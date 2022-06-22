@@ -53,7 +53,7 @@ func (b *builtinLowerUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	result.ReserveString(n)
-	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -114,7 +114,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 			result.AppendNull()
 			continue
 		}
-		if int64(byteLength) > int64(b.tp.Flen)/num {
+		if int64(byteLength) > int64(b.tp.GetFlen())/num {
 			result.AppendNull()
 			continue
 		}
@@ -165,7 +165,7 @@ func (b *builtinUpperUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 	result.ReserveString(n)
-	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -688,8 +688,8 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 		str := strings.Join(strs[i], seps[i])
-		// todo check whether the length of result is larger than Flen
-		// if b.tp.Flen != types.UnspecifiedLength && len(str) > b.tp.Flen {
+		// todo check whether the length of result is larger than flen
+		// if b.tp.flen != types.UnspecifiedLength && len(str) > b.tp.flen {
 		//	result.AppendNull()
 		//	continue
 		// }
@@ -718,7 +718,7 @@ func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if done {
 		return nil
 	}
-	enc := charset.FindEncoding(resultTp.Charset)
+	enc := charset.FindEncoding(resultTp.GetCharset())
 	encBuf := &bytes.Buffer{}
 	for i := 0; i < n; i++ {
 		if expr.IsNull(i) {
@@ -741,10 +741,10 @@ func vecEvalStringConvertBinary(result *chunk.Column, n int, expr *chunk.Column,
 	var chs string
 	var op charset.Op
 	if types.IsBinaryStr(argTp) {
-		chs = resultTp.Charset
+		chs = resultTp.GetCharset()
 		op = charset.OpDecode
 	} else if types.IsBinaryStr(resultTp) {
-		chs = argTp.Charset
+		chs = argTp.GetCharset()
 		op = charset.OpEncode
 	} else {
 		return false
@@ -820,7 +820,7 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 		}
 
 		// when count > MaxInt64, returns whole string.
-		if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().Flag) {
+		if count < 0 && mysql.HasUnsignedFlag(b.args[2].GetType().GetFlag()) {
 			result.AppendString(str)
 			continue
 		}
@@ -1024,7 +1024,7 @@ func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		strLength := len(str)
 		padStr := padBuf.GetString(i)
 		padLength := len(padStr)
-		if targetLength < 0 || targetLength > b.tp.Flen || (strLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength > b.tp.GetFlen() || (strLength < targetLength && padLength == 0) {
 			result.AppendNull()
 			continue
 		}
@@ -1095,7 +1095,7 @@ func (b *builtinLpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
 			result.AppendNull()
 			continue
 		}
@@ -1485,7 +1485,7 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		strLength := len(str)
 		padStr := padBuf.GetString(i)
 		padLength := len(padStr)
-		if targetLength < 0 || targetLength > b.tp.Flen || (strLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength > b.tp.GetFlen() || (strLength < targetLength && padLength == 0) {
 			result.AppendNull()
 			continue
 		}
@@ -2125,7 +2125,7 @@ func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) err
 		return err
 	}
 
-	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
 	var x [4]byte
 	encBuf := bytes.NewBuffer(x[:])
 	result.ResizeInt64(n, false)
@@ -2329,7 +2329,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		bufint[i] = buf[i].Int64s()
 	}
 	encBuf := &bytes.Buffer{}
-	enc := charset.FindEncoding(b.tp.Charset)
+	enc := charset.FindEncoding(b.tp.GetCharset())
 	hasStrictMode := b.ctx.GetSessionVars().StrictSQLMode
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
@@ -2516,8 +2516,8 @@ func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 
 			result.AppendNull()
 			continue
-		} else if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
-			b.tp.Flen = mysql.MaxBlobWidth
+		} else if b.tp.GetFlen() == -1 || b.tp.GetFlen() > mysql.MaxBlobWidth {
+			b.tp.SetFlen(mysql.MaxBlobWidth)
 		}
 
 		newStr := base64.StdEncoding.EncodeToString([]byte(str))
@@ -2618,7 +2618,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		runeLength := len([]rune(str))
 		padLength := len([]rune(padStr))
 
-		if targetLength < 0 || targetLength*4 > b.tp.Flen || (runeLength < targetLength && padLength == 0) {
+		if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
 			result.AppendNull()
 			continue
 		}

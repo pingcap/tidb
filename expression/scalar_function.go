@@ -90,7 +90,7 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // SupportReverseEval returns if this expression supports reversed evaluation.
 func (sf *ScalarFunction) SupportReverseEval() bool {
-	switch sf.RetType.Tp {
+	switch sf.RetType.GetType() {
 	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
 		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
@@ -144,7 +144,7 @@ func typeInferForNull(args []Expression) {
 	}
 	var isNull = func(expr Expression) bool {
 		cons, ok := expr.(*Constant)
-		return ok && cons.RetType.Tp == mysql.TypeNull && cons.Value.IsNull()
+		return ok && cons.RetType.GetType() == mysql.TypeNull && cons.Value.IsNull()
 	}
 	// Infer the actual field type of the NULL constant.
 	var retFieldTp *types.FieldType
@@ -166,7 +166,7 @@ func typeInferForNull(args []Expression) {
 	for _, arg := range args {
 		if isNull(arg) {
 			*arg.GetType() = *retFieldTp
-			arg.GetType().Flag &= ^mysql.NotNullFlag // Remove NotNullFlag of NullConst
+			arg.GetType().DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
 		}
 	}
 }
@@ -224,7 +224,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if err != nil {
 		return nil, err
 	}
-	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
+	if builtinRetTp := f.getRetTp(); builtinRetTp.GetType() != mysql.TypeUnspecified || retType.GetType() == mysql.TypeUnspecified {
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
@@ -353,7 +353,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(sf.GetCtx(), row)
-		if mysql.HasUnsignedFlag(tp.Flag) {
+		if mysql.HasUnsignedFlag(tp.GetFlag()) {
 			res = uint64(intRes)
 		} else {
 			res = intRes
@@ -371,8 +371,8 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	case types.ETString:
 		var str string
 		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
-		if !isNull && err == nil && tp.Tp == mysql.TypeEnum {
-			res, err = types.ParseEnum(tp.Elems, str, tp.Collate)
+		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
+			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
 			if ctx := sf.GetCtx(); ctx != nil {
 				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
 					if sc.TruncateAsWarning {
@@ -560,7 +560,7 @@ func (sf *ScalarFunction) GetSingleColumn(reverse bool) (*Column, bool) {
 // Coercibility returns the coercibility value which is used to check collations.
 func (sf *ScalarFunction) Coercibility() Coercibility {
 	if !sf.Function.HasCoercibility() {
-		sf.SetCoercibility(deriveCoercibilityForScarlarFunc(sf))
+		sf.SetCoercibility(deriveCoercibilityForScalarFunc(sf))
 	}
 	return sf.Function.Coercibility()
 }

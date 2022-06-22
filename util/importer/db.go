@@ -96,9 +96,9 @@ func genRowData(table *table) (string, error) {
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
 	_, isUnique := table.uniqIndices[column.name]
-	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
+	isUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
 
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeTiny:
 		var data int64
 		if isUnique {
@@ -150,9 +150,9 @@ func genColumnData(table *table, column *column) (string, error) {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		data := []byte{'\''}
 		if isUnique {
-			data = append(data, []byte(column.data.uniqString(tp.Flen))...)
+			data = append(data, []byte(column.data.uniqString(tp.GetFlen()))...)
 		} else {
-			data = append(data, []byte(randString(randInt(1, tp.Flen)))...)
+			data = append(data, []byte(randString(randInt(1, tp.GetFlen())))...)
 		}
 
 		data = append(data, '\'')

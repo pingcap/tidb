@@ -549,10 +549,10 @@ func AnalyzeValuesFromBuckets(valueString string, cols []*model.ColumnInfo) ([]s
 	}
 
 	for i, col := range cols {
-		if IsTimeTypeAndNeedDecode(col.Tp) {
+		if IsTimeTypeAndNeedDecode(col.GetType()) {
 			// check if values[i] is already a time string
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			_, err := types.ParseTime(sc, values[i], col.Tp, types.MinFsp)
+			_, err := types.ParseTime(sc, values[i], col.GetType(), types.MinFsp)
 			if err == nil {
 				continue
 			}
@@ -686,13 +686,12 @@ func GetSessionVariable(ctx context.Context, db QueryExecutor, variable string) 
 	*/
 
 	for rows.Next() {
-		err = rows.Scan(&variable, &value)
-		if err != nil {
+		if err = rows.Scan(&variable, &value); err != nil {
 			return "", errors.Trace(err)
 		}
 	}
 
-	if rows.Err() != nil {
+	if err := rows.Err(); err != nil {
 		return "", errors.Trace(err)
 	}
 

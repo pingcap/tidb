@@ -18,7 +18,6 @@ import (
 	"math"
 	"reflect"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/dbterror"
-	math2 "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -123,7 +122,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.MinValue = model.DefaultPositiveSequenceMinValue
 			}
 			if !startSetFlag {
-				sequenceInfo.Start = mathutil.MaxInt64(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
+				sequenceInfo.Start = mathutil.Max(sequenceInfo.MinValue, model.DefaultPositiveSequenceStartValue)
 			}
 			if !maxSetFlag {
 				sequenceInfo.MaxValue = model.DefaultPositiveSequenceMaxValue
@@ -133,7 +132,7 @@ func handleSequenceOptions(seqOptions []*ast.SequenceOption, sequenceInfo *model
 				sequenceInfo.MaxValue = model.DefaultNegativeSequenceMaxValue
 			}
 			if !startSetFlag {
-				sequenceInfo.Start = mathutil.MinInt64(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
+				sequenceInfo.Start = mathutil.Min(sequenceInfo.MaxValue, model.DefaultNegativeSequenceStartValue)
 			}
 			if !minSetFlag {
 				sequenceInfo.MinValue = model.DefaultNegativeSequenceMinValue
@@ -153,7 +152,7 @@ func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
 		// Cache value should be bigger than 0.
 		return false
 	}
-	maxIncrement = math2.Abs(seqInfo.Increment)
+	maxIncrement = mathutil.Abs(seqInfo.Increment)
 
 	return seqInfo.MaxValue >= seqInfo.Start &&
 		seqInfo.MaxValue > seqInfo.MinValue &&

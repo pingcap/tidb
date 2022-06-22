@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/mock"
@@ -115,7 +116,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		for i, e := range gotElements {
 			require.Equal(t, expectedElements[i], e)
 		}
-		require.NoError(t, ctx.NewTxn(context.Background()))
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
@@ -226,8 +227,8 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
-	require.True(t, mysql.HasNotNullFlag(c2.Flag))
-	require.False(t, mysql.HasPreventNullInsertFlag(c2.Flag))
+	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
+	require.False(t, mysql.HasPreventNullInsertFlag(c2.GetFlag()))
 	err = tk1.ExecToErr("insert into t1 values ();")
 	require.EqualError(t, err, "[table:1364]Field 'c2' doesn't have a default value")
 }
@@ -282,12 +283,12 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
 	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
-	require.True(t, mysql.HasNotNullFlag(c2.Flag))
-	require.False(t, mysql.HasPreventNullInsertFlag(c2.Flag))
+	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
+	require.False(t, mysql.HasPreventNullInsertFlag(c2.GetFlag()))
 	require.EqualError(t, tk1.ExecToErr("insert into t1 values ()"), "[table:1364]Field 'c2' doesn't have a default value")
 
 	c2 = external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
-	require.Equal(t, mysql.TypeTiny, c2.FieldType.Tp)
+	require.Equal(t, mysql.TypeTiny, c2.FieldType.GetType())
 }
 
 func TestModifyColumnBetweenStringTypes(t *testing.T) {
@@ -301,7 +302,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varchar(5);")
 	mvc := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, 5, mvc.FieldType.Flen)
+	require.Equal(t, 5, mvc.FieldType.GetFlen())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a varchar(100);")
@@ -313,7 +314,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a char(5);")
 	mc := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, 5, mc.FieldType.Flen)
+	require.Equal(t, 5, mc.FieldType.GetFlen())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a char(100);")
@@ -325,7 +326,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustGetErrMsg("alter table tt change a a binary(5);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
 	mb := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, 10, mb.FieldType.Flen)
+	require.Equal(t, 10, mb.FieldType.GetFlen())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00"))
 	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
 	tk.MustExec("alter table tt change a a binary(12);")
@@ -338,7 +339,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varbinary(5);")
 	mvb := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, 5, mvb.FieldType.Flen)
+	require.Equal(t, 5, mvb.FieldType.GetFlen())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varbinary(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a varbinary(12);")
@@ -352,34 +353,34 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 
 	tk.MustExec("alter table tt change a a char(10);")
 	c2 := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, mysql.TypeString, c2.FieldType.Tp)
-	require.Equal(t, 10, c2.FieldType.Flen)
+	require.Equal(t, mysql.TypeString, c2.FieldType.GetType())
+	require.Equal(t, 10, c2.FieldType.GetFlen())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
 
 	// char to text
 	tk.MustExec("alter table tt change a a text;")
 	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, mysql.TypeBlob, c2.FieldType.Tp)
+	require.Equal(t, mysql.TypeBlob, c2.FieldType.GetType())
 
 	// text to set
 	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a set('111', '10000');")
 	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, mysql.TypeSet, c2.FieldType.Tp)
+	require.Equal(t, mysql.TypeSet, c2.FieldType.GetType())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to set
 	tk.MustExec("alter table tt change a a set('10000', '111');")
 	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, mysql.TypeSet, c2.FieldType.Tp)
+	require.Equal(t, mysql.TypeSet, c2.FieldType.GetType())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to enum
 	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a enum('111', '10000');")
 	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
-	require.Equal(t, mysql.TypeEnum, c2.FieldType.Tp)
+	require.Equal(t, mysql.TypeEnum, c2.FieldType.GetType())
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustExec("alter table tt change a a enum('10000', '111');")
 	tk.MustQuery("select * from tt where a = 1").Check(testkit.Rows("10000"))

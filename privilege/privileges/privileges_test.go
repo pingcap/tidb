@@ -1277,6 +1277,9 @@ func TestSystemSchema(t *testing.T) {
 	err = tk.ExecToErr("create table metric_schema.t(a int)")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	tk.MustGetErrCode("create table metrics_schema.t (id int);", errno.ErrTableaccessDenied)
+	tk.MustGetErrCode("create table performance_schema.t (id int);", errno.ErrTableaccessDenied)
 }
 
 func TestPerformanceSchema(t *testing.T) {
@@ -2004,14 +2007,14 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_time_series_count'`).Check(testkit.Rows())
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
 
-	_, err := tk.Exec("SET tidb_force_priority = 'NO_PRIORITY'")
+	_, err := tk.Exec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SET GLOBAL tidb_enable_telemetry = OFF")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SET GLOBAL tidb_top_sql_max_time_series_count = 100")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 
-	_, err = tk.Exec("SELECT @@session.tidb_force_priority")
+	_, err = tk.Exec("SELECT @@global.tidb_force_priority")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SELECT @@global.tidb_enable_telemetry")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
@@ -2029,10 +2032,10 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
 
 	// should not actually make any change.
-	tk.MustExec("SET tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustExec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
 
-	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))

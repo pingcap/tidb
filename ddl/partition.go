@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/slice"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
@@ -625,7 +625,11 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			}
 		}
 		comment, _ := def.Comment()
-		err := checkTooLongTable(def.Name)
+		comment, err := validateCommentLength(ctx.GetSessionVars(), def.Name.L, &comment, dbterror.ErrTooLongTablePartitionComment)
+		if err != nil {
+			return nil, err
+		}
+		err = checkTooLongTable(def.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -657,7 +661,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
-		tp.Flag |= mysql.UnsignedFlag
+		tp.AddFlag(mysql.UnsignedFlag)
 	}
 	for _, exp := range exprs {
 		if _, ok := exp.(*ast.MaxValueExpr); ok {
@@ -670,7 +674,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 		switch val.Kind() {
 		case types.KindUint64, types.KindNull:
 		case types.KindInt64:
-			if mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
+			if mysql.HasUnsignedFlag(tp.GetFlag()) && val.GetInt64() < 0 {
 				return dbterror.ErrPartitionConstDomain.GenWithStackByArgs()
 			}
 		default:
@@ -876,7 +880,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if len(pi.Columns) == 0 {
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		if isColUnsigned(tblInfo.Columns, tblInfo.Partition) {
-			tp.Flag |= mysql.UnsignedFlag
+			tp.AddFlag(mysql.UnsignedFlag)
 		}
 		colTps = []*types.FieldType{tp}
 	} else {
@@ -913,7 +917,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 					defs[i].InValues[j][k] = s
 				}
 				if colTps[k].EvalType() == types.ETString {
-					s = string(hack.String(collate.GetCollator(cols[k].Collate).Key(s)))
+					s = string(hack.String(collate.GetCollator(cols[k].GetCollate()).Key(s)))
 				}
 				s = strings.ReplaceAll(s, ",", `\,`)
 				inValueStrs = append(inValueStrs, s)
@@ -1115,10 +1119,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	}
 
 	var physicalTableIDs []int64
-	if job.State == model.JobStateRunning && job.SchemaState == model.StateNone {
-		// Manually set first state.
-		job.SchemaState = model.StatePublic
-	}
 	// In order to skip maintaining the state check in partitionDefinition, TiDB use droppingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	originalState := job.SchemaState
@@ -1166,14 +1166,15 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 				}
 			}
-			reorgInfo, err := getReorgInfoFromPartitions(w.JobContext, d, t, job, tbl, physicalTableIDs, elements)
+			rh := newReorgHandler(t)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job), d, rh, job, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
+			err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
 						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -1185,12 +1186,8 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 					// if timeout, we should return, check for the owner and re-wait job done.
 					return ver, nil
 				}
-				// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-				w.reorgCtx.cleanNotifyReorgCancel()
 				return ver, errors.Trace(err)
 			}
-			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			w.reorgCtx.cleanNotifyReorgCancel()
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
@@ -1199,6 +1196,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: tblInfo.Partition.Definitions}})
 		// A background job will be created to delete old partition data.
@@ -1458,9 +1456,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
-		RowID:       mathutil.MaxInt64(ptAutoIDs.RowID, ntAutoIDs.RowID),
-		IncrementID: mathutil.MaxInt64(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
-		RandomID:    mathutil.MaxInt64(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
+		RowID:       mathutil.Max(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		IncrementID: mathutil.Max(ptAutoIDs.IncrementID, ntAutoIDs.IncrementID),
+		RandomID:    mathutil.Max(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
 	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
@@ -1619,7 +1617,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ddlJobCtx, nil, sql, paramList...)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, nil, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1659,7 +1657,7 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 }
 
 func trimQuotation(str string) string {
-	return strings.Trim(str, "\"")
+	return strings.Trim(str, "'")
 }
 
 func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
@@ -1946,7 +1944,7 @@ func (cns columnNameSlice) At(i int) string {
 // isColUnsigned returns true if the partitioning key column is unsigned.
 func isColUnsigned(cols []*model.ColumnInfo, pi *model.PartitionInfo) bool {
 	for _, col := range cols {
-		isUnsigned := mysql.HasUnsignedFlag(col.Flag)
+		isUnsigned := mysql.HasUnsignedFlag(col.GetFlag())
 		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
 			return true
 		}
@@ -2097,7 +2095,7 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 		if columnInfo == nil {
 			return nil, errors.Trace(dbterror.ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
 		}
-		ts = append(ts, columnInfo.Tp)
+		ts = append(ts, columnInfo.GetType())
 	}
 
 	return ts, nil

@@ -111,8 +111,8 @@ func EqualTableInfo(tableInfo1, tableInfo2 *model.TableInfo) (bool, string) {
 		if col.Name.O != tableInfo2.Columns[j].Name.O {
 			return false, fmt.Sprintf("column name not equal, one is %s another is %s", col.Name.O, tableInfo2.Columns[j].Name.O)
 		}
-		if col.Tp != tableInfo2.Columns[j].Tp {
-			return false, fmt.Sprintf("column %s's type not equal, one is %v another is %v", col.Name.O, col.Tp, tableInfo2.Columns[j].Tp)
+		if col.GetType() != tableInfo2.Columns[j].GetType() {
+			return false, fmt.Sprintf("column %s's type not equal, one is %v another is %v", col.Name.O, col.GetType(), tableInfo2.Columns[j].GetType())
 		}
 	}
 

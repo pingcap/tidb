@@ -1,0 +1,44 @@
+name: Real TiKV Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  realtikv-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        suite:
+          - brietest
+          - pessimistictest
+          - sessiontest
+          - statisticstest
+          - txntest
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: 1.18
+      - name: Setup TiKV cluster
+        run: |
+          # Disable pipelined pessimistic lock temporarily until tikv#11649 is resolved
+          echo -e "[pessimistic-txn]\npipelined = false\n" > tikv.toml
+          echo -e "[raftdb]\nmax-open-files = 20480\n" >> tikv.toml
+          echo -e "[rocksdb]\nmax-open-files = 20480\n" >> tikv.toml
+          curl --proto '=https' --tlsv1.2 -sSf https://tiup-mirrors.pingcap.com/install.sh | sh
+          $HOME/.tiup/bin/tiup playground nightly --mode tikv-slim --kv 3 --pd 3 --without-monitor --kv.config tikv.toml &
+          curl --retry-connrefused --retry 5 --retry-delay 5 http://127.0.0.1:2379
+      - name: Run Tests
+        run: |
+          export log_level=error
+          make failpoint-enable
+          go test ./tests/realtikvtest/${{ matrix.suite }} -v -with-real-tikv -timeout 30m

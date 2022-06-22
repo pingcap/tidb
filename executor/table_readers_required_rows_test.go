@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +80,7 @@ func (r *requiredRowsSelectResult) genOneRow() chunk.Row {
 }
 
 func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{} {
-	switch valType.Tp {
+	switch valType.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
 	case mysql.TypeDouble:
@@ -132,7 +132,7 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 }
 
 func buildMockDAGRequest(sctx sessionctx.Context) *tipb.DAGRequest {
-	req, _, err := constructDAGReq(sctx, []core.PhysicalPlan{&core.PhysicalTableScan{
+	req, err := constructDAGReq(sctx, []core.PhysicalPlan{&core.PhysicalTableScan{
 		Columns: []*model.ColumnInfo{},
 		Table:   &model.TableInfo{ID: 12345, PKIsHandle: false},
 		Desc:    false,

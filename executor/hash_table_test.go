@@ -34,12 +34,12 @@ import (
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 6
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -57,9 +57,9 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	numCols := 3
 	colTypes := make([]*types.FieldType, 0, numCols)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP())
+	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
 	for i := 0; i < numRows; i++ {
@@ -158,7 +158,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	}
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
-	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
+	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(matched))
 	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))

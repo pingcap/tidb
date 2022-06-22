@@ -304,14 +304,8 @@ func TestIssue28650(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t1 select rand()*400 from t1;")
 	}
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = config.OOMActionLog
-		})
-	}()
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	wg.Wait()
 	for _, sql := range sqls {
 		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
@@ -439,10 +433,8 @@ func TestIndexJoin31494(t *testing.T) {
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
 	// This bug will be reproduced in 10 times.
@@ -460,7 +452,7 @@ func TestIndexJoin31494(t *testing.T) {
 func TestFix31038(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableCollectExecutionInfo = false
+		conf.Instance.EnableCollectExecutionInfo = false
 	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

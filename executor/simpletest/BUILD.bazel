@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "simpletest_test",
+    srcs = [
+        "main_test.go",
+        "simple_test.go",
+    ],
+    flaky = True,
+    shard_count = 30,
+    deps = [
+        "//config",
+        "//executor",
+        "//parser/auth",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//planner/core",
+        "//session",
+        "//sessionctx",
+        "//statistics/handle",
+        "//store/mockstore",
+        "//testkit",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

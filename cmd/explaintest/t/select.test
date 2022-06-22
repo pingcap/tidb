@@ -251,6 +251,30 @@ insert into precise_types values (
 );
 SELECT a, b, c, d FROM precise_types;
 
+# for issue 19940
+drop table if exists t1;
+create table t1(a int, b int);
+insert into t1 values (1,1),(2,2),(1,3),(2,3);
+drop table if exists t2;
+create table t2(a int, b int);
+insert into t2 values (1,1),(2,2),(3,4);
+drop table if exists t3;
+create table t3(a int, b int);
+insert into t3 values (1,1),(2,3);
+drop table if exists t4;
+create table t4(a int, b int);
+analyze table t1,t2,t3;
+explain format = 'brief' select * from t2 left join t1 on t2.a=t1.a left join t3 on t2.a=t3.a;
+explain format = 'brief' select * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.a=1;
+explain format = 'brief' select * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.a=t3.a;
+explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a join t3 on t2.b=t3.b;
+explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+explain format = 'brief' select * from t2 right join t3 on t3.a=t2.a right join t1 on t2.a=t1.a;
+explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t4.a;
+explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t3.a;
+explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t1.a=t4.a;
+
+drop table if exists t3;
 create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
 --error 1105

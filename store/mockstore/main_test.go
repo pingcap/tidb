@@ -19,12 +19,12 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	callback := func(i int) int {
 		// wait for leveldb to close, leveldb will be closed in one second
 		time.Sleep(time.Second)

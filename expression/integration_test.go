@@ -249,6 +249,141 @@ func TestBuiltinFuncJsonPretty(t *testing.T) {
 	require.Equal(t, errors.ErrCode(mysql.ErrInvalidJSONText), terr.Code())
 }
 
+func TestGetLock(t *testing.T) {
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// No timeout specified
+	err := tk.ExecToErr("SELECT get_lock('testlock')")
+	require.Error(t, err)
+	terr := errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(mysql.ErrWrongParamcountToNativeFct), terr.Code())
+
+	// 0 timeout = immediate
+	// Negative timeout = convert to max value
+	tk.MustQuery("SELECT get_lock('testlock1', 0)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('testlock2', -10)").Check(testkit.Rows("1"))
+	// show warnings:
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect get_lock value: '-10'"))
+	tk.MustQuery("SELECT release_lock('testlock1'), release_lock('testlock2')").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// GetLock/ReleaseLock with NULL name or '' name
+	rs, _ := tk.Exec("SELECT get_lock('', 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT get_lock(NULL, 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock('')")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock(NULL)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	// NULL timeout is fine (= unlimited)
+	tk.MustQuery("SELECT get_lock('aaa', NULL)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('aaa')").Check(testkit.Rows("1"))
+
+	// GetLock in CAPS, release lock in different case.
+	tk.MustQuery("SELECT get_lock('aBC', -10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('AbC')").Check(testkit.Rows("1"))
+
+	// Release unacquired LOCK and previously released lock
+	tk.MustQuery("SELECT release_lock('randombytes')").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT release_lock('abc')").Check(testkit.Rows("0"))
+
+	// GetLock with integer name, 64, character name.
+	tk.MustQuery("SELECT get_lock(1234, 10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock(REPEAT('a', 64), 10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock(1234), release_lock(REPEAT('aa', 32))").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// 65 character name
+	rs, _ = tk.Exec("SELECT get_lock(REPEAT('a', 65), 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock(REPEAT('a', 65))")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	// len should be based on character length, not byte length
+	// accented a character = 66 bytes but only 33 chars
+	tk.MustQuery("SELECT get_lock(REPEAT(unhex('C3A4'), 33), 10)")
+	tk.MustQuery("SELECT release_lock(REPEAT(unhex('C3A4'), 33))")
+
+	// Floating point timeout.
+	tk.MustQuery("SELECT get_lock('nnn', 1.2)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('nnn')").Check(testkit.Rows("1"))
+
+	// Multiple locks acquired in one statement.
+	// Release all locks and one not held lock
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT release_lock('a1'),release_lock('a2'),release_lock('a3'), release_lock('random'), release_lock('a4')").Check(testkit.Rows("1 1 1 0 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// Multiple locks acquired, released all at once.
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("4"))
+	tk.MustQuery("SELECT release_lock('a1')").Check(testkit.Rows("0")) // lock is free
+
+	// Multiple locks acquired, reference count increased, released all at once.
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a5', 1.2)").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("7")) // 7 not 5, because the it includes ref count
+	tk.MustQuery("SELECT release_lock('a1')").Check(testkit.Rows("0"))  // lock is free
+	tk.MustQuery("SELECT release_lock('a5')").Check(testkit.Rows("0"))  // lock is free
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+
+	// Test common cases:
+	// Get a lock, release it immediately.
+	// Try to release it again (its released)
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0"))
+
+	// Get a lock, acquire it again, release it twice.
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0"))
+
+	// Test someone else has the lock with short timeout.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
+	// try again
+	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
+	// release it
+	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
+
+	// Confirm all locks are released
+	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+}
+
 func TestMiscellaneousBuiltin(t *testing.T) {
 	ctx := context.Background()
 	store, clean := testkit.CreateMockStore(t)
@@ -320,7 +455,6 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a order by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
 
 	// for locks
-	tk.MustExec(`set tidb_enable_noop_functions=1;`)
 	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
@@ -330,6 +464,10 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock3');`) // not acquired
+	result.Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT RELEASE_ALL_LOCKS()`).Check(testkit.Rows("0")) // none acquired
+
 }
 
 func TestConvertToBit(t *testing.T) {
@@ -753,7 +891,7 @@ func TestStringBuiltin(t *testing.T) {
 	// for convert
 	result = tk.MustQuery(`select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
 	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
-	// Charset 866 does not have a default collation configured currently, so this will return error.
+	// charset 866 does not have a default collation configured currently, so this will return error.
 	err = tk.ExecToErr(`select convert("123" using "866");`)
 	require.Error(t, err, "[parser:1115]Unknown character set: '866'")
 	// Test case in issue #4436.
@@ -1781,6 +1919,7 @@ func TestCompareBuiltin(t *testing.T) {
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
 
 	tk.MustExec("drop table if exists t")
+
 	// insert value at utc timezone
 	tk.MustExec("set time_zone = '+00:00'")
 	tk.MustExec("create table t(a timestamp)")
@@ -2580,7 +2719,7 @@ func TestColumnInfoModified(t *testing.T) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
-	require.Equal(t, mysql.TypeLong, col.Tp)
+	require.Equal(t, mysql.TypeLong, col.GetType())
 }
 
 func TestIssues(t *testing.T) {
@@ -2737,10 +2876,8 @@ func TestTiDBIsOwnerFunc(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	result := tk.MustQuery("select tidb_is_ddl_owner()")
-	ddlOwnerChecker := tk.Session().DDLOwnerChecker()
-	require.NotNil(t, ddlOwnerChecker)
 	var ret int64
-	if ddlOwnerChecker.IsOwner() {
+	if tk.Session().IsDDLOwner() {
 		ret = 1
 	}
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
@@ -3001,8 +3138,9 @@ func TestUnknowHintIgnore(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
-	_, err := tk.Exec("select 1 from /*+ test1() */ t")
+	rs, err := tk.Exec("select 1 from /*+ test1() */ t")
 	require.NoError(t, err)
+	rs.Close()
 }
 
 func TestValuesInNonInsertStmt(t *testing.T) {
@@ -3463,6 +3601,7 @@ func TestDateTimeAddReal(t *testing.T) {
 		{`select date("1900-01-01") + interval 1.123456789e3 second;`, "1900-01-01 00:18:43.456789"},
 		{`SELECT "1900-01-01 00:18:43.456789" - INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:00:00"},
 		{`SELECT 19000101001843.456789 - INTERVAL 1.123456789e3 SECOND;`, "1900-01-01 00:00:00"},
+		{`SELECT 19000101000000.0005 + INTERVAL 0.0005 SECOND;`, "1900-01-01 00:00:00.001000"},
 		{`select date("1900-01-01") - interval 1.123456789e3 second;`, "1899-12-31 23:41:16.543211"},
 		{`select 19000101000000 - interval 1.123456789e3 second;`, "1899-12-31 23:41:16.543211"},
 	}
@@ -3472,6 +3611,26 @@ func TestDateTimeAddReal(t *testing.T) {
 	}
 }
 
+func TestIssue30253(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	cases := []struct {
+		sql    string
+		result string
+	}{
+		{`SELECT INTERVAL 1.123456789e3 SECOND + "1900-01-01 00:00:00"`, "1900-01-01 00:18:43.456789"},
+		{`SELECT INTERVAL 1 Year + 19000101000000`, "1901-01-01 00:00:00"},
+		{`select interval 6 month + date("1900-01-01")`, "1900-07-01"},
+		{`select interval "5:2" MINUTE_SECOND + "1900-01-01"`, "1900-01-01 00:05:02"},
+	}
+
+	for _, c := range cases {
+		tk.MustQuery(c.sql).Check(testkit.Rows(c.result))
+	}
+}
 func TestIssue10181(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3709,7 +3868,7 @@ func TestDatetimeMicrosecond(t *testing.T) {
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL -2 DAY_MICROSECOND);`).Check(
 		testkit.Rows("2007-03-28 22:08:27.800000"))
 
-	// For Decimal
+	// For decimal
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 HOUR_MINUTE);`).Check(
 		testkit.Rows("2007-03-29 00:10:28"))
 	tk.MustQuery(`select DATE_ADD('2007-03-28 22:08:28',INTERVAL 2.2 MINUTE_SECOND);`).Check(
@@ -4259,6 +4418,18 @@ func TestCollationAndCharset(t *testing.T) {
 	tk.MustQuery("select trim(both 'abc' collate utf8mb4_bin from 'c' collate utf8mb4_general_ci);").Check(testkit.Rows("c"))
 	tk.MustQuery("select substr('abc' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("bc"))
 	tk.MustQuery("select replace('abc' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci, 'd' collate utf8mb4_unicode_ci);").Check(testkit.Rows("adc"))
+}
+
+// https://github.com/pingcap/tidb/issues/34500.
+func TestJoinOnDifferentCollations(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a char(10) charset gbk collate gbk_chinese_ci, b time);")
+	tk.MustExec("insert into t values ('08:00:00', '08:00:00');")
+	tk.MustQuery("select t1.a, t2.b from t as t1 right join t as t2 on t1.a = t2.b;").
+		Check(testkit.Rows("08:00:00 08:00:00"))
 }
 
 func TestCoercibility(t *testing.T) {
@@ -7100,4 +7271,180 @@ func TestIssue33397(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
 	result := tk.MustQuery("select compress(a) from t").Rows()
 	require.Equal(t, [][]interface{}{{""}, {""}}, result)
+}
+
+func TestIssue34659(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32))")
+	tk.MustExec("insert into t values(date_add(cast('00:00:00' as time), interval 1.1 second))")
+	result := tk.MustQuery("select * from t").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:00.000001"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1000000 microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.000000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1111119 second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.0 second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.0"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 second_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 second_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:01:01"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"308:38:31"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:01:01"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"308:38:31"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_minute) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"01:01:00"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 day_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 day_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+}
+
+func TestIssue31799(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(i int, c varchar(32))")
+	tk.MustExec("insert into t values(1, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1 second))")
+	tk.MustExec("insert into t values(2, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1 second))")
+	tk.MustExec("insert into t values(3, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second))")
+	tk.MustExec("insert into t values(4, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second))")
+	tk.MustExec("insert into t values(5, date_add(cast('00:00:00' as time), interval 1.1 second))")
+	tk.MustQuery("select c from t order by i").Check([][]interface{}{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}})
+	tk.MustExec("drop table t")
+}
+
+func TestIssue31867(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp(6) not null default current_timestamp(6) on update current_timestamp(6))")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000000')")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000001')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000001')")
+	tk.MustQuery("select date_add(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 01:01:01.000000"},
+		{"1970-01-01 01:01:01.000001"},
+		{"1971-01-01 01:01:00.000000"},
+		{"1971-01-01 01:01:00.000001"},
+		{"2001-01-01 00:01:00.000000"},
+		{"2001-01-01 00:01:00.000001"},
+		{"2001-01-01 01:01:00.000000"},
+		{"2001-01-01 01:01:00.000001"},
+	})
+	tk.MustQuery("select date_sub(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 00:59:01.000000"},
+		{"1970-01-01 00:59:01.000001"},
+		{"1971-01-01 00:59:00.000000"},
+		{"1971-01-01 00:59:00.000001"},
+		{"2000-12-31 23:59:00.000000"},
+		{"2000-12-31 23:59:00.000001"},
+		{"2001-01-01 00:59:00.000000"},
+		{"2001-01-01 00:59:00.000001"},
+	})
+	tk.MustExec("drop table t")
+}
+
+func TestDateAddForNonExistingTimestamp(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = 'CET'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp)")
+	tk.MustExec("set time_zone = 'UTC'")
+	tk.MustExec("insert into t values('2022-03-27 00:30:00')")
+	tk.MustExec("insert into t values('2022-10-30 00:30:00')")
+	tk.MustExec("insert into t values('2022-10-30 01:30:00')")
+	tk.MustExec("set time_zone = 'Europe/Amsterdam'")
+	// Non-existing CET timestamp.
+	tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
+	tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]interface{}{
+		{"2022-03-27 02:30:00"},
+		{"2022-10-30 03:30:00"},
+		{"2022-10-30 03:30:00"},
+	})
+	tk.MustExec("drop table t")
+}
+
+func TestImcompleteDateFunc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select to_seconds('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_seconds('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT CONVERT_TZ('2004-10-00 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT CONVERT_TZ('2004-00-01 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_ADD('1998-10-00',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_ADD('2004-00-01',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_SUB('1998-10-00', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_SUB('2004-00-01', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DAYOFYEAR('2007-00-03');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DAYOFYEAR('2007-02-00');;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-00-01','2003-05-01');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-00');;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select week('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select week('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKDAY('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKDAY('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKOFYEAR('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKOFYEAR('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select YEARWEEK('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
 }

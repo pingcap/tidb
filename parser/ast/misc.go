@@ -46,6 +46,7 @@ var (
 	_ StmtNode = &SetRoleStmt{}
 	_ StmtNode = &SetDefaultRoleStmt{}
 	_ StmtNode = &SetStmt{}
+	_ StmtNode = &SetSessionStatesStmt{}
 	_ StmtNode = &UseStmt{}
 	_ StmtNode = &FlushStmt{}
 	_ StmtNode = &KillStmt{}
@@ -57,6 +58,7 @@ var (
 	_ StmtNode = &RenameUserStmt{}
 	_ StmtNode = &HelpStmt{}
 	_ StmtNode = &PlanReplayerStmt{}
+	_ StmtNode = &CompactTableStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -229,7 +231,8 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("EXPLAIN ")
 	if n.Analyze {
 		ctx.WriteKeyWord("ANALYZE ")
-	} else {
+	}
+	if !n.Analyze || strings.ToLower(n.Format) != "row" {
 		ctx.WriteKeyWord("FORMAT ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Format)
@@ -356,6 +359,53 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Stmt = node.(StmtNode)
+	return v.Leave(n)
+}
+
+type CompactReplicaKind string
+
+const (
+	// CompactReplicaKindTiFlash means compacting TiFlash replicas.
+	CompactReplicaKindTiFlash = "TIFLASH"
+
+	// CompactReplicaKindTiKV means compacting TiKV replicas.
+	CompactReplicaKindTiKV = "TIKV"
+)
+
+// CompactTableStmt is a statement to manually compact a table.
+type CompactTableStmt struct {
+	stmtNode
+
+	Table       *TableName
+	ReplicaKind CompactReplicaKind
+}
+
+// Restore implements Node interface.
+func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER TABLE ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while add table")
+	}
+
+	// Note: There is only TiFlash replica available now. TiKV will be added later.
+	ctx.WriteKeyWord(" COMPACT ")
+	ctx.WriteKeyWord(string(n.ReplicaKind))
+	ctx.WriteKeyWord(" REPLICA")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CompactTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CompactTableStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
 	return v.Leave(n)
 }
 
@@ -611,11 +661,17 @@ type RollbackStmt struct {
 	stmtNode
 	// CompletionType overwrites system variable `completion_type` within transaction
 	CompletionType CompletionType
+	// SavepointName is the savepoint name.
+	SavepointName string
 }
 
 // Restore implements Node interface.
 func (n *RollbackStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ROLLBACK")
+	if n.SavepointName != "" {
+		ctx.WritePlain(" TO ")
+		ctx.WritePlain(n.SavepointName)
+	}
 	if err := n.CompletionType.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore RollbackStmt.CompletionType")
 	}
@@ -883,6 +939,48 @@ func (n *KillStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// SavepointStmt is the statement of SAVEPOINT.
+type SavepointStmt struct {
+	stmtNode
+	// Name is the savepoint name.
+	Name string
+}
+
+// Restore implements Node interface.
+func (n *SavepointStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SAVEPOINT ")
+	ctx.WritePlain(n.Name)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SavepointStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*SavepointStmt)
+	return v.Leave(n)
+}
+
+// ReleaseSavepointStmt is the statement of RELEASE SAVEPOINT.
+type ReleaseSavepointStmt struct {
+	stmtNode
+	// Name is the savepoint name.
+	Name string
+}
+
+// Restore implements Node interface.
+func (n *ReleaseSavepointStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RELEASE SAVEPOINT ")
+	ctx.WritePlain(n.Name)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ReleaseSavepointStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*ReleaseSavepointStmt)
+	return v.Leave(n)
+}
+
 // SetStmt is the statement to set variables.
 type SetStmt struct {
 	stmtNode
@@ -955,6 +1053,28 @@ func (n *SetConfigStmt) Accept(v Visitor) (Node, bool) {
 	} else {
 		n.Value = node.(ExprNode)
 	}
+	return v.Leave(n)
+}
+
+// SetSessionStatesStmt is a statement to restore session states.
+type SetSessionStatesStmt struct {
+	stmtNode
+
+	SessionStates string
+}
+
+func (n *SetSessionStatesStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET SESSION_STATES ")
+	ctx.WriteString(n.SessionStates)
+	return nil
+}
+
+func (n *SetSessionStatesStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetSessionStatesStmt)
 	return v.Leave(n)
 }
 
@@ -3417,7 +3537,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop":
+	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join":
 		ctx.WritePlain(")")
 		return nil
 	}
@@ -3430,7 +3550,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "ordered_hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join", "leading":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

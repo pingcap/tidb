@@ -91,7 +91,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			changed = true
 			modified[i] = true
 			// Rebase auto increment id if the field is changed.
-			if mysql.HasAutoIncrementFlag(col.Flag) {
+			if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 				recordID, err := getAutoRecordID(newData[i], &col.FieldType, false)
 				if err != nil {
 					return false, err
@@ -111,7 +111,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				handleChanged = true
 			}
 		} else {
-			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
+			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && modified[i] {
 				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
 				onUpdateSpecified[i] = true
 			}
@@ -146,8 +146,8 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
-		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err == nil {
+		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && !modified[i] && !onUpdateSpecified[i] {
+			if v, err := expression.GetTimeValue(sctx, strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal()); err == nil {
 				newData[i] = v
 				modified[i] = true
 			} else {

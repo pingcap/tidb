@@ -86,7 +86,7 @@ func TestIssue23872(t *testing.T) {
 		require.NoError(t, err)
 		cols := rs.Fields()
 		require.NoError(t, rs.Close())
-		require.Equal(t, test.flag, cols[0].Column.Flag)
+		require.Equal(t, test.flag, cols[0].Column.GetFlag())
 	}
 }
 
@@ -131,14 +131,14 @@ func TestCreateTableWithLike(t *testing.T) {
 	require.Nil(t, tbl1Info.ForeignKeys)
 	require.True(t, tbl1Info.PKIsHandle)
 	col := tbl1Info.Columns[0]
-	hasNotNull := mysql.HasNotNullFlag(col.Flag)
+	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
 	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
 	require.True(t, tbl2Info.PKIsHandle)
-	require.True(t, mysql.HasNotNullFlag(tbl2Info.Columns[0].Flag))
+	require.True(t, mysql.HasNotNullFlag(tbl2Info.Columns[0].GetFlag()))
 
 	// for different databases
 	tk.MustExec("create database ctwl_db1")
@@ -464,7 +464,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	require.NoError(t, checkErr)
 	require.Error(t, err)
 	errMsg := err.Error()
-	require.True(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"))
+	require.Truef(t, strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job"), "%v", errMsg)
 }
 
 func TestRecoverTableByJobID(t *testing.T) {

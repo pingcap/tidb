@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"runtime/trace"
 	"sort"
 	"sync"
@@ -398,10 +397,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 				task.doneErr = errors.Errorf("%v", r)
 				close(task.results)
 			}
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			cancelFunc()
 		}
 	}()
@@ -676,7 +672,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			if terror.ErrorEqual(err, types.ErrOverflow) || terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				return nil, nil
 			}
-			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.GetType() == mysql.TypeSet || innerColType.GetType() == mysql.TypeEnum) {
 				return nil, nil
 			}
 			return nil, err

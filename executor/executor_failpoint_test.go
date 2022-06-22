@@ -188,6 +188,11 @@ func TestSplitRegionTimeout(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	require.NoError(t, failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("tikvclient/injectLiveness"))
+	}()
+
 	require.NoError(t, failpoint.Enable("tikvclient/mockSplitRegionTimeout", `return(true)`))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -299,10 +304,8 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
 		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
 	}
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionLog
-	})
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	testcases := []struct {
 		name string
 		sql  string

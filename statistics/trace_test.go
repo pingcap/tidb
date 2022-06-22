@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -32,7 +31,6 @@ import (
 )
 
 func TestTraceCE(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

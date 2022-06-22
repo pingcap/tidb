@@ -320,13 +320,14 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 	}
 	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() == currVer {
-		return checkPlacementPolicyNotInUseFromInfoSchema(is, policy)
+		return CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
 	}
 
-	return checkPlacementPolicyNotInUseFromMeta(t, policy)
+	return CheckPlacementPolicyNotInUseFromMeta(t, policy)
 }
 
-func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy *model.PolicyInfo) error {
+// CheckPlacementPolicyNotInUseFromInfoSchema export for test.
+func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy *model.PolicyInfo) error {
 	for _, dbInfo := range is.AllSchemas() {
 		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
 			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
@@ -375,7 +376,8 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo
 	return dbIDs, partIDs, tblInfos, nil
 }
 
-func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {
+// CheckPlacementPolicyNotInUseFromMeta export for test.
+func CheckPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo) error {
 	schemas, err := t.ListDatabases()
 	if err != nil {
 		return err

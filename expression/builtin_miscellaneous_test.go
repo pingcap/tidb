@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -55,8 +56,12 @@ func TestInetAton(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, tt["Expected"][0], d)
+		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
+			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+		} else {
+			require.NoError(t, err)
+			testutil.DatumEqual(t, tt["Expected"][0], d)
+		}
 	}
 }
 
@@ -287,6 +292,8 @@ func TestInet6AtoN(t *testing.T) {
 		{"::ffff:1.2.3.4", []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04}},
 		{"", nil},
 		{"Not IP address", nil},
+		{"1.0002.3.4", nil},
+		{"1.2.256", nil},
 		{"::ffff:255.255.255.255", []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}},
 	}
 	fc := funcs[ast.Inet6Aton]
@@ -295,8 +302,13 @@ func TestInet6AtoN(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
+		expect := types.NewDatum(test.expect)
+		if expect.IsNull() {
+			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+		} else {
+			require.NoError(t, err)
+			testutil.DatumEqual(t, expect, result)
+		}
 	}
 
 	var argNull types.Datum

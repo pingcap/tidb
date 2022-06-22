@@ -290,7 +290,6 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
 		tblInfo.State = model.StateDeleteOnly
@@ -298,7 +297,6 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
 		oldIDs := getPartitionIDs(tblInfo)
@@ -311,14 +309,14 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		}
 		if tblInfo.IsSequence() {
 			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
-				break
+				return ver, errors.Trace(err)
 			}
 		} else {
 			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
-				break
+				return ver, errors.Trace(err)
 			}
 			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
-				break
+				return ver, errors.Trace(err)
 			}
 		}
 		// Placement rules cannot be removed immediately after drop table / truncate table, because the
@@ -329,9 +327,9 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
+		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
-
+	job.SchemaState = tblInfo.State
 	return ver, errors.Trace(err)
 }
 
@@ -412,10 +410,6 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, false)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 	case model.StateWriteOnly:
 		// write only -> public
 		// do recover table.
@@ -446,14 +440,15 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 		}
 
-		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID, tids)
+		err = w.delRangeManager.removeFromGCDeleteRange(w.ctx, dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
-		tblInfo.State = model.StatePublic
-		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
+		tableInfo := tblInfo.Clone()
+		tableInfo.State = model.StatePublic
+		tableInfo.UpdateTS = t.StartTS
+		err = t.CreateTableAndSetAutoID(schemaID, tableInfo, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -471,11 +466,13 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		job.CtxVars = []interface{}{tids}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(d, t, job, tableInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
@@ -860,12 +857,14 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 }
 
 func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits uint64) error {
+	if shardRowIDBits == 0 {
+		return nil
+	}
 	ctx, err := s.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer s.put(ctx)
-
 	// Check next global max auto ID first.
 	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	if err != nil {
@@ -1050,11 +1049,11 @@ func onModifyTableCharsetAndCollate(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		// update column charset.
 		for _, col := range tblInfo.Columns {
 			if field_types.HasCharset(&col.FieldType) {
-				col.Charset = toCharset
-				col.Collate = toCollate
+				col.SetCharset(toCharset)
+				col.SetCollate(toCollate)
 			} else {
-				col.Charset = charset.CharsetBin
-				col.Collate = charset.CharsetBin
+				col.SetCharset(charset.CharsetBin)
+				col.SetCollate(charset.CharsetBin)
 			}
 		}
 	}

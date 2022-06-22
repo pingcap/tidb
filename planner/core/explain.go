@@ -312,7 +312,7 @@ func (p *PhysicalTableScan) isFullScan() bool {
 	var unsignedIntHandle bool
 	if p.Table.PKIsHandle {
 		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 		}
 	}
 	for _, ran := range p.Ranges {

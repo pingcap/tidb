@@ -45,8 +45,9 @@ var emptyHandleValsErr = errors.New("empty handleVals for TiDB table")
 // Dumper is the dump progress structure
 type Dumper struct {
 	tctx      *tcontext.Context
-	conf      *Config
 	cancelCtx context.CancelFunc
+	conf      *Config
+	metrics   *metrics
 
 	extStore storage.ExternalStorage
 	dbHandle *sql.DB
@@ -79,6 +80,10 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		cancelCtx:                 cancelFn,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
+
+	d.metrics = newMetrics(conf.PromFactory, conf.Labels)
+	d.metrics.registerTo(conf.PromRegistry)
+
 	err := adjustConfig(conf,
 		registerTLSConfig,
 		validateSpecifiedSQL,
@@ -123,7 +128,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}()
 
 	// for consistency lock, we should get table list at first to generate the lock tables SQL
-	if conf.Consistency == consistencyTypeLock {
+	if conf.Consistency == ConsistencyTypeLock {
 		conn, err = createConnWithConsistency(tctx, pool, repeatableRead)
 		if err != nil {
 			return errors.Trace(err)
@@ -176,7 +181,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
-	if conf.Consistency != consistencyTypeLock {
+	if conf.Consistency != ConsistencyTypeLock {
 		if err = prepareTableListToDump(tctx, conf, metaConn); err != nil {
 			return err
 		}
@@ -211,7 +216,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	taskChan := make(chan Task, defaultDumpThreads)
-	AddGauge(taskChannelCapacity, conf.Labels, defaultDumpThreads)
+	AddGauge(d.metrics.taskChannelCapacity, defaultDumpThreads)
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
 	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskChan, rebuildConn)
@@ -221,7 +226,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	defer tearDownWriters()
 
 	if conf.TransactionalConsistency {
-		if conf.Consistency == consistencyTypeFlush || conf.Consistency == consistencyTypeLock {
+		if conf.Consistency == ConsistencyTypeFlush || conf.Consistency == ConsistencyTypeLock {
 			tctx.L().Info("All the dumping transactions have started. Start to unlock tables")
 		}
 		if err = conCtrl.TearDown(tctx); err != nil {
@@ -290,11 +295,11 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		if err != nil {
 			return nil, func() {}, err
 		}
-		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore)
+		writer := NewWriter(tctx, int64(i), conf, conn, d.extStore, d.metrics)
 		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
 			if _, ok := task.(*TaskTableData); ok {
-				IncCounter(finishedTablesCounter, conf.Labels)
+				IncCounter(d.metrics.finishedTablesCounter)
 				// FIXME: actually finishing the last chunk doesn't means this table is 'finished'.
 				//  We can call this table is 'finished' if all its chunks are finished.
 				//  Comment this log now to avoid ambiguity.
@@ -304,7 +309,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
-			IncGauge(taskChannelCapacity, conf.Labels)
+			IncGauge(d.metrics.taskChannelCapacity)
 			if td, ok := task.(*TaskTableData); ok {
 				tctx.L().Debug("finish dumping table data task",
 					zap.String("database", td.Meta.DatabaseName()),
@@ -536,17 +541,17 @@ func adjustColumnsCollation(tctx *tcontext.Context, createStmt *ast.CreateTableS
 			}
 		}
 		fieldType := col.Tp
-		if fieldType.Collate != "" {
+		if fieldType.GetCollate() != "" {
 			continue
 		}
-		if fieldType.Charset != "" {
+		if fieldType.GetCharset() != "" {
 			// just have charset
-			collation, ok := charsetAndDefaultCollationMap[strings.ToLower(fieldType.Charset)]
+			collation, ok := charsetAndDefaultCollationMap[strings.ToLower(fieldType.GetCharset())]
 			if !ok {
-				tctx.L().Warn("not found charset default collation for column.", zap.String("table", createStmt.Table.Name.String()), zap.String("column", col.Name.String()), zap.String("charset", strings.ToLower(fieldType.Charset)))
+				tctx.L().Warn("not found charset default collation for column.", zap.String("table", createStmt.Table.Name.String()), zap.String("column", col.Name.String()), zap.String("charset", strings.ToLower(fieldType.GetCharset())))
 				continue
 			}
-			fieldType.Collate = collation
+			fieldType.SetCollate(collation)
 		}
 	}
 }
@@ -560,7 +565,7 @@ func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *BaseConn, meta Tabl
 	// Update total rows
 	fieldName, _ := pickupPossibleField(tctx, meta, conn)
 	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, fieldName, conf)
-	AddCounter(estimateTotalRowsCounter, conf.Labels, float64(c))
+	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 
 	if conf.Rows == UnspecifiedSize {
 		return d.sequentialDumpTable(tctx, conn, meta, taskChan)
@@ -758,14 +763,13 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 }
 
 func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan<- Task) (ctxDone bool) {
-	conf := d.conf
 	select {
 	case <-tctx.Done():
 		return true
 	case taskChan <- task:
 		tctx.L().Debug("send task to writer",
 			zap.String("task", task.Brief()))
-		DecGauge(taskChannelCapacity, conf.Labels)
+		DecGauge(d.metrics.taskChannelCapacity)
 		return false
 	}
 }
@@ -1075,10 +1079,10 @@ func extractTiDBRowIDFromDecodedKey(indexField, key string) (string, error) {
 func getListTableTypeByConf(conf *Config) listTableType {
 	// use listTableByShowTableStatus by default because it has better performance
 	listType := listTableByShowTableStatus
-	if conf.Consistency == consistencyTypeLock {
+	if conf.Consistency == ConsistencyTypeLock {
 		// for consistency lock, we need to build the tables to dump as soon as possible
 		listType = listTableByInfoSchema
-	} else if conf.Consistency == consistencyTypeFlush && matchMysqlBugversion(conf.ServerInfo) {
+	} else if conf.Consistency == ConsistencyTypeFlush && matchMysqlBugversion(conf.ServerInfo) {
 		// For some buggy versions of mysql, we need a workaround to get a list of table names.
 		listType = listTableByShowFullTables
 	}
@@ -1201,16 +1205,16 @@ func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *BaseConn, taskChan ch
 	data := newTableData(conf.SQL, 0, true)
 	task := NewTaskTableData(meta, data, 0, 1)
 	c := detectEstimateRows(tctx, metaConn, fmt.Sprintf("EXPLAIN %s", conf.SQL), []string{"rows", "estRows", "count"})
-	AddCounter(estimateTotalRowsCounter, conf.Labels, float64(c))
+	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 	atomic.StoreInt64(&d.totalTables, int64(1))
 	d.sendTaskToChan(tctx, task, taskChan)
 }
 
 func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 	switch consistency {
-	case consistencyTypeLock, consistencyTypeFlush:
+	case ConsistencyTypeLock, ConsistencyTypeFlush:
 		return !trxConsistencyOnly
-	case consistencyTypeSnapshot, consistencyTypeNone:
+	case ConsistencyTypeSnapshot, ConsistencyTypeNone:
 		return true
 	default:
 		return false
@@ -1220,6 +1224,7 @@ func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 // Close closes a Dumper and stop dumping immediately
 func (d *Dumper) Close() error {
 	d.cancelCtx()
+	d.metrics.unregisterFrom(d.conf.PromRegistry)
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}
@@ -1313,23 +1318,23 @@ func detectServerInfo(d *Dumper) error {
 // resolveAutoConsistency is an initialization step of Dumper.
 func resolveAutoConsistency(d *Dumper) error {
 	conf := d.conf
-	if conf.Consistency != consistencyTypeAuto {
+	if conf.Consistency != ConsistencyTypeAuto {
 		return nil
 	}
 	switch conf.ServerInfo.ServerType {
 	case version.ServerTypeTiDB:
-		conf.Consistency = consistencyTypeSnapshot
+		conf.Consistency = ConsistencyTypeSnapshot
 	case version.ServerTypeMySQL, version.ServerTypeMariaDB:
-		conf.Consistency = consistencyTypeFlush
+		conf.Consistency = ConsistencyTypeFlush
 	default:
-		conf.Consistency = consistencyTypeNone
+		conf.Consistency = ConsistencyTypeNone
 	}
 	return nil
 }
 
 func validateResolveAutoConsistency(d *Dumper) error {
 	conf := d.conf
-	if conf.Consistency != consistencyTypeSnapshot && conf.Snapshot != "" {
+	if conf.Consistency != ConsistencyTypeSnapshot && conf.Snapshot != "" {
 		return errors.Errorf("can't specify --snapshot when --consistency isn't snapshot, resolved consistency: %s", conf.Consistency)
 	}
 	return nil
@@ -1457,7 +1462,7 @@ func setSessionParam(d *Dumper) error {
 		if si.ServerType != version.ServerTypeTiDB {
 			return errors.New("snapshot consistency is not supported for this server")
 		}
-		if consistency == consistencyTypeSnapshot {
+		if consistency == ConsistencyTypeSnapshot {
 			conf.ServerInfo.HasTiKV, err = CheckTiDBWithTiKV(pool)
 			if err != nil {
 				d.L().Info("cannot check whether TiDB has TiKV, will apply tidb_snapshot by default. This won't affect dump process", log.ShortError(err))

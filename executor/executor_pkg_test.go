@@ -171,8 +171,13 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 			tp = ftypes[0]
 		}
 		fieldType := types.NewFieldType(tp)
-		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
-		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.SetFlen(flen)
+		fieldType.SetDecimal(decimal)
+
+		charset, collate := types.DefaultCharsetForType(tp)
+		fieldType.SetCharset(charset)
+		fieldType.SetCollate(collate)
 		col.RetType = fieldType
 		schema.Append(col)
 	}
@@ -395,7 +400,9 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 	vars := variable.NewSessionVars()
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
-		TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+		},
 	}
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})

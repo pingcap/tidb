@@ -240,9 +240,9 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		}
 		return &concatFunction{aggFunction: aggFunc, maxLen: maxLen}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType().Collate)}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType().Collate)}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:
@@ -311,7 +311,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		}
 	// `select max(a) from empty_tbl` returns `null`, while `select max(a) from empty_tbl group by b` returns empty.
 	case ast.AggFuncMax, ast.AggFuncMin:
-		if !hasGroupBy && a.RetTp.Tp != mysql.TypeBit {
+		if !hasGroupBy && a.RetTp.GetType() != mysql.TypeBit {
 			removeNotNull = true
 		}
 	// `select distinct a from empty_tbl` returns empty
@@ -329,7 +329,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 	}
 	if removeNotNull {
 		a.RetTp = a.RetTp.Clone()
-		a.RetTp.Flag &^= mysql.NotNullFlag
+		a.RetTp.DelFlag(mysql.NotNullFlag)
 	}
 	return nil
 }

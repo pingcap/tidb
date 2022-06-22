@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
@@ -116,8 +116,43 @@ type HistColl struct {
 type TableMemoryUsage struct {
 	TableID         int64
 	TotalMemUsage   int64
-	ColumnsMemUsage map[int64]*ColumnMemUsage
-	IndicesMemUsage map[int64]*IndexMemUsage
+	ColumnsMemUsage map[int64]CacheItemMemoryUsage
+	IndicesMemUsage map[int64]CacheItemMemoryUsage
+}
+
+// TotalIdxTrackingMemUsage returns total indices' tracking memory usage
+func (t *TableMemoryUsage) TotalIdxTrackingMemUsage() (sum int64) {
+	for _, idx := range t.IndicesMemUsage {
+		sum += idx.TrackingMemUsage()
+	}
+	return sum
+}
+
+// TotalColTrackingMemUsage returns total columns' tracking memory usage
+func (t *TableMemoryUsage) TotalColTrackingMemUsage() (sum int64) {
+	for _, col := range t.ColumnsMemUsage {
+		sum += col.TrackingMemUsage()
+	}
+	return sum
+}
+
+// TotalTrackingMemUsage return total tracking memory usage
+func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
+	return t.TotalIdxTrackingMemUsage() + t.TotalColTrackingMemUsage()
+}
+
+// TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
+type TableCacheItem interface {
+	ItemID() int64
+	DropEvicted()
+	MemoryUsage() CacheItemMemoryUsage
+}
+
+// CacheItemMemoryUsage indicates the memory usage of TableCacheItem
+type CacheItemMemoryUsage interface {
+	ItemID() int64
+	TotalMemoryUsage() int64
+	TrackingMemUsage() int64
 }
 
 // ColumnMemUsage records column memory usage
@@ -129,6 +164,21 @@ type ColumnMemUsage struct {
 	TotalMemUsage     int64
 }
 
+// TotalMemoryUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) TotalMemoryUsage() int64 {
+	return c.TotalMemUsage
+}
+
+// ItemID implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) ItemID() int64 {
+	return c.ColumnID
+}
+
+// TrackingMemUsage implements CacheItemMemoryUsage
+func (c *ColumnMemUsage) TrackingMemUsage() int64 {
+	return c.CMSketchMemUsage
+}
+
 // IndexMemUsage records index memory usage
 type IndexMemUsage struct {
 	IndexID           int64
@@ -137,27 +187,42 @@ type IndexMemUsage struct {
 	TotalMemUsage     int64
 }
 
+// TotalMemoryUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) TotalMemoryUsage() int64 {
+	return c.TotalMemUsage
+}
+
+// ItemID implements CacheItemMemoryUsage
+func (c *IndexMemUsage) ItemID() int64 {
+	return c.IndexID
+}
+
+// TrackingMemUsage implements CacheItemMemoryUsage
+func (c *IndexMemUsage) TrackingMemUsage() int64 {
+	return c.CMSketchMemUsage
+}
+
 // MemoryUsage returns the total memory usage of this Table.
 // it will only calc the size of Columns and Indices stats data of table.
 // We ignore the size of other metadata in Table
 func (t *Table) MemoryUsage() *TableMemoryUsage {
 	tMemUsage := &TableMemoryUsage{
 		TableID:         t.PhysicalID,
-		ColumnsMemUsage: make(map[int64]*ColumnMemUsage),
-		IndicesMemUsage: make(map[int64]*IndexMemUsage),
+		ColumnsMemUsage: make(map[int64]CacheItemMemoryUsage),
+		IndicesMemUsage: make(map[int64]CacheItemMemoryUsage),
 	}
 	for _, col := range t.Columns {
 		if col != nil {
 			colMemUsage := col.MemoryUsage()
-			tMemUsage.ColumnsMemUsage[colMemUsage.ColumnID] = colMemUsage
-			tMemUsage.TotalMemUsage += colMemUsage.TotalMemUsage
+			tMemUsage.ColumnsMemUsage[colMemUsage.ItemID()] = colMemUsage
+			tMemUsage.TotalMemUsage += colMemUsage.TotalMemoryUsage()
 		}
 	}
 	for _, index := range t.Indices {
 		if index != nil {
 			idxMemUsage := index.MemoryUsage()
-			tMemUsage.IndicesMemUsage[idxMemUsage.IndexID] = idxMemUsage
-			tMemUsage.TotalMemUsage += idxMemUsage.TotalMemUsage
+			tMemUsage.IndicesMemUsage[idxMemUsage.ItemID()] = idxMemUsage
+			tMemUsage.TotalMemUsage += idxMemUsage.TotalMemoryUsage()
 		}
 	}
 	return tMemUsage
@@ -246,11 +311,17 @@ func (t *Table) ColumnByName(colName string) *Column {
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
 func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
 	if isIndex {
-		idxStatsInfo := t.Indices[ID]
-		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
+		if idxStatsInfo, ok := t.Indices[ID]; ok {
+			return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
+		}
+		// newly added index which is not analyzed yet
+		return 0, nil, nil, nil, nil
 	}
-	colStatsInfo := t.Columns[ID]
-	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
+	if colStatsInfo, ok := t.Columns[ID]; ok {
+		return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
+	}
+	// newly added column which is not analyzed yet
+	return 0, nil, nil, nil, nil
 }
 
 // GetColRowCount tries to get the row count of the a column if possible.
@@ -263,6 +334,21 @@ func (t *Table) GetColRowCount() float64 {
 		}
 	}
 	return -1
+}
+
+// GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
+// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, ture.
+func (t *Table) GetStatsHealthy() (int64, bool) {
+	if t == nil || t.Pseudo {
+		return 0, false
+	}
+	var healthy int64
+	if t.ModifyCount < t.Count {
+		healthy = int64((1.0 - float64(t.ModifyCount)/float64(t.Count)) * 100.0)
+	} else if t.ModifyCount == 0 {
+		healthy = 100
+	}
+	return healthy, true
 }
 
 type tableColumnID struct {
@@ -671,7 +757,7 @@ func (coll *HistColl) getEqualCondSelectivity(sctx sessionctx.Context, idx *Inde
 				break
 			}
 			if col, ok := coll.Columns[colID]; ok {
-				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
+				ndv = mathutil.Max(ndv, col.Histogram.NDV)
 			}
 		}
 		return outOfRangeEQSelectivity(ndv, coll.Count, int64(idx.TotalRowCount())), nil
@@ -804,7 +890,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 			t.Columns[col.ID] = &Column{
 				PhysicalID: fakePhysicalID,
 				Info:       col,
-				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
 			}
 		}

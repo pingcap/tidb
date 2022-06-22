@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -124,7 +125,7 @@ AddLoop:
 	tbl := external.GetTableByName(t, tk, "test", "t2")
 	i := 0
 	j := 0
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	defer func() {
 		if txn, err := tk.Session().Txn(true); err == nil {
 			require.NoError(t, txn.Rollback())
@@ -167,8 +168,8 @@ AddLoop:
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colC := tblInfo.Columns[2]
-	require.Equal(t, mysql.TypeTimestamp, colC.Tp)
-	require.False(t, mysql.HasNotNullFlag(colC.Flag))
+	require.Equal(t, mysql.TypeTimestamp, colC.GetType())
+	require.False(t, mysql.HasNotNullFlag(colC.GetFlag()))
 	// add datetime type column
 	tk.MustExec("create table test_on_update_d (c1 int, c2 datetime);")
 	tk.MustExec("alter table test_on_update_d add column c3 datetime on update current_timestamp;")
@@ -177,8 +178,8 @@ AddLoop:
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 	colC = tblInfo.Columns[2]
-	require.Equal(t, mysql.TypeDatetime, colC.Tp)
-	require.False(t, mysql.HasNotNullFlag(colC.Flag))
+	require.Equal(t, mysql.TypeDatetime, colC.GetType())
+	require.False(t, mysql.HasNotNullFlag(colC.GetFlag()))
 
 	// add year type column
 	tk.MustExec("create table test_on_update_e (c1 int);")
@@ -315,7 +316,7 @@ func TestChangeColumn(t *testing.T) {
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colD := tblInfo.Columns[2]
-	require.True(t, mysql.HasNoDefaultValueFlag(colD.Flag))
+	require.True(t, mysql.HasNoDefaultValueFlag(colD.GetFlag()))
 	// for the following definitions: 'not null', 'null', 'default value' and 'comment'
 	tk.MustExec("alter table t3 change b b varchar(20) null default 'c' comment 'my comment'")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
@@ -324,7 +325,7 @@ func TestChangeColumn(t *testing.T) {
 	tblInfo = tbl.Meta()
 	colB := tblInfo.Columns[1]
 	require.Equal(t, "my comment", colB.Comment)
-	require.False(t, mysql.HasNotNullFlag(colB.Flag))
+	require.False(t, mysql.HasNotNullFlag(colB.GetFlag()))
 	tk.MustExec("insert into t3 set aa = 3, dd = 5")
 	tk.MustQuery("select b from t3").Check(testkit.Rows("a", "b", "c"))
 	// for timestamp
@@ -336,7 +337,7 @@ func TestChangeColumn(t *testing.T) {
 	tblInfo = tbl.Meta()
 	colC := tblInfo.Columns[3]
 	require.Equal(t, "col c comment", colC.Comment)
-	require.False(t, mysql.HasNotNullFlag(colC.Flag))
+	require.False(t, mysql.HasNotNullFlag(colC.GetFlag()))
 	// for enum
 	tk.MustExec("alter table t3 add column en enum('a', 'b', 'c') not null default 'a'")
 	// https://github.com/pingcap/tidb/issues/23488
@@ -437,6 +438,11 @@ func TestRenameColumn(t *testing.T) {
 
 	tk.MustExec("drop view test_rename_column_view")
 	tk.MustExec("drop table test_rename_column")
+
+	// Test rename a non-exists column. See https://github.com/pingcap/tidb/issues/34811.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustGetErrCode("alter table t rename column b to b;", errno.ErrBadField)
 }
 
 func TestVirtualColumnDDL(t *testing.T) {
@@ -628,13 +634,37 @@ func TestColumnModifyingDefinition(t *testing.T) {
 			c2 = col
 		}
 	}
-	require.True(t, mysql.HasNotNullFlag(c2.Flag))
+	require.True(t, mysql.HasNotNullFlag(c2.GetFlag()))
 
 	tk.MustExec("drop table if exists test2;")
 	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
 	tk.MustExec("insert into test2(c2) values (null);")
 	tk.MustGetErrMsg("alter table test2 change c2 a int not null", "[ddl:1265]Data truncated for column 'a' at row 1")
 	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
+}
+
+func TestColumnModifyingDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int default 1);")
+	tk.MustExec("alter table t change a a int default 0.00;")
+	ret := tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '0'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1.25);")
+	tk.MustExec("alter table t change a a int default 2.8;")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '3'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a float default 1.25);")
+	tk.MustExec("alter table t change a a float default '0012.32';")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` float DEFAULT '12.32'"))
 }
 
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {
@@ -830,7 +860,7 @@ func TestCheckConvertToCharacter(t *testing.T) {
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset latin1 collate latin1_bin", errno.ErrUnsupportedDDLOperation)
-	require.Equal(t, "binary", tbl.Cols()[0].Charset)
+	require.Equal(t, "binary", tbl.Cols()[0].GetCharset())
 }
 
 func TestAddMultiColumnsIndex(t *testing.T) {
@@ -1009,16 +1039,16 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().Columns, 4)
 	require.Equal(t, "c1", tbl.Meta().Columns[0].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[0].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[0].GetType())
 	require.Equal(t, 0, tbl.Meta().Columns[0].Offset)
 	require.Equal(t, "_col$_c1", tbl.Meta().Columns[1].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[1].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[1].GetType())
 	require.Equal(t, 1, tbl.Meta().Columns[1].Offset)
 	require.Equal(t, "_col$__col$_c1_0", tbl.Meta().Columns[2].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[2].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[2].GetType())
 	require.Equal(t, 2, tbl.Meta().Columns[2].Offset)
 	require.Equal(t, "_col$__col$__col$_c1_0_0", tbl.Meta().Columns[3].Name.O)
-	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[3].Tp)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[3].GetType())
 	require.Equal(t, 3, tbl.Meta().Columns[3].Offset)
 
 	tk.MustExec("drop table if exists t")

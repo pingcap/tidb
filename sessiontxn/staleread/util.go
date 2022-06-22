@@ -38,7 +38,7 @@ func CalculateAsOfTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (u
 
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millionsecond here, so set fsp to 3.
-	toTypeTimestamp.Decimal = 3
+	toTypeTimestamp.SetDecimal(3)
 	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
 	if err != nil {
 		return 0, err

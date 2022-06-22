@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //go:build !race
-// +build !race
 
 package server
 
@@ -993,6 +992,7 @@ func TestCreateTableFlen(t *testing.T) {
 	require.Len(t, cols, 2)
 	require.Equal(t, 21, int(cols[0].ColumnLength))
 	require.Equal(t, 22, int(cols[1].ColumnLength))
+	rs.Close()
 }
 
 func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
@@ -1111,12 +1111,14 @@ func TestFieldList(t *testing.T) {
 	cols := rs.Columns()
 	require.Equal(t, tooLongColumnAsName, cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
+	rs.Close()
 
 	rs, err = Execute(ctx, qctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
 	require.NoError(t, err)
 	cols = rs.Columns()
 	require.Equal(t, "c_bit", cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
+	rs.Close()
 }
 
 func TestClientErrors(t *testing.T) {
@@ -1153,6 +1155,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 
 	{
@@ -1163,6 +1166,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 
 	{
@@ -1177,7 +1181,9 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
+
 	{
 
 		rs, err := Execute(ctx, qctx, "select if(1, null, 1) ;")
@@ -1186,6 +1192,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 	{
 		rs, err := Execute(ctx, qctx, "select CASE 1 WHEN 2 THEN 1 END ;")
@@ -1194,6 +1201,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 	{
 		rs, err := Execute(ctx, qctx, "select NULL;")
@@ -1202,6 +1210,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 }
 
@@ -1222,6 +1231,7 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	require.NoError(t, err)
 	rs, err := Execute(ctx, qctx, "select c1 from t;")
 	require.NoError(t, err)
+	defer rs.Close()
 	cols := rs.Columns()
 	require.Len(t, cols, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)

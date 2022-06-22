@@ -47,6 +47,8 @@ type LogCollector interface {
 	SetSuccessStatus(success bool)
 
 	Summary(name string)
+
+	Log(msg string, fields ...zap.Field)
 }
 
 type logFunc func(msg string, fields ...zap.Field)
@@ -235,6 +237,10 @@ func (tc *logCollector) Summary(name string) {
 	}
 
 	tc.log(name+" success summary", logFields...)
+}
+
+func (tc *logCollector) Log(msg string, fields ...zap.Field) {
+	tc.log(msg, fields...)
 }
 
 // SetLogCollector allow pass LogCollector outside.

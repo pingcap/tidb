@@ -18,10 +18,10 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 

@@ -23,7 +23,7 @@ import (
 )
 
 func onLockTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	arg := &lockTablesArg{}
+	arg := &LockTablesArg{}
 	if err := job.DecodeArgs(arg); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
@@ -111,7 +111,7 @@ func findSessionInfoIndex(sessions []model.SessionInfo, sessionInfo model.Sessio
 }
 
 // lockTable uses to check table locked and acquire the table lock for the request session.
-func lockTable(tbInfo *model.TableInfo, idx int, arg *lockTablesArg) error {
+func lockTable(tbInfo *model.TableInfo, idx int, arg *LockTablesArg) error {
 	if !tbInfo.IsLocked() {
 		tbInfo.Lock = &model.TableLockInfo{
 			Tp: arg.LockTables[idx].Tp,
@@ -167,7 +167,7 @@ func checkTableLocked(tbInfo *model.TableInfo, lockTp model.TableLockType, sessi
 }
 
 // unlockTables uses unlock a batch of table lock one by one.
-func unlockTables(d *ddlCtx, t *meta.Meta, job *model.Job, arg *lockTablesArg) (ver int64, err error) {
+func unlockTables(d *ddlCtx, t *meta.Meta, job *model.Job, arg *LockTablesArg) (ver int64, err error) {
 	if arg.IndexOfUnlock >= len(arg.UnlockTables) {
 		return ver, nil
 	}
@@ -198,7 +198,7 @@ func unlockTables(d *ddlCtx, t *meta.Meta, job *model.Job, arg *lockTablesArg) (
 }
 
 // unlockTable uses to unlock table lock that hold by the session.
-func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) (needUpdateTableInfo bool) {
+func unlockTable(tbInfo *model.TableInfo, arg *LockTablesArg) (needUpdateTableInfo bool) {
 	if !tbInfo.IsLocked() {
 		return false
 	}
@@ -223,7 +223,7 @@ func unlockTable(tbInfo *model.TableInfo, arg *lockTablesArg) (needUpdateTableIn
 }
 
 func onUnlockTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	arg := &lockTablesArg{}
+	arg := &LockTablesArg{}
 	if err := job.DecodeArgs(arg); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled

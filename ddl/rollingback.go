@@ -37,8 +37,8 @@ func updateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo
 	}
 
 	for _, col := range nullCols {
-		col.Flag |= mysql.NotNullFlag
-		col.Flag &^= mysql.PreventNullInsertFlag
+		col.AddFlag(mysql.NotNullFlag)
+		col.DelFlag(mysql.PreventNullInsertFlag)
 	}
 	return nil
 }
@@ -56,7 +56,7 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		}
 		for _, col := range nullCols {
 			// Field PreventNullInsertFlag flag reset.
-			col.Flag &^= mysql.PreventNullInsertFlag
+			col.DelFlag(mysql.PreventNullInsertFlag)
 		}
 	}
 
@@ -115,7 +115,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		w.reorgCtx.notifyReorgCancel()
+		d.notifyReorgCancel(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
 	}
@@ -128,7 +128,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 		if job.SchemaState == model.StateNone {
 			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].Flag|mysql.PreventNullInsertFlag != 0 {
+			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].GetFlag()|mysql.PreventNullInsertFlag != 0 {
 				job.State = model.JobStateRollingback
 				return ver, dbterror.ErrCancelledDDLJob
 			}
@@ -329,7 +329,7 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		w.reorgCtx.notifyReorgCancel()
+		d.notifyReorgCancel(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
 		// add index workers are not started, remove the indexInfo in tableInfo.
@@ -387,7 +387,7 @@ func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return cancelOnlyNotHandledJob(job)
+	return cancelOnlyNotHandledJob(job, model.StatePublic)
 }
 
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
@@ -420,9 +420,9 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
+func cancelOnlyNotHandledJob(job *model.Job, initialState model.SchemaState) (ver int64, err error) {
 	// We can only cancel the not handled job.
-	if job.SchemaState == model.StateNone {
+	if job.SchemaState == initialState {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
@@ -437,7 +437,7 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return cancelOnlyNotHandledJob(job)
+	return cancelOnlyNotHandledJob(job, model.StateNone)
 }
 
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -472,13 +472,15 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackTruncateTable(t, job)
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(w, d, t, job)
+	case model.ActionDropForeignKey:
+		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
-		model.ActionDropForeignKey, model.ActionRenameTable, model.ActionRenameTables,
+		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement:
-		ver, err = cancelOnlyNotHandledJob(job)
+		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob

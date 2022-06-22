@@ -45,7 +45,6 @@ import (
 	"io"
 	"net"
 	"os/user"
-	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -77,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
@@ -335,8 +336,14 @@ func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
-		terror.Log(err)
+		if err != nil {
+			// We need to expect connection might have already disconnected.
+			// This is because closeConn() might be called after a connection read-timeout.
+			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+		}
 	}
+	// Close statements and session
+	// This will release advisory locks, row locks, etc.
 	if ctx := cc.getCtx(); ctx != nil {
 		return ctx.Close()
 	}
@@ -686,7 +693,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				return err
 			}
 		}
-	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
+	} else if tlsutil.RequireSecureTransport.Load() && !cc.isUnixSocket {
+		// If it's not a socket connection, we should reject the connection
+		// because TLS is required.
 		err := errSecureTransportRequired.FastGenByArgs()
 		terror.Log(err)
 		return err
@@ -1041,25 +1050,17 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run(ctx context.Context) {
-	const size = 4096
 	defer func() {
 		r := recover()
 		if r != nil {
-			buf := make([]byte, size)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("connection running loop panic",
 				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
 				zap.String("err", fmt.Sprintf("%v", r)),
-				zap.String("stack", string(buf)),
+				zap.Stack("stack"),
 			)
 			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
-		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
 		}
 	}()
 
@@ -1679,7 +1680,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.StartStopWatcher()
 	// let stop watcher goroutine quit
 	defer loadDataInfo.ForceQuit()
-	err = loadDataInfo.Ctx.NewTxn(ctx)
+	err = sessiontxn.NewTxn(ctx, loadDataInfo.Ctx)
 	if err != nil {
 		return err
 	}
@@ -1874,10 +1875,14 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
-			if retryable && cc.ctx.GetSessionVars().IsRcCheckTsRetryable(err) {
+			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+			if txnErr != nil {
+				err = txnErr
+				break
+			}
+
+			if retryable && action == sessiontxn.StmtActionRetryReady {
 				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
-				logutil.Logger(ctx).Info("RC read with ts checking has failed, retry RC read",
-					zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
 				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 				if err != nil {
@@ -2145,10 +2150,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		}
 		// TODO(jianzhang.zj: add metrics here)
 		runErr = errors.Errorf("%v", r)
-		buf := make([]byte, 4096)
-		stackSize := runtime.Stack(buf, false)
-		buf = buf[:stackSize]
-		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
+		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()

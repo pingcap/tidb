@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
@@ -212,13 +213,15 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	is := testGetIS(t, tk.Session())
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO()))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		tk.Session().PrepareTSFuture(ctx)
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)
@@ -308,6 +311,8 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	ctx := context.TODO()
 	is := testGetIS(t, tk.Session())
 	for i, tt := range tests {
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO()))
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
@@ -315,7 +320,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
-		tk.Session().PrepareTSFuture(ctx)
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)
@@ -364,7 +369,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
-		tk.Session().PrepareTSFuture(ctx)
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)

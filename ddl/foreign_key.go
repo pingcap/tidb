@@ -106,6 +106,7 @@ func onDropForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		job.SchemaState = fkInfo.State
 		return ver, nil
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("foreign key", fkInfo.State)

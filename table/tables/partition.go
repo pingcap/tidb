@@ -252,7 +252,6 @@ type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
 	valueMap map[string]ListPartitionLocation
-	mu       sync.RWMutex
 	sorted   *btree.BTree
 
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
@@ -658,6 +657,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 	columns []*expression.Column, names types.NameSlice) error {
 	pi := tblInfo.GetPartitionInfo()
 	schema := expression.NewSchema(columns...)
+	p := parser.New()
 	colPrunes := make([]*ForListColumnPruning, 0, len(pi.Columns))
 	for colIdx := range pi.Columns {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, pi.Columns[colIdx].L)
@@ -679,7 +679,10 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx sessionctx.Context, tblInfo
 			valueMap: make(map[string]ListPartitionLocation),
 			sorted:   btree.New(btreeDegree),
 		}
-
+		err := colPrune.buildPartitionValueMapAndSorted(p)
+		if err != nil {
+			return err
+		}
 		colPrunes = append(colPrunes, colPrune)
 	}
 	lp.ColPrunes = colPrunes
@@ -760,22 +763,28 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(ctx sessionctx.Context
 	return location[0].PartIdx, nil
 }
 
-// buildListPartitionValueMapAndSorted builds list columns partition value map for the specified column.
-// it also builds list columns partition value btree for the specified column.
+// buildPartitionValueMapAndSorted builds list columns partition value map for the specified column.
+// It also builds list columns partition value btree for the specified column.
 // colIdx is the specified column index in the list columns.
-func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted() error {
-	lp.mu.RLock()
+func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(p *parser.Parser) error {
 	l := len(lp.valueMap)
-	lp.mu.RUnlock()
 	if l != 0 {
 		return nil
 	}
 
-	p := parser.New()
+	return lp.buildListPartitionValueMapAndSorted(p)
+}
+
+// RebuildPartitionValueMapAndSorted rebuilds list columns partition value map for the specified column.
+func (lp *ForListColumnPruning) RebuildPartitionValueMapAndSorted(p *parser.Parser) error {
+	lp.valueMap = make(map[string]ListPartitionLocation, len(lp.valueMap))
+	lp.sorted.Clear(false)
+	return lp.buildListPartitionValueMapAndSorted(p)
+}
+
+func (lp *ForListColumnPruning) buildListPartitionValueMapAndSorted(p *parser.Parser) error {
 	pi := lp.tblInfo.GetPartitionInfo()
 	sc := lp.ctx.GetSessionVars().StmtCtx
-	lp.mu.Lock()
-	defer lp.mu.Unlock()
 	for partitionIdx, def := range pi.Definitions {
 		for groupIdx, vs := range def.InValues {
 			keyBytes, err := lp.genConstExprKey(lp.ctx, sc, vs[lp.colIdx], lp.schema, lp.names, p)
@@ -830,19 +839,11 @@ func (lp *ForListColumnPruning) genKey(sc *stmtctx.StatementContext, v types.Dat
 
 // LocatePartition locates partition by the column value
 func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v types.Datum) (ListPartitionLocation, error) {
-	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
-	err := lp.buildPartitionValueMapAndSorted()
-	if err != nil {
-		return nil, err
-	}
-
 	key, err := lp.genKey(sc, v)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	lp.mu.RLock()
 	location, ok := lp.valueMap[string(key)]
-	lp.mu.RUnlock()
 	if !ok {
 		return nil, nil
 	}
@@ -851,13 +852,8 @@ func (lp *ForListColumnPruning) LocatePartition(sc *stmtctx.StatementContext, v 
 
 // LocateRanges locates partition ranges by the column range
 func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ranger.Range) ([]ListPartitionLocation, error) {
-	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
-	err := lp.buildPartitionValueMapAndSorted()
-	if err != nil {
-		return nil, err
-	}
-
 	var lowKey, highKey []byte
+	var err error
 	lowVal := r.LowVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowVal = types.GetMinValue(lp.ExprCol.GetType())
@@ -1065,7 +1061,7 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		}
 		ret = val
 	}
-	unsigned := mysql.HasUnsignedFlag(t.partitionExpr.Expr.GetType().Flag)
+	unsigned := mysql.HasUnsignedFlag(t.partitionExpr.Expr.GetType().GetFlag())
 	ranges := t.partitionExpr.ForRangePruning
 	length := len(ranges.LessThan)
 	pos := sort.Search(length, func(i int) bool {

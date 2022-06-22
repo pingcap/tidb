@@ -7,9 +7,10 @@
         "Plan": [
           "HashJoin 2.25 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
           "├─HashAgg(Build) 1.69 root  group by:test.t2.a, test.t2.b, funcs:firstrow(test.t2.a)->test.t2.a, funcs:firstrow(test.t2.b)->test.t2.b",
-          "│ └─TableReader 2.25 root  data:Selection",
-          "│   └─Selection 2.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│     └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
+          "│ └─TableReader 1.69 root  data:HashAgg",
+          "│   └─HashAgg 1.69 cop[tikv]  group by:test.t2.a, test.t2.b, ",
+          "│     └─Selection 2.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│       └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
           "└─TableReader(Probe) 2.25 root  data:Selection",
           "  └─Selection 2.25 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
@@ -36,9 +37,10 @@
         "Plan": [
           "HashJoin 1.69 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t2.b, Column#7)]",
           "├─HashAgg(Build) 1.69 root  group by:test.t2.a, test.t2.b, funcs:firstrow(test.t2.a)->test.t2.a, funcs:firstrow(test.t2.b)->test.t2.b",
-          "│ └─TableReader 2.25 root  data:Selection",
-          "│   └─Selection 2.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
-          "│     └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
+          "│ └─TableReader 1.69 root  data:HashAgg",
+          "│   └─HashAgg 1.69 cop[tikv]  group by:test.t2.a, test.t2.b, ",
+          "│     └─Selection 2.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│       └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
           "└─HashAgg(Probe) 2.25 root  group by:test.t1.a, funcs:count(1)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
           "  └─TableReader 3.00 root  data:Selection",
           "    └─Selection 3.00 cop[tikv]  not(isnull(test.t1.a))",

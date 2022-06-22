@@ -122,7 +122,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -144,7 +144,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -167,7 +167,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		if !ok {
 			return -1
 		}
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -530,7 +530,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
-		collator := collate.GetCollator(cols[offset].GetType().Collate)
+		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
 			points[offset] = rb.build(accesses[offset], collator)
@@ -667,7 +667,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				hasResidual = true
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
-			points := rb.build(item, collate.GetCollator(newTpSlice[0].Collate))
+			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
 			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)

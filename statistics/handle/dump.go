@@ -236,14 +236,14 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 
 	for _, col := range tbl.Columns {
 		// loadStatsFromJSON doesn't support partition table now.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, col.FMSketch, int(col.StatsVer), 1, false, false)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
 		// loadStatsFromJSON doesn't support partition table now.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, nil, int(idx.StatsVer), 1, false, false)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -301,16 +301,16 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			// Deal with sortKey, the length of sortKey maybe longer than the column's length.
-			orgLen := colInfo.FieldType.Flen
-			if types.IsString(colInfo.FieldType.Tp) {
-				colInfo.Flen = types.UnspecifiedLength
+			orgLen := colInfo.FieldType.GetFlen()
+			if types.IsString(colInfo.FieldType.GetType()) {
+				colInfo.SetFlen(types.UnspecifiedLength)
 			}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if types.IsString(colInfo.FieldType.Tp) {
-				colInfo.Flen = orgLen
+			if types.IsString(colInfo.FieldType.GetType()) {
+				colInfo.SetFlen(orgLen)
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
@@ -322,15 +322,15 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				statsVer = *jsonCol.StatsVer
 			}
 			col := &statistics.Column{
-				PhysicalID: physicalID,
-				Histogram:  *hist,
-				CMSketch:   cm,
-				TopN:       topN,
-				FMSketch:   fms,
-				Info:       colInfo,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
-				StatsVer:   statsVer,
-				Loaded:     true,
+				PhysicalID:      physicalID,
+				Histogram:       *hist,
+				CMSketch:        cm,
+				TopN:            topN,
+				FMSketch:        fms,
+				Info:            colInfo,
+				IsHandle:        tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				StatsVer:        statsVer,
+				ColLoadedStatus: statistics.NewColFullLoadStatus(),
 			}
 			col.Count = int64(col.TotalRowCount())
 			tbl.Columns[col.ID] = col
