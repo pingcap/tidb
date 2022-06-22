@@ -411,12 +411,13 @@ func NewDuplicateManager(
 	sessOpts *kv.SessionOptions,
 	concurrency int,
 	hasDupe *atomic.Bool,
+	logger log.Logger,
 ) (*DuplicateManager, error) {
-	decoder, err := kv.NewTableKVDecoder(tbl, tableName, sessOpts)
+	logger = logger.With(zap.String("tableName", tableName))
+	decoder, err := kv.NewTableKVDecoder(tbl, tableName, sessOpts, logger)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger := log.With(zap.String("tableName", tableName))
 	return &DuplicateManager{
 		tbl:         tbl,
 		tableName:   tableName,
