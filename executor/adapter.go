@@ -416,7 +416,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
-	breakpoint.Inject(a.Ctx, sessiontxn.StopPointBeforeExecutorFirstRun)
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, err
@@ -793,7 +793,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err != nil {
 		return nil, err
 	}
-	breakpoint.Inject(a.Ctx, sessiontxn.StopPointOnStmtRetryAfterLockError)
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointOnStmtRetryAfterLockError)
 
 	e, err := a.buildExecutor()
 	if err != nil {
