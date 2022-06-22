@@ -353,6 +353,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 
 	go func() {
 		//nolint:staticcheck
+		//lint:ignore SA2000
 		taskWg.Add(1)
 		taskCh <- [2]int64{0, math.MaxInt64}
 		taskWg.Wait()
