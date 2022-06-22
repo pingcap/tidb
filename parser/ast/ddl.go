@@ -2569,6 +2569,7 @@ const (
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
+	AlterTableLastPartition
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2973,6 +2974,15 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		} else if n.Num != 0 {
 			ctx.WriteKeyWord(" PARTITIONS ")
 			ctx.WritePlainf("%d", n.Num)
+		}
+	case AlterTableLastPartition:
+		ctx.WriteKeyWord("LAST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
 		}
 	case AlterTablePartitionOptions:
 		restoreWithoutSpecialComment := func() error {
