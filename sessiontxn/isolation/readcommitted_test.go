@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -137,6 +139,61 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
+}
+
+func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk2.MustExec("insert into t values(1, 1)")
+
+	tk.MustExec("set @@tidb_rc_read_check_ts=1")
+	se := tk.Session()
+	ctx := context.Background()
+	provider := initializePessimisticRCProvider(t, tk)
+
+	// first ts should request from tso
+	compareTS := getOracleTS(t, se)
+	readOnlyStmtID, _, _, err := tk.Session().PrepareStmt("select * from t")
+	require.NoError(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	require.NoError(t, err)
+	ts, err := provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, ts, compareTS)
+
+	// second ts should reuse first ts
+	compareTS = getOracleTS(t, se)
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, compareTS, ts)
+
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	compareTS = getOracleTS(t, se)
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	require.NoError(t, err)
+	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, compareTS, ts)
+	// retry
+	tk.Session().GetSessionVars().RetryInfo.Retrying = true
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, readOnlyStmtID, []types.Datum{})
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, ts, compareTS)
 }
 
 func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
