@@ -61,9 +61,3 @@ func EnableGlobalSessionStopFailPoint() error {
 func DisableGlobalSessionStopFailPoint() error {
 	return failpoint.Disable("github.com/pingcap/tidb/util/taskstop/sessionStop")
 }
-
-// IsGlobalSessionStopFailPointEnabled returns whether the global session stop fail point is enabled
-func IsGlobalSessionStopFailPointEnabled() bool {
-	status, err := failpoint.Status("github.com/pingcap/tidb/util/taskstop/sessionStop")
-	return err == nil && status == "return"
-}
