@@ -1959,6 +1959,39 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustQuery("select * from e7").Check(testkit.Rows("1"))
 	tk.MustGetErrCode("alter table e6 exchange partition p1 with table e7", tmysql.ErrRowDoesNotMatchPartition)
 
+	// validation test for list partition
+	tk.MustExec("set @@tidb_enable_list_partition=true")
+	tk.MustExec(`CREATE TABLE t1 (store_id int)
+	PARTITION BY LIST (store_id) (
+		PARTITION pNorth VALUES IN (1, 2, 3, 4, 5),
+		PARTITION pEast VALUES IN (6, 7, 8, 9, 10),
+		PARTITION pWest VALUES IN (11, 12, 13, 14, 15),
+		PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
+	);`)
+	tk.MustExec(`create table t2 (store_id int);`)
+	tk.MustExec(`insert into t1 values (1);`)
+	tk.MustExec(`insert into t1 values (6);`)
+	tk.MustExec(`insert into t1 values (11);`)
+	tk.MustExec(`insert into t2 values (3);`)
+	tk.MustExec("alter table t1 exchange partition pNorth with table t2")
+
+	tk.MustQuery("select * from t1 partition(pNorth)").Check(testkit.Rows("3"))
+	tk.MustGetErrCode("alter table t1 exchange partition pEast with table t2", tmysql.ErrRowDoesNotMatchPartition)
+
+	// validation test for list columns partition
+	tk.MustExec(`CREATE TABLE t3 (id int, store_id int)
+	PARTITION BY LIST COLUMNS (id, store_id) (
+		PARTITION pNorth VALUES IN ((1, 1), (2, 2)),
+		PARTITION pEast VALUES IN ((3, 3), (4, 4))
+	);`)
+	tk.MustExec(`create table t4 (id int, store_id int);`)
+	tk.MustExec(`insert into t3 values (1, 1);`)
+	tk.MustExec(`insert into t4 values (2, 2);`)
+	tk.MustExec("alter table t3 exchange partition pNorth with table t4")
+
+	tk.MustQuery("select * from t3 partition(p0)").Check(testkit.Rows(""))
+	tk.MustGetErrCode("alter table t3 exchange partition p1 with table t4", tmysql.ErrRowDoesNotMatchPartition)
+
 	// test exchange partition from different databases
 	tk.MustExec("create table e8 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("create database if not exists exchange_partition")
