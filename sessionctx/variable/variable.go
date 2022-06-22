@@ -132,6 +132,9 @@ type SysVar struct {
 	GetSession func(*SessionVars) (string, error)
 	// GetGlobal is a getter function for global scope.
 	GetGlobal func(*SessionVars) (string, error)
+	// GetStateValue gets the value for session states, which is used for migrating sessions.
+	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
+	GetStateValue func(*SessionVars) (string, bool, error)
 	// skipInit defines if the sysvar should be loaded into the session on init.
 	// This is only important to set for sysvars that include session scope,
 	// since global scoped sysvars are not-applicable.

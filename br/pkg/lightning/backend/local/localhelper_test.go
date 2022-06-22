@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -418,6 +419,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -586,6 +588,7 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -672,6 +675,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 	ctx := context.Background()
 
@@ -762,7 +766,7 @@ func TestNeedSplit(t *testing.T) {
 
 	for hdl, idx := range checkMap {
 		checkKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(hdl))
-		res := needSplit(checkKey, regions)
+		res := needSplit(checkKey, regions, log.L())
 		if idx < 0 {
 			require.Nil(t, res)
 		} else {
