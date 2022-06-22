@@ -152,6 +152,8 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	// Set retType to BINARY(0) if all arguments are of type NULL.
 	if resultFieldType.GetType() == mysql.TypeNull {
 		types.SetBinChsClnFlag(bf.tp)
+		resultFieldType.SetFlen(0)
+		resultFieldType.SetDecimal(0)
 	} else {
 		maxIntLen := 0
 		maxFlen := 0
@@ -160,7 +162,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		// and max integer-part length in `maxIntLen`.
 		for _, argTp := range fieldTps {
 			if argTp.GetDecimal() > resultFieldType.GetDecimal() {
-				resultFieldType.SetDecimal(argTp.GetDecimal())
+				resultFieldType.SetDecimalUnderLimit(argTp.GetDecimal())
 			}
 			argIntLen := argTp.GetFlen()
 			if argTp.GetDecimal() > 0 {
@@ -181,12 +183,12 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		// For integer, field length = maxIntLen + (1/0 for sign bit)
 		// For decimal, field length = maxIntLen + maxDecimal + (1/0 for sign bit)
 		if resultEvalType == types.ETInt || resultEvalType == types.ETDecimal {
-			resultFieldType.SetFlen(maxIntLen + resultFieldType.GetDecimal())
+			resultFieldType.SetFlenUnderLimit(maxIntLen + resultFieldType.GetDecimal())
 			if resultFieldType.GetDecimal() > 0 {
-				resultFieldType.SetFlen(resultFieldType.GetFlen() + 1)
+				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
 			}
 			if !mysql.HasUnsignedFlag(resultFieldType.GetFlag()) {
-				resultFieldType.SetFlen(resultFieldType.GetFlen() + 1)
+				resultFieldType.SetFlenUnderLimit(resultFieldType.GetFlen() + 1)
 			}
 			bf.tp = resultFieldType
 		} else {
@@ -551,8 +553,8 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
-	sig.getRetTp().SetFlen(flen)
-	sig.getRetTp().SetDecimal(decimal)
+	sig.getRetTp().SetFlenUnderLimit(flen)
+	sig.getRetTp().SetDecimalUnderLimit(decimal)
 
 	return sig, nil
 }
@@ -863,8 +865,8 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		}
 	}
 	flen, decimal := fixFlenAndDecimalForGreatestAndLeast(args)
-	sig.getRetTp().SetFlen(flen)
-	sig.getRetTp().SetDecimal(decimal)
+	sig.getRetTp().SetFlenUnderLimit(flen)
+	sig.getRetTp().SetDecimalUnderLimit(decimal)
 	return sig, nil
 }
 

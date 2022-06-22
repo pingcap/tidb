@@ -16,11 +16,14 @@ package sessionstates_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -80,12 +83,134 @@ func TestUserVars(t *testing.T) {
 	}
 }
 
+func TestSystemVars(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tests := []struct {
+		stmts           []string
+		varName         string
+		inSessionStates bool
+		checkStmt       string
+		expectedValue   string
+	}{
+		{
+			// normal variable
+			inSessionStates: true,
+			varName:         variable.TiDBMaxTiFlashThreads,
+			expectedValue:   strconv.Itoa(variable.DefTiFlashMaxThreads),
+		},
+		{
+			// hidden variable
+			inSessionStates: false,
+			varName:         variable.TiDBTxnReadTS,
+		},
+		{
+			// none-scoped variable
+			inSessionStates: false,
+			varName:         variable.DataDir,
+			expectedValue:   "/usr/local/mysql/data/",
+		},
+		{
+			// instance-scoped variable
+			inSessionStates: false,
+			varName:         variable.TiDBGeneralLog,
+			expectedValue:   "0",
+		},
+		{
+			// global-scoped variable
+			inSessionStates: false,
+			varName:         variable.TiDBAutoAnalyzeStartTime,
+			expectedValue:   variable.DefAutoAnalyzeStartTime,
+		},
+		{
+			// sem invisible variable
+			inSessionStates: false,
+			varName:         variable.TiDBAllowRemoveAutoInc,
+		},
+		{
+			// noop variables
+			stmts:           []string{"set sql_buffer_result=true"},
+			inSessionStates: true,
+			varName:         "sql_buffer_result",
+			expectedValue:   "1",
+		},
+		{
+			stmts:           []string{"set transaction isolation level repeatable read"},
+			inSessionStates: true,
+			varName:         "tx_isolation_one_shot",
+			expectedValue:   "REPEATABLE-READ",
+		},
+		{
+			inSessionStates: false,
+			varName:         variable.Timestamp,
+		},
+		{
+			stmts:           []string{"set timestamp=100"},
+			inSessionStates: true,
+			varName:         variable.Timestamp,
+			expectedValue:   "100",
+		},
+		{
+			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000"},
+			inSessionStates: true,
+			varName:         variable.RandSeed1,
+			checkStmt:       "select rand()",
+			expectedValue:   "0.028870999839968048",
+		},
+		{
+			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000", "select rand()"},
+			inSessionStates: true,
+			varName:         variable.RandSeed1,
+			checkStmt:       "select rand()",
+			expectedValue:   "0.11641535266900002",
+		},
+	}
+
+	sem.Enable()
+	for _, tt := range tests {
+		tk1 := testkit.NewTestKit(t, store)
+		for _, stmt := range tt.stmts {
+			if strings.HasPrefix(stmt, "select") {
+				tk1.MustQuery(stmt)
+			} else {
+				tk1.MustExec(stmt)
+			}
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		rows := tk1.MustQuery("show session_states").Rows()
+		state := rows[0][0].(string)
+		msg := fmt.Sprintf("var name: '%s', expected value: '%s'", tt.varName, tt.expectedValue)
+		require.Equal(t, tt.inSessionStates, strings.Contains(state, tt.varName), msg)
+		state = strconv.Quote(state)
+		setSQL := fmt.Sprintf("set session_states %s", state)
+		tk2.MustExec(setSQL)
+		if len(tt.expectedValue) > 0 {
+			checkStmt := tt.checkStmt
+			if len(checkStmt) == 0 {
+				checkStmt = fmt.Sprintf("select @@%s", tt.varName)
+			}
+			tk2.MustQuery(checkStmt).Check(testkit.Rows(tt.expectedValue))
+		}
+	}
+
+	{
+		// The session value should not change even if the global value changes.
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("set global autocommit=0")
+		tk3 := testkit.NewTestKit(t, store)
+		showSessionStatesAndSet(t, tk1, tk3)
+		tk3.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+	}
+}
+
 func showSessionStatesAndSet(t *testing.T, tk1, tk2 *testkit.TestKit) {
 	rows := tk1.MustQuery("show session_states").Rows()
 	require.Len(t, rows, 1)
 	state := rows[0][0].(string)
-	state = strings.ReplaceAll(state, "\\", "\\\\")
-	state = strings.ReplaceAll(state, "'", "\\'")
-	setSQL := fmt.Sprintf("set session_states '%s'", state)
+	state = strconv.Quote(state)
+	setSQL := fmt.Sprintf("set session_states %s", state)
 	tk2.MustExec(setSQL)
 }
