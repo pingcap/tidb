@@ -22,7 +22,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -407,4 +409,34 @@ func TestSpillToDisk(t *testing.T) {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
 	}
 	rows.Check(testkit.Rows(resRows...))
+}
+
+func TestCTEExecError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists src;")
+	tk.MustExec("create table src(first int, second int);")
+
+	insertStr := fmt.Sprintf("insert into src values (%d, %d)", rand.Intn(1000), rand.Intn(1000))
+	for i := 0; i < 1000; i++ {
+		insertStr += fmt.Sprintf(",(%d, %d)", rand.Intn(1000), rand.Intn(1000))
+	}
+	insertStr += ";"
+	tk.MustExec(insertStr)
+
+	// Increase projection concurrency and decrease chunk size
+	// to increase the probability of reproducing the problem.
+	tk.MustExec("set tidb_max_chunk_size = 32")
+	tk.MustExec("set tidb_projection_concurrency = 20")
+	for i := 0; i < 10; i++ {
+		err := tk.QueryToErr("with recursive cte(iter, first, second, result) as " +
+			"(select 1, first, second, first+second from src " +
+			" union all " +
+			"select iter+1, second, result, second+result from cte where iter < 80 )" +
+			"select * from cte")
+		require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
+	}
 }

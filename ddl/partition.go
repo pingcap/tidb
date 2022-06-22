@@ -143,6 +143,15 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		ids := getIDs([]*model.TableInfo{tblInfo})
+		for _, p := range tblInfo.Partition.AddingDefinitions {
+			ids = append(ids, p.ID)
+		}
+		if err := alterTableLabelRule(job.SchemaName, tblInfo, ids); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
@@ -182,6 +191,27 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) error {
+	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, schemaName, meta.Name.L)
+	oldRule, err := infosync.GetLabelRules(context.TODO(), []string{tableRuleID})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(oldRule) == 0 {
+		return nil
+	}
+
+	r, ok := oldRule[tableRuleID]
+	if ok {
+		rule := r.Reset(schemaName, meta.Name.L, "", ids...)
+		err = infosync.PutLabelRule(context.TODO(), rule)
+		if err != nil {
+			return errors.Wrapf(err, "failed to notify PD label rule")
+		}
+	}
+	return nil
 }
 
 func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
@@ -1059,6 +1089,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
+
+		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1090,6 +1126,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
+
+		if err := alterTableLabelRule(job.SchemaName, tblInfo, getIDs([]*model.TableInfo{tblInfo})); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
