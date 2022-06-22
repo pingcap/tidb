@@ -41,6 +41,7 @@ const (
 func IsAllowFastDDL() bool {
 	// Only when both TiDBFastDDL is set to on and Lightning env is inited successful,
 	// the add index could choose lightning path to do backfill procedure.
+	// ToDo: need check PiTR is off currently.
 	if variable.FastDDL.Load() && lit.GlobalLightningEnv.IsInited {
 		return true
 	} else {
@@ -120,7 +121,7 @@ func canRestoreReorgTask(reorg *reorgInfo, indexId int64) bool {
 	return true
 }
 
-// Below is lightning worker logic
+// Below is lightning worker implement
 type addIndexWorkerLit struct {
 	addIndexWorker
 
@@ -188,11 +189,6 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 
 		for _, idxRecord := range idxRecords {
 			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			if idxRecord.skip {
-				continue
-			}
 
 			// Create the index.
 			key, idxVal, _, err := w.index.Create4SST(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion)

@@ -948,9 +948,9 @@ var (
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	// TiDBFastDDL indicates whether to use lightning to enhance DDL reorg performance.
-	FastDDL                               = atomic.NewBool(false)
+	FastDDL                           = atomic.NewBool(false)
 	// Temporary Variable for set dist quota for lightning add index, int type, GB as unit
-    DiskQuota                             = atomic.NewInt32(100)
+    DiskQuota                         = atomic.NewInt32(100)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 )
 

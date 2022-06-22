@@ -201,6 +201,7 @@ func UnsafeImportEngineData(jobId int64, indexId int64) error {
 	}
 
 	totalStorageAvail := GlobalLightningEnv.LitMemRoot.TotalDiskAvailable()
+	GlobalLightningEnv.checkAndResetQuota()
 	if GlobalLightningEnv.NeedImportEngineData(totalStorageAvail) {
 		// ToDo it should be handle when do checkpoint solution.
 		// Flush wirter cached data into local disk for engine first.

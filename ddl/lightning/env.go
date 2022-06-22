@@ -36,7 +36,7 @@ const (
 	_tb                      = 1024 * _gb
 	_pb                      = 1024 * _tb
 	flush_size               = 1 * _mb
-	diskQuota                = 100 * _gb
+	minStorageQuota          = 100 * _gb
 	importThreadhold float32 = 0.15
 )
 
@@ -73,7 +73,7 @@ func init() {
 		GlobalLightningEnv.limit = int64(rLimit.Cur)
 	}
 	GlobalLightningEnv.IsInited = false
-	GlobalLightningEnv.diskQuota = diskQuota
+	GlobalLightningEnv.diskQuota = minStorageQuota
 
 }
 
@@ -146,11 +146,15 @@ func (l *LightningEnv) parseDiskQuota(val int) error {
 	}
     
 	// If the disk quato is less than 100 GB, then disable lightning 
-	if sz.Available < diskQuota {
+	if sz.Available < minStorageQuota {
 		log.L().Error(LERR_DISK_QUOTA_SMALL,
 			zap.String("disk quota", strconv.FormatInt(int64(sz.Available), 10)))
         return errors.New(LERR_DISK_QUOTA_SMALL)
 	}
+	// If set quota is less than 100 GB size
+	if val < minStorageQuota {
+		val = minStorageQuota
+	} 
 	setDiskValue := int64(val * _gb)
 	// The Dist quota should be 100 GB to 1 PB
 	if setDiskValue > int64(sz.Available) {
@@ -195,16 +199,12 @@ func (g *LightningEnv) NeedImportEngineData(availDisk uint64) bool {
 	return false
 }
 
-func (g *LightningEnv) CheckInit() (bool, string){
-	if g.IsInited == true {
-		return true, ""
-	} else {
-		if g.ErrPath != "" {
-			return false, g.ErrPath
-		}
-		if g.ErrQuota != "" {
-			return false, g.ErrQuota
-		}
-	}
-	return true, ""
+// Check whether sysvar disk quota is set to a smaller value and adjust according. 
+func (g *LightningEnv) checkAndResetQuota() {
+   var newQuota int64
+   newQuota = int64(variable.DiskQuota.Load())
+   newQuota *= int64(_gb)
+   if g.diskQuota >= int64(newQuota) {
+	   g.diskQuota = int64(newQuota)
+   }
 }
