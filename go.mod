@@ -54,7 +54,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20210831085004-b5390aa83f65
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
-	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
+	github.com/pingcap/tipb v0.0.0-20211025074540-e1c7362eeeb4
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -66,7 +66,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210831090540-391fcd842dc8
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20211221092530-2f48d74d6949
 	github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0

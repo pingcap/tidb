@@ -3231,6 +3231,28 @@ func (s *testIntegrationSuite) TestIssue26719(c *C) {
 	tk.MustExec(`rollback`)
 }
 
+func (s *testIntegrationSuite) TestIssue32428(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table `t1` (`a` enum('aa') DEFAULT NULL, KEY `k` (`a`))")
+	tk.MustExec("insert into t1 values('aa')")
+	tk.MustExec("insert into t1 values(null)")
+	tk.MustQuery("select a from t1 where a<=>'aa'").Check(testkit.Rows("aa"))
+	tk.MustQuery("select a from t1 where a<=>null").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec(`CREATE TABLE IDT_MULTI15860STROBJSTROBJ (
+	  COL1 enum('aa') DEFAULT NULL,
+	  COL2 int(41) DEFAULT NULL,
+	  COL3 year(4) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2),
+	  KEY U_M_COL5 (COL3,COL2))`)
+	tk.MustExec(`insert into IDT_MULTI15860STROBJSTROBJ  values("aa", 1013610488, 1982)`)
+	tk.MustQuery(`SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = "aa"`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`prepare stmt from "SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = ?"`)
+	tk.MustExec(`set @a="aa"`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows()) // empty result
+}
+
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4358,4 +4380,70 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	tk.MustExec("insert into IDT_HP24172(col1) values(8388607);")
 	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
 	result.Check(testkit.Rows("<nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssues29711(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists tbl_29711")
+	tk.MustExec("CREATE TABLE `tbl_29711` (" +
+		"`col_250` text COLLATE utf8_unicode_ci NOT NULL," +
+		"`col_251` enum('Alice','Bob','Charlie','David') COLLATE utf8_unicode_ci NOT NULL DEFAULT 'Charlie'," +
+		"PRIMARY KEY (`col_251`,`col_250`(1)) NONCLUSTERED);")
+	tk.MustQuery("explain format=brief " +
+		"select col_250,col_251 from tbl_29711 where col_251 between 'Bob' and 'David' order by col_250,col_251 limit 6;").
+		Check(testkit.Rows(
+			"TopN 6.00 root  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"└─IndexLookUp 6.00 root  ",
+			"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:tbl_29711, index:PRIMARY(col_251, col_250) range:[\"Bob\",\"Bob\"], [\"Charlie\",\"Charlie\"], [\"David\",\"David\"], keep order:false, stats:pseudo",
+			"  └─TopN(Probe) 6.00 cop[tikv]  test.tbl_29711.col_250, test.tbl_29711.col_251, offset:0, count:6",
+			"    └─TableRowIDScan 30.00 cop[tikv] table:tbl_29711 keep order:false, stats:pseudo",
+		))
+
+	tk.MustExec("drop table if exists t29711")
+	tk.MustExec("CREATE TABLE `t29711` (" +
+		"`a` varchar(10) DEFAULT NULL," +
+		"`b` int(11) DEFAULT NULL," +
+		"`c` int(11) DEFAULT NULL," +
+		"KEY `ia` (`a`(2)))")
+	tk.MustQuery("explain format=brief select * from t29711 use index (ia) order by a limit 10;").
+		Check(testkit.Rows(
+			"TopN 10.00 root  test.t29711.a, offset:0, count:10",
+			"└─IndexLookUp 10.00 root  ",
+			"  ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t29711, index:ia(a) keep order:false, stats:pseudo",
+			"  └─TopN(Probe) 10.00 cop[tikv]  test.t29711.a, offset:0, count:10",
+			"    └─TableRowIDScan 10000.00 cop[tikv] table:t29711 keep order:false, stats:pseudo",
+		))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10), b char(10), c char(10), index (a, b, c)) collate utf8mb4_bin;")
+	tk.MustExec("insert into t values ('b', 'a', '1'), ('b', 'A', '2'), ('c', 'a', '3');")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
+}
+
+func (s *testIntegrationSerialSuite) TestKeepPrunedConds(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, c int, unique index idx(a, b, c)) PARTITION BY RANGE ( `a` ) (PARTITION `PART_202101` VALUES LESS THAN (202102), PARTITION `PART_202102` VALUES LESS THAN (202103), PARTITION `PART_202103` VALUES LESS THAN (202104));")
+	tk.MustExec("set @@tidb_keep_pruned_conds = 1")
+	tk.MustQuery("explain format = 'brief' select count(*) from t where a = 202103 and b = 1 and c = 1;").Check(testkit.Rows(""+
+		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
+		"└─Point_Get 1.00 root table:t, partition:part_202103, index:idx(a, b, c) "))
+
+	tk.MustExec("set @@tidb_keep_pruned_conds = 0")
+	tk.MustQuery("explain format = 'brief' select count(*) from t where a = 202103 and b = 1 and c = 1;").Check(testkit.Rows(""+
+		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
+		"└─IndexReader 0.01 root  index:Selection",
+		"  └─Selection 0.01 cop[tikv]  eq(test.t.b, 1), eq(test.t.c, 1)",
+		"    └─IndexFullScan 10000.00 cop[tikv] table:t, partition:part_202103, index:idx(a, b, c) keep order:false, stats:pseudo"))
 }

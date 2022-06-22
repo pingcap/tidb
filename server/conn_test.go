@@ -914,3 +914,43 @@ func (ts *ConnTestSuite) TestHandleAuthPlugin(c *C) {
 	err = cc.handleAuthPlugin(ctx, &resp)
 	c.Assert(err, IsNil)
 }
+
+func (ts *ConnTestSuite) TestAuthPlugin2(c *C) {
+
+	c.Parallel()
+
+	cfg := newTestConfig()
+	cfg.Socket = ""
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+
+	drv := NewTiDBDriver(ts.store)
+	srv, err := NewServer(cfg, drv)
+	c.Assert(err, IsNil)
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+		user:   "root",
+	}
+	ctx := context.Background()
+	se, _ := session.CreateSession4Test(ts.store)
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc.ctx = tc
+
+	resp := handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+	}
+
+	cc.isUnixSocket = true
+	_, err = cc.checkAuthPlugin(ctx, &resp)
+	c.Assert(err, IsNil)
+
+}
