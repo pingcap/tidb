@@ -178,7 +178,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		return nil, err
 	}
 	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
-
+	//nolint: prealloc
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
 	ch := make(chan result, len(serversInfo))
@@ -271,7 +271,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result // nolint: prealloc
+	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -349,7 +349,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	wg.Wait()
 	close(ch)
 	// Keep the original order to make the result more stable
-	var results []result // nolint: prealloc
+	var results []result //nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -565,7 +565,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	// The retrieve progress may be abort
 	ctx, e.cancel = context.WithCancel(ctx)
 
-	var results []chan logStreamResult // nolint: prealloc
+	var results []chan logStreamResult //nolint: prealloc
 	for _, srv := range serversInfo {
 		typ := srv.ServerType
 		address := srv.Address
@@ -1070,6 +1070,7 @@ func (e *tikvRegionPeersRetriever) isUnexpectedStoreID(storeID int64, storeMap m
 
 func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
 	regionsInfo []helper.RegionInfo, storeMap map[int64]struct{}) ([][]types.Datum, error) {
+	//nolint: prealloc
 	var rows [][]types.Datum
 	for _, region := range regionsInfo {
 		records := make([][]types.Datum, 0, len(region.Peers))
