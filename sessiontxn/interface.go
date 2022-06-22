@@ -180,7 +180,8 @@ func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 	if err := NewTxn(ctx, sctx); err != nil {
 		return err
 	}
-	return GetTxnManager(sctx).OnStmtStart(ctx, nil)
+	txnManager := GetTxnManager(sctx)
+	return txnManager.OnStmtStart(ctx, txnManager.GetCurrentStmt())
 }
 
 // GetTxnManager returns the TxnManager object from session context
