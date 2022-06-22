@@ -114,7 +114,7 @@ run_test() {
 
     # backup rawkv
     echo "backup start..."
-    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR backup raw -s "local://$BACKUP_DIR" --start 31 --end 745f3132385f725f3134 --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
 
     # delete data in range[start-key, end-key)
     clean 31 3130303030303030
