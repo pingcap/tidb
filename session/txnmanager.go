@@ -117,6 +117,7 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 
 func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
+	m.stmtNode = nil
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
