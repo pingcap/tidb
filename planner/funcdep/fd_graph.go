@@ -32,12 +32,23 @@ type fdEdge struct {
 	// And if there's a functional dependency `const` -> `column` exists. We would let the from side be empty.
 	strict bool
 	equiv  bool
+
+	// FD with non-nil conditionNC is hidden in FDSet, it will be visible again when at least one null-reject column in conditionNC.
+	// conditionNC should be satisfied before some FD make vision again, it's quite like lax FD to be strengthened as strict
+	// one. But the constraints should take effect on specified columns from conditionNC rather than just determinant columns.
+	conditionNC *FastIntSet
 }
 
 // FDSet is the main portal of functional dependency, it stores the relationship between (extended table / physical table)'s
 // columns. For more theory about this design, ref the head comments in the funcdep/doc.go.
 type FDSet struct {
 	fdEdges []*fdEdge
+	// after left join, according to rule 3.3.3, it may create a lax FD from inner equivalence
+	// cols pointing to outer equivalence cols.  eg: t left join t1 on t.a = t1.b, leading a
+	// lax FD from t1.b ~> t.a, this lax attribute is coming from supplied null value to all
+	// left rows, once there is a null-refusing predicate on the inner side on upper layer, this
+	// can be equivalence again. (the outer rows left are all coming from equal matching)
+	ncEdges []*fdEdge
 	// NotNullCols is used to record the columns with not-null attributes applied.
 	// eg: {1} ~~> {2,3}, when {2,3} not null is applied, it actually does nothing.
 	// but we should record {2,3} as not-null down for the convenience of transferring
@@ -50,18 +61,9 @@ type FDSet struct {
 	// GroupByCols is used to record columns / expressions that under the group by phrase.
 	GroupByCols FastIntSet
 	HasAggBuilt bool
-	// after left join, according to rule 3.3.3, it may create a lax FD from inner equivalence
-	// cols pointing to outer equivalence cols.  eg: t left join t1 on t.a = t1.b, leading a
-	// lax FD from t1.b ~> t.a, this lax attribute is coming from supplied null value to all
-	// left rows, once there is a null-refusing predicate on the inner side on upper layer, this
-	// can be equivalence again. (the outer rows left are all coming from equal matching)
-	//
-	// why not just makeNotNull of them, because even a non-equiv-related inner col can also
-	// refuse supplied null values.
-	Rule333Equiv struct {
-		Edges     []*fdEdge
-		InnerCols FastIntSet
-	}
+
+	// todo: when multi join and across select block, this may need to be maintained more precisely.
+
 }
 
 // ClosureOfStrict is exported for outer usage.
@@ -213,6 +215,20 @@ func (s *FDSet) AddStrictFunctionalDependency(from, to FastIntSet) {
 // AddLaxFunctionalDependency is to add `LAX` functional dependency to the fdGraph.
 func (s *FDSet) AddLaxFunctionalDependency(from, to FastIntSet) {
 	s.addFunctionalDependency(from, to, false, false)
+}
+
+// AddNCFunctionalDependency is to add conditional functional dependency to the fdGraph.
+func (s *FDSet) AddNCFunctionalDependency(from, to, nc FastIntSet, strict, equiv bool) {
+	// Since nc edge is invisible by now, just collecting them together simply, once the
+	// null-reject on nc cols is satisfied, let's pick them out and insert into the fdEdge
+	// normally.
+	s.ncEdges = append(s.ncEdges, &fdEdge{
+		from:        from,
+		to:          to,
+		strict:      strict,
+		equiv:       equiv,
+		conditionNC: &nc,
+	})
 }
 
 // addFunctionalDependency will add strict/lax functional dependency to the fdGraph.
@@ -425,6 +441,7 @@ func (s *FDSet) AddConstants(cons FastIntSet) {
 					shouldRemoved = true
 				}
 			}
+			// pre-condition NOTE 1 in doc.go, it won't occur duplicate definite determinant of Lax FD.
 			// for strict or lax FDs, both can reduce the dependencies side columns with constant closure.
 			if fd.removeColumnsToSide(cols) {
 				shouldRemoved = true
@@ -507,6 +524,29 @@ func (s *FDSet) EquivalenceCols() (eqs []*FastIntSet) {
 func (s *FDSet) MakeNotNull(notNullCols FastIntSet) {
 	notNullCols.UnionWith(s.NotNullCols)
 	notNullColsSet := s.closureOfEquivalence(notNullCols)
+	// make nc FD visible.
+	for i := 0; i < len(s.ncEdges); i++ {
+		fd := s.ncEdges[i]
+		if fd.conditionNC.Intersects(notNullColsSet) {
+			// condition satisfied.
+			s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+			i--
+			if fd.isConstant() {
+				s.AddConstants(fd.to)
+			} else if fd.equiv {
+				s.AddEquivalence(fd.from, fd.to)
+				newNotNullColsSet := s.closureOfEquivalence(notNullColsSet)
+				if !newNotNullColsSet.Difference(notNullColsSet).IsEmpty() {
+					notNullColsSet = newNotNullColsSet
+					// expand not-null set.
+					i = -1
+				}
+			} else {
+				s.addFunctionalDependency(fd.from, fd.to, fd.strict, fd.equiv)
+			}
+		}
+	}
+	// make origin FD strengthened.
 	for i := 0; i < len(s.fdEdges); i++ {
 		fd := s.fdEdges[i]
 		if fd.strict {
@@ -545,6 +585,8 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 			s.fdEdges = append(s.fdEdges, fd)
 		}
 	}
+	// just simple merge the ncEdge from both side together.
+	s.ncEdges = append(s.ncEdges, rhs.ncEdges...)
 	// todo: add strict FD: (left key + right key) -> all cols.
 	// maintain a key?
 }
@@ -711,18 +753,13 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 			s.addFunctionalDependency(edge.from, edge.to, false, edge.equiv)
 		}
 	}
+	s.ncEdges = append(s.ncEdges, innerFDs.ncEdges...)
 	leftCombinedFDFrom := NewFastIntSet()
 	leftCombinedFDTo := NewFastIntSet()
 	for _, edge := range filterFDs.fdEdges {
 		// Rule #3.2, constant FD are removed from right side of left join.
 		if edge.isConstant() {
-			s.Rule333Equiv.Edges = append(s.Rule333Equiv.Edges, &fdEdge{
-				from:   edge.from,
-				to:     edge.to,
-				strict: edge.strict,
-				equiv:  edge.equiv,
-			})
-			s.Rule333Equiv.InnerCols = innerCols
+			s.AddNCFunctionalDependency(edge.from, edge.to, innerCols, edge.strict, edge.equiv)
 			continue
 		}
 		// Rule #3.3, we only keep the lax FD from right side pointing the left side.
@@ -757,13 +794,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 					s.addFunctionalDependency(NewFastIntSet(i), NewFastIntSet(j), false, false)
 				}
 			}
-			s.Rule333Equiv.Edges = append(s.Rule333Equiv.Edges, &fdEdge{
-				from:   laxFDFrom,
-				to:     laxFDTo,
-				strict: true,
-				equiv:  true,
-			})
-			s.Rule333Equiv.InnerCols = innerCols
+			s.AddNCFunctionalDependency(equivColsLeft, equivColsRight, innerCols, true, true)
 		}
 		// Rule #3.1, filters won't produce any strict/lax FDs.
 	}
@@ -796,7 +827,6 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	}
 
 	// merge the not-null-cols/registered-map from both side together.
-	s.NotNullCols.UnionWith(innerFDs.NotNullCols)
 	s.NotNullCols.UnionWith(filterFDs.NotNullCols)
 	// inner cols can be nullable since then.
 	s.NotNullCols.DifferenceWith(innerCols)
@@ -814,19 +844,6 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 		s.GroupByCols.Insert(i)
 	}
 	s.HasAggBuilt = s.HasAggBuilt || innerFDs.HasAggBuilt
-}
-
-// MakeRestoreRule333 reset the status of how we deal with this rule.
-func (s *FDSet) MakeRestoreRule333() {
-	for _, eg := range s.Rule333Equiv.Edges {
-		if eg.isConstant() {
-			s.AddConstants(eg.to)
-		} else {
-			s.AddEquivalence(eg.from, eg.to)
-		}
-	}
-	s.Rule333Equiv.Edges = nil
-	s.Rule333Equiv.InnerCols.Clear()
 }
 
 // ArgOpts contains some arg used for FD maintenance.
@@ -882,6 +899,10 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 			s.AddLaxFunctionalDependency(fd.from, fd.to)
 		}
 	}
+	for i := range fds.ncEdges {
+		fd := fds.ncEdges[i]
+		s.ncEdges = append(s.ncEdges, fd)
+	}
 	s.NotNullCols.UnionWith(fds.NotNullCols)
 	if s.HashCodeToUniqueID == nil {
 		s.HashCodeToUniqueID = fds.HashCodeToUniqueID
@@ -898,7 +919,6 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 		s.GroupByCols.Insert(i)
 	}
 	s.HasAggBuilt = fds.HasAggBuilt
-	s.Rule333Equiv = fds.Rule333Equiv
 }
 
 // MaxOneRow will regard every column in the fdSet as a constant. Since constant is stronger that strict FD, it will
@@ -1033,9 +1053,12 @@ func (s *FDSet) ProjectCols(cols FastIntSet) {
 					continue
 				}
 			}
-			if fd.removeColumnsToSide(fd.from) {
-				// fd.to side is empty, remove this FD.
-				continue
+			// from and to side of equiv are same, don't do trivial elimination.
+			if !fd.isEquivalence() {
+				if fd.removeColumnsToSide(fd.from) {
+					// fd.to side is empty, remove this FD.
+					continue
+				}
 			}
 		}
 
@@ -1086,6 +1109,32 @@ func (s *FDSet) ProjectCols(cols FastIntSet) {
 			s.AddStrictFunctionalDependency(fd.from, fd.to)
 		} else {
 			s.AddLaxFunctionalDependency(fd.from, fd.to)
+		}
+	}
+	// ncEdge should also be projected.
+	for i := 0; i < len(s.ncEdges); i++ {
+		nc := s.ncEdges[i]
+		if !nc.conditionNC.Intersects(cols) {
+			// edge is projected out, the nc edge's condition won't be satisfied anymore.
+			continue
+		}
+		if nc.isConstant() {
+			nc.to.IntersectionWith(cols)
+			if nc.to.IsEmpty() {
+				// edge is projected out.
+				s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+				i--
+			}
+			continue
+		}
+		if nc.equiv {
+			nc.from.IntersectionWith(cols)
+			nc.to.IntersectionWith(cols)
+			if nc.from.IsEmpty() {
+				// edge is projected out.
+				s.ncEdges = append(s.ncEdges[:i], s.ncEdges[i+1:]...)
+				i--
+			}
 		}
 	}
 }

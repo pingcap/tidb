@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -81,6 +82,9 @@ type Histogram struct {
 	Correlation float64
 }
 
+// EmptyHistogramSize is the size of empty histogram, about 112 = 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references.
+const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
+
 // Bucket store the bucket count and repeat.
 type Bucket struct {
 	Count  int64
@@ -88,11 +92,17 @@ type Bucket struct {
 	NDV    int64
 }
 
+// EmptyBucketSize is the size of empty bucket, 3*8=24 now.
+const EmptyBucketSize = int64(unsafe.Sizeof(Bucket{}))
+
 type scalar struct {
 	lower        float64
 	upper        float64
 	commonPfxLen int // commonPfxLen is the common prefix length of the lower bound and upper bound when the value type is KindString or KindBytes.
 }
+
+// EmptyScalarSize is the size of empty scalar.
+const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
@@ -101,7 +111,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
 		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
 		tp = tp.Clone()
-		tp.Collate = charset.CollationBin
+		tp.SetCollate(charset.CollationBin)
 	}
 	return &Histogram{
 		ID:                id,
@@ -128,14 +138,11 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
-// everytime changed the Histogram of the table, it will cost O(n)
-// complexity so calculate the memoryUsage might cost little time.
-// We ignore the size of other metadata in Histogram.
 func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
 	return
 }
 
@@ -157,7 +164,7 @@ func (c *Column) AvgColSize(count int64, isKey bool) float64 {
 	if histCount > 0 {
 		notNullRatio = 1.0 - float64(c.NullCount)/histCount
 	}
-	switch c.Histogram.Tp.Tp {
+	switch c.Histogram.Tp.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return 8 * notNullRatio
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
@@ -237,7 +244,7 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, n
 	hg.Buckets[l-1].Repeat = repeat
 }
 
-// DecodeTo decodes the histogram bucket values into `Tp`.
+// DecodeTo decodes the histogram bucket values into `tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
 	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
 	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
@@ -252,7 +259,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 	return nil
 }
 
-// ConvertTo converts the histogram bucket values into `Tp`.
+// ConvertTo converts the histogram bucket values into `tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	hist.Correlation = hg.Correlation
@@ -787,7 +794,7 @@ func (hg *Histogram) popFirstBucket() {
 
 // IsIndexHist checks whether current histogram is one for index.
 func (hg *Histogram) IsIndexHist() bool {
-	return hg.Tp.Tp == mysql.TypeBlob
+	return hg.Tp.GetType() == mysql.TypeBlob
 }
 
 // MergeHistograms merges two histograms.
@@ -907,7 +914,7 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
-	if mysql.HasUnsignedFlag(hg.Tp.Flag) {
+	if mysql.HasUnsignedFlag(hg.Tp.GetFlag()) {
 		if l < 0 {
 			l = 0
 		}
@@ -1050,16 +1057,8 @@ type Column struct {
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
-	// Loaded means if the histogram, the topn and the cm sketch are loaded fully.
-	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
-	// Note: Currently please use Column.IsLoaded() to check if it's loaded.
-	Loaded bool
-}
-
-// IsLoaded is a wrap around c.Loaded.
-// It's just for safe when we are switching from `c.notNullCount() > 0)` to `c.Loaded`.
-func (c *Column) IsLoaded() bool {
-	return c.Loaded || c.notNullCount() > 0
+	// ColLoadedStatus indicates the status of column statistics
+	ColLoadedStatus
 }
 
 func (c *Column) String() string {
@@ -1093,7 +1092,7 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 
 // MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage() *ColumnMemUsage {
+func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	var sum int64
 	columnMemUsage := &ColumnMemUsage{
 		ColumnID: c.Info.ID,
@@ -1130,7 +1129,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
 			return true
 		}
-		if !c.IsLoaded() && stmtctx != nil {
+		if c.IsLoadNeeded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
@@ -1141,12 +1140,15 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 			}
 		}
 	}
-	return c.TotalRowCount() == 0 || (!c.IsLoaded() && c.Histogram.NDV > 0)
+	// In some cases, some statistics in column would be evicted
+	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
+	// In this case, we will think this column as valid due to we can still use the rest of the statistics to do optimize.
+	return c.TotalRowCount() == 0 || (!c.IsEssentialStatsLoaded() && c.Histogram.NDV > 0)
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && !c.IsLoaded()
+	return (!collPseudo || !c.NotAccurate()) && c.IsLoadNeeded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -1272,7 +1274,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
-			cnt = clampRowCount(cnt, c.notNullCount())
+			cnt = mathutil.Clamp(cnt, 0, c.notNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
@@ -1285,7 +1287,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			cnt += highCnt
 		}
 
-		cnt = clampRowCount(cnt, c.TotalRowCount())
+		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
@@ -1301,9 +1303,22 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		rowCount += cnt
 	}
-
-	rowCount = clampRowCount(rowCount, float64(realtimeRowCount))
+	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
 	return rowCount, nil
+}
+
+// ItemID implements TableCacheItem
+func (c *Column) ItemID() int64 {
+	return c.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
+// DropEvicted drops evicted structures
+func (c *Column) DropEvicted() {
+	if c.StatsVer < Version2 && c.IsStatsInitialized() {
+		c.CMSketch = nil
+		c.evictedStatus = onlyCmsEvicted
+	}
 }
 
 // Index represents an index histogram.
@@ -1317,6 +1332,27 @@ type Index struct {
 	Info           *model.IndexInfo
 	Flag           int64
 	LastAnalyzePos types.Datum
+}
+
+// ItemID implements TableCacheItem
+func (idx *Index) ItemID() int64 {
+	return idx.Info.ID
+}
+
+// DropEvicted implements TableCacheItem
+// DropEvicted drops evicted structures
+func (idx *Index) DropEvicted() {
+	idx.CMSketch = nil
+}
+
+// IsEvicted returns whether index statistics got evicted
+func (idx *Index) IsEvicted() bool {
+	switch idx.StatsVer {
+	case Version1:
+		return idx.CMSketch == nil
+	default:
+		return false
+	}
 }
 
 func (idx *Index) String() string {
@@ -1338,10 +1374,10 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() *IndexMemUsage {
+func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 	var sum int64
 	indexMemUsage := &IndexMemUsage{
-		IndexID: idx.ID,
+		IndexID: idx.Info.ID,
 	}
 	histMemUsage := idx.Histogram.MemoryUsage()
 	indexMemUsage.HistogramMemUsage = histMemUsage
@@ -1503,8 +1539,7 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 		}
 	}
-
-	totalCount = clampRowCount(totalCount, float64(realtimeRowCount))
+	totalCount = mathutil.Clamp(totalCount, 0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -1731,7 +1766,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
-		newCol.Loaded = oldCol.Loaded
+		newCol.ColLoadedStatus = oldCol.ColLoadedStatus
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
@@ -1757,16 +1792,6 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 		return false
 	}
 	return true
-}
-
-func clampRowCount(rowCount, upperLimit float64) (clampedRowCount float64) {
-	if rowCount > upperLimit {
-		return upperLimit
-	}
-	if rowCount < 0 {
-		return 0
-	}
-	return rowCount
 }
 
 // matchPrefix checks whether ad is the prefix of value
@@ -2106,9 +2131,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			d.SetBytes(meta.Encoded)
 		} else {
 			var err error
-			if types.IsTypeTime(hists[0].Tp.Tp) {
+			if types.IsTypeTime(hists[0].Tp.GetType()) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
 			} else {
 				_, d, err = codec.DecodeOne(meta.Encoded)
 			}
@@ -2248,4 +2273,51 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil
+}
+
+const (
+	allLoaded = iota
+	onlyCmsEvicted
+	//onlyHistRemained
+	allEvicted
+)
+
+// ColLoadedStatus indicates the status of column statistics
+type ColLoadedStatus struct {
+	statsInitialized bool
+	evictedStatus    int
+}
+
+// NewColFullLoadStatus returns the status that the column fully loaded
+func NewColFullLoadStatus() ColLoadedStatus {
+	return ColLoadedStatus{
+		statsInitialized: true,
+		evictedStatus:    allLoaded,
+	}
+}
+
+// IsStatsInitialized indicates whether the column's statistics was loaded from storage before.
+// Note that `IsStatsInitialized` only can be set in initializing
+func (s ColLoadedStatus) IsStatsInitialized() bool {
+	return s.statsInitialized
+}
+
+// IsLoadNeeded indicates whether it needs load statistics during LoadNeededHistograms or sync stats
+// If the column was loaded and any statistics of it is evicting, it also needs re-load statistics.
+func (s ColLoadedStatus) IsLoadNeeded() bool {
+	if s.statsInitialized {
+		return s.evictedStatus > allLoaded
+	}
+	return true
+}
+
+// IsEssentialStatsLoaded indicates whether the essential statistics is loaded.
+// If the column was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
+func (s ColLoadedStatus) IsEssentialStatsLoaded() bool {
+	return s.statsInitialized && (s.evictedStatus < allEvicted)
+}
+
+// IsCMSEvicted indicates whether the cms got evicted now.
+func (s ColLoadedStatus) IsCMSEvicted() bool {
+	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
 }

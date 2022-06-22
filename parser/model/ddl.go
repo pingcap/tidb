@@ -95,6 +95,7 @@ const (
 	ActionAlterTableStatsOptions        ActionType = 58
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
+	ActionMultiSchemaChange             ActionType = 61
 )
 
 var actionMap = map[ActionType]string{
@@ -157,6 +158,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterCacheTable:               "alter table cache",
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
+	ActionMultiSchemaChange:             "alter table multi-schema change",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -256,6 +258,38 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
 	Warnings []*errors.Error
+
+	SubJobs    []*SubJob `json:"sub_jobs"`
+	Revertible bool      `json:"revertible"`
+
+	AddColumns    []CIStr `json:"-"`
+	DropColumns   []CIStr `json:"-"`
+	ModifyColumns []CIStr `json:"-"`
+	AddIndexes    []CIStr `json:"-"`
+	DropIndexes   []CIStr `json:"-"`
+	AlterIndexes  []CIStr `json:"-"`
+
+	RelativeColumns []CIStr `json:"-"`
+}
+
+func NewMultiSchemaInfo() *MultiSchemaInfo {
+	return &MultiSchemaInfo{
+		SubJobs:    nil,
+		Revertible: true,
+	}
+}
+
+type SubJob struct {
+	Type        ActionType      `json:"type"`
+	Args        []interface{}   `json:"-"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
+	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []interface{}   `json:"-"`
 }
 
 // Job is for a DDL operation.
@@ -509,6 +543,51 @@ func (job *Job) IsQueueing() bool {
 
 func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
+}
+
+// MayNeedReorg indicates that this job may need to reorganize the data.
+func (job *Job) MayNeedReorg() bool {
+	switch job.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// IsRollbackable checks whether the job can be rollback.
+func (job *Job) IsRollbackable() bool {
+	switch job.Type {
+	case ActionDropIndex, ActionDropPrimaryKey, ActionDropIndexes:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
+		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
+		// know the type of index here, we consider all indices except primary index as non-rollbackable.
+		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
+		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
+		if job.SchemaState == StateDeleteOnly ||
+			job.SchemaState == StateDeleteReorganization ||
+			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionAddTablePartition:
+		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
+	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropForeignKey, ActionDropTablePartition:
+		return job.SchemaState == StatePublic
+	case ActionDropColumns, ActionRebaseAutoID, ActionShardRowID,
+		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
+		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
+		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
+		ActionModifyTableAutoIdCache, ActionModifySchemaDefaultPlacement:
+		return job.SchemaState == StateNone
+	}
+	return true
 }
 
 // JobState is for job state.

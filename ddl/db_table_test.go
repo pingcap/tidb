@@ -34,113 +34,15 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
-
-// TestCancelDropTable tests cancel ddl job which type is drop table.
-func TestCancelDropTableAndSchema(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	testCases := []struct {
-		needAddTableOrDB bool
-		action           model.ActionType
-		jobState         model.JobState
-		JobSchemaState   model.SchemaState
-		cancelSucc       bool
-	}{
-		// Check drop table.
-		// model.JobStateNone means the jobs is canceled before the first run.
-		{true, model.ActionDropTable, model.JobStateQueueing, model.StateNone, true},
-		{false, model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, false},
-
-		// Check drop database.
-		{true, model.ActionDropSchema, model.JobStateQueueing, model.StateNone, true},
-		{false, model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	var jobID int64
-	testCase := &testCases[0]
-	tk.MustExec("create database if not exists test_drop_db")
-	dbInfo, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test_drop_db"))
-	require.True(t, ok)
-
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState && job.SchemaID == dbInfo.ID {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originHook := dom.DDL().GetHook()
-	defer dom.DDL().SetHook(originHook)
-	dom.DDL().SetHook(hook)
-	var err error
-	sql := ""
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.needAddTableOrDB {
-			tk.MustExec("create database if not exists test_drop_db")
-			tk.MustExec("use test_drop_db")
-			tk.MustExec("create table if not exists t(c1 int, c2 int)")
-		}
-
-		dbInfo, ok = dom.InfoSchema().SchemaByName(model.NewCIStr("test_drop_db"))
-		require.True(t, ok)
-
-		if testCase.action == model.ActionDropTable {
-			sql = "drop table t;"
-		} else if testCase.action == model.ActionDropSchema {
-			sql = "drop database test_drop_db;"
-		}
-
-		_, err = tk.Exec(sql)
-		if testCase.cancelSucc {
-			require.Nil(t, checkErr)
-			require.Error(t, err)
-			require.Equal(t, "[ddl:8214]Cancelled DDL job", err.Error())
-			tk.MustExec("insert into t values (?, ?)", i, i)
-		} else {
-			require.NoError(t, err)
-			require.NotNil(t, checkErr)
-			require.Equal(t, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error(), checkErr.Error())
-			_, err = tk.Exec("insert into t values (?, ?)", i, i)
-			require.Error(t, err)
-		}
-	}
-}
 
 func TestTableForeignKey(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -261,6 +163,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int);")
@@ -412,105 +315,53 @@ func TestCreateTableWithEnumCol(t *testing.T) {
 	tk.MustQuery("select * from t_enum").Check(testkit.Rows("c"))
 }
 
-// TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
-func TestCancelAddTableAndDropTablePartition(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+func TestCreateTableWithIntegerColWithDefault(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test_partition_table")
-	tk.MustExec("use test_partition_table")
-	tk.MustExec("drop table if exists t_part")
-	tk.MustExec(`create table t_part (a int key)
-		partition by range(a) (
-		partition p0 values less than (10),
-		partition p1 values less than (20)
-	);`)
-	defer tk.MustExec("drop table t_part;")
-	base := 10
-	for i := 0; i < base; i++ {
-		tk.MustExec("insert into t_part values (?)", i)
-	}
+	tk.MustExec("use test")
+	// It's for failure cases.
+	tk.MustExec("drop table if exists t1")
+	failedSQL := "create table t1 (a tinyint unsigned default -1.25);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	failedSQL = "create table t1 (a tinyint default 999999999);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
 
-	testCases := []struct {
-		action         model.ActionType
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
-	}{
-		{model.ActionAddTablePartition, model.JobStateQueueing, model.StateNone, true},
-		{model.ActionDropTablePartition, model.JobStateQueueing, model.StateNone, true},
-		// Add table partition now can be cancelled in ReplicaOnly state.
-		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	testCase := &testCases[0]
-	var jobID int64
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
+	// It's for successful cases
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a tinyint unsigned default 1.25);")
+	ret := tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` tinyint(3) unsigned DEFAULT '1'"))
 
-	var err error
-	sql := ""
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.action == model.ActionAddTablePartition {
-			sql = `alter table t_part add partition (
-				partition p2 values less than (30)
-				);`
-		} else if testCase.action == model.ActionDropTablePartition {
-			sql = "alter table t_part drop partition p1;"
-		}
-		_, err = tk.Exec(sql)
-		if testCase.cancelSucc {
-			require.Nil(t, checkErr)
-			require.Error(t, err)
-			require.Equal(t, "[ddl:8214]Cancelled DDL job", err.Error())
-			tk.MustExec("insert into t_part values (?)", i+base)
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a smallint default -1.25);")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` smallint(6) DEFAULT '-1'"))
 
-			ctx := tk.Session()
-			is := domain.GetDomain(ctx).InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test_partition_table"), model.NewCIStr("t_part"))
-			require.NoError(t, err)
-			partitionInfo := tbl.Meta().GetPartitionInfo()
-			require.NotNil(t, partitionInfo)
-			require.Len(t, partitionInfo.AddingDefinitions, 0)
-		} else {
-			require.NoError(t, err)
-			require.NoError(t, checkErr)
-			require.Equal(t, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error(), checkErr.Error())
-			tk.MustExec("insert into t_part values (?)", i)
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a mediumint default 2.8);")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` mediumint(9) DEFAULT '3'"))
 
-		}
-	}
-	dom.DDL().SetHook(originalHook)
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a int default -2.8);")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '-3'"))
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a bigint unsigned default 0.0);")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` bigint(20) unsigned DEFAULT '0'"))
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a float default '0012.43');")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` float DEFAULT '12.43'"))
+
+	tk.MustExec("drop table t1")
+	tk.MustExec("create table t1 (a double default '12.4300');")
+	ret = tk.MustQuery("show create table t1").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` double DEFAULT '12.43'"))
 }
 
 func TestAlterTableWithValidation(t *testing.T) {
@@ -679,7 +530,7 @@ func TestTableLocksLostCommit(t *testing.T) {
 	tk.MustExec("LOCK TABLES t1 WRITE")
 	tk.MustExec("INSERT INTO t1 VALUES(10)")
 
-	_, err := tk2.Exec("SELECT * FROM t1")
+	err := tk2.ExecToErr("SELECT * FROM t1")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 
 	tk.Session().Close()
@@ -727,32 +578,32 @@ func TestWriteLocal(t *testing.T) {
 
 	// Test: forbid write
 	tk.MustExec("lock tables t1 write local")
-	_, err := tk2.Exec("insert into t1 values(NULL)")
+	err := tk2.ExecToErr("insert into t1 values(NULL)")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
 
 	// Test mutex: lock write local first
 	tk.MustExec("lock tables t1 write local")
-	_, err = tk2.Exec("lock tables t1 write local")
+	err = tk2.ExecToErr("lock tables t1 write local")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 write")
+	err = tk2.ExecToErr("lock tables t1 write")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 read")
+	err = tk2.ExecToErr("lock tables t1 read")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
 
 	// Test mutex: lock write first
 	tk.MustExec("lock tables t1 write")
-	_, err = tk2.Exec("lock tables t1 write local")
+	err = tk2.ExecToErr("lock tables t1 write local")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
 
 	// Test mutex: lock read first
 	tk.MustExec("lock tables t1 read")
-	_, err = tk2.Exec("lock tables t1 write local")
+	err = tk2.ExecToErr("lock tables t1 write local")
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
@@ -797,38 +648,27 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("lock tables t1 read")
 	tk.MustQuery("select * from t1")
 	tk2.MustQuery("select * from t1")
-	_, err := tk.Exec("insert into t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite))
-	_, err = tk.Exec("update t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite))
-	_, err = tk.Exec("delete from t1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite))
+	tk.MustGetDBError("insert into t1 set a=1", infoschema.ErrTableNotLockedForWrite)
+	tk.MustGetDBError("update t1 set a=1", infoschema.ErrTableNotLockedForWrite)
+	tk.MustGetDBError("delete from t1", infoschema.ErrTableNotLockedForWrite)
 
-	_, err = tk2.Exec("insert into t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("update t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("delete from t1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
+	tk2.MustGetDBError("insert into t1 set a=1", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("update t1 set a=1", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("delete from t1", infoschema.ErrTableLocked)
 	tk2.MustExec("lock tables t1 read")
-	_, err = tk2.Exec("insert into t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite))
+	tk2.MustGetDBError("insert into t1 set a=1", infoschema.ErrTableNotLockedForWrite)
 
 	// Test write lock.
-	_, err = tk.Exec("lock tables t1 write")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
+	tk.MustGetDBError("lock tables t1 write", infoschema.ErrTableLocked)
 	tk2.MustExec("unlock tables")
 	tk.MustExec("lock tables t1 write")
 	tk.MustQuery("select * from t1")
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 set a=1")
 
-	_, err = tk2.Exec("select * from t1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("insert into t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 write")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
+	tk2.MustGetDBError("select * from t1", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("insert into t1 set a=1", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("lock tables t1 write", infoschema.ErrTableLocked)
 
 	// Test write local lock.
 	tk.MustExec("lock tables t1 write local")
@@ -837,18 +677,13 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("insert into t1 set a=1")
 
 	tk2.MustQuery("select * from t1")
-	_, err = tk2.Exec("delete from t1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("insert into t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 write")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("lock tables t1 read")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
+	tk2.MustGetDBError("delete from t1", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("insert into t1 set a=1", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("lock tables t1 write", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("lock tables t1 read", infoschema.ErrTableLocked)
 
 	// Test none unique table.
-	_, err = tk.Exec("lock tables t1 read, t1 write")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrNonuniqTable))
+	tk.MustGetDBError("lock tables t1 read, t1 write", infoschema.ErrNonuniqTable)
 
 	// Test lock table by other session in transaction and commit without retry.
 	tk.MustExec("unlock tables")
@@ -857,9 +692,8 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1")
 	tk2.MustExec("lock tables t1 write")
-	_, err = tk.Exec("commit")
-	require.Error(t, err)
-	require.Equal(t, "previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]", err.Error())
+	tk.MustGetErrMsg("commit",
+		"previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 
 	// Test lock table by other session in transaction and commit with retry.
 	tk.MustExec("unlock tables")
@@ -868,8 +702,7 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1")
 	tk2.MustExec("lock tables t1 write")
-	_, err = tk.Exec("commit")
-	require.Truef(t, terror.ErrorEqual(err, infoschema.ErrTableLocked), "err: %v\n", err)
+	tk.MustGetDBError("commit", infoschema.ErrTableLocked)
 
 	// Test for lock the same table multiple times.
 	tk2.MustExec("lock tables t1 write")
@@ -897,59 +730,45 @@ func TestLockTables(t *testing.T) {
 	tk.MustExec("lock tables t1 write, t2 read")
 	tk.MustExec("truncate table t1")
 	tk.MustExec("insert into t1 set a=1")
-	_, err = tk2.Exec("insert into t1 set a=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
+	tk2.MustGetDBError("insert into t1 set a=1", infoschema.ErrTableLocked)
 
 	// Test for lock unsupported schema tables.
-	_, err = tk2.Exec("lock tables performance_schema.global_status write")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrAccessDenied))
-	_, err = tk2.Exec("lock tables information_schema.tables write")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrAccessDenied))
-	_, err = tk2.Exec("lock tables mysql.db write")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrAccessDenied))
+	tk2.MustGetDBError("lock tables performance_schema.global_status write", infoschema.ErrAccessDenied)
+	tk2.MustGetDBError("lock tables information_schema.tables write", infoschema.ErrAccessDenied)
+	tk2.MustGetDBError("lock tables mysql.db write", infoschema.ErrAccessDenied)
 
 	// Test create table/view when session is holding the table locks.
 	tk.MustExec("unlock tables")
 	tk.MustExec("lock tables t1 write, t2 read")
-	_, err = tk.Exec("create table t3 (a int)")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLocked))
-	_, err = tk.Exec("create view v1 as select * from t1;")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLocked))
+	tk.MustGetDBError("create table t3 (a int)", infoschema.ErrTableNotLocked)
+	tk.MustGetDBError("create view v1 as select * from t1;", infoschema.ErrTableNotLocked)
 
 	// Test for locking view was not supported.
 	tk.MustExec("unlock tables")
 	tk.MustExec("create view v1 as select * from t1;")
-	_, err = tk.Exec("lock tables v1 read")
-	require.True(t, terror.ErrorEqual(err, table.ErrUnsupportedOp))
+	tk.MustGetDBError("lock tables v1 read", table.ErrUnsupportedOp)
 
 	// Test for locking sequence was not supported.
 	tk.MustExec("unlock tables")
 	tk.MustExec("create sequence seq")
-	_, err = tk.Exec("lock tables seq read")
-	require.True(t, terror.ErrorEqual(err, table.ErrUnsupportedOp))
+	tk.MustGetDBError("lock tables seq read", table.ErrUnsupportedOp)
 	tk.MustExec("drop sequence seq")
 
 	// Test for create/drop/alter database when session is holding the table locks.
 	tk.MustExec("unlock tables")
 	tk.MustExec("lock table t1 write")
-	_, err = tk.Exec("drop database test")
-	require.True(t, terror.ErrorEqual(err, table.ErrLockOrActiveTransaction))
-	_, err = tk.Exec("create database test_lock")
-	require.True(t, terror.ErrorEqual(err, table.ErrLockOrActiveTransaction))
-	_, err = tk.Exec("alter database test charset='utf8mb4'")
-	require.True(t, terror.ErrorEqual(err, table.ErrLockOrActiveTransaction))
+	tk.MustGetDBError("drop database test", table.ErrLockOrActiveTransaction)
+	tk.MustGetDBError("create database test_lock", table.ErrLockOrActiveTransaction)
+	tk.MustGetDBError("alter database test charset='utf8mb4'", table.ErrLockOrActiveTransaction)
 	// Test alter/drop database when other session is holding the table locks of the database.
 	tk2.MustExec("create database test_lock2")
-	_, err = tk2.Exec("drop database test")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
-	_, err = tk2.Exec("alter database test charset='utf8mb4'")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
+	tk2.MustGetDBError("drop database test", infoschema.ErrTableLocked)
+	tk2.MustGetDBError("alter database test charset='utf8mb4'", infoschema.ErrTableLocked)
 
 	// Test for admin cleanup table locks.
 	tk.MustExec("unlock tables")
 	tk.MustExec("lock table t1 write, t2 write")
-	_, err = tk2.Exec("lock tables t1 write, t2 read")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableLocked))
+	tk2.MustGetDBError("lock tables t1 write, t2 read", infoschema.ErrTableLocked)
 	tk2.MustExec("admin cleanup table lock t1,t2")
 	checkTableLock(t, tk, "test", "t1", model.TableLockNone)
 	checkTableLock(t, tk, "test", "t2", model.TableLockNone)
@@ -1017,18 +836,12 @@ func TestDDLWithInvalidTableInfo(t *testing.T) {
 
 	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;")
 	// Test drop partition column.
-	_, err = tk.Exec("alter table t drop column a;")
-	require.Error(t, err)
 	// TODO: refine the error message to compatible with MySQL
-	require.Equal(t, "[planner:1054]Unknown column 'a' in 'expression'", err.Error())
+	tk.MustGetErrMsg("alter table t drop column a;", "[planner:1054]Unknown column 'a' in 'expression'")
 	// Test modify column with invalid expression.
-	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
-	require.Error(t, err)
-	require.Equal(t, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ", err.Error())
+	tk.MustGetErrMsg("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));", "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
 	// Test add column with invalid expression.
-	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
-	require.Error(t, err)
-	require.Equal(t, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ", err.Error())
+	tk.MustGetErrMsg("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));", "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
 func TestAddColumn2(t *testing.T) {
@@ -1062,7 +875,7 @@ func TestAddColumn2(t *testing.T) {
 	// mock for outdated tidb update record.
 	require.NotNil(t, writeOnlyTable)
 	ctx := context.Background()
-	err = tk.Session().NewTxn(ctx)
+	err = sessiontxn.NewTxn(ctx, tk.Session())
 	require.NoError(t, err)
 	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Session(), kv.IntHandle(1), writeOnlyTable.WritableCols())
 	require.NoError(t, err)

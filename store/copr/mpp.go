@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
@@ -514,7 +514,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{},
 		startTs:                    startTs,
 		vars:                       vars,
 		needTriggerFallback:        needTriggerFallback,
-		enableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
+		enableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
 	}
 	go iter.run(ctxChild)
 	return iter

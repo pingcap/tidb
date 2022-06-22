@@ -536,43 +536,6 @@ func TestIsNoop(t *testing.T) {
 	require.True(t, sv.IsNoop)
 }
 
-func TestTiDBReadOnly(t *testing.T) {
-	rro := GetSysVar(TiDBRestrictedReadOnly)
-	sro := GetSysVar(TiDBSuperReadOnly)
-
-	vars := NewSessionVars()
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-
-	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
-	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "ON"))
-	result, err := mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "ON", result)
-
-	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
-	err = mock.SetGlobalSysVar(sro.Name, "OFF")
-	require.Error(t, err)
-	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
-
-	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
-	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "OFF"))
-	result, err = mock.GetGlobalSysVar(rro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", result)
-
-	result, err = mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "ON", result)
-
-	// it is ok to turn off tidb_super_read_only now
-	require.NoError(t, mock.SetGlobalSysVar(sro.Name, "OFF"))
-	result, err = mock.GetGlobalSysVar(sro.Name)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", result)
-}
-
 func TestInstanceScopedVars(t *testing.T) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
@@ -624,32 +587,28 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginDir)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Plugin.Dir, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginDir, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginLoad)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Plugin.Load, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginLoad, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBSlowLogThreshold)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), val)
+	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBRecordPlanInSlowLog)
 	require.NoError(t, err)
-	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog) == 1
+	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
 	require.Equal(t, BoolToOnOff(enabled), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), val)
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
-	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
 	require.NoError(t, err)
@@ -661,7 +620,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
 	require.NoError(t, err)
@@ -697,10 +656,7 @@ func TestSettersandGetters(t *testing.T) {
 			// There are some historial exceptions where global variables are loaded into the session.
 			// Please don't add to this list, the behavior is not MySQL compatible.
 			switch sv.Name {
-			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
-				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
-				TiDBEnableTelemetry, TiDBEnablePointGetCache:
+			case TiDBRowFormatVersion:
 				continue
 			}
 			require.Nil(t, sv.SetSession)
@@ -819,6 +775,14 @@ func TestLcTimeNamesReadOnly(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLcMessagesReadOnly(t *testing.T) {
+	sv := GetSysVar("lc_messages")
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
+	require.Error(t, err)
+}
+
 func TestDDLWorkers(t *testing.T) {
 	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
 	vars := NewSessionVars()
@@ -864,8 +828,8 @@ func TestInstanceScope(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
 		if sv.HasInstanceScope() {
-			require.NotNil(t, sv.GetGlobal)
-			require.NotNil(t, sv.SetGlobal)
+			require.Nil(t, sv.GetSession)
+			require.Nil(t, sv.SetSession)
 		}
 	}
 
@@ -946,4 +910,76 @@ func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
 	_, err = sv.Validate(vars, "1.5", ScopeSession)
 	require.Error(t, err)
 	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
+}
+
+func TestTiDBMemQuotaQuery(t *testing.T) {
+	sv := GetSysVar(TiDBMemQuotaQuery)
+	vars := NewSessionVars()
+
+	for _, scope := range []ScopeFlag{ScopeGlobal, ScopeSession} {
+		newVal := 32 * 1024 * 1024
+		val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		require.Equal(t, val, "33554432")
+		require.NoError(t, err)
+
+		// min value out of range
+		newVal = -2
+		expected := -1
+		val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), scope)
+		// expected to truncate
+		require.Equal(t, val, fmt.Sprintf("%d", expected))
+		require.NoError(t, err)
+	}
+}
+
+func TestTiDBQueryLogMaxLen(t *testing.T) {
+	sv := GetSysVar(TiDBQueryLogMaxLen)
+	vars := NewSessionVars()
+
+	newVal := 32 * 1024 * 1024
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "33554432")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 1073741825
+	expected := 1073741824
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = -2
+	expected = 0
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+}
+
+func TestTiDBCommitterConcurrency(t *testing.T) {
+	sv := GetSysVar(TiDBCommitterConcurrency)
+	vars := NewSessionVars()
+
+	newVal := 1024
+	val, err := sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	require.Equal(t, val, "1024")
+	require.NoError(t, err)
+
+	// out of range
+	newVal = 10001
+	expected := 10000
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to truncate
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
+
+	// min value out of range
+	newVal = 0
+	expected = 1
+	val, err = sv.Validate(vars, fmt.Sprintf("%d", newVal), ScopeGlobal)
+	// expected to set to min value
+	require.Equal(t, val, fmt.Sprintf("%d", expected))
+	require.NoError(t, err)
 }

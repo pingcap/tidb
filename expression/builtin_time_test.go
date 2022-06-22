@@ -796,11 +796,11 @@ func TestTime(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Time, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeDuration, tp.Tp)
-		require.Equal(t, charset.CharsetBin, tp.Charset)
-		require.Equal(t, charset.CollationBin, tp.Collate)
-		require.Equal(t, mysql.BinaryFlag, tp.Flag&mysql.BinaryFlag)
-		require.Equal(t, c.flen, tp.Flen)
+		require.Equal(t, mysql.TypeDuration, tp.GetType())
+		require.Equal(t, charset.CharsetBin, tp.GetCharset())
+		require.Equal(t, charset.CollationBin, tp.GetCollate())
+		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
+		require.Equal(t, c.flen, tp.GetFlen())
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
@@ -946,7 +946,7 @@ func TestAddTimeSig(t *testing.T) {
 	resetStmtContext(ctx)
 	now, _, err := evalNowWithFsp(ctx, 0)
 	require.NoError(t, err)
-	res, _, err := du.add(ctx, now, "1", "MICROSECOND")
+	res, _, err := du.add(ctx, now, "1", "MICROSECOND", 6)
 	require.NoError(t, err)
 	require.Equal(t, 6, res.Fsp())
 
@@ -1188,7 +1188,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	}
 
 	f := types.NewFieldType(tp)
-	f.Decimal = fsp
+	f.SetDecimal(fsp)
 
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
@@ -1266,7 +1266,7 @@ func TestFromUnixTime(t *testing.T) {
 		if len(c.format) == 0 {
 			constants := datumsToConstants([]types.Datum{timestamp})
 			if !c.isDecimal {
-				constants[0].GetType().Decimal = 0
+				constants[0].GetType().SetDecimal(0)
 			}
 
 			f, err := fc.getFunction(ctx, constants)
@@ -1280,7 +1280,7 @@ func TestFromUnixTime(t *testing.T) {
 			format := types.NewStringDatum(c.format)
 			constants := datumsToConstants([]types.Datum{timestamp, format})
 			if !c.isDecimal {
-				constants[0].GetType().Decimal = 0
+				constants[0].GetType().SetDecimal(0)
 			}
 			f, err := fc.getFunction(ctx, constants)
 			require.NoError(t, err)
@@ -1494,20 +1494,23 @@ func TestFromDays(t *testing.T) {
 	tests := []struct {
 		day    int64
 		expect string
+		isNil  bool
 	}{
-		{-140, "0000-00-00"},   // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
-		{140, "0000-00-00"},    // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
-		{735000, "2012-05-12"}, // Leap year.
-		{735030, "2012-06-11"},
-		{735130, "2012-09-19"},
-		{734909, "2012-02-11"},
-		{734878, "2012-01-11"},
-		{734927, "2012-02-29"},
-		{734634, "2011-05-12"}, // Non Leap year.
-		{734664, "2011-06-11"},
-		{734764, "2011-09-19"},
-		{734544, "2011-02-11"},
-		{734513, "2011-01-11"},
+		{-140, "0000-00-00", false},   // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{140, "0000-00-00", false},    // mysql FROM_DAYS returns 0000-00-00 for any day <= 365.
+		{735000, "2012-05-12", false}, // Leap year.
+		{735030, "2012-06-11", false},
+		{735130, "2012-09-19", false},
+		{734909, "2012-02-11", false},
+		{734878, "2012-01-11", false},
+		{734927, "2012-02-29", false},
+		{734634, "2011-05-12", false}, // Non Leap year.
+		{734664, "2011-06-11", false},
+		{734764, "2011-09-19", false},
+		{734544, "2011-02-11", false},
+		{734513, "2011-01-11", false},
+		{3652424, "9999-12-31", false},
+		{3652425, "", true},
 	}
 
 	fc := funcs[ast.FromDays]
@@ -1520,7 +1523,11 @@ func TestFromDays(t *testing.T) {
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 
 		require.NoError(t, err)
-		require.Equal(t, test.expect, result.GetMysqlTime().String())
+		if test.isNil {
+			require.True(t, result.IsNull())
+		} else {
+			require.Equal(t, test.expect, result.GetMysqlTime().String())
+		}
 	}
 
 	stringTests := []struct {
@@ -1624,11 +1631,11 @@ func TestTimeDiff(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.TimeDiff, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeDuration, tp.Tp)
-		require.Equal(t, charset.CharsetBin, tp.Charset)
-		require.Equal(t, charset.CollationBin, tp.Collate)
-		require.Equal(t, mysql.BinaryFlag, tp.Flag)
-		require.Equal(t, c.flen, tp.Flen)
+		require.Equal(t, mysql.TypeDuration, tp.GetType())
+		require.Equal(t, charset.CharsetBin, tp.GetCharset())
+		require.Equal(t, charset.CollationBin, tp.GetCollate())
+		require.Equal(t, mysql.BinaryFlag, tp.GetFlag())
+		require.Equal(t, c.flen, tp.GetFlen())
 		d, err := f.Eval(chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
@@ -1857,7 +1864,7 @@ func TestUnixTimestamp(t *testing.T) {
 
 	for _, test := range tests {
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().Decimal = test.inputDecimal
+		expr[0].GetType().SetDecimal(test.inputDecimal)
 		resetStmtContext(ctx)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoErrorf(t, err, "%+v", test)
@@ -1996,84 +2003,94 @@ func TestDateArithFuncs(t *testing.T) {
 	}
 
 	testDurations := []struct {
-		fc       functionClass
-		dur      string
-		fsp      int
-		unit     string
-		format   interface{}
-		expected string
+		fc           functionClass
+		dur          string
+		fsp          int
+		unit         string
+		format       interface{}
+		expected     string
+		checkHmsOnly bool // Duration + day returns datetime with current date padded, only check HMS part for them.
 	}{
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "MICROSECOND",
-			format:   "100",
-			expected: "00:00:00.000100",
+			fc:           fcAdd,
+			dur:          "00:00:00",
+			fsp:          0,
+			unit:         "MICROSECOND",
+			format:       "100",
+			expected:     "00:00:00.000100",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "MICROSECOND",
-			format:   100.0,
-			expected: "00:00:00.000100",
+			fc:           fcAdd,
+			dur:          "00:00:00",
+			fsp:          0,
+			unit:         "MICROSECOND",
+			format:       100.0,
+			expected:     "00:00:00.000100",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcSub,
-			dur:      "00:00:01",
-			fsp:      0,
-			unit:     "MICROSECOND",
-			format:   "100",
-			expected: "00:00:00.999900",
+			fc:           fcSub,
+			dur:          "00:00:01",
+			fsp:          0,
+			unit:         "MICROSECOND",
+			format:       "100",
+			expected:     "00:00:00.999900",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   "1",
-			expected: "24:00:00",
+			fc:           fcAdd,
+			dur:          "01:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       "1",
+			expected:     "01:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "SECOND",
-			format:   1,
-			expected: "00:00:01",
+			fc:           fcAdd,
+			dur:          "00:00:00",
+			fsp:          0,
+			unit:         "SECOND",
+			format:       1,
+			expected:     "00:00:01",
+			checkHmsOnly: false,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   types.NewDecFromInt(1),
-			expected: "24:00:00",
+			fc:           fcAdd,
+			dur:          "01:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       types.NewDecFromInt(1),
+			expected:     "01:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcAdd,
-			dur:      "00:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   1.0,
-			expected: "24:00:00",
+			fc:           fcAdd,
+			dur:          "01:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       1.0,
+			expected:     "01:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcSub,
-			dur:      "26:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   "1",
-			expected: "02:00:00",
+			fc:           fcSub,
+			dur:          "26:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       "1",
+			expected:     "02:00:00",
+			checkHmsOnly: true,
 		},
 		{
-			fc:       fcSub,
-			dur:      "26:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   1,
-			expected: "02:00:00",
+			fc:           fcSub,
+			dur:          "26:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       1,
+			expected:     "02:00:00",
+			checkHmsOnly: true,
 		},
 		{
 			fc:       fcSub,
@@ -2084,12 +2101,13 @@ func TestDateArithFuncs(t *testing.T) {
 			expected: "25:59:59",
 		},
 		{
-			fc:       fcSub,
-			dur:      "27:00:00",
-			fsp:      0,
-			unit:     "DAY",
-			format:   1.0,
-			expected: "03:00:00",
+			fc:           fcSub,
+			dur:          "27:00:00",
+			fsp:          0,
+			unit:         "DAY",
+			format:       1.0,
+			expected:     "03:00:00",
+			checkHmsOnly: true,
 		},
 	}
 	for _, tt := range testDurations {
@@ -2102,7 +2120,12 @@ func TestDateArithFuncs(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		require.Equal(t, tt.expected, v.GetMysqlDuration().String())
+		if tt.checkHmsOnly {
+			s := v.GetMysqlTime().String()
+			require.Truef(t, strings.HasSuffix(s, tt.expected), "Suffix mismatch: %v, %v", s, tt.expected)
+		} else {
+			require.Equal(t, tt.expected, v.GetMysqlDuration().String())
+		}
 	}
 }
 
@@ -2190,11 +2213,11 @@ func TestMakeDate(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.MakeDate, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeDate, tp.Tp)
-		require.Equal(t, charset.CharsetBin, tp.Charset)
-		require.Equal(t, charset.CollationBin, tp.Collate)
-		require.Equal(t, mysql.BinaryFlag, tp.Flag)
-		require.Equal(t, mysql.MaxDateWidth, tp.Flen)
+		require.Equal(t, mysql.TypeDate, tp.GetType())
+		require.Equal(t, charset.CharsetBin, tp.GetCharset())
+		require.Equal(t, charset.CollationBin, tp.GetCollate())
+		require.Equal(t, mysql.BinaryFlag, tp.GetFlag())
+		require.Equal(t, mysql.MaxDateWidth, tp.GetFlen())
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
@@ -2286,13 +2309,7 @@ func TestMakeTime(t *testing.T) {
 	}
 
 	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
-	tp1 := &types.FieldType{
-		Tp:      mysql.TypeLonglong,
-		Flag:    mysql.UnsignedFlag,
-		Charset: charset.CharsetBin,
-		Collate: charset.CollationBin,
-		Flen:    mysql.MaxIntWidth,
-	}
+	tp1 := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err := f.Eval(chunk.Row{})
 	require.NoError(t, err)
@@ -2668,7 +2685,7 @@ func TestSecToTime(t *testing.T) {
 	for _, test := range tests {
 		comment := fmt.Sprintf("%+v", test)
 		expr := datumsToConstants([]types.Datum{test.input})
-		expr[0].GetType().Decimal = test.inputDecimal
+		expr[0].GetType().SetDecimal(test.inputDecimal)
 		f, err := fc.getFunction(ctx, expr)
 		require.NoError(t, err, comment)
 		d, err := evalBuiltinFunc(f, chunk.Row{})

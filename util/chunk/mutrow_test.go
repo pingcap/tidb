@@ -27,6 +27,7 @@ import (
 )
 
 func TestMutRow(t *testing.T) {
+	allTypes := newAllTypes()
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
 	sc := new(stmtctx.StatementContext)
@@ -34,7 +35,7 @@ func TestMutRow(t *testing.T) {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])
 		d2 := types.NewDatum(val)
-		cmp, err := d.Compare(sc, &d2, collate.GetCollator(allTypes[i].Collate))
+		cmp, err := d.Compare(sc, &d2, collate.GetCollator(allTypes[i].GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -90,6 +91,7 @@ func TestMutRow(t *testing.T) {
 }
 
 func TestIssue29947(t *testing.T) {
+	allTypes := newAllTypes()
 	mutRow := MutRowFromTypes(allTypes)
 	nilDatum := types.NewDatum(nil)
 
@@ -168,9 +170,9 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 
 func TestMutRowShallowCopyPartialRow(t *testing.T) {
 	colTypes := make([]*types.FieldType, 0, 3)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeTimestamp})
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeVarString))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeLonglong))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeTimestamp))
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", 123, types.ZeroTimestamp).ToRow()
@@ -198,11 +200,11 @@ var rowsNum = 1024
 func BenchmarkMutRowShallowCopyPartialRow(b *testing.B) {
 	b.ReportAllocs()
 	colTypes := make([]*types.FieldType, 0, 8)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeVarString))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeVarString))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeLonglong))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeLonglong))
+	colTypes = append(colTypes, types.NewFieldType(mysql.TypeDatetime))
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()

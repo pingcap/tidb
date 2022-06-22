@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -263,13 +263,10 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = replicaReadType
-	builder.SetResourceGroupTagger(sv.StmtCtx)
-	return builder
-}
-
-// SetStreaming sets "Streaming" flag for "kv.Request".
-func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
-	builder.Request.Streaming = streaming
+	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
+	if sv.EnablePaging {
+		builder.SetPaging(true)
+	}
 	return builder
 }
 
@@ -306,10 +303,8 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 }
 
 // SetResourceGroupTagger sets the request resource group tagger.
-func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
-	if topsqlstate.TopSQLEnabled() {
-		builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
-	}
+func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGroupTagger) *RequestBuilder {
+	builder.Request.ResourceGroupTagger = tagger
 	return builder
 }
 
@@ -603,7 +598,7 @@ func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementCont
 	}
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
-		low, high, err := encodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -642,7 +637,7 @@ func indexRangesToKVRangesForTablesWithInterruptSignal(sc *stmtctx.StatementCont
 func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	rans := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
-		low, high, err := encodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -691,7 +686,7 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
 	// check the interrupt signal periodically.
 	for i, ran := range ranges {
-		low, high, err := encodeIndexKey(sc, ran)
+		low, high, err := EncodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
@@ -719,7 +714,8 @@ func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idx
 	return krs, nil
 }
 
-func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
+// EncodeIndexKey gets encoded keys containing low and high
+func EncodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []byte, error) {
 	low, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 	if err != nil {
 		return nil, nil, err

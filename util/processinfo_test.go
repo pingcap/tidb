@@ -25,7 +25,7 @@ import (
 func TestGlobalConnID(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	newCfg.Experimental.EnableGlobalKill = true
+	newCfg.EnableGlobalKill = true
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)

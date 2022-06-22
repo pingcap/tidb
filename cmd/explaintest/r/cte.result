@@ -730,3 +730,78 @@ c1	c2
 2	1
 2	2
 2	3
+use test;
+drop table if exists t1, t2;
+drop view if exists v1;
+create table t1 (a int);
+insert into t1 values (0), (1), (2), (3), (4);
+create table t2 (a int);
+insert into t2 values (1), (2), (3), (4), (5);
+drop view if exists v1,v2;
+create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
+create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
+create database if not exists test1;
+use test1;
+select * from test.v1;
+a
+5
+4
+3
+2
+select * from test.v2;
+a
+6
+5
+4
+3
+use test;
+drop table if exists t ,t1, t2;
+create table t(a int);
+insert into t values (0);
+create table t1 (b int);
+insert into t1 values (0);
+create table t2 (c int);
+insert into t2 values (0);
+drop view if exists v1;
+create view v1 as with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;
+use test1;
+select * from test.v1;
+b	c
+0	0
+use test;
+drop table if exists t11111;
+create table t11111 (d int);
+insert into t11111 values (123), (223), (323);
+drop view if exists v1;
+create view v1 as WITH t123 AS (WITH t11111 AS ( SELECT * FROM t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, t2 ) SELECT * FROM t11111;
+use test1;
+select * from test.v1;
+d
+123
+223
+323
+use test;
+drop table if exists t1;
+create table t1 (a int);
+insert into t1 values (1);
+drop view if exists v1;
+create view v1 as SELECT (WITH qn AS (SELECT 10*a as a FROM t1),qn2 AS (SELECT 3*a AS b FROM qn) SELECT * from qn2 LIMIT 1) FROM t1;
+use test1;
+select * from test.v1;
+name_exp_1
+30
+use test;
+drop table if exists t1,t2;
+create table t1 (a int);
+insert into t1 values (0), (1);
+create table t2 (b int);
+insert into t2 values  (4), (5);
+drop view if exists v1;
+create view v1 as with t1 as (with t11 as (select * from t1) select * from t1, t2) select * from t1;
+use test1;
+select * from test.v1;
+a	b
+0	5
+0	4
+1	5
+1	4

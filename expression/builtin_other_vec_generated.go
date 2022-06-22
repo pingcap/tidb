@@ -52,7 +52,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 			hasNull[i] = true
 		}
 	}
-	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	var compareResult int
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
@@ -83,7 +83,7 @@ func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 		if err := args[j].VecEvalInt(b.ctx, input, buf1); err != nil {
 			return err
 		}
-		isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().Flag)
+		isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().GetFlag())
 		args1 := buf1.Int64s()
 		buf1.MergeNulls(buf0)
 		for i := 0; i < n; i++ {

@@ -20,18 +20,18 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,8 +43,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -241,8 +243,56 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
+var statsHealthyGauges = []prometheus.Gauge{
+	metrics.StatsHealthyGauge.WithLabelValues("[0,50)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[50,80)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[80,100)"),
+	metrics.StatsHealthyGauge.WithLabelValues("[100,100]"),
+	// [0,100] should always be the last
+	metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
+}
+
+type statsHealthyChange struct {
+	bucketDelta [5]int
+}
+
+func (c *statsHealthyChange) update(add bool, statsHealthy int64) {
+	var idx int
+	if statsHealthy < 50 {
+		idx = 0
+	} else if statsHealthy < 80 {
+		idx = 1
+	} else if statsHealthy < 100 {
+		idx = 2
+	} else {
+		idx = 3
+	}
+	lastIDX := len(c.bucketDelta) - 1
+	if add {
+		c.bucketDelta[idx] += 1
+		c.bucketDelta[lastIDX] += 1
+	} else {
+		c.bucketDelta[idx] -= 1
+		c.bucketDelta[lastIDX] -= 1
+	}
+}
+
+func (c *statsHealthyChange) drop(statsHealthy int64) {
+	c.update(false, statsHealthy)
+}
+
+func (c *statsHealthyChange) add(statsHealthy int64) {
+	c.update(true, statsHealthy)
+}
+
+func (c *statsHealthyChange) apply() {
+	for i, val := range c.bucketDelta {
+		statsHealthyGauges[i].Add(float64(val))
+	}
+}
+
 // Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(is infoschema.InfoSchema) error {
+func (h *Handle) Update(is infoschema.InfoSchema, opts ...TableStatsOpt) error {
 	oldCache := h.statsCache.Load().(statsCache)
 	lastVersion := oldCache.version
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -261,7 +311,11 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	healthyChange := &statsHealthyChange{}
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
@@ -279,7 +333,8 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		oldTbl, ok := oldCache.Get(physicalID)
+		if ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -287,6 +342,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		if err != nil {
 			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
+		}
+		if oldHealthy, ok := oldTbl.GetStatsHealthy(); ok {
+			healthyChange.drop(oldHealthy)
 		}
 		if tbl == nil {
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -297,9 +355,15 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
+		if newHealthy, ok := tbl.GetStatsHealthy(); ok {
+			healthyChange.add(newHealthy)
+		}
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))
+	updated := h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion, opts...))
+	if updated {
+		healthyChange.apply()
+	}
 	return nil
 }
 
@@ -408,19 +472,24 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			if isIndex == 0 {
 				errMsg = fmt.Sprintf("`%s`", tableInfo.Name.L)
 			} else {
-				indexName := ""
-				for _, idx := range tableInfo.Indices {
-					if idx.ID == histIDs[0] {
-						indexName = idx.Name.L
-					}
-				}
-				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, indexName)
+				errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[0]))
 			}
 			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 			return
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(histIDs[i], isIndex == 1)
+			// partition stats is not empty but column stats(hist, topn) is missing
+			if partitionStats.Count > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+				var errMsg string
+				if isIndex == 0 {
+					errMsg = fmt.Sprintf("`%s` column: `%s`", tableInfo.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
+				} else {
+					errMsg = fmt.Sprintf("`%s` index: `%s`", tableInfo.Name.L, tableInfo.FindIndexNameByID(histIDs[i]))
+				}
+				err = types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(errMsg)
+				return
+			}
 			if i == 0 {
 				// In a partition, we will only update globalStats.Count once
 				globalStats.Count += count
@@ -515,14 +584,24 @@ func (h *Handle) GetMemConsumed() (size int64) {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
-	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...TableStatsOpt) *statistics.Table {
+	return h.GetPartitionStats(tblInfo, tblInfo.ID, opts...)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...TableStatsOpt) *statistics.Table {
 	statsCache := h.statsCache.Load().(statsCache)
-	tbl, ok := statsCache.Get(pid)
+	var tbl *statistics.Table
+	var ok bool
+	option := &tableStatsOption{}
+	for _, opt := range opts {
+		opt(option)
+	}
+	if option.byQuery {
+		tbl, ok = statsCache.GetByQuery(pid)
+	} else {
+		tbl, ok = statsCache.Get(pid)
+	}
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
@@ -538,12 +617,17 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
+	enableQuota := oldCache.EnableQuota()
+	newCost := newCache.Cost()
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
-		h.statsCache.memTracker.Consume(newCache.Cost() - oldCache.Cost())
+		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
 		h.statsCache.Store(newCache)
 		updated = true
 	}
 	h.statsCache.Unlock()
+	if updated && enableQuota {
+		costGauge.Set(float64(newCost))
+	}
 	return
 }
 
@@ -561,6 +645,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			err = err1
 		}
 	}()
+	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 
 	for _, col := range cols {
 		oldCache := h.statsCache.Load().(statsCache)
@@ -569,7 +654,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			continue
 		}
 		c, ok := tbl.Columns[col.ColumnID]
-		if !ok || c.IsLoaded() {
+		if !ok || !c.IsLoadNeeded() {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
@@ -581,9 +666,12 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		fms, err := h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
-		if err != nil {
-			return errors.Trace(err)
+		var fms *statistics.FMSketch
+		if loadFMSketch {
+			fms, err = h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ColumnID)
 		if err != nil {
@@ -593,15 +681,15 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
 		}
 		colHist := &statistics.Column{
-			PhysicalID: col.TableID,
-			Histogram:  *hg,
-			Info:       c.Info,
-			CMSketch:   cms,
-			TopN:       topN,
-			FMSketch:   fms,
-			IsHandle:   c.IsHandle,
-			StatsVer:   rows[0].GetInt64(0),
-			Loaded:     true,
+			PhysicalID:      col.TableID,
+			Histogram:       *hg,
+			Info:            c.Info,
+			CMSketch:        cms,
+			TopN:            topN,
+			FMSketch:        fms,
+			IsHandle:        c.IsHandle,
+			StatsVer:        rows[0].GetInt64(0),
+			ColLoadedStatus: statistics.NewColFullLoadStatus(),
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
@@ -724,10 +812,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	statsVer := row.GetInt64(7)
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	col := table.Columns[histID]
 	errorRate := statistics.ErrorRate{}
 	flag := row.GetInt64(8)
@@ -740,15 +824,15 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		if histID != colInfo.ID {
 			continue
 		}
-		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)
+		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets if:
 		// 1. Lease > 0, and:
 		// 2. this column is not handle, and:
-		// 3. the column doesn't has buckets before, and:
+		// 3. the column doesn't has any statistics before, and:
 		// 4. loadAll is false.
 		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
-			(col == nil || !col.IsLoaded() && col.LastUpdateVersion < histVer) &&
+			(col == nil || !col.IsStatsInitialized() && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
@@ -758,11 +842,10 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			col = &statistics.Column{
 				PhysicalID: table.PhysicalID,
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				FMSketch:   fmSketch,
 				Info:       colInfo,
 				Count:      count + nullCount,
 				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
 			}
@@ -779,18 +862,24 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
+			// we load all the statistics, i.e., loadAll is true. We don't need to read FMSketch from storage in notNeedLoad IF.
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 0, histID)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *hg,
-				Info:       colInfo,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				ErrorRate:  errorRate,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
-				Flag:       flag,
-				StatsVer:   statsVer,
-				Loaded:     true,
+				PhysicalID:      table.PhysicalID,
+				Histogram:       *hg,
+				Info:            colInfo,
+				CMSketch:        cms,
+				TopN:            topN,
+				FMSketch:        fmSketch,
+				ErrorRate:       errorRate,
+				IsHandle:        tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				Flag:            flag,
+				StatsVer:        statsVer,
+				ColLoadedStatus: statistics.NewColFullLoadStatus(),
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
@@ -886,7 +975,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 		return table, nil
 	}
 	for _, row := range rows {
-		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(5))
+		lastVersion = mathutil.Max(lastVersion, row.GetUint64(5))
 		name := row.GetString(0)
 		status := uint8(row.GetInt64(1))
 		if status == StatsStatusDeleted || status == StatsStatusInited {
@@ -1011,6 +1100,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		statsVer = version
 	}
 	// 2. Save histograms.
+	const maxInsertLength = 1024 * 1024
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
 			// It's normal virtual column, skip it.
@@ -1034,8 +1124,26 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 				return err
 			}
 			if topN := result.TopNs[i]; topN != nil {
-				for _, meta := range topN.TopN {
-					if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, meta.Encoded, meta.Count); err != nil {
+				for j := 0; j < len(topN.TopN); {
+					end := j + batchInsertSize
+					if end > len(topN.TopN) {
+						end = len(topN.TopN)
+					}
+					sql := new(strings.Builder)
+					sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
+					for k := j; k < end; k++ {
+						val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, topN.TopN[k].Encoded, topN.TopN[k].Count)
+						if k > j {
+							val = "," + val
+						}
+						if k > j && sql.Len()+len(val) > maxInsertLength {
+							end = k
+							break
+						}
+						sql.WriteString(val)
+					}
+					j = end
+					if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
 						return err
 					}
 				}
@@ -1057,25 +1165,43 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			}
 			sc := h.mu.ctx.GetSessionVars().StmtCtx
 			var lastAnalyzePos []byte
-			for j := range hg.Buckets {
-				count := hg.Buckets[j].Count
-				if j > 0 {
-					count -= hg.Buckets[j-1].Count
+			for j := 0; j < len(hg.Buckets); {
+				end := j + batchInsertSize
+				if end > len(hg.Buckets) {
+					end = len(hg.Buckets)
 				}
-				var upperBound types.Datum
-				upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-				if err != nil {
-					return err
+				sql := new(strings.Builder)
+				sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
+				for k := j; k < end; k++ {
+					count := hg.Buckets[k].Count
+					if k > 0 {
+						count -= hg.Buckets[k-1].Count
+					}
+					var upperBound types.Datum
+					upperBound, err = hg.GetUpper(k).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+					if err != nil {
+						return err
+					}
+					if k == len(hg.Buckets)-1 {
+						lastAnalyzePos = upperBound.GetBytes()
+					}
+					var lowerBound types.Datum
+					lowerBound, err = hg.GetLower(k).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+					if err != nil {
+						return err
+					}
+					val := sqlexec.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, k, count, hg.Buckets[k].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[k].NDV)
+					if k > j {
+						val = "," + val
+					}
+					if k > j && sql.Len()+len(val) > maxInsertLength {
+						end = k
+						break
+					}
+					sql.WriteString(val)
 				}
-				if j == len(hg.Buckets)-1 {
-					lastAnalyzePos = upperBound.GetBytes()
-				}
-				var lowerBound types.Datum
-				lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-				if err != nil {
-					return err
-				}
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, j, count, hg.Buckets[j].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[j].NDV); err != nil {
+				j = end
+				if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
 					return err
 				}
 			}
@@ -1119,7 +1245,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 
 // SaveStatsToStorage saves the stats to storage.
 // TODO: refactor to reduce the number of parameters
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool, updateAnalyzeTime bool) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
@@ -1157,10 +1283,6 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	if err != nil {
 		return err
 	}
-	fmSketch, err := statistics.EncodeFMSketch(fms)
-	if err != nil {
-		return err
-	}
 	// Delete outdated data
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
@@ -1174,11 +1296,6 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
-	}
-	if fmSketch != nil && needDumpFMS {
-		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
-			return err
-		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {
@@ -1277,9 +1394,9 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// When there's new collation data, the length of bounds of histogram(the collate key) might be
-			// longer than the FieldType.Flen of this column.
+			// longer than the FieldType.flen of this column.
 			// We change it to TypeBlob to bypass the length check here.
-			if tp.EvalType() == types.ETString && tp.Tp != mysql.TypeEnum && tp.Tp != mysql.TypeSet {
+			if tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
 			lowerBound, err = d.ConvertTo(sc, tp)
@@ -2012,18 +2129,18 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) error {
-	serverInfo, err := infosync.GetServerInfo()
-	if err != nil {
-		return err
-	}
-	address := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
 	ctx := context.TODO()
+	jobInfo := job.JobInfo
+	const textMaxLength = 65535
+	if len(jobInfo) > textMaxLength {
+		jobInfo = jobInfo[:textMaxLength]
+	}
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, address, procID)
+	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
 	if err != nil {
 		return err
 	}
@@ -2041,4 +2158,45 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
 	_, _, err := h.execRestrictedSQL(context.TODO(), "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 	return err
+}
+
+type tableStatsOption struct {
+	byQuery bool
+}
+
+// TableStatsOpt used to edit getTableStatsOption
+type TableStatsOpt func(*tableStatsOption)
+
+// WithTableStatsByQuery indicates user needed
+func WithTableStatsByQuery() TableStatsOpt {
+	return func(option *tableStatsOption) {
+		option.byQuery = true
+	}
+}
+
+// SetStatsCacheCapacity sets capacity
+func (h *Handle) SetStatsCacheCapacity(c int64) {
+	if h == nil {
+		return
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return
+	}
+	sc := v.(statsCache)
+	sc.SetCapacity(c)
+}
+
+// GetStatsCacheFrontTable gets front table in statsCacheInner implementation
+// only used for test
+func (h *Handle) GetStatsCacheFrontTable() int64 {
+	if h == nil {
+		return 0
+	}
+	v := h.statsCache.Load()
+	if v == nil {
+		return 0
+	}
+	sc := v.(statsCache)
+	return sc.Front()
 }

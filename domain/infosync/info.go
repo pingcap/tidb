@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -196,14 +195,14 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
-	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	err := is.newSessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 	if err != nil {
 		return err
 	}
 	if skipRegisterToDashboard {
 		return nil
 	}
-	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	return is.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // SetSessionManager set the session manager for InfoSyncer.
@@ -266,7 +265,7 @@ func SetMockTiFlash(tiflash *MockTiFlash) {
 
 	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
 	if ok {
-		m.tiflash = tiflash
+		m.SetMockTiFlash(tiflash)
 	}
 }
 
@@ -642,8 +641,9 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	now := oracle.GetTimeFromTS(currentVer.Ver)
 	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
-
 	minStartTS := oracle.GoTimeToTS(now)
+	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
+		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
@@ -651,6 +651,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 
 	for _, innerTS := range innerSessionStartTSList {
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
 		kv.PrintLongTimeInternalTxn(now, innerTS, false)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
@@ -663,6 +664,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
 	}
+	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
 }
 
 // Done returns a channel that closes when the info syncer is no longer being refreshed.
@@ -683,12 +685,12 @@ func (is *InfoSyncer) TopologyDone() <-chan struct{} {
 
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
-	return is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	return is.newSessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // RestartTopology restart the topology syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) RestartTopology(ctx context.Context) error {
-	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	return is.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
 }
 
 // GetAllTiDBTopology gets all tidb topology
@@ -718,7 +720,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
-	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
 	if err != nil {
 		return err
 	}
@@ -737,7 +739,7 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 		return nil
 	}
 	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s:%d", TopologyInformationPath, is.info.IP, is.info.Port)
-	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
+	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
 	}

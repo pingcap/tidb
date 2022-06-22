@@ -27,7 +27,7 @@ trap undo_set_globals EXIT
 # and the changes are actually effective. So we have this check-and-retry loop
 # below to ensure Lightning gets our desired global vars.
 run_sql "SET GLOBAL time_zone='-08:00', GLOBAL default_week_format=4, GLOBAL block_encryption_mode='aes-256-cbc'"
-for i in $(seq 3); do
+for _ in $(seq 3); do
     sleep 1
     run_sql "SELECT CONCAT(@@time_zone, ',', @@default_week_format, ',', @@block_encryption_mode) res"
     if [ "$(read_result)" = '-08:00,4,aes-256-cbc' ]; then
@@ -35,7 +35,7 @@ for i in $(seq 3); do
     fi
 done
 
-for BACKEND in 'local' 'tidb' 'importer'; do
+for BACKEND in 'local' 'tidb'; do
     if [ "$BACKEND" = 'local' ]; then
         check_cluster_version 4 0 0 'local backend' || continue
     fi

@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -282,8 +282,8 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 		}
 		uCurrentEnd := uint64(currentEnd)
 		if allocIDs {
-			newBase = mathutil.MaxUint64(uCurrentEnd, requiredBase)
-			newEnd = mathutil.MinUint64(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
+			newBase = mathutil.Max(uCurrentEnd, requiredBase)
+			newEnd = mathutil.Min(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
 		} else {
 			if uCurrentEnd >= requiredBase {
 				newBase = uCurrentEnd
@@ -340,8 +340,8 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 			return err1
 		}
 		if allocIDs {
-			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
-			newEnd = mathutil.MinInt64(math.MaxInt64-alloc.step, newBase) + alloc.step
+			newBase = mathutil.Max(currentEnd, requiredBase)
+			newEnd = mathutil.Min(math.MaxInt64-alloc.step, newBase) + alloc.step
 		} else {
 			if currentEnd >= requiredBase {
 				newBase = currentEnd
@@ -780,7 +780,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, nextStep)
+			tmpStep := mathutil.Min(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -869,7 +869,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(nextStep)))
+			tmpStep := int64(mathutil.Min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -1073,7 +1073,7 @@ type ShardIDLayout struct {
 func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 	incrementalBits := typeBitsLength - shardBits
-	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
+	hasSignBit := !mysql.HasUnsignedFlag(fieldType.GetFlag())
 	if hasSignBit {
 		incrementalBits -= 1
 	}

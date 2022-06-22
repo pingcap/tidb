@@ -45,19 +45,15 @@ var (
 		"Performance.PseudoEstimateRatio": {},
 		"Performance.StmtCountLimit":      {},
 		"Performance.TCPKeepAlive":        {},
-		"OOMAction":                       {},
-		"MemQuotaQuery":                   {},
 		"TiKVClient.StoreLimit":           {},
 		"Log.Level":                       {},
-		"Log.SlowThreshold":               {},
-		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},
-		"CheckMb4ValueInUTF8":             {},
+		"Instance.SlowThreshold":          {},
+		"Instance.CheckMb4ValueInUTF8":    {},
 		"TxnLocalLatches.Capacity":        {},
 		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
 		"OpenTracing.Enable":              {},
-		"PreparedPlanCache.Enabled":       {},
 	}
 )
 

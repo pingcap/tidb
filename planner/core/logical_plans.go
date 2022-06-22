@@ -136,8 +136,9 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo       *tableHintInfo
-	preferJoinType uint
+	hintInfo        *tableHintInfo
+	preferJoinType  uint
+	preferJoinOrder bool
 
 	EqualConditions []*expression.ScalarFunction
 	LeftConditions  expression.CNFExprs
@@ -327,7 +328,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 		opt.SkipFDRule331 = true
 	}
 
-	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0
+	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0 && len(p.OtherConditions) == 0
 	if opt.OnlyInnerFilter {
 		// if one of the inner condition is constant false, the inner side are all null, left make constant all of that.
 		for _, one := range innerCondition {
@@ -791,7 +792,7 @@ func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartiti
 		if col, ok := item.(*expression.Column); ok {
 			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
 				Col:       col,
-				CollateID: property.GetCollateIDByNameForPartition(col.GetType().Collate),
+				CollateID: property.GetCollateIDByNameForPartition(col.GetType().GetCollate()),
 			})
 		}
 	}
@@ -964,19 +965,6 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 
 	// extract equivalence cols.
 	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
-
-	// after left join, according to rule 3.3.3, it may create a lax FD from inner equivalence
-	// cols pointing to outer equivalence cols.  eg: t left join t1 on t.a = t1.b, leading a
-	// lax FD from t1.b ~> t.a, this lax attribute is coming from supplied null value to all
-	// left rows, once there is a null-refusing predicate on the inner side on upper layer, this
-	// can be equivalence again. (the outer rows left are all coming from equal matching)
-	//
-	// why not just makeNotNull of them, because even a non-equiv-related inner col can also
-	// refuse supplied null values.
-	if fds.Rule333Equiv.InnerCols.Len() != 0 && notnullColsUniqueIDs.Intersects(fds.Rule333Equiv.InnerCols) {
-		// restore/re-strength FDs from rule 333
-		fds.MakeRestoreRule333()
-	}
 
 	// apply operator's characteristic's FD setting.
 	fds.MakeNotNull(notnullColsUniqueIDs)
@@ -1209,7 +1197,7 @@ type LogicalIndexScan struct {
 
 // MatchIndexProp checks if the indexScan can match the required property.
 func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (match bool) {
-	if prop.IsEmpty() {
+	if prop.IsSortItemEmpty() {
 		return true
 	}
 	if all, _ := prop.AllSameOrder(); !all {
@@ -1361,7 +1349,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	isUnsigned := false
 	if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
 	} else if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
@@ -1432,7 +1420,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
-		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
 			alreadyHandle := false
 			for _, col := range path.IdxCols {
 				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
@@ -1533,7 +1521,7 @@ func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Sch
 		return nil
 	}
 	for i, col := range cols {
-		if mysql.HasPriKeyFlag(col.Flag) {
+		if mysql.HasPriKeyFlag(col.GetFlag()) {
 			return schema.Columns[i]
 		}
 	}
@@ -1635,6 +1623,17 @@ type WindowFrame struct {
 	End   *FrameBound
 }
 
+// Clone copies a window frame totally.
+func (wf *WindowFrame) Clone() *WindowFrame {
+	cloned := new(WindowFrame)
+	*cloned = *wf
+
+	cloned.Start = wf.Start.Clone()
+	cloned.End = wf.End.Clone()
+
+	return cloned
+}
+
 // FrameBound is the boundary of a frame.
 type FrameBound struct {
 	Type      ast.BoundType
@@ -1646,6 +1645,20 @@ type FrameBound struct {
 	CalcFuncs []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
+}
+
+// Clone copies a frame bound totally.
+func (fb *FrameBound) Clone() *FrameBound {
+	cloned := new(FrameBound)
+	*cloned = *fb
+
+	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+	for _, it := range fb.CalcFuncs {
+		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+	}
+	cloned.CmpFuncs = fb.CmpFuncs
+
+	return cloned
 }
 
 // LogicalWindow represents a logical window function plan.
@@ -1811,6 +1824,8 @@ type ShowContents struct {
 	Flag      int                  // Some flag parsed from sql, such as FULL.
 	User      *auth.UserIdentity   // Used for show grants.
 	Roles     []*auth.RoleIdentity // Used for show grants.
+
+	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	Full        bool
 	IfNotExists bool // Used for `show create database if not exists`.

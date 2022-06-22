@@ -78,10 +78,6 @@ func (m *mutexForRowContainer) RUnlock() {
 type RowContainer struct {
 	m *mutexForRowContainer
 
-	fieldType []*types.FieldType
-	chunkSize int
-	numRow    int
-
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 	actionSpill *SpillDiskAction
@@ -97,8 +93,6 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 			rLock:   rLock,
 			wLocks:  []*sync.RWMutex{rLock},
 		},
-		fieldType:   fieldType,
-		chunkSize:   chunkSize,
 		memTracker:  memory.NewTracker(memory.LabelForRowContainer, -1),
 		diskTracker: disk.NewTracker(memory.LabelForRowContainer, -1),
 	}
@@ -248,16 +242,22 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 }
 
 // GetRow returns the row the ptr pointed to.
-func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
+func (c *RowContainer) GetRow(ptr RowPtr) (row Row, err error) {
+	row, _, err = c.GetRowAndAppendToChunk(ptr, nil)
+	return row, err
+}
+
+// GetRowAndAppendToChunk gets a Row from the RowContainer by RowPtr.
+func (c *RowContainer) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.alreadySpilled() {
 		if err := c.m.records.spillError; err != nil {
-			return Row{}, err
+			return Row{}, nil, err
 		}
-		return c.m.records.inDisk.GetRow(ptr)
+		return c.m.records.inDisk.GetRowAndAppendToChunk(ptr, chk)
 	}
-	return c.m.records.inMemory.GetRow(ptr), nil
+	return c.m.records.inMemory.GetRow(ptr), nil, nil
 }
 
 // GetMemTracker returns the memory tracker in records, panics if the RowContainer has already spilled.
@@ -438,20 +438,24 @@ type SortedRowContainer struct {
 	keyCmpFuncs []CompareFunc
 
 	actionSpill *SortAndSpillDiskAction
+	memTracker  *memory.Tracker
 }
 
 // NewSortedRowContainer creates a new SortedRowContainer in memory.
 func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []CompareFunc) *SortedRowContainer {
-	return &SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
+	src := SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
 		ByItemsDesc: ByItemsDesc, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}
+	src.memTracker = memory.NewTracker(memory.LabelForRowContainer, -1)
+	src.RowContainer.GetMemTracker().AttachTo(src.GetMemTracker())
+	return &src
 }
 
 // Close close the SortedRowContainer
 func (c *SortedRowContainer) Close() error {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
-	c.GetMemTracker().Consume(int64(-8 * cap(c.ptrM.rowPtrs)))
+	c.GetMemTracker().Consume(int64(-8 * c.NumRow()))
 	c.ptrM.rowPtrs = nil
 	return c.RowContainer.Close()
 }
@@ -486,7 +490,7 @@ func (c *SortedRowContainer) Sort() {
 	if c.ptrM.rowPtrs != nil {
 		return
 	}
-	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow())
+	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
@@ -498,7 +502,6 @@ func (c *SortedRowContainer) Sort() {
 		}
 	}
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
-	c.GetMemTracker().Consume(int64(8 * c.numRow))
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
@@ -513,6 +516,8 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 	if c.ptrM.rowPtrs != nil {
 		return ErrCannotAddBecauseSorted
 	}
+	// Consume the memory usage of rowPtrs in advance
+	c.GetMemTracker().Consume(int64(chk.NumRows() * 8))
 	return c.RowContainer.Add(chk)
 }
 
@@ -542,6 +547,11 @@ func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
 		SpillDiskAction: c.RowContainer.ActionSpillForTest(),
 	}
 	return c.actionSpill
+}
+
+// GetMemTracker return the memory tracker for the sortedRowContainer
+func (c *SortedRowContainer) GetMemTracker() *memory.Tracker {
+	return c.memTracker
 }
 
 // SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If

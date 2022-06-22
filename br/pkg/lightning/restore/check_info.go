@@ -48,9 +48,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -402,7 +402,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	bigTableCount := 0
 	tableCount := 0
 	unSortedTableCount := 0
-	errMgr := errormanager.New(nil, rc.cfg)
+	errMgr := errormanager.New(nil, rc.cfg, log.FromContext(ctx))
 	for _, db := range rc.dbMetas {
 		info, ok := rc.dbInfos[db.Name]
 		if !ok {
@@ -455,7 +455,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 }
 
 // localResource checks the local node has enough resources for this import when local backend enabled;
-func (rc *Controller) localResource(sourceSize int64) error {
+func (rc *Controller) localResource(ctx context.Context, sourceSize int64) error {
 	if rc.isSourceInLocal() {
 		sourceDir := strings.TrimPrefix(rc.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
 		same, err := common.SameDisk(sourceDir, rc.cfg.TikvImporter.SortedKVDir)
@@ -489,7 +489,7 @@ func (rc *Controller) localResource(sourceSize int64) error {
 			units.BytesSize(float64(sourceSize)),
 			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(localAvailable)))
 		passed = false
-		log.L().Error(message)
+		log.FromContext(ctx).Error(message)
 	default:
 		message = fmt.Sprintf("local disk space may not enough to finish import, "+
 			"estimate sorted data size is %s, but local available is %s,"+
@@ -497,7 +497,7 @@ func (rc *Controller) localResource(sourceSize int64) error {
 			units.BytesSize(float64(sourceSize)),
 			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
 		passed = true
-		log.L().Warn(message)
+		log.FromContext(ctx).Warn(message)
 	}
 	rc.checkTemplate.Collect(Critical, passed, message)
 	return nil
@@ -510,7 +510,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 	tableCheckPoint, err := rc.checkpointsDB.Get(ctx, uniqueName)
 	if err != nil {
 		// there is no checkpoint
-		log.L().Debug("no checkpoint detected", zap.String("table", uniqueName))
+		log.FromContext(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
 		return nil, true
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
@@ -570,12 +570,12 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 		}
 	}
 	if len(columns) == 0 {
-		log.L().Debug("no valid checkpoint detected", zap.String("table", uniqueName))
+		log.FromContext(ctx).Debug("no valid checkpoint detected", zap.String("table", uniqueName))
 		return nil, false
 	}
 	info := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if info != nil {
-		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil)
+		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil, log.FromContext(ctx))
 		if err != nil {
 			msgs = append(msgs, fmt.Sprintf("failed to calculate columns %s, table %s's info has changed,"+
 				"consider remove this checkpoint, and start import again.", err.Error(), uniqueName))
@@ -590,8 +590,8 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 
 // hasDefault represents col has default value.
 func hasDefault(col *model.ColumnInfo) bool {
-	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.Flag) ||
-		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
+	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.GetFlag()) ||
+		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
 }
 
 func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, row []types.Datum, err error) {
@@ -615,12 +615,12 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
-		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
+		parser = mydump.NewChunkParser(ctx, rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, rc.store, reader, dataFileMeta.Path)
 		if err != nil {
@@ -641,7 +641,7 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 // SchemaIsValid checks the import file and cluster schema is match.
 func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
-		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
+		log.FromContext(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil
 	}
 
@@ -663,7 +663,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	core := info.Core
 	defaultCols := make(map[string]struct{})
 	for _, col := range core.Columns {
-		if hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.Flag)) {
+		if hasDefault(col) || (info.Core.ContainsAutoRandomBits() && mysql.HasPriKeyFlag(col.GetFlag())) {
 			// this column has default value or it's auto random id, so we can ignore it
 			defaultCols[col.Name.L] = struct{}{}
 		}
@@ -673,7 +673,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 
 	// only check the first file of this table.
 	dataFile := tableInfo.DataFiles[0]
-	log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
+	log.FromContext(ctx).Info("datafile to check", zap.String("db", tableInfo.DB),
 		zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 	// get columns name from data file.
 	dataFileMeta := dataFile.FileMeta
@@ -687,7 +687,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		return nil, errors.Trace(err)
 	}
 	if colsFromDataFile == nil && len(row) == 0 {
-		log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
+		log.FromContext(ctx).Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
 		return msgs, nil
 	}
 
@@ -898,7 +898,7 @@ outer:
 	level := Warn
 	if hasUniqueField && len(rows) > 1 {
 		level = Critical
-	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0]) {
+	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx)) {
 		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
 		level = Critical
 	}
@@ -907,10 +907,15 @@ outer:
 	return nil
 }
 
-func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{}, values []types.Datum) bool {
+func checkFieldCompatibility(
+	tbl *model.TableInfo,
+	ignoreCols map[string]struct{},
+	values []types.Datum,
+	logger log.Logger,
+) bool {
 	se := kv.NewSession(&kv.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
-	})
+	}, logger)
 	for i, col := range tbl.Columns {
 		// do not check ignored columns
 		if _, ok := ignoreCols[col.Name.L]; ok {
@@ -921,7 +926,7 @@ func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{
 		}
 		_, err := table.CastValue(se, values[i], col, true, false)
 		if err != nil {
-			log.L().Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
+			logger.Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
 				zap.Any("column_info", col), zap.Error(err))
 			return false
 		}
@@ -956,7 +961,7 @@ func (rc *Controller) sampleDataFromTable(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{
+	kvEncoder, err := rc.backend.NewEncoder(ctx, tbl, &kv.SessionOptions{
 		SQLMode:        rc.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        rc.sysVars,
@@ -976,12 +981,12 @@ func (rc *Controller) sampleDataFromTable(
 		if err != nil {
 			return errors.Trace(err)
 		}
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
-		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
+		parser = mydump.NewChunkParser(ctx, rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, rc.store, reader, sampleFile.Path)
 		if err != nil {
@@ -991,7 +996,7 @@ func (rc *Controller) sampleDataFromTable(
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", sampleFile.Path, sampleFile.Type.String()))
 	}
 	defer parser.Close()
-	logTask := log.With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
+	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
 	igCols, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return errors.Trace(err)
@@ -1017,7 +1022,11 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
+					columnPermutation, err = createColumnPermutation(
+						columnNames,
+						igCols.ColumnsMap(),
+						tableInfo,
+						log.FromContext(ctx))
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1036,7 +1045,7 @@ outloop:
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
 		if encodeErr != nil {
-			encodeErr = errMgr.RecordTypeError(ctx, log.L(), tableInfo.Name.O, sampleFile.Path, offset,
+			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)
 			if encodeErr != nil {
 				return errors.Annotatef(encodeErr, "in file at offset %d", offset)
@@ -1075,7 +1084,7 @@ outloop:
 	if rowSize > 0 && kvSize > rowSize {
 		tableMeta.IndexRatio = float64(kvSize) / float64(rowSize)
 	}
-	log.L().Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
+	log.FromContext(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
 	return nil
 }
 
@@ -1092,7 +1101,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 
 	var lock sync.Mutex
 	tableNames := make([]string, 0)
-	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
+	concurrency := mathutil.Min(tableCount, rc.cfg.App.RegionConcurrency)
 	ch := make(chan string, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
 
@@ -1159,7 +1168,7 @@ func tableContainsData(ctx context.Context, db utils.DBExecutor, tableName strin
 	query := "select 1 from " + tableName + " limit 1"
 	exec := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	var dump int
 	err := exec.QueryRow(ctx, "check table empty", query, &dump)

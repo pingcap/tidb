@@ -125,7 +125,7 @@ func pseudoSelectivity(coll *HistColl, exprs []expression.Expression) float64 {
 				continue
 			}
 			colExists[col.Info.Name.L] = true
-			if mysql.HasUniKeyFlag(col.Info.Flag) {
+			if mysql.HasUniKeyFlag(col.Info.GetFlag()) {
 				return 1.0 / float64(coll.Count)
 			}
 		case ast.GE, ast.GT, ast.LE, ast.LT:

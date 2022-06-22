@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //go:build !race
-// +build !race
 
 package server
 
@@ -32,6 +31,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -992,6 +992,7 @@ func TestCreateTableFlen(t *testing.T) {
 	require.Len(t, cols, 2)
 	require.Equal(t, 21, int(cols[0].ColumnLength))
 	require.Equal(t, 22, int(cols[1].ColumnLength))
+	rs.Close()
 }
 
 func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
@@ -1110,12 +1111,14 @@ func TestFieldList(t *testing.T) {
 	cols := rs.Columns()
 	require.Equal(t, tooLongColumnAsName, cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
+	rs.Close()
 
 	rs, err = Execute(ctx, qctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
 	require.NoError(t, err)
 	cols = rs.Columns()
 	require.Equal(t, "c_bit", cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
+	rs.Close()
 }
 
 func TestClientErrors(t *testing.T) {
@@ -1152,6 +1155,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 
 	{
@@ -1162,6 +1166,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 
 	{
@@ -1176,7 +1181,9 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
+
 	{
 
 		rs, err := Execute(ctx, qctx, "select if(1, null, 1) ;")
@@ -1185,6 +1192,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 	{
 		rs, err := Execute(ctx, qctx, "select CASE 1 WHEN 2 THEN 1 END ;")
@@ -1193,6 +1201,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 	{
 		rs, err := Execute(ctx, qctx, "select NULL;")
@@ -1201,6 +1210,7 @@ func TestNullFlag(t *testing.T) {
 		require.Len(t, cols, 1)
 		expectFlag := uint16(tmysql.BinaryFlag)
 		require.Equal(t, expectFlag, dumpFlag(cols[0].Type, cols[0].Flag))
+		rs.Close()
 	}
 }
 
@@ -1221,6 +1231,7 @@ func TestNO_DEFAULT_VALUEFlag(t *testing.T) {
 	require.NoError(t, err)
 	rs, err := Execute(ctx, qctx, "select c1 from t;")
 	require.NoError(t, err)
+	defer rs.Close()
 	cols := rs.Columns()
 	require.Len(t, cols, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
@@ -1293,6 +1304,77 @@ func TestPessimisticInsertSelectForUpdate(t *testing.T) {
 	require.Nil(t, rs) // should be no delay
 }
 
+func TestTopSQLCatchRunningSQL(t *testing.T) {
+	ts, cleanup := createTidbTestTopSQLSuite(t)
+	defer cleanup()
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("drop database if exists topsql")
+	dbt.MustExec("create database topsql")
+	dbt.MustExec("use topsql;")
+	dbt.MustExec("create table t (a int, b int);")
+
+	for i := 0; i < 5000; i++ {
+		dbt.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop"))
+	}()
+
+	mc := mockTopSQLTraceCPU.NewTopSQLCollector()
+	topsql.SetupTopSQLForTest(mc)
+	sqlCPUCollector := collector.NewSQLCPUCollector(mc)
+	sqlCPUCollector.Start()
+	defer sqlCPUCollector.Stop()
+
+	query := "select count(*) from t as t0 join t as t1 on t0.a != t1.a;"
+	needEnableTopSQL := int64(0)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			if atomic.LoadInt64(&needEnableTopSQL) == 1 {
+				time.Sleep(2 * time.Millisecond)
+				topsqlstate.EnableTopSQL()
+				atomic.StoreInt64(&needEnableTopSQL, 0)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	execFn := func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		atomic.StoreInt64(&needEnableTopSQL, 1)
+		mustQuery(t, dbt, query)
+		topsqlstate.DisableTopSQL()
+	}
+	check := func() {
+		require.NoError(t, ctx.Err())
+		stats := mc.GetSQLStatsBySQLWithRetry(query, true)
+		require.Greaterf(t, len(stats), 0, query)
+	}
+	ts.testCase(t, mc, execFn, check)
+	cancel()
+	wg.Wait()
+}
+
 func TestTopSQLCPUProfile(t *testing.T) {
 	ts, cleanup := createTidbTestTopSQLSuite(t)
 	defer cleanup()
@@ -1304,9 +1386,11 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop"))
 	}()
 

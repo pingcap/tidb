@@ -2,6 +2,13 @@
   {
     "name": "TestEagerAggregation",
     "cases": [
+      "select count(*) from t t1 left join t2 on t1.a = t2.c",
+      "select count(*) from t t1 join t2 on t1.a = t2.c",
+      "select count(t2.c) from t t1 left join t2 on t1.a = t2.c",
+      "select count(t1.d) from t t1 right join t2 on t1.d = t2.c",
+      "select count(*) from t t1 right join t2 on t1.a = t2.c",
+      "select count(t2.c) from t t1 right join t2 on t1.a = t2.c",
+      "select sum(t2.c is null) from t t1 left join t2 on t1.a = t2.c;",
       "select sum(t.a), sum(t.a+1), sum(t.a), count(t.a), sum(t.a) + count(t.a) from t",
       "select sum(t.a + t.b), sum(t.a + t.c), sum(t.a + t.b), count(t.a) from t having sum(t.a + t.b) > 0 order by sum(t.a + t.c)",
       "select sum(a.a) from t a, t b where a.c = b.c",

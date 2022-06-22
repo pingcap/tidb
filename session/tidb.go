@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -299,7 +300,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sessVars.IsAutocommit())
 		}
-		err = se.NewTxn(ctx)
+		err = sessiontxn.NewTxn(ctx, se)
 		// The transaction does not committed yet, we need to keep it in transaction.
 		// The last history could not be "commit"/"rollback" statement.
 		// It means it is impossible to start a new transaction at the end of the transaction.

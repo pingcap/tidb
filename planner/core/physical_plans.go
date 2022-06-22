@@ -261,7 +261,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg:
+		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.schema = p.indexPlan.Schema()
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -1192,11 +1192,15 @@ type PhysicalSort struct {
 	basePhysicalPlan
 
 	ByItems []*util.ByItems
+	// whether this operator only need to sort the data of one partition.
+	// it is true only if it is used to sort the sharded data of the window function.
+	IsPartialSort bool
 }
 
 // Clone implements PhysicalPlan interface.
 func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSort)
+	cloned.IsPartialSort = ls.IsPartialSort
 	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -1333,6 +1337,9 @@ type PhysicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+
+	// on which store the window function executes.
+	storeTp kv.StoreType
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1356,6 +1363,34 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 		}
 	}
 	return corCols
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalWindow)
+	*cloned = *p
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
+	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
+	for _, it := range p.OrderBy {
+		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
+	}
+	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
+	for _, it := range p.WindowFuncDescs {
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+	}
+	if p.Frame != nil {
+		cloned.Frame = p.Frame.Clone()
+	}
+
+	return cloned, nil
 }
 
 // PhysicalShuffle represents a shuffle plan.

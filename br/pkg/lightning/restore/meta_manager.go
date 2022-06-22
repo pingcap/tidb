@@ -37,7 +37,7 @@ type dbMetaMgrBuilder struct {
 func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 	exec := common.SQLWithRetry{
 		DB:           b.db,
-		Logger:       log.L(),
+		Logger:       log.FromContext(ctx),
 		HideQueryLog: redact.NeedRedact(),
 	}
 	metaDBSQL := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", common.EscapeIdentifier(b.schema))
@@ -78,6 +78,11 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
+	// ReallocTableRowIDs reallocates the row IDs of a table.
+	// It returns new rowIDBase and maxRowID or any error it encounters.
+	// Note that noopTableMetaMgr has a noop implementation of this function.
+	// If maxRowID is 0, caller should maintain rowIDBase and maxRowID itself.
+	ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
@@ -160,6 +165,51 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	}
 }
 
+func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error) {
+	conn, err := m.session.Conn(ctx)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer conn.Close()
+	exec := &common.SQLWithRetry{
+		DB:     m.session,
+		Logger: m.tr.logger,
+	}
+	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
+	if err != nil {
+		return 0, 0, errors.Annotate(err, "enable pessimistic transaction failed")
+	}
+	var (
+		maxRowIDMax int64
+		newRowIDMax int64
+	)
+	err = exec.Transact(ctx, "realloc table rowID", func(ctx context.Context, tx *sql.Tx) error {
+		row := tx.QueryRowContext(
+			ctx,
+			fmt.Sprintf("SELECT MAX(row_id_max) from %s WHERE table_id = ? FOR UPDATE", m.tableName),
+			m.tr.tableInfo.ID,
+		)
+		if row.Err() != nil {
+			return errors.Trace(err)
+		}
+		if err := row.Scan(&maxRowIDMax); err != nil {
+			return errors.Trace(err)
+		}
+		newRowIDMax = maxRowIDMax + newRowIDCount
+		// nolint:gosec
+		query := fmt.Sprintf("UPDATE %s SET row_id_max = ? WHERE table_id = ? AND task_id = ?", m.tableName)
+		if _, err := tx.ExecContext(ctx, query, newRowIDMax, m.tr.tableInfo.ID, m.taskID); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	// newRowIDBase = maxRowIDMax + 1
+	return maxRowIDMax + 1, newRowIDMax, nil
+}
+
 func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
@@ -237,8 +287,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				maxRowIDMax = rowIDMax
 			}
 		}
-		if rows.Err() != nil {
-			return errors.Trace(rows.Err())
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 
 		// no enough info are available, fetch row_id max for table
@@ -248,10 +298,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				// the `show table next_row_id` will returns the unique key field only.
 				var autoIDField string
 				for _, col := range m.tr.tableInfo.Core.Columns {
-					if mysql.HasAutoIncrementFlag(col.Flag) {
+					if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 						autoIDField = col.Name.L
 						break
-					} else if mysql.HasPriKeyFlag(col.Flag) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
+					} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
 						autoIDField = col.Name.L
 						break
 					}
@@ -332,10 +382,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		ck := verify.MakeKVChecksum(baseTotalBytes, baseTotalKvs, baseChecksum)
 		checksum = &ck
 	}
-	log.L().Info("allocate table row_id base", zap.String("table", m.tr.tableName),
+	log.FromContext(ctx).Info("allocate table row_id base", zap.String("table", m.tr.tableName),
 		zap.Int64("row_id_base", newRowIDBase))
 	if checksum != nil {
-		log.L().Info("checksum base", zap.Any("checksum", checksum))
+		log.FromContext(ctx).Info("checksum base", zap.Any("checksum", checksum))
 	}
 	return checksum, newRowIDBase, nil
 }
@@ -452,8 +502,8 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		}
 		rows.Close()
 		closed = true
-		if rows.Err() != nil {
-			return errors.Trace(rows.Err())
+		if err := rows.Err(); err != nil {
+			return errors.Trace(err)
 		}
 
 		// nolint:gosec
@@ -469,7 +519,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 		ck := verify.MakeKVChecksum(totalBytes, totalKvs, totalChecksum)
 		baseTotalChecksum = &ck
 	}
-	log.L().Info("check table checksum", zap.String("table", m.tr.tableName),
+	log.FromContext(ctx).Info("check table checksum", zap.String("table", m.tr.tableName),
 		zap.Bool("checksum", needChecksum), zap.String("new_status", newStatus.String()))
 	return
 }
@@ -486,7 +536,7 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tableName string) error {
 	exec := &common.SQLWithRetry{
 		DB:     db,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	query := fmt.Sprintf("DELETE FROM %s", metaTable)
 	var args []interface{}
@@ -586,7 +636,7 @@ type storedCfgs struct {
 func (m *dbTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := fmt.Sprintf(`INSERT INTO %s (task_id, status, source_bytes) values (?, ?, ?) ON DUPLICATE KEY UPDATE state = ?`, m.tableName)
@@ -597,7 +647,7 @@ func (m *dbTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	exist := false
@@ -639,7 +689,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -697,7 +747,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -780,7 +830,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			// try to rollback the stopped schedulers
 			cancelFunc := m.pd.MakeUndoFunctionByConfig(pausedCfg.RestoreCfg)
 			if err1 := cancelFunc(ctx); err1 != nil {
-				log.L().Warn("undo remove schedulers failed", zap.Error(err1))
+				log.FromContext(ctx).Warn("undo remove schedulers failed", zap.Error(err1))
 			}
 			return errors.Trace(err)
 		}
@@ -828,7 +878,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
 	if err != nil {
@@ -873,7 +923,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 				allFinished = false
 				// check if other task still running
 				if state == taskStateNormal {
-					log.L().Info("unfinished task found", zap.Int64("task_id", taskID),
+					log.FromContext(ctx).Info("unfinished task found", zap.Int64("task_id", taskID),
 						zap.Stringer("status", status))
 					switchBack = false
 				}
@@ -907,7 +957,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 
 		return nil
 	})
-	log.L().Info("check all task finish status", zap.Bool("task_finished", finished),
+	log.FromContext(ctx).Info("check all task finish status", zap.Bool("task_finished", finished),
 		zap.Bool("all_finished", allFinished), zap.Bool("switch_back", switchBack))
 
 	return switchBack, allFinished, err
@@ -916,7 +966,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	// avoid override existing metadata if the meta is already inserted.
 	stmt := fmt.Sprintf("DROP TABLE %s;", m.tableName)
@@ -929,7 +979,7 @@ func (m *dbTaskMetaMgr) Cleanup(ctx context.Context) error {
 func (m *dbTaskMetaMgr) CleanupTask(ctx context.Context) error {
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	stmt := fmt.Sprintf("DELETE FROM %s WHERE task_id = %d;", m.tableName, m.taskID)
 	err := exec.Exec(ctx, "clean up task", stmt)
@@ -941,14 +991,20 @@ func (m *dbTaskMetaMgr) Close() {
 }
 
 func (m *dbTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
-	return MaybeCleanupAllMetas(ctx, m.session, m.schemaName, true)
+	return MaybeCleanupAllMetas(ctx, log.FromContext(ctx), m.session, m.schemaName, true)
 }
 
 // MaybeCleanupAllMetas remove the meta schema if there is no unfinished tables
-func MaybeCleanupAllMetas(ctx context.Context, db *sql.DB, schemaName string, tableMetaExist bool) error {
+func MaybeCleanupAllMetas(
+	ctx context.Context,
+	logger log.Logger,
+	db *sql.DB,
+	schemaName string,
+	tableMetaExist bool,
+) error {
 	exec := &common.SQLWithRetry{
 		DB:     db,
-		Logger: log.L(),
+		Logger: logger,
 	}
 
 	// check if all tables are finished
@@ -959,7 +1015,7 @@ func MaybeCleanupAllMetas(ctx context.Context, db *sql.DB, schemaName string, ta
 			return errors.Trace(err)
 		}
 		if cnt > 0 {
-			log.L().Warn("there are unfinished table in table meta table, cleanup skipped.")
+			logger.Warn("there are unfinished table in table meta table, cleanup skipped.")
 			return nil
 		}
 	}
@@ -1031,6 +1087,12 @@ func (m noopTableMetaMgr) InitTableMeta(ctx context.Context) error {
 	return nil
 }
 
+func (m noopTableMetaMgr) ReallocTableRowIDs(ctx context.Context, _ int64) (int64, int64, error) {
+	// we don't need to reconcile rowIDs across all the instances
+	// barring using parallel import
+	return 0, 0, nil
+}
+
 func (m noopTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
 	return nil, 0, nil
 }
@@ -1051,7 +1113,9 @@ func (m noopTableMetaMgr) FinishTable(ctx context.Context) error {
 	return nil
 }
 
-type singleMgrBuilder struct{}
+type singleMgrBuilder struct {
+	taskID int64
+}
 
 func (b singleMgrBuilder) Init(context.Context) error {
 	return nil
@@ -1059,7 +1123,8 @@ func (b singleMgrBuilder) Init(context.Context) error {
 
 func (b singleMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	return &singleTaskMetaMgr{
-		pd: pd,
+		pd:     pd,
+		taskID: b.taskID,
 	}
 }
 
@@ -1068,15 +1133,34 @@ func (b singleMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 }
 
 type singleTaskMetaMgr struct {
-	pd *pdutil.PdController
+	pd           *pdutil.PdController
+	taskID       int64
+	initialized  bool
+	sourceBytes  uint64
+	clusterAvail uint64
 }
 
 func (m *singleTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
+	m.sourceBytes = uint64(source)
+	m.initialized = true
 	return nil
 }
 
 func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
-	_, err := action(nil)
+	newTasks, err := action([]taskMeta{
+		{
+			taskID:       m.taskID,
+			status:       taskMetaStatusInitial,
+			sourceBytes:  m.sourceBytes,
+			clusterAvail: m.clusterAvail,
+		},
+	})
+	for _, t := range newTasks {
+		if m.taskID == t.taskID {
+			m.sourceBytes = t.sourceBytes
+			m.clusterAvail = t.clusterAvail
+		}
+	}
 	return err
 }
 
@@ -1085,7 +1169,7 @@ func (m *singleTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdut
 }
 
 func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
-	return true, nil
+	return m.initialized, nil
 }
 
 func (m *singleTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (shouldSwitchBack bool, shouldCleanupMeta bool, err error) {

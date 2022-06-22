@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -700,7 +701,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
-		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.Tp, col.tp.Flag, col.tp.Flen, bin)
+		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
 		resp, err := ts.fetchStatus(path)
 		require.NoErrorf(t, err, "url: %v", ts.statusURL(path))
 		decoder := json.NewDecoder(resp.Body)
@@ -970,9 +971,8 @@ func TestAllHistory(t *testing.T) {
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
-	_, err = txnMeta.GetAllHistoryDDLJobs()
+	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
-	data, _ := txnMeta.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
 
 	require.NoError(t, err)

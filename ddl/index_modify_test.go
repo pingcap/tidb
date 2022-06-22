@@ -34,16 +34,15 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -286,7 +285,7 @@ LOOP:
 	// require.Contains(t, fmt.Sprintf("%v", ay), "c3_index")
 
 	// get all row handles
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tbl := external.GetTableByName(t, tk, "test", "test_add_index")
 	handles := kv.NewHandleMap()
 	err := tables.IterRecords(tbl, tk.Session(), tbl.Cols(),
@@ -315,7 +314,7 @@ LOOP:
 	require.NoError(t, err)
 	require.NoError(t, txn.Rollback())
 
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }
@@ -675,63 +674,6 @@ func TestAddIndexWithPK(t *testing.T) {
 	}
 }
 
-// TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
-func TestCancelAddIndex1(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	for i := 0; i < 50; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
-	}
-
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().SetHook(hook)
-	err := tk.ExecToErr("alter table t add index idx_c2(c2)")
-	require.NoError(t, checkErr)
-	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-
-	dom.DDL().SetHook(originalHook)
-	tbl := external.GetTableByName(t, tk, "test", "t")
-	for _, idx := range tbl.Indices() {
-		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c2"))
-	}
-	tk.MustExec("alter table t add index idx_c2(c2)")
-	tk.MustExec("alter table t drop index idx_c2")
-}
-
 func TestAddGlobalIndex(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -753,7 +695,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	require.NotNil(t, indexInfo)
 	require.True(t, indexInfo.Global)
 
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
 
@@ -783,7 +725,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	require.NotNil(t, indexInfo)
 	require.True(t, indexInfo.Global)
 
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err = tk.Session().Txn(true)
 	require.NoError(t, err)
 
@@ -812,7 +754,7 @@ func checkGlobalIndexRow(
 	idxVals []types.Datum,
 	rowVals []types.Datum,
 ) {
-	require.NoError(t, ctx.NewTxn(context.Background()))
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	sc := ctx.GetSessionVars().StmtCtx
@@ -865,7 +807,7 @@ func checkGlobalIndexRow(
 }
 
 func TestDropIndexes(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	// drop multiple indexes
 	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
@@ -885,7 +827,6 @@ func TestDropIndexes(t *testing.T) {
 
 	testDropIndexesIfExists(t, store)
 	testDropIndexesFromPartitionedTable(t, store)
-	testCancelDropIndexes(t, store, dom.DDL())
 }
 
 func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL string, idxNames []string) {
@@ -973,100 +914,6 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column c2;")
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add column c1 int")
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column if exists c1;")
-}
-
-func testCancelDropIndexes(t *testing.T, store kv.Storage, d ddl.DDL) {
-	indexesName := []string{"idx_c1", "idx_c2"}
-	addIdxesSQL := "alter table t add index idx_c1 (c1);alter table t add index idx_c2 (c2);"
-	dropIdxesSQL := "alter table t drop index idx_c1;alter table t drop index idx_c2;"
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	defer tk.MustExec("drop table t;")
-	for i := 0; i < 5; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
-	}
-	testCases := []struct {
-		needAddIndex   bool
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
-	}{
-		// model.JobStateNone means the jobs is canceled before the first run.
-		// if we cancel successfully, we need to set needAddIndex to false in the next test case. Otherwise, set needAddIndex to true.
-		{true, model.JobStateQueueing, model.StateNone, true},
-		{false, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteOnly, false},
-		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{}
-	var jobID int64
-	testCase := &testCases[0]
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if (job.Type == model.ActionDropIndex || job.Type == model.ActionDropPrimaryKey) &&
-			job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobID = job.ID
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originalHook := d.GetHook()
-	d.SetHook(hook)
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.needAddIndex {
-			tk.MustExec(addIdxesSQL)
-		}
-		err := tk.ExecToErr(dropIdxesSQL)
-		tbl := external.GetTableByName(t, tk, "test", "t")
-
-		var indexInfos []*model.IndexInfo
-		for _, idxName := range indexesName {
-			indexInfo := tbl.Meta().FindIndexByName(idxName)
-			if indexInfo != nil {
-				indexInfos = append(indexInfos, indexInfo)
-			}
-		}
-
-		if testCase.cancelSucc {
-			require.NoError(t, checkErr)
-			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-			require.NotNil(t, indexInfos)
-			require.Equal(t, model.StatePublic, indexInfos[0].State)
-		} else {
-			require.NoError(t, err)
-			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			require.Nil(t, indexInfos)
-		}
-	}
-	d.SetHook(originalHook)
-	tk.MustExec(addIdxesSQL)
-	tk.MustExec(dropIdxesSQL)
 }
 
 func TestDropPrimaryKey(t *testing.T) {

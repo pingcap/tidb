@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -271,14 +270,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		if topsqlstate.TopSQLEnabled() {
-			txn, err := e.ctx.Txn(true)
-			if err == nil {
-				txn.SetOption(kv.ResourceGroupTagger, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-				if e.ctx.GetSessionVars().StmtCtx.KvExecCounter != nil {
-					// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-					txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().StmtCtx.KvExecCounter.RPCInterceptor())
-				}
+		txn, err := e.ctx.Txn(true)
+		if err == nil {
+			sc := e.ctx.GetSessionVars().StmtCtx
+			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+			if sc.KvExecCounter != nil {
+				// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {

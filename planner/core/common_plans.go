@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -56,6 +57,7 @@ import (
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
+var planCacheMissCounter = metrics.PlanCacheMissCounter.WithLabelValues("cache_miss")
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -188,10 +190,10 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name          string
-	UsingVars     []expression.Expression
-	PrepareParams []types.Datum
-	ExecID        uint32
+	Name         string
+	TxtProtoVars []expression.Expression // parsed variables under text protocol
+	BinProtoVars []types.Datum           // parsed variables under binary protocol
+	ExecID       uint32
 	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
 	SnapshotTS uint64
 	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
@@ -235,25 +237,25 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	prepared := preparedObj.PreparedAst
 	vars.StmtCtx.StmtType = prepared.StmtType
 
-	paramLen := len(e.PrepareParams)
+	paramLen := len(e.BinProtoVars)
 	if paramLen > 0 {
-		// for binary protocol execute, argument is placed in vars.PrepareParams
+		// for binary protocol execute, argument is placed in vars.BinProtoVars
 		if len(prepared.Params) != paramLen {
 			return errors.Trace(ErrWrongParamCount)
 		}
-		vars.PreparedParams = e.PrepareParams
+		vars.PreparedParams = e.BinProtoVars
 		for i, val := range vars.PreparedParams {
 			param := prepared.Params[i].(*driver.ParamMarkerExpr)
 			param.Datum = val
 			param.InExecute = true
 		}
 	} else {
-		// for `execute stmt using @a, @b, @c`, using value in e.UsingVars
-		if len(prepared.Params) != len(e.UsingVars) {
+		// for `execute stmt using @a, @b, @c`, using value in e.TxtProtoVars
+		if len(prepared.Params) != len(e.TxtProtoVars) {
 			return errors.Trace(ErrWrongParamCount)
 		}
 
-		for i, usingVar := range e.UsingVars {
+		for i, usingVar := range e.TxtProtoVars {
 			val, err := usingVar.Eval(chunk.Row{})
 			if err != nil {
 				return err
@@ -283,10 +285,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	e.IsStaleness = isStaleness
 
 	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
-		if isStaleness != sctx.GetSessionVars().StmtCtx.IsStaleness {
-			panic(fmt.Sprintf("%v != %v", isStaleness, sctx.GetSessionVars().StmtCtx.IsStaleness))
-		}
-
+		staleread.AssertStmtStaleness(sctx, isStaleness)
 		if isStaleness {
 			is2, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 			if err != nil {
@@ -305,6 +304,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		// schema version like prepared plan cache key
 		prepared.CachedPlan = nil
 		preparedObj.Executor = nil
+		preparedObj.ColumnInfos = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
 		// Example:
@@ -451,22 +451,47 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
+
+	// In rc or for update read, we need the latest schema version to decide whether we need to
+	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
+	var latestSchemaVersion int64
+
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
+			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
+			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
+			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
+			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+		}
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
+			preparedStmt.StmtDB, prepared.SchemaVersion, latestSchemaVersion); err != nil {
 			return err
 		}
 	}
-	tps := make([]*types.FieldType, len(e.UsingVars))
-	varsNum := len(e.UsingVars)
-	for i, param := range e.UsingVars {
-		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
-		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
-		if tps[i] == nil {
-			tps[i] = types.NewFieldType(mysql.TypeNull)
+
+	var varsNum int
+	var binVarTypes []byte
+	var txtVarTypes []*types.FieldType
+	isBinProtocol := len(e.BinProtoVars) > 0
+	if isBinProtocol { // binary protocol
+		varsNum = len(e.BinProtoVars)
+		for _, param := range e.BinProtoVars {
+			binVarTypes = append(binVarTypes, param.Kind())
+		}
+	} else { // txt protocol
+		varsNum = len(e.TxtProtoVars)
+		for _, param := range e.TxtProtoVars {
+			name := param.(*expression.ScalarFunction).GetArgs()[0].String()
+			tp := sctx.GetSessionVars().UserVarTypes[name]
+			if tp == nil {
+				tp = types.NewFieldType(mysql.TypeNull)
+			}
+			txtVarTypes = append(txtVarTypes, tp)
 		}
 	}
-	if prepared.CachedPlan != nil {
+
+	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
@@ -492,7 +517,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	if prepared.UseCache {
+	if prepared.UseCache { // for general plans
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -506,7 +531,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
 				}
-				if !cachedVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+				if !cachedVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
 					continue
 				}
 				planValid := true
@@ -553,6 +578,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
+	planCacheMissCounter.Inc()
 	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
@@ -572,18 +598,19 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
+				prepared.SchemaVersion, latestSchemaVersion); err != nil {
 				return err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+				if cacheVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
@@ -621,7 +648,7 @@ func containTableDual(p Plan) bool {
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
-	if sctx.GetSessionVars().StmtCtx.SkipPlanCache {
+	if !sctx.GetSessionVars().StmtCtx.UseCache || sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return nil
 	}
 	var (
@@ -773,9 +800,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
-					for j := range ranges.Ranges[i].LowVal {
-						x.IndexValues[i][j] = ranges.Ranges[i].LowVal[j]
-					}
+					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
 			} else {
 				var pkCol *expression.Column
@@ -868,7 +893,7 @@ func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constan
 		return nil, err
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.Collate))
+	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}
@@ -885,10 +910,10 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 				pkCols = append(pkCols, pkCol)
 				// We need to consider the prefix index.
 				// For example: when we have 'a varchar(50), index idx(a(10))'
-				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.Flen = 10'.
+				// So we will get 'colInfo.Length = 50' and 'pkCol.RetType.flen = 10'.
 				// In 'hasPrefix' function from 'util/ranger/ranger.go' file,
 				// we use 'columnLength == types.UnspecifiedLength' to check whether we have prefix index.
-				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.Flen {
+				if colInfo.Length != types.UnspecifiedLength && colInfo.Length == pkCol.RetType.GetFlen() {
 					pkColsLen = append(pkColsLen, types.UnspecifiedLength)
 				} else {
 					pkColsLen = append(pkColsLen, colInfo.Length)
@@ -1105,11 +1130,12 @@ type AnalyzeInfo struct {
 
 // V2AnalyzeOptions is used to hold analyze options information.
 type V2AnalyzeOptions struct {
-	PhyTableID int64
-	RawOpts    map[ast.AnalyzeOptionType]uint64
-	FilledOpts map[ast.AnalyzeOptionType]uint64
-	ColChoice  model.ColumnChoice
-	ColumnList []*model.ColumnInfo
+	PhyTableID  int64
+	RawOpts     map[ast.AnalyzeOptionType]uint64
+	FilledOpts  map[ast.AnalyzeOptionType]uint64
+	ColChoice   model.ColumnChoice
+	ColumnList  []*model.ColumnInfo
+	IsPartition bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -1206,6 +1232,14 @@ type SplitRegionStatus struct {
 	IndexInfo *model.IndexInfo
 }
 
+// CompactTable represents a "ALTER TABLE [NAME] COMPACT ..." plan.
+type CompactTable struct {
+	baseSchemaProducer
+
+	ReplicaKind ast.CompactReplicaKind
+	TableInfo   *model.TableInfo
+}
+
 // DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer
@@ -1262,7 +1296,7 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == types.ExplainFormatVerbose:
+	case format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
@@ -1296,8 +1330,20 @@ func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
 	}
+
+	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		pp, ok := e.TargetPlan.(PhysicalPlan)
+		if ok {
+			if _, err := pp.GetPlanCost(property.RootTaskType, CostFlagRecalculate|CostFlagUseTrueCardinality); err != nil {
+				return err
+			}
+		} else {
+			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
+		}
+	}
+
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1507,14 +1553,14 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			row = append(row, estCost)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if e.Format == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
@@ -1539,7 +1585,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
 		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			planCost, _ := pp.GetPlanCost(property.RootTaskType)
+			planCost, _ := pp.GetPlanCost(property.RootTaskType, 0)
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		} else {
 			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)

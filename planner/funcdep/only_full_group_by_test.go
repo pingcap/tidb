@@ -169,6 +169,21 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	// classic cases
 	tk.MustQuery("select customer1.a, count(*) from customer1 left join customer2 on customer1.a=customer2.b where customer2.pk in (7,9) group by customer2.b;")
 	tk.MustQuery("select customer1.a, count(*) from customer1 left join customer2 on customer1.a=1 where customer2.pk in (7,9) group by customer2.b;")
+	// c2.pk reject the null from both inner side of the left join.
+	tk.MustQuery("select c1.a, count(*) from customer2 c3 left join (customer1 c1 left join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	tk.MustQuery("select c3.b, count(*) from customer2 c3 left join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	tk.MustQuery("select c1.a, count(*) from customer2 c3 left join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3 left join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=1 where c2.pk in (7,9) group by c2.b;")
+	// inner join nested with outer join.
+	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3 join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=1 where c2.pk in (7,9) group by c2.b;")
+	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  join (customer1 c1 left join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  join (customer1 c1 left join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	// outer join nested with inner join.
+	// TODO: inner side's strict FD and equiv FD can be saved.
+	//tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	//tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+	//tk.MustQuery("select c1.a, c3.b, count(*) from customer2 c3  left join (customer1 c1 inner join customer2 c2 on c1.a=1 and c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
+
 	tk.MustExec("drop view if exists customer")
 	// this left join can extend left pk to all cols.
 	tk.MustExec("CREATE algorithm=merge definer='root'@'localhost' VIEW customer as SELECT pk,a,b FROM customer1 LEFT JOIN customer2 USING (pk);")
@@ -207,6 +222,9 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t4.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 	tk.MustExec("select t4.d from t1 join (t2 as t3 left join t2 as t4 on t4.d=3) on t1.a=10 group by \"\";")
+	err = tk.ExecToErr("select t4.d from t1 join (t2 as t3 left join t2 as t4 on t4.d=3 and t4.c+t3.c=2) on t1.a=10 group by \"\";")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t4.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 	//tk.MustExec("drop table t1")
 	//tk.MustExec("drop view v1")
 	//tk.MustExec("create table t1(a int not null, b int)")

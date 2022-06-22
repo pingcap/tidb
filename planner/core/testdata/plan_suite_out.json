@@ -878,11 +878,11 @@
       },
       {
         "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort"
       },
       {
         "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by c order by k",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort"
       },
       {
         "SQL": "select sum(to_base64(e)) from t where c = 1",
@@ -1678,10 +1678,10 @@
       {
         "SQL": "select count(distinct c) from t group by c;",
         "Plan": [
-          "HashAgg 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
-          "└─IndexReader 8000.00 root  index:HashAgg",
-          "  └─HashAgg 8000.00 cop[tikv]  group by:test.t.c, ",
-          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+          "StreamAgg 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 8000.00 root  index:StreamAgg",
+          "  └─StreamAgg 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
         ],
         "Result": [
           "0",
@@ -1743,13 +1743,13 @@
         "Plan": [
           "HashAgg 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
           "└─PartitionUnion 16000.00 root  ",
-          "  ├─HashAgg 8000.00 root  group by:Column#15, funcs:firstrow(Column#13)->Column#6, funcs:firstrow(Column#14)->Column#5",
-          "  │ └─Projection 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#13, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#14, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#15",
-          "  │   └─TableReader 10000.00 root  data:TableFullScan",
+          "  ├─HashAgg 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#6, funcs:firstrow(Column#7)->Column#5",
+          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │   └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
-          "  └─HashAgg 8000.00 root  group by:Column#18, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#5",
-          "    └─Projection 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#16, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#17, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#18",
-          "      └─TableReader 10000.00 root  data:TableFullScan",
+          "  └─HashAgg 8000.00 root  group by:Column#10, funcs:firstrow(Column#10)->Column#6, funcs:firstrow(Column#10)->Column#5",
+          "    └─TableReader 8000.00 root  data:HashAgg",
+          "      └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
           "        └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -1926,13 +1926,13 @@
         "Plan": [
           "HashAgg 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
           "└─PartitionUnion 16000.00 root  ",
-          "  ├─HashAgg 8000.00 root  group by:Column#15, funcs:firstrow(Column#13)->Column#6, funcs:firstrow(Column#14)->Column#5",
-          "  │ └─Projection 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#13, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#14, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#15",
-          "  │   └─TableReader 10000.00 root  data:TableFullScan",
+          "  ├─HashAgg 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#6, funcs:firstrow(Column#7)->Column#5",
+          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │   └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
-          "  └─HashAgg 8000.00 root  group by:Column#18, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#5",
-          "    └─Projection 10000.00 root  date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#16, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#17, date_format(test.tc.timestamp, %Y-%m-%d %H)->Column#18",
-          "      └─TableReader 10000.00 root  data:TableFullScan",
+          "  └─HashAgg 8000.00 root  group by:Column#10, funcs:firstrow(Column#10)->Column#6, funcs:firstrow(Column#10)->Column#5",
+          "    └─TableReader 8000.00 root  data:HashAgg",
+          "      └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
           "        └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
         ],
         "Result": null

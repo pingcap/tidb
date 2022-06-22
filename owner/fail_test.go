@@ -74,9 +74,9 @@ func TestFailNewSession(t *testing.T) {
 			if cli != nil {
 				_ = cli.Close()
 			}
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/closeClient"))
 		}()
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/closeClient", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.
@@ -84,7 +84,7 @@ func TestFailNewSession(t *testing.T) {
 		// https://github.com/etcd-io/etcd/blob/ae9734e/clientv3/concurrency/session.go#L38
 		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/client.go#L253
 		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/retry_interceptor.go#L63
-		_, err = NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
+		_, err = util.NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
 		require.Truef(t, isContextDone, "err %v", err)
 	}()
@@ -99,13 +99,13 @@ func TestFailNewSession(t *testing.T) {
 			if cli != nil {
 				_ = cli.Close()
 			}
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/closeGrpc"))
 		}()
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/closeGrpc", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.
-		_, err = NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
+		_, err = util.NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
 		require.Truef(t, isContextDone, "err %v", err)
 	}()

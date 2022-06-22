@@ -55,14 +55,14 @@ func restoreColumnInfoFromUnwrapped(ctx *format.RestoreCtx, col []interface{}, c
 	if col[columnInfoTupleIndexGeneratedStored].(bool) {
 		ctx.WriteKeyWord(" STORED")
 	}
-	if mysql.HasNotNullFlag(typ.Flag) {
+	if mysql.HasNotNullFlag(typ.GetFlag()) {
 		ctx.WriteKeyWord(" NOT NULL")
 	}
 	if defVal := col[columnInfoTupleIndexDefaultValue]; defVal != nil {
 		ctx.WriteKeyWord(" DEFAULT ")
 		ctx.WritePlainf("%v", defVal)
 	}
-	if mysql.HasAutoIncrementFlag(typ.Flag) {
+	if mysql.HasAutoIncrementFlag(typ.GetFlag()) {
 		ctx.WriteKeyWord(" AUTO_INCREMENT")
 	}
 }
@@ -263,7 +263,7 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 	columns := make(columnMap)
 	for _, ci := range ti.Columns {
 		columns[ci.Name.L] = encodeColumnInfoToLattice(ci)
-		if !hasExplicitPrimaryKey && (ci.Flag&mysql.PriKeyFlag) != 0 {
+		if !hasExplicitPrimaryKey && (ci.GetFlag()&mysql.PriKeyFlag) != 0 {
 			indices["primary"] = encodeImplicitPrimaryKeyToLattice(ci)
 		}
 	}

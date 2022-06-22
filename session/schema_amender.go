@@ -142,15 +142,15 @@ func needCollectModifyColOps(actionType uint64) bool {
 }
 
 func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
-	if ft1.Tp == ft2.Tp &&
-		ft1.Flag == ft2.Flag &&
-		ft1.Flen == ft2.Flen &&
-		ft1.Decimal == ft2.Decimal &&
-		ft1.Charset == ft2.Charset &&
-		ft1.Collate == ft2.Collate &&
-		len(ft1.Elems) == len(ft2.Elems) {
-		for i, elem := range ft1.Elems {
-			if elem != ft2.Elems[i] {
+	if ft1.GetType() == ft2.GetType() &&
+		ft1.GetFlag() == ft2.GetFlag() &&
+		ft1.GetFlen() == ft2.GetFlen() &&
+		ft1.GetDecimal() == ft2.GetDecimal() &&
+		ft1.GetCharset() == ft2.GetCharset() &&
+		ft1.GetCollate() == ft2.GetCollate() &&
+		len(ft1.GetElems()) == len(ft2.GetElems()) {
+		for i, elem := range ft1.GetElems() {
+			if elem != ft2.GetElem(i) {
 				return false
 			}
 		}
@@ -164,11 +164,11 @@ func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
 func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnInfo) error {
 	// Modifying a stored generated column is not allowed by DDL, the generated related fields are not considered.
 	if !fieldTypeDeepEquals(&colAtStart.FieldType, &colAtCommit.FieldType) {
-		if colAtStart.FieldType.Flag != colAtCommit.FieldType.Flag {
+		if colAtStart.FieldType.GetFlag() != colAtCommit.FieldType.GetFlag() {
 			return errors.Trace(errors.Errorf("flag is not matched for column=%v, from=%v to=%v",
-				colAtCommit.Name.String(), colAtStart.FieldType.Flag, colAtCommit.FieldType.Flag))
+				colAtCommit.Name.String(), colAtStart.FieldType.GetFlag(), colAtCommit.FieldType.GetFlag()))
 		}
-		if colAtStart.Charset != colAtCommit.Charset || colAtStart.Collate != colAtCommit.Collate {
+		if colAtStart.GetCharset() != colAtCommit.GetCharset() || colAtStart.GetCollate() != colAtCommit.GetCollate() {
 			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
 		}
 		_, err := types.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
@@ -418,7 +418,7 @@ func getCommonHandleDatum(tbl table.Table, row chunk.Row) []types.Datum {
 	}
 	datumBuf := make([]types.Datum, 0, 4)
 	for _, col := range tbl.Cols() {
-		if mysql.HasPriKeyFlag(col.Flag) {
+		if mysql.HasPriKeyFlag(col.GetFlag()) {
 			datumBuf = append(datumBuf, row.GetDatum(col.Offset, &col.FieldType))
 		}
 	}

@@ -43,7 +43,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 		if row.IsNull(0) {
 			continue
 		}
-		switch dataType.Tp {
+		switch dataType.GetType() {
 		case mysql.TypeString:
 			curVal := row.GetString(0)
 			if i == 0 {
@@ -104,7 +104,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 	setED, _ := types.ParseSet(elems, "e,d", mysql.DefaultCollationName) // setED.Value == 3
 
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
-	unsignedType.Flag |= mysql.UnsignedFlag
+	unsignedType.AddFlag(mysql.UnsignedFlag)
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, 4, 4, 4),
 		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, 4, 4, 4),
@@ -140,7 +140,7 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 
 func TestMaxMin(t *testing.T) {
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
-	unsignedType.Flag |= mysql.UnsignedFlag
+	unsignedType.AddFlag(mysql.UnsignedFlag)
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, nil, 4),
 		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, nil, 4),

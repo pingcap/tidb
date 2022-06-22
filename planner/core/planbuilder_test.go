@@ -71,7 +71,7 @@ func TestShow(t *testing.T) {
 		node.Tp = tp
 		schema, _ := buildShowSchema(node, false, false)
 		for _, col := range schema.Columns {
-			require.Greater(t, col.RetType.Flen, 0)
+			require.Greater(t, col.RetType.GetFlen(), 0)
 		}
 	}
 }

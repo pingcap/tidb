@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"strconv"
 	"sync"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 )
 
 // InternalKey

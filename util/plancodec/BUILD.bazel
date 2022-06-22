@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "plancodec",
+    srcs = [
+        "codec.go",
+        "id.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/plancodec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//util/texttree",
+        "@com_github_golang_snappy//:snappy",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "plancodec_test",
+    srcs = [
+        "codec_test.go",
+        "id_test.go",
+        "main_test.go",
+    ],
+    embed = [":plancodec"],
+    deps = [
+        "//kv",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

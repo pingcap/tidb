@@ -96,10 +96,12 @@ type StatementContext struct {
 	SkipUTF8Check          bool
 	SkipASCIICheck         bool
 	SkipUTF8MB4Check       bool
+	MultiSchemaInfo        *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
-	IsStaleness bool
+	IsStaleness     bool
+	InRestrictedSQL bool
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -243,6 +245,11 @@ type StatementContext struct {
 
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
+
+	// IsSQLRegistered uses to indicate whether the SQL has been registered for TopSQL.
+	IsSQLRegistered atomic2.Bool
+	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
+	IsSQLAndPlanRegistered atomic2.Bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -254,6 +261,7 @@ type StmtHints struct {
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
+	StraightJoinOrder       bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
 	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
@@ -755,6 +763,9 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	}
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
+	}
+	if sc.InRestrictedSQL {
+		flags |= model.FlagInRestrictedSQL
 	}
 	return flags
 }

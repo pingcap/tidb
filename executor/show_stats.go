@@ -251,7 +251,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -306,11 +306,11 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	}
 	colNameToType := make(map[string]byte, len(statsTbl.Columns))
 	for _, col := range stableColsStats(statsTbl.Columns) {
-		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.Tp})
+		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -426,14 +426,9 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 }
 
 func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo {
+	healthy, ok := statsTbl.GetStatsHealthy()
+	if !ok {
 		return
-	}
-	var healthy int64
-	if statsTbl.ModifyCount < statsTbl.Count {
-		healthy = int64((1.0 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0)
-	} else if statsTbl.ModifyCount == 0 {
-		healthy = 100
 	}
 	e.appendRow([]interface{}{
 		dbName,

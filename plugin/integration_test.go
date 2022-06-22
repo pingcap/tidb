@@ -360,7 +360,7 @@ func TestAuditLogNormal(t *testing.T) {
 		},
 		{
 			sql:      "ROLLBACK",
-			stmtType: "RollBack",
+			stmtType: "Rollback",
 		},
 		{
 			sql:      "START TRANSACTION",
@@ -485,11 +485,13 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "show stats_histograms",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_histograms",
 		},
 		{
 			sql:      "show stats_meta",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_meta",
 		},
 		{
 			sql:      "show status",
