@@ -1333,7 +1333,7 @@ func TestPessimisticLockNonExistsKey(t *testing.T) {
 }
 
 func TestUnionAllPointGetLockBlockInsert(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -1387,22 +1387,19 @@ func TestUnionAllPointGetLockBlockInsert(t *testing.T) {
 		if c.shouldBlock {
 			select {
 			case <-ch:
-				panic("Should receive nothing!")
-			case <-time.After(time.Second * 3):
+				panic("Should receive nothing")
+			case <-time.After(time.Second * 1):
 				break
 			}
-
-			tk.MustExec("commit")
 		} else {
 			select {
 			case <-ch:
 				break
-			case <-time.After(time.Second * 3):
+			case <-time.After(time.Second * 1):
 				panic("Timeout!")
 			}
-
-			tk.MustExec("commit")
 		}
+		tk.MustExec("commit")
 
 		wg.Wait()
 		close(ch)
