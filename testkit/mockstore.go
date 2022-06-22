@@ -19,7 +19,9 @@ package testkit
 import (
 	"testing"
 	"time"
+	"flag"
 
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -29,8 +31,28 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+// WithTiKV flag makes the test case run with real TiKV
+var WithTiKV = flag.String("with-tikv", "", "whether tests run with real TiKV")
+
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
+	if *WithTiKV != "" {
+		var d driver.TiKVDriver
+		var err error
+		store, err = d.Open("tikv://" + *WithTiKV)
+		require.NoError(t, err)
+
+		var dom *domain.Domain
+		dom, err = session.BootstrapSession(store)
+		clean = func() {
+			dom.Close()
+			err := store.Close()
+			require.NoError(t, err)
+		}
+		require.NoError(t, err)
+		return
+	}
+
 	store, _, clean = CreateMockStoreAndDomain(t, opts...)
 	return
 }
