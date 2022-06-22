@@ -17,12 +17,14 @@ package sessiontxn_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -50,9 +52,12 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/hookBeforeFirstRunExecutor", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/hookAfterOnStmtRetryWithLockError", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan", "return"))
 
 	store, do, clean := testkit.CreateMockStoreAndDomain(t)
@@ -80,9 +85,12 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/hookBeforeFirstRunExecutor"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/hookAfterOnStmtRetryWithLockError"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan"))
 
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
@@ -700,5 +708,123 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 	})
 
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
+	tk.MustExec("rollback")
+}
+
+// See issue: https://github.com/pingcap/tidb/issues/35459
+func TestStillWriteConflictAfterRetry(t *testing.T) {
+	store, _, deferFunc := setupTxnContextTest(t)
+	defer deferFunc()
+
+	queries := []string{
+		"select * from t1 for update",
+		"select * from t1 where id=1 for update",
+		"select * from t1 where id in (1, 2, 3) for update",
+		"select * from t1 where id=1 and v>0 for update",
+		"select * from t1 where id=1 for update union select * from t1 where id=1 for update",
+		"update t1 set v=v+1",
+		"update t1 set v=v+1 where id=1",
+		"update t1 set v=v+1 where id=1 and v>0",
+		"update t1 set v=v+1 where id in (1, 2, 3)",
+		"update t1 set v=v+1 where id in (1, 2, 3) and v>0",
+	}
+
+	for _, isolation := range []string{ast.RepeatableRead, ast.ReadCommitted} {
+		for _, query := range queries {
+			for _, autocommit := range []bool{true, false} {
+				t.Run(fmt.Sprintf("%s,%s,autocommit=%v", isolation, query, autocommit), func(t *testing.T) {
+					testStillWriteConflictAfterRetry(t, store, isolation, query, autocommit)
+				})
+			}
+		}
+	}
+}
+
+func testStillWriteConflictAfterRetry(t *testing.T, store kv.Storage, isolation string, query string, autocommit bool) {
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("set tx_isolation = '%s'", isolation))
+	tk.MustExec("set autocommit=1")
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("truncate table t1")
+	tk.MustExec("insert into t1 values(1, 10)")
+
+	se := tk.Session()
+	chanBeforeRunStmt := make(chan func(), 1)
+	chanAfterOnStmtRetry := make(chan func(), 1)
+	c2 := make(chan string, 1)
+	c3 := make(chan string, 1)
+	wait := func(ch chan string, expect string) {
+		select {
+		case got := <-ch:
+			if got != expect {
+				panic(fmt.Sprintf("expect '%s', got '%s'", expect, got))
+			}
+		case <-time.After(time.Second * 10):
+			panic("wait2 timeout")
+		}
+	}
+
+	if autocommit {
+		tk.MustExec("begin")
+	} else {
+		tk.MustExec("set @@autocommit=0")
+	}
+
+	se.SetValue(sessiontxn.HookBeforeFirstRunExecutorKey, chanBeforeRunStmt)
+	se.SetValue(sessiontxn.HookAfterOnStmtRetryWithLockErrorKey, chanAfterOnStmtRetry)
+	defer func() {
+		se.SetValue(sessiontxn.HookBeforeFirstRunExecutorKey, nil)
+		se.SetValue(sessiontxn.HookAfterOnStmtRetryWithLockErrorKey, nil)
+	}()
+
+	chanBeforeRunStmt <- func() {
+		c2 <- "now before session1 runStmt"
+		wait(c3, "session2 updated v=v+1 done")
+	}
+
+	chanAfterOnStmtRetry <- func() {
+		c2 <- "now after OnStmtRetry before rebuild executor"
+		wait(c3, "session2 updated v=v+1 again done")
+	}
+
+	go func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		// first conflict
+		wait(c2, "now before session1 runStmt")
+		tk2.MustExec("update t1 set v=v+1 where id=1")
+		c3 <- "session2 updated v=v+1 done"
+
+		// second conflict
+		wait(c2, "now after OnStmtRetry before rebuild executor")
+		tk2.MustExec("update t1 set v=v+1 where id=1")
+		c3 <- "session2 updated v=v+1 again done"
+		chanAfterOnStmtRetry <- func() {}
+		c3 <- "done"
+	}()
+
+	isSelect := false
+	if strings.HasPrefix(query, "update ") {
+		tk.MustExec(query)
+	} else if strings.HasPrefix(query, "select ") {
+		isSelect = true
+		tk.MustQuery(query).Check(testkit.Rows("1 12"))
+	} else {
+		require.FailNowf(t, "invalid query: %s", query)
+	}
+
+	wait(c3, "done")
+
+	se.SetValue(sessiontxn.HookBeforeFirstRunExecutorKey, nil)
+	se.SetValue(sessiontxn.HookAfterOnStmtRetryWithLockErrorKey, nil)
+	if isSelect {
+		tk.MustExec("update t1 set v=v+1")
+	}
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
 	tk.MustExec("rollback")
 }

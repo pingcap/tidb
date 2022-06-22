@@ -193,6 +193,29 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	return sv.GetGlobalFromHook(s)
 }
 
+// GetSessionStatesSystemVar gets the session variable value for session states.
+// It's only used for encoding session states when migrating a session.
+// The returned boolean indicates whether to keep this value in the session states.
+func GetSessionStatesSystemVar(s *SessionVars, name string) (string, bool, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		return sv.GetStateValue(s)
+	}
+	if sv.GetSession != nil {
+		val, err := sv.GetSessionFromHook(s)
+		return val, err == nil, err
+	}
+	// Only get the cached value. No need to check the global or default value.
+	if val, ok := s.systems[sv.Name]; ok {
+		return val, true, nil
+	}
+	return "", false, nil
+}
+
 // GetGlobalSystemVar gets a global system variable.
 func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)
@@ -511,37 +534,4 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
-}
-
-func checkGCTxnMaxWaitTime(vars *SessionVars,
-	normalizedValue string,
-	originalValue string,
-	scope ScopeFlag) (string, error) {
-	ival, err := strconv.Atoi(normalizedValue)
-	if err != nil {
-		return originalValue, errors.Trace(err)
-	}
-	GcLifeTimeStr, _ := getTiDBTableValue(vars, "tikv_gc_life_time", "10m0s")
-	GcLifeTimeDuration, err := time.ParseDuration(GcLifeTimeStr)
-	if err != nil {
-		return originalValue, errors.Trace(err)
-	}
-	if GcLifeTimeDuration.Seconds() > (float64)(ival) {
-		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCMaxWaitTime, normalizedValue))
-	}
-	return normalizedValue, nil
-}
-
-func checkTiKVGCLifeTime(vars *SessionVars,
-	normalizedValue string,
-	originalValue string,
-	scope ScopeFlag) (string, error) {
-	gcLifetimeDuration, err := time.ParseDuration(normalizedValue)
-	if err != nil {
-		return originalValue, errors.Trace(err)
-	}
-	if gcLifetimeDuration.Seconds() > float64(GCMaxWaitTime.Load()) {
-		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCLifetime, normalizedValue))
-	}
-	return normalizedValue, nil
 }

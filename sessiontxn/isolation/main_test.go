@@ -52,7 +52,9 @@ type txnAssert[T sessiontxn.TxnContextProvider] struct {
 	active                bool
 	inTxn                 bool
 	minStartTS            uint64
+	startTS               uint64
 	causalConsistencyOnly bool
+	couldRetry            bool
 }
 
 func (a *txnAssert[T]) Check(t *testing.T) {
@@ -73,23 +75,40 @@ func (a *txnAssert[T]) Check(t *testing.T) {
 	require.GreaterOrEqual(t, txnCtx.CreateTime.Nanosecond(), a.minStartTime.Nanosecond())
 	require.Equal(t, a.inTxn, sessVars.InTxn())
 	require.Equal(t, a.inTxn, txnCtx.IsExplicit)
+	require.Equal(t, a.couldRetry, txnCtx.CouldRetry)
 
 	txn, err := a.sctx.Txn(false)
 	require.NoError(t, err)
 	require.Equal(t, a.active, txn.Valid())
 	if !a.active {
 		require.False(t, a.inTxn)
+		require.Zero(t, a.startTS)
 		require.Zero(t, txnCtx.StartTS)
 	} else {
-		require.NotZero(t, a.minStartTS)
+		require.True(t, a.minStartTS != 0 || a.startTS != 0)
 		require.Greater(t, txnCtx.StartTS, a.minStartTS)
+		if a.startTS != 0 {
+			require.Equal(t, a.startTS, txnCtx.StartTS)
+		}
 		require.Equal(t, txnCtx.StartTS, txn.StartTS())
 		require.Same(t, sessVars.KVVars, txn.GetVars())
 		require.Equal(t, txnCtx.TxnScope, txn.GetOption(kv.TxnScope))
 		require.Equal(t, a.causalConsistencyOnly, !txn.GetOption(kv.GuaranteeLinearizability).(bool))
+		require.Equal(t, txnCtx.IsPessimistic, txn.IsPessimistic())
 	}
 	// The next line is testing the provider has the type T, if not, the cast will panic
 	_ = provider.(T)
+}
+
+func activeSnapshotTxnAssert(sctx sessionctx.Context, ts uint64, isolation string) *txnAssert[sessiontxn.TxnContextProvider] {
+	return &txnAssert[sessiontxn.TxnContextProvider]{
+		sctx:         sctx,
+		minStartTime: time.Now(),
+		startTS:      ts,
+		active:       true,
+		inTxn:        false,
+		isolation:    isolation,
+	}
 }
 
 func (a *txnAssert[T]) CheckAndGetProvider(t *testing.T) T {
