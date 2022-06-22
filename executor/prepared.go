@@ -333,7 +333,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string) (*ExecStmt, bool, bool, error) {
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -341,6 +341,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	execStmt := sessiontxn.GetTxnManager(sctx).GetCurrentStmt().(*ast.ExecuteStmt)
 	isStaleness := snapshotTS != 0
 	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
+	execStmt.BinaryArgs = args
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err

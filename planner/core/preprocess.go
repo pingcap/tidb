@@ -1653,7 +1653,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
 					return err
 				}
-				if err := txnManager.OnStmtStart(context.TODO(), nil); err != nil {
+				if err := txnManager.OnStmtStart(context.TODO(), txnManager.GetCurrentStmt()); err != nil {
 					return err
 				}
 			}
