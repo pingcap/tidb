@@ -2206,7 +2206,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 func (s *session) preparedStmtExec(ctx context.Context,
 	is infoschema.InfoSchema, snapshotTS uint64,
-	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, error) {
+	stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string) (sqlexec.RecordSet, error) {
 
 	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
@@ -2216,7 +2216,7 @@ func (s *session) preparedStmtExec(ctx context.Context,
 		}
 	})
 
-	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, snapshotTS, replicaReadScope, args)
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, stmtID, is, snapshotTS, replicaReadScope)
 	if err != nil {
 		return nil, err
 	}
@@ -2425,7 +2425,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 			return rs, nil
 		}
 	}
-	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, replicaReadScope, args)
+	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, stmtID, preparedStmt, replicaReadScope)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
