@@ -533,19 +533,15 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 		func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan) {
 			switch x := p.(type) {
 			case *PointGetPlan:
-				if physicalLock != nil {
-					tuples = append(tuples, &Tuple{
-						pointGet:     x,
-						physicalLock: physicalLock,
-					})
-				}
+				tuples = append(tuples, &Tuple{
+					pointGet:     x,
+					physicalLock: physicalLock,
+				})
 			case *BatchPointGetPlan:
-				if physicalLock != nil {
-					tuples = append(tuples, &Tuple{
-						batchPointGet: x,
-						physicalLock:  physicalLock,
-					})
-				}
+				tuples = append(tuples, &Tuple{
+					batchPointGet: x,
+					physicalLock:  physicalLock,
+				})
 			case *PhysicalLock:
 				// There may be multiple PhysicalLock nodes in a single chain.
 				// In this case, we only eliminate the last one.
@@ -572,22 +568,28 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 		return p
 	}
 
-	for _, tuple := range tuples {
-		lock, waitTime := getLockWaitTime(sctx, tuple.physicalLock.Lock)
-		if !lock {
-			unionScan := physicalLockMap[tuple.physicalLock]
-			if unionScan != nil {
-				delete(unionScanSet, unionScan)
+	if len(physicalLockMap) != 0 {
+		for _, tuple := range tuples {
+			if tuple.physicalLock == nil {
+				continue
 			}
-			delete(physicalLockMap, tuple.physicalLock)
-			continue
-		}
-		if tuple.pointGet != nil {
-			tuple.pointGet.Lock = lock
-			tuple.pointGet.LockWaitTime = waitTime
-		} else {
-			tuple.batchPointGet.Lock = lock
-			tuple.batchPointGet.LockWaitTime = waitTime
+
+			lock, waitTime := getLockWaitTime(sctx, tuple.physicalLock.Lock)
+			if !lock {
+				unionScan := physicalLockMap[tuple.physicalLock]
+				if unionScan != nil {
+					delete(unionScanSet, unionScan)
+				}
+				delete(physicalLockMap, tuple.physicalLock)
+				continue
+			}
+			if tuple.pointGet != nil {
+				tuple.pointGet.Lock = lock
+				tuple.pointGet.LockWaitTime = waitTime
+			} else {
+				tuple.batchPointGet.Lock = lock
+				tuple.batchPointGet.LockWaitTime = waitTime
+			}
 		}
 	}
 
