@@ -424,6 +424,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_txn_commit_batch_size = 100")
 	tk.MustQuery("select @@global.tidb_txn_commit_batch_size;").Check(testkit.Rows("100"))
 
+	tk.MustQuery("select @@global.tidb_enable_unified_slow_log;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_enable_unified_slow_log = on")
+	tk.MustQuery("select @@global.tidb_enable_unified_slow_log;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_unified_slow_log = off")
+	tk.MustQuery("select @@global.tidb_enable_unified_slow_log;").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
 	tk.MustExec("set @@session.tidb_metric_query_step = 9")
