@@ -1380,35 +1380,41 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	switchBack := false
 	cleanup := false
 	postProgress := func() error { return nil }
-	if rc.cfg.TikvImporter.Backend == config.BackendLocal && !rc.taskMgr.CanPauseSchedulerByKeyRange() {
-		logTask.Info("removing PD leader&region schedulers")
+	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+		var restoreFn pdutil.UndoFunc
 
-		restoreFn, err := rc.taskMgr.CheckAndPausePdSchedulers(ctx)
-		if err != nil {
-			return errors.Trace(err)
+		if !rc.taskMgr.CanPauseSchedulerByKeyRange() {
+			logTask.Info("removing PD leader&region schedulers")
+
+			var err error
+			restoreFn, err = rc.taskMgr.CheckAndPausePdSchedulers(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		finishSchedulers = func() {
-			if restoreFn != nil {
-				taskFinished := finalErr == nil
-				// use context.Background to make sure this restore function can still be executed even if ctx is canceled
-				restoreCtx := context.Background()
-				needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
-				if err != nil {
-					logTask.Warn("check restore pd schedulers failed", zap.Error(err))
-					return
+			taskFinished := finalErr == nil
+			// use context.Background to make sure this restore function can still be executed even if ctx is canceled
+			restoreCtx := context.Background()
+			needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
+			if err != nil {
+				logTask.Warn("check restore pd schedulers failed", zap.Error(err))
+				return
+			}
+			switchBack = needSwitchBack
+			cleanup = needCleanup
+
+			if needSwitchBack && restoreFn != nil {
+				logTask.Info("add back PD leader&region schedulers")
+				if restoreE := restoreFn(restoreCtx); restoreE != nil {
+					logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 				}
-				switchBack = needSwitchBack
-				if needSwitchBack {
-					logTask.Info("add back PD leader&region schedulers")
-					if restoreE := restoreFn(restoreCtx); restoreE != nil {
-						logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-					}
-				}
-				cleanup = needCleanup
 			}
 
-			rc.taskMgr.Close()
+			if rc.taskMgr != nil {
+				rc.taskMgr.Close()
+			}
 		}
 	}
 
