@@ -296,7 +296,7 @@ func TestShowTableRegion(t *testing.T) {
 	// Check scheduling constraint and scheduling state default value
 	for i := range rows {
 		require.Equal(t, "", rows[i][11])
-		//require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
+		require.Equal(t, "", rows[i][12])
 	}
 
 	re = tk.MustQuery("show table t_regions regions")
@@ -621,7 +621,7 @@ func TestShowTableRegion(t *testing.T) {
 	tbl = external.GetTableByName(t, tk, "test", "t1_scheduling")
 	require.Equal(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
 	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[0][11])
-	require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[0][12])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[0][12])
 
 	// Test scheduling info for partitioned table with placement policy
 	tk.MustExec("drop table if exists t2_scheduling")
@@ -643,9 +643,9 @@ func TestShowTableRegion(t *testing.T) {
 	require.Equal(t, "LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\"", rows[0][11])
 	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[1][11])
 	require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[2][11])
-	require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[0][12])
-	require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[1][12])
-	require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[2][12])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[0][12])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[1][12])
+	require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[2][12])
 
 	// Test scheduling info for partitioned table after split to regions
 	tk.MustExec("drop table if exists t3_scheduling")
@@ -665,7 +665,7 @@ func TestShowTableRegion(t *testing.T) {
 		} else {
 			require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
 		}
-		require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
 
 	// Test scheduling info for un-partitioned table after split index to regions
@@ -678,7 +678,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows[0], 13)
 	for i := range rows {
 		require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
-		require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
 
 	// Test scheduling info for partitioned table after split index to regions
@@ -699,7 +699,7 @@ func TestShowTableRegion(t *testing.T) {
 		} else {
 			require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
 		}
-		require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
 	re = tk.MustQuery("show table t5_scheduling index idx1 regions")
 	rows = re.Rows()
@@ -711,7 +711,7 @@ func TestShowTableRegion(t *testing.T) {
 		} else {
 			require.Equal(t, "PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\"", rows[i][11])
 		}
-		require.Equal(t, new(infosync.PlacementScheduleState).String(), rows[i][12])
+		require.Equal(t, infosync.PlacementScheduleStatePending.String(), rows[i][12])
 	}
 
 }
