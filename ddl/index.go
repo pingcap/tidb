@@ -602,14 +602,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo,
-	elements []*meta.Element, rh *reorgHandler) (ver int64, err error) {
+	elements []*meta.Element, rh *reorgHandler) (done bool, ver int64, err error) {
 	// If reorg task started already, now be here for restore previous execution.
 	if reorgInfo.Meta.IsLightningEnabled {
 		// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consist.
 		if !canRestoreReorgTask(reorgInfo, indexInfo.ID) {
 			reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 			if err != nil || reorgInfo.first {
-				return ver, errors.Trace(err)
+				return false, ver, errors.Trace(err)
 			}
 		}
 	}
@@ -624,32 +624,27 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		// Once Env is created well, set IsLightningOk to true.
 		if err == nil {
 			reorgInfo.Meta.IsLightningEnabled = true
-		} else {
-			reorgInfo.Meta.IsLightningEnabled = false
 		}
 	}
 
     if reorgInfo.Meta.IsLightningEnabled {
 		switch indexInfo.SubState {
 		case model.StateNone:
-			if IsAllowFastDDL() {
-				indexInfo.SubState = model.StateBackFillSync
-				ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-				if err != nil {
-					return ver, errors.Trace(err)
-				}
-				logutil.BgLogger().Info("Lightning backfill start state none")
-				return ver, nil
+			indexInfo.SubState = model.StateBackFillSync
+			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+			if err != nil {
+				return false, ver, errors.Trace(err)
 			}
+			logutil.BgLogger().Info("Lightning backfill start state none")
+			return false, ver, nil
 		case model.StateBackFillSync:
 			indexInfo.SubState = model.StateBackFill
 			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 			if err != nil {
-				return ver, errors.Trace(err)
+				return false, ver, errors.Trace(err)
 			}
-
 			logutil.BgLogger().Info("Lightning backfill state backfill Sync")
-			return ver, nil
+			return false, ver, nil
 		case model.StateBackFill:
 			logutil.BgLogger().Info("Lightning backfill state backfill")
 			// Continue to backfill.
@@ -657,32 +652,26 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			indexInfo.SubState = model.StateMerge
 			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 			if err != nil {
-				return ver, errors.Trace(err)
+				return false, ver, errors.Trace(err)
 			}
 
 			logutil.BgLogger().Info("Lightning backfill state merge Sync")
 
-			return ver, nil
+			return false, ver, nil
 		case model.StateMerge:
 			logutil.BgLogger().Info("Lightning merge the increment part of adding index")
 			index := tables.NewIndex(tbl.(table.PhysicalTable).GetPhysicalID(), tbl.Meta(), indexInfo)
 			backFillWk := backFillIndexWorker{backfillWorker: newBackfillWorker(newContext(reorgInfo.d.store), 0, tbl.(table.PhysicalTable), reorgInfo), index: index}
 			err = backFillWk.BackfillIncrementIndex()
 			if err != nil {
-				return ver, err
+				return false, ver, err
 			}
-			return ver, nil
+			return true, ver, nil
 		default:
-			return 0, errors.New("Lightning backfill: should not happened")
+			return false, 0, errors.New("Lightning backfill: should not happened")
 		}
-	} else {
-      // If IsLightningEnabled false, we should double check whether lightning is used.
-	  if indexInfo.SubState != model.StateNone {
-		  // Be in here, means the lighning has be used before, need to first clean the temp index data.
-
-	  }
 	}
-	return ver, nil;
+	return false, ver, nil;
 }
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -696,10 +685,14 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return false, ver, errors.Trace(err)
 	}
 
-    ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
-	if err != nil {
-		logutil.BgLogger().Error("Lightning: Add index backfill processing:", zap.String("Error:", err.Error()))
-		return false, ver, errors.Trace(err)
+    done, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
+    if reorgInfo.Meta.IsLightningEnabled {
+		if err != nil {
+			logutil.BgLogger().Error("Lightning: Add index backfill processing:", zap.String("Error:", err.Error()))
+		}
+		if (indexInfo.SubState != model.StateBackFill) {
+			return done, ver, err
+		}
 	}
 
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {

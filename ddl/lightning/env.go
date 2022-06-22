@@ -185,6 +185,7 @@ func genLightningDataDir(sortPath string) (string, error) {
 		if err != nil {
 			log.L().Error(LERR_CREATE_DIR_FAILED, zap.String("Sort path:", sortPath),
 				zap.String("Error:", err.Error()))
+			err = os.Mkdir("/tmp/tmp_ddl", 0o700)
 			return "/tmp/tmp_ddl", err
 		}
 	}
