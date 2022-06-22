@@ -170,7 +170,6 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	prevTS := ts
 
 	// second ts should reuse first ts
-	compareTS = getOracleTS(t, se)
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.NoError(t, err)
