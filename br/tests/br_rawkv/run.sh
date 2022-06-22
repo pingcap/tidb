@@ -110,7 +110,7 @@ run_test() {
 
     checksum_ori=$(checksum 31 3130303030303030)
     checksum_partial=$(checksum 311111 311122)
-    checksum_t_prefix=$(checksum 745f3132385f725f3132 745f3132385f725f3133)
+    checksum_t_prefix=$(checksum 745f3132385f725f3131 745f3132385f725f3134)
 
     # backup rawkv
     echo "backup start..."
@@ -165,14 +165,14 @@ run_test() {
     fi
 
     echo "t prefix restore start..."
-    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start "745f3132385f725f3132" --end "745f3132385f725f3133" --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
+    run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start "745f3132385f725f3131" --end "745f3132385f725f3134" --format hex --concurrency 4 --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
     bin/rawkv --pd $PD_ADDR \
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
         --key "$TEST_DIR/certs/br.key" \
-        --mode scan --start-key 745f3132385f725f3132 --end-key 745f3132385f725f3133
+        --mode scan --start-key 745f3132385f725f3131 --end-key 745f3132385f725f3134
 
-    checksum_new=$(checksum 745f3132385f725f3132 745f3132385f725f3133)
+    checksum_new=$(checksum 745f3132385f725f3131 745f3132385f725f3133)
 
     if [ "$checksum_new" != "$checksum_t_prefix" ];then
         echo "checksum failed after restore"
