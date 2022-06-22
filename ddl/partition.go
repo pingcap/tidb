@@ -497,9 +497,10 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.Par
 		// Suggested syntax does not allow partition definitions for INTERVAL range partitioning
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow partition definitions")
 	}
-	if s.FirstRangeEnd == nil || s.LastRangeEnd == nil {
+	if s.Interval.FirstRangeEnd == nil || s.Interval.LastRangeEnd == nil {
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
 	}
+	return nil
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
