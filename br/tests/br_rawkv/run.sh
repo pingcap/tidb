@@ -106,7 +106,7 @@ run_test() {
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
         --key "$TEST_DIR/certs/br.key" \
-        --mode put --put-data "745f3132385f725f3132, 745f3132385f725f3133"
+        --mode put --put-data "745f3132385f725f3132:1, 745f3132385f725f3133:2"
 
     checksum_ori=$(checksum 31 3130303030303030)
     checksum_partial=$(checksum 311111 311122)
