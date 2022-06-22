@@ -20,8 +20,10 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+// NotifyBreakPointFuncKey is the key where break point notify function located
 const NotifyBreakPointFuncKey = stringutil.StringerStr("breakPointNotifyFunc")
 
+// Inject injects a break point to a session
 func Inject(sctx sessionctx.Context, name string) {
 	failpoint.Inject(name, func(_ failpoint.Value) {
 		val := sctx.Value(NotifyBreakPointFuncKey)

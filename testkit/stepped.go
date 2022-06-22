@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var commandInternalError = errors.New("command error")
+var errCommandRunFailed = errors.New("command run failed")
 
 type steppedTestkitMsgType int
 
@@ -102,6 +102,7 @@ type SteppedTestKit struct {
 	cmdResult any
 }
 
+// NewSteppedTestKit creates a new SteppedTestKit
 func NewSteppedTestKit(t *testing.T, store kv.Storage) *SteppedTestKit {
 	tk := &SteppedTestKit{
 		t:   t,
@@ -127,6 +128,7 @@ func (tk *SteppedTestKit) ExpectStopOnAnyBreakPoint() {
 	require.NotEqual(tk.t, "", tk.cmdStopAt)
 }
 
+// SetBreakPoints sets the break points we want to stop at
 func (tk *SteppedTestKit) SetBreakPoints(breakPoints []string) {
 	tk.breakPoints = breakPoints
 }
@@ -137,7 +139,7 @@ func (tk *SteppedTestKit) handleCommandMsg() {
 	switch msg.tp {
 	case msgTpCmdDone:
 		tk.cmdStopAt = ""
-		if msg.val == commandInternalError {
+		if msg.val == errCommandRunFailed {
 			require.FailNow(tk.t, "internal command failed")
 		} else {
 			tk.cmdResult = msg.val
@@ -164,7 +166,7 @@ func (tk *SteppedTestKit) steppedCommand(cmd steppedTestKitCommand) *SteppedTest
 		var breakPointPaths []string
 		defer func() {
 			if !success {
-				result = commandInternalError
+				result = errCommandRunFailed
 			}
 
 			tk.tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, nil)
