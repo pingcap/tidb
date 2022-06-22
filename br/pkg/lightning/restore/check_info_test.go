@@ -583,9 +583,11 @@ func TestLocalResource(t *testing.T) {
 		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
 	}
 
+	ctx := context.Background()
+
 	// 1. source-size is smaller than disk-size, won't trigger error information
 	rc.checkTemplate = NewSimpleTemplate()
-	err = rc.localResource(1000)
+	err = rc.localResource(ctx, 1000)
 	require.NoError(t, err)
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
@@ -594,7 +596,7 @@ func TestLocalResource(t *testing.T) {
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
-	err = rc.localResource(4096)
+	err = rc.localResource(ctx, 4096)
 	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
@@ -604,7 +606,7 @@ func TestLocalResource(t *testing.T) {
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
 	rc.cfg.TikvImporter.DiskQuota = config.ByteSize(1024)
-	err = rc.localResource(4096)
+	err = rc.localResource(ctx, 4096)
 	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
