@@ -160,7 +160,7 @@ type Handle interface {
 	String() string
 	// MemUsage returns the memory usage of a handle.
 	MemUsage() uint64
-	// ExtraMemSize returns the dynamic size of memory occupied by the handle, e.g. slices.
+	// ExtraMemSize returns the memory usage of objects that are pointed to by the Handle.
 	ExtraMemSize() uint64
 }
 
@@ -374,6 +374,7 @@ func (ch *CommonHandle) MemUsage() uint64 {
 
 // ExtraMemSize implements the Handle interface.
 func (ch *CommonHandle) ExtraMemSize() uint64 {
+	// colEndOffsets is a slice of uint16.
 	return uint64(cap(ch.encoded) + cap(ch.colEndOffsets)*2)
 }
 
