@@ -795,28 +795,13 @@ func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
 func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// avg int
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a decimal(1,0))")
-	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testGetTableByName(c, tk.Se, "test", "t")
-	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
-	c.Assert(err, IsNil)
-	tk.MustExec("insert into t values(9)")
-	for i := 0; i < 16; i++ {
-		tk.MustExec("insert into t select * from t")
-	}
-	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
-	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
-	tk.MustQuery("select avg(a) from t group by a").Check(testkit.Rows("9.0000"))
-	tk.MustExec("drop table if exists t")
 
 	// avg decimal
 	tk.MustExec("drop table if exists td;")
 	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
 	tk.MustExec("alter table td set tiflash replica 1")
-	tb = testGetTableByName(c, tk.Se, "test", "td")
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	tb := testGetTableByName(c, tk.Se, "test", "td")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into td values (null, 22876);")
 	tk.MustExec("insert into td values (9220557287087669248, 32767);")
