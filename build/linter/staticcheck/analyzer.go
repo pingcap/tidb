@@ -29,5 +29,5 @@ var (
 
 func init() {
 	Analyzer = FindAnalyzerByName(name)
-	util.MungeAnalyzer(Analyzer)
+	util.SkipAnalyzer(Analyzer)
 }
