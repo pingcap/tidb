@@ -1231,9 +1231,6 @@ func updateEstRows(operator PhysicalPlan, costFlag uint64) {
 }
 
 func getCardinality(operator PhysicalPlan, costFlag uint64) float64 {
-	if operator == nil {
-		return 0
-	}
 	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
 		return getOperatorActRows(operator)
 	}
