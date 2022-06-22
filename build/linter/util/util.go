@@ -33,9 +33,8 @@ const (
 	skipFile
 )
 
-// Directive is a comment of the form '//lint:<command>
-// [arguments...]'. It represents instructions to the static analysis
-// tool.
+// Directive is a comment of the form '//lint:<command> [arguments...]' and `//nolint:<command>`.
+// It represents instructions to the static analysis tool.
 type Directive struct {
 	Command   SkipType
 	Linters   []string
