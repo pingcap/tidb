@@ -126,9 +126,8 @@ func (m *txnManager) GetCurrentStmt() ast.StmtNode {
 
 // OnStmtStart is the hook that should be called when a new statement started
 func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
-	if node != nil {
-		m.stmtNode = node
-	}
+	m.stmtNode = node
+
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
