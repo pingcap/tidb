@@ -690,7 +690,6 @@ func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
 
 }
 
-
 func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
