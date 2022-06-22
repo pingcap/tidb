@@ -338,13 +338,9 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
-		return nil, false, false, err
-	}
+	execStmt := sessiontxn.GetTxnManager(sctx).GetCurrentStmt().(*ast.ExecuteStmt)
 	isStaleness := snapshotTS != 0
 	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
-	execStmt.BinaryArgs = args
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err

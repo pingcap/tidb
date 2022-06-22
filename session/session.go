@@ -2236,14 +2236,11 @@ func (s *session) preparedStmtExec(ctx context.Context,
 
 // cachedPointPlanExec is a short path currently ONLY for cached "point select plan" execution
 func (s *session) cachedPointPlanExec(ctx context.Context,
-	is infoschema.InfoSchema, stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, bool, error) {
+	is infoschema.InfoSchema, stmtID uint32, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string) (sqlexec.RecordSet, bool, error) {
 
 	prepared := prepareStmt.PreparedAst
 	// compile ExecStmt
-	execAst := &ast.ExecuteStmt{ExecID: stmtID}
-	if err := executor.ResetContextOfStmt(s, execAst); err != nil {
-		return nil, false, err
-	}
+	execAst := sessiontxn.GetTxnManager(s).GetCurrentStmt().(*ast.ExecuteStmt)
 
 	failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInCachedPlanExec", true)
@@ -2252,7 +2249,6 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		staleread.AssertStmtStaleness(s, false)
 	})
 
-	execAst.BinaryArgs = args
 	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
 		return nil, false, err
@@ -2406,8 +2402,13 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
-	execAst := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
-	if err = s.onTxnManagerStmtStartOrRetry(ctx, execAst); err != nil {
+	execStmt := &ast.ExecuteStmt{ExecID: stmtID}
+	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
+		return nil, err
+	}
+	execStmt.BinaryArgs = args
+
+	if err = s.onTxnManagerStmtStartOrRetry(ctx, execStmt); err != nil {
 		return nil, err
 	}
 
@@ -2416,7 +2417,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	if ok {
-		rs, ok, err := s.cachedPointPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
+		rs, ok, err := s.cachedPointPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope)
 		if err != nil {
 			return nil, err
 		}

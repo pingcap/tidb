@@ -158,6 +158,8 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
+	// GetCurrentStmt returns the current statement node
+	GetCurrentStmt() ast.StmtNode
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:

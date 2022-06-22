@@ -120,6 +120,10 @@ func (m *txnManager) OnTxnEnd() {
 	m.stmtNode = nil
 }
 
+func (m *txnManager) GetCurrentStmt() ast.StmtNode {
+	return m.stmtNode
+}
+
 // OnStmtStart is the hook that should be called when a new statement started
 func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	if node != nil {
