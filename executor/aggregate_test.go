@@ -1398,7 +1398,6 @@ func TestAvgDecimal(t *testing.T) {
 
 func (s *testSerialSuite) TestRandomPanicAggConsume(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_max_chunk_size=32")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
 	tk.MustExec("use test")
