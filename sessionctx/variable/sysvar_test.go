@@ -648,6 +648,14 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 	}
 }
 
+// TestSysVarNameIsLowerCase tests that no new sysvars are added with uppercase characters.
+// In MySQL variables are always lowercase, and can be set in a case-insensitive way.
+func TestSysVarNameIsLowerCase(t *testing.T) {
+	for _, sv := range GetSysVars() {
+		require.Equal(t, strings.ToLower(sv.Name), sv.Name, "sysvar name countains uppercase characters")
+	}
+}
+
 // TestSettersandGetters tests that sysvars are logically correct with getter and setter functions.
 // i.e. it doesn't make sense to have a SetSession function on a variable that is only globally scoped.
 func TestSettersandGetters(t *testing.T) {

@@ -2044,7 +2044,7 @@ func doDMLWorks(s Session) {
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
 		}
-		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
+		value := fmt.Sprintf(`("%s", "%s")`, k, vVal)
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
