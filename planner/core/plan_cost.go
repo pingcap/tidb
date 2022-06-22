@@ -318,11 +318,12 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 			rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 			seekCost = estimateNetSeekCost(p.tablePlan)
-			taskType := property.CopSingleReadTaskType
-			if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-				taskType = property.MppTaskType
+			tType := property.MppTaskType
+			if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
+				// regard the underlying tasks as cop-task on modelVer1 for compatibility
+				tType = property.CopSingleReadTaskType
 			}
-			childCost, err := p.tablePlan.GetPlanCost(taskType, costFlag)
+			childCost, err := p.tablePlan.GetPlanCost(tType, costFlag)
 			if err != nil {
 				return 0, err
 			}
@@ -336,7 +337,8 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 		// consider concurrency
 		p.planCost /= concurrency
 		// consider tidb_enforce_mpp
-		if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() && !hasCostFlag(costFlag, CostFlagRecalculate) {
+		if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() &&
+			!hasCostFlag(costFlag, CostFlagRecalculate) { // show the real cost in explain-statements
 			p.planCost /= 1000000000
 		}
 	}
@@ -924,19 +926,20 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint
 }
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
-func (p *PhysicalStreamAgg) GetCost(inputRows float64, taskType property.TaskType, costFlag uint64) float64 {
+func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFlag uint64) float64 {
 	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if taskType == property.RootTaskType {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
-	} else if taskType == property.MppTaskType {
-		if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
-			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
-		} else {
+	} else if isMPP {
+		if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+			// use the dedicated CPU factor for TiFlash on modelVer2
 			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
+		} else {
+			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 		}
-	} else { // TiKV task
+	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
 	rowsPerGroup := inputRows / getCardinality(p, costFlag)
@@ -955,7 +958,7 @@ func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, costFlag uin
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), taskType, costFlag)
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), taskType == property.RootTaskType, taskType == property.MppTaskType, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -976,10 +979,11 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 			cpuCost += (con + 1) * sessVars.GetConcurrencyFactor()
 		}
 	} else if isMPP {
-		if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
-			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
-		} else {
+		if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+			// use the dedicated CPU factor for TiFlash on modelVer2
 			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
+		} else {
+			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 		}
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
