@@ -285,22 +285,6 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build(b *executorBuilder) error {
-	if snapshotTS := e.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		if err := e.ctx.InitTxnWithStartTS(snapshotTS); err != nil {
-			return err
-		}
-	} else {
-		ok, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
-		if err != nil {
-			return err
-		}
-		if ok {
-			err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))

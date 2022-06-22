@@ -95,6 +95,7 @@ const (
 	ActionAlterTableStatsOptions        ActionType = 58
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
+	ActionMultiSchemaChange             ActionType = 61
 )
 
 var actionMap = map[ActionType]string{
@@ -157,6 +158,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterCacheTable:               "alter table cache",
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
+	ActionMultiSchemaChange:             "alter table multi-schema change",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -256,6 +258,38 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
 	Warnings []*errors.Error
+
+	SubJobs    []*SubJob `json:"sub_jobs"`
+	Revertible bool      `json:"revertible"`
+
+	AddColumns    []CIStr `json:"-"`
+	DropColumns   []CIStr `json:"-"`
+	ModifyColumns []CIStr `json:"-"`
+	AddIndexes    []CIStr `json:"-"`
+	DropIndexes   []CIStr `json:"-"`
+	AlterIndexes  []CIStr `json:"-"`
+
+	RelativeColumns []CIStr `json:"-"`
+}
+
+func NewMultiSchemaInfo() *MultiSchemaInfo {
+	return &MultiSchemaInfo{
+		SubJobs:    nil,
+		Revertible: true,
+	}
+}
+
+type SubJob struct {
+	Type        ActionType      `json:"type"`
+	Args        []interface{}   `json:"-"`
+	RawArgs     json.RawMessage `json:"raw_args"`
+	SchemaState SchemaState     `json:"schema_state"`
+	SnapshotVer uint64          `json:"snapshot_ver"`
+	Revertible  bool            `json:"revertible"`
+	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
+	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []interface{}   `json:"-"`
 }
 
 // Job is for a DDL operation.

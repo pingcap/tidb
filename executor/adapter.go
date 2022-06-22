@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime/trace"
 	"strings"
 	"sync/atomic"
@@ -239,8 +238,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	})
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
-	startTs := uint64(math.MaxUint64)
-	err := a.Ctx.InitTxnWithStartTS(startTs)
+	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
 	if err != nil {
 		return nil, err
 	}
@@ -416,6 +414,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
+
+	failpoint.Inject("hookBeforeFirstRunExecutor", func() {
+		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookBeforeFirstRunExecutorKey)
+	})
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -793,6 +795,11 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err != nil {
 		return nil, err
 	}
+
+	failpoint.Inject("hookAfterOnStmtRetryWithLockError", func() {
+		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookAfterOnStmtRetryWithLockErrorKey)
+	})
+
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -823,31 +830,8 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
-		if snapshotTS := ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-			if err := ctx.InitTxnWithStartTS(snapshotTS); err != nil {
-				return nil, err
-			}
-		} else {
-			// Do not sync transaction for Execute statement, because the real optimization work is done in
-			// "ExecuteExec.Build".
-			useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
-			if err != nil {
-				return nil, err
-			}
-			if useMaxTS {
-				logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
-				if err := ctx.InitTxnWithStartTS(math.MaxUint64); err != nil {
-					return nil, err
-				}
-			}
-			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
-				switch {
-				case useMaxTS:
-					stmtCtx.Priority = kv.PriorityHigh
-				case a.LowerPriority:
-					stmtCtx.Priority = kv.PriorityLow
-				}
-			}
+		if stmtCtx.Priority == mysql.NoPriority && a.LowerPriority {
+			stmtCtx.Priority = kv.PriorityLow
 		}
 	}
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {

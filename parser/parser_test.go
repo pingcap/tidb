@@ -1037,6 +1037,13 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SHOW PLACEMENT LABELS", true, "SHOW PLACEMENT LABELS"},
 		{"SHOW PLACEMENT LABELS LIKE '%zone%'", true, "SHOW PLACEMENT LABELS LIKE _UTF8MB4'%zone%'"},
 		{"SHOW PLACEMENT LABELS WHERE label='l123'", true, "SHOW PLACEMENT LABELS WHERE `label`=_UTF8MB4'l123'"},
+
+		// for show/set session_states
+		{"SHOW SESSION_STATES", true, "SHOW SESSION_STATES"},
+		{"SET SESSION_STATES 'x'", true, "SET SESSION_STATES 'x'"},
+		{"SET SESSION_STATES", false, ""},
+		{"SET SESSION_STATES 1", false, ""},
+		{"SET SESSION_STATES now()", false, ""},
 	}
 	RunTest(t, table, false)
 }
@@ -1864,6 +1871,7 @@ func TestBuiltin(t *testing.T) {
 		// interval
 		{`select "2011-11-11 10:10:10.123456" + interval 10 second`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
 		{`select "2011-11-11 10:10:10.123456" - interval 10 second`, true, "SELECT DATE_SUB(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
+		{`select  interval 10 second + "2011-11-11 10:10:10.123456"`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
 		// for date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 MICROSECOND)"},
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 second)`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
@@ -3948,6 +3956,23 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
 
 	require.Equal(t, "hash_join", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 2)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
+
+	// Test ORDERED_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ ORDERED_HASH_JOIN(t1, T2), ordered_hash_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "ordered_hash_join", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 2)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
+
+	require.Equal(t, "ordered_hash_join", hints[1].HintName.L)
 	require.Len(t, hints[1].Tables, 2)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)

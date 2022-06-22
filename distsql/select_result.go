@@ -60,7 +60,6 @@ var (
 
 var (
 	_ SelectResult = (*selectResult)(nil)
-	_ SelectResult = (*streamResult)(nil)
 	_ SelectResult = (*serialSelectResults)(nil)
 )
 

@@ -167,8 +167,8 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sum = "h1:rQlvB2AYWme2bIB18r/SipGiMEVJYE9U0z+MGoU/LtQ=",
-        version = "v0.0.0-20180807104634-af7a81e8dd0d",
+        sum = "h1:WmMmtZanGEfIHnJN9N3A4Pl6mM69D+GxEph2eOaCf7g=",
+        version = "v1.0.0",
     )
     go_repository(
         name = "com_github_burntsushi_toml",
@@ -1914,8 +1914,8 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:+46isFI9fR9R+nJVDMI55tCC/TCwp+bvVA4HLGEv1rY=",
-        version = "v0.0.0-20220314125451-bfb5c2c55188",
+        sum = "h1:L4nZwfYSrIsWPAZR8zMwHaNQJy0Rjy3Od6Smj5mlOms=",
+        version = "v0.0.0-20220602075447-4847c5d68e73",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -2244,8 +2244,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:KhOkCnqpxh/B2gGZdXSUyKgNRZaPzYsCIWGjNdrFmOA=",
-        version = "v2.0.1-0.20220531081749-2807409d4968",
+        sum = "h1:N5ivsNkDQDgimY0ZVqMnWqXjEnxy5uFChoB4wPIKpPI=",
+        version = "v2.0.1-0.20220613112734-be31f33ba03b",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

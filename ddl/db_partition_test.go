@@ -157,7 +157,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 	);`
 	tk.MustGetErrCode(sql4, tmysql.ErrPartitionMaxvalue)
 
-	_, err = tk.Exec(`CREATE TABLE rc (
+	tk.MustExec(`CREATE TABLE rc (
 		a INT NOT NULL,
 		b INT NOT NULL,
 		c INT NOT NULL
@@ -168,7 +168,6 @@ func TestCreateTableWithPartition(t *testing.T) {
 	partition p3 values less than (65,30,13),
 	partition p4 values less than (maxvalue,30,40)
 	);`)
-	require.NoError(t, err)
 
 	sql6 := `create table employees (
 	id int not null,
@@ -211,7 +210,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 	);`
 	tk.MustGetErrCode(sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
 
-	_, err = tk.Exec(`CREATE TABLE t9 (
+	tk.MustGetDBError(`CREATE TABLE t9 (
 		a INT NOT NULL,
 		b INT NOT NULL,
 		c INT NOT NULL
@@ -220,8 +219,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 	partition p0 values less than (10),
 	partition p2 values less than (20),
 	partition p3 values less than (20)
-	);`)
-	require.True(t, dbterror.ErrRangeNotIncreasing.Equal(err))
+	);`, dbterror.ErrRangeNotIncreasing)
 
 	tk.MustGetErrCode(`create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 
@@ -1285,15 +1283,15 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
 	require.Len(t, part.Definitions, 5)
-	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
-	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
 	require.Equal(t, [][]string{{"5", `NULL`}}, part.Definitions[2].InValues)
 	require.Equal(t, model.NewCIStr("p3"), part.Definitions[2].Name)
-	require.Equal(t, [][]string{{"7", `"a"`}}, part.Definitions[3].InValues)
+	require.Equal(t, [][]string{{"7", `'a'`}}, part.Definitions[3].InValues)
 	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
-	require.Equal(t, [][]string{{"8", `"a"`}}, part.Definitions[4].InValues)
+	require.Equal(t, [][]string{{"8", `'a'`}}, part.Definitions[4].InValues)
 	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
 
 	errorCases := []struct {
@@ -1389,9 +1387,9 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	require.Equal(t, "id", part.Columns[0].O)
 	require.Equal(t, "name", part.Columns[1].O)
 	require.Len(t, part.Definitions, 2)
-	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, [][]string{{"1", `'a'`}, {"2", `'b'`}}, part.Definitions[0].InValues)
 	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
-	require.Equal(t, [][]string{{"5", `"a"`}, {"NULL", "NULL"}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"5", `'a'`}, {"NULL", "NULL"}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p3"), part.Definitions[1].Name)
 
 	sql := "alter table t drop partition p10;"
@@ -1456,7 +1454,7 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	part := tbl.Meta().Partition
 	require.True(t, part.Type == model.PartitionTypeList)
 	require.Len(t, part.Definitions, 3)
-	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, [][]string{{"3", `'a'`}, {"4", `'b'`}}, part.Definitions[1].InValues)
 	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
 	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
@@ -3088,11 +3086,8 @@ func TestPartitionErrorCode(t *testing.T) {
 	)
 	partition by hash(store_id)
 	partitions 4;`)
-	_, err := tk.Exec("alter table employees add partition partitions 8;")
-	require.True(t, dbterror.ErrUnsupportedAddPartition.Equal(err))
-
-	_, err = tk.Exec("alter table employees add partition (partition p5 values less than (42));")
-	require.True(t, dbterror.ErrUnsupportedAddPartition.Equal(err))
+	tk.MustGetDBError("alter table employees add partition partitions 8;", dbterror.ErrUnsupportedAddPartition)
+	tk.MustGetDBError("alter table employees add partition (partition p5 values less than (42));", dbterror.ErrUnsupportedAddPartition)
 
 	// coalesce partition
 	tk.MustExec(`create table clients (
@@ -3103,16 +3098,14 @@ func TestPartitionErrorCode(t *testing.T) {
 	)
 	partition by hash( month(signed) )
 	partitions 12;`)
-	_, err = tk.Exec("alter table clients coalesce partition 4;")
-	require.True(t, dbterror.ErrUnsupportedCoalescePartition.Equal(err))
+	tk.MustGetDBError("alter table clients coalesce partition 4;", dbterror.ErrUnsupportedCoalescePartition)
 
 	tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20)
 		);`)
-	_, err = tk.Exec("alter table t_part coalesce partition 4;")
-	require.True(t, dbterror.ErrCoalesceOnlyOnHashPartition.Equal(err))
+	tk.MustGetDBError("alter table t_part coalesce partition 4;", dbterror.ErrCoalesceOnlyOnHashPartition)
 
 	tk.MustGetErrCode(`alter table t_part reorganize partition p0, p1 into (
 			partition p0 values less than (1980));`, tmysql.ErrUnsupportedDDLOperation)
@@ -3135,9 +3128,7 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t truncate partition p0;")
-
-	_, err = tk1.Exec("commit")
-	require.NoError(t, err)
+	tk1.MustExec("commit")
 }
 
 func TestConstAndTimezoneDepent(t *testing.T) {
@@ -3337,8 +3328,7 @@ func TestCommitWhenSchemaChange(t *testing.T) {
 	tk.MustExec("insert into nt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into nt values (7), (9);")
-	_, err = tk.Session().Execute(context.Background(), "commit")
-	require.True(t, domain.ErrInfoSchemaChanged.Equal(err))
+	tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
 
 	tk.MustExec("admin check table pt")
 	tk.MustQuery("select * from pt").Check(testkit.Rows())
@@ -3349,8 +3339,7 @@ func TestCommitWhenSchemaChange(t *testing.T) {
 	tk.MustExec("insert into pt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into pt values (7), (9);")
-	_, err = tk.Session().Execute(context.Background(), "commit")
-	require.True(t, domain.ErrInfoSchemaChanged.Equal(err))
+	tk.MustGetDBError("commit", domain.ErrInfoSchemaChanged)
 
 	tk.MustExec("admin check table pt")
 	tk.MustQuery("select * from pt").Check(testkit.Rows())
@@ -3365,34 +3354,28 @@ func TestCreatePartitionTableWithWrongType(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	var err error
-	_, err = tk.Exec(`create table t(
+	tk.MustGetDBError(`create table t(
 	b int(10)
 	) partition by range columns (b) (
 		partition p0 values less than (0x10),
 		partition p3 values less than (0x20)
-	)`)
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
+	)`, dbterror.ErrWrongTypeColumnValue)
 
-	_, err = tk.Exec(`create table t(
+	tk.MustGetDBError(`create table t(
 	b int(10)
 	) partition by range columns (b) (
 		partition p0 values less than ('g'),
 		partition p3 values less than ('k')
-	)`)
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
+	)`, dbterror.ErrWrongTypeColumnValue)
 
-	_, err = tk.Exec(`create table t(
+	tk.MustGetDBError(`create table t(
 	b char(10)
 	) partition by range columns (b) (
 		partition p0 values less than (30),
 		partition p3 values less than (60)
-	)`)
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
+	)`, dbterror.ErrWrongTypeColumnValue)
 
-	_, err = tk.Exec(`create table t(
+	err = tk.ExecToErr(`create table t(
 	b datetime
 	) partition by range columns (b) (
 		partition p0 values less than ('g'),
@@ -3422,35 +3405,13 @@ func TestAddPartitionForTableWithWrongType(t *testing.T) {
 		partition p0 values less than ('2020-09-01')
 	)`)
 
-	var err error
-
-	_, err = tk.Exec("alter table t_int add partition (partition p1 values less than ('g'))")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
-
-	_, err = tk.Exec("alter table t_int add partition (partition p1 values less than (0x20))")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
-
-	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (0x20))")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrRangeNotIncreasing.Equal(err))
-
-	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (10))")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
-
-	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than ('m'))")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
-
-	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than (0x20))")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
-
-	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than (20))")
-	require.Error(t, err)
-	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
+	tk.MustGetDBError("alter table t_int add partition (partition p1 values less than ('g'))", dbterror.ErrWrongTypeColumnValue)
+	tk.MustGetDBError("alter table t_int add partition (partition p1 values less than (0x20))", dbterror.ErrWrongTypeColumnValue)
+	tk.MustGetDBError("alter table t_char add partition (partition p1 values less than (0x20))", dbterror.ErrRangeNotIncreasing)
+	tk.MustGetDBError("alter table t_char add partition (partition p1 values less than (10))", dbterror.ErrWrongTypeColumnValue)
+	tk.MustGetDBError("alter table t_date add partition (partition p1 values less than ('m'))", dbterror.ErrWrongTypeColumnValue)
+	tk.MustGetDBError("alter table t_date add partition (partition p1 values less than (0x20))", dbterror.ErrWrongTypeColumnValue)
+	tk.MustGetDBError("alter table t_date add partition (partition p1 values less than (20))", dbterror.ErrWrongTypeColumnValue)
 }
 
 func TestPartitionListWithTimeType(t *testing.T) {
@@ -3517,8 +3478,7 @@ func TestAddTableWithPartition(t *testing.T) {
 	tk.MustGetErrCode("create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;", errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists local_partition_table;")
 	tk.MustExec("drop table if exists partition_table;")
-	_, err = tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
-	require.NoError(t, err)
+	tk.MustExec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
 	tk.MustExec("drop table if exists partition_table;")
 	tk.MustExec("drop table if exists local_partition_range_table;")
 	tk.MustGetErrCode(`create temporary table local_partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
@@ -3654,4 +3614,64 @@ func TestDuplicatePartitionNames(t *testing.T) {
 		"PARTITION BY LIST (`a`)\n" +
 		"(PARTITION `p2` VALUES IN (2),\n" +
 		" PARTITION `p3` VALUES IN (3))"))
+}
+
+func TestPartitionTableWithAnsiQuotes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database partitionWithAnsiQuotes")
+	defer tk.MustExec("drop database partitionWithAnsiQuotes")
+	tk.MustExec("use partitionWithAnsiQuotes")
+	tk.MustExec("SET SESSION sql_mode='ANSI_QUOTES'")
+
+	// Test single quotes.
+	tk.MustExec(`create table t(created_at datetime) PARTITION BY RANGE COLUMNS(created_at) (
+		PARTITION p0 VALUES LESS THAN ('2021-12-01 00:00:00'),
+		PARTITION p1 VALUES LESS THAN ('2022-01-01 00:00:00'))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"created_at\" datetime DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE COLUMNS(\"created_at\")\n" +
+		"(PARTITION \"p0\" VALUES LESS THAN ('2021-12-01 00:00:00'),\n" +
+		" PARTITION \"p1\" VALUES LESS THAN ('2022-01-01 00:00:00'))"))
+	tk.MustExec("drop table t")
+
+	// Test expression with single quotes.
+	tk.MustExec(`create table t(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
+		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
+		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')))`)
+	// FIXME: should be "created_at" instead of `created_at`, see #35389.
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"created_at\" timestamp NULL DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (UNIX_TIMESTAMP(`created_at`))\n" +
+		"(PARTITION \"p0\" VALUES LESS THAN (1638288000),\n" +
+		" PARTITION \"p1\" VALUES LESS THAN (1640966400))"))
+	tk.MustExec("drop table t")
+
+	// Test values in.
+	tk.MustExec(`CREATE TABLE t (a int DEFAULT NULL, b varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a,b) (
+		PARTITION p0 VALUES IN ((1,'1'),(2,'2')),
+ 		PARTITION p1 VALUES IN ((10,'10'),(11,'11')))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" int(11) DEFAULT NULL,\n" +
+		"  \"b\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\",\"b\")\n" +
+		"(PARTITION \"p0\" VALUES IN ((1,'1'),(2,'2')),\n" +
+		" PARTITION \"p1\" VALUES IN ((10,'10'),(11,'11')))"))
+	tk.MustExec("drop table t")
+
+	// Test escaped characters in single quotes.
+	tk.MustExec(`CREATE TABLE t (a varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a) (
+		PARTITION p0 VALUES IN ('\'','\'\'',''''''''),
+ 		PARTITION p1 VALUES IN ('""','\\','\\\'\t\n'))`)
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE \"t\" (\n" +
+		"  \"a\" varchar(255) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST COLUMNS(\"a\")\n" +
+		"(PARTITION \"p0\" VALUES IN ('''','''''',''''''''),\n" +
+		" PARTITION \"p1\" VALUES IN ('\"\"','\\\\','\\\\''\t\n'))"))
+	tk.MustExec("drop table t")
 }

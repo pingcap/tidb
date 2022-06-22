@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -235,6 +236,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForTable(ctx)
 	case ast.ShowPlacementForPartition:
 		return e.fetchShowPlacementForPartition(ctx)
+	case ast.ShowSessionStates:
+		return e.fetchShowSessionStates(ctx)
 	}
 	return nil
 }
@@ -817,6 +820,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
+				if v.IsNoop && !variable.EnableNoopVariables.Load() {
+					continue
+				}
 				if fieldFilter != "" && v.Name != fieldFilter {
 					continue
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
@@ -839,6 +845,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
+		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+			continue
+		}
 		if fieldFilter != "" && v.Name != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
@@ -1924,6 +1933,33 @@ func (e *ShowExec) fetchShowBuiltins() error {
 	for _, f := range expression.GetBuiltinList() {
 		e.appendRow([]interface{}{f})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
+	sessionStates := &sessionstates.SessionStates{}
+	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
+	if err != nil {
+		return err
+	}
+	stateBytes, err := gjson.Marshal(sessionStates)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stateJSON := json.BinaryJSON{}
+	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
+		return err
+	}
+	// This will be implemented in future PRs.
+	tokenBytes, err := gjson.Marshal("")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tokenJSON := json.BinaryJSON{}
+	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
+		return err
+	}
+	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
 

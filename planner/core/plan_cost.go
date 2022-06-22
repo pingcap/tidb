@@ -34,6 +34,11 @@ const (
 	CostFlagUseTrueCardinality
 )
 
+const (
+	modelVer1 = 1
+	modelVer2 = 2
+)
+
 func hasCostFlag(costFlag, flag uint64) bool {
 	return (costFlag & flag) > 0
 }
@@ -61,21 +66,40 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	var cpuFactor float64
-	switch taskType {
-	case property.RootTaskType, property.MppTaskType:
-		cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
-	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
-		cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
-	default:
-		return 0, errors.Errorf("unknown task type %v", taskType)
+
+	var selfCost float64
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case modelVer1: // selection cost: rows * cpu-factor
+		var cpuFactor float64
+		switch taskType {
+		case property.RootTaskType, property.MppTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
+		case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
+		default:
+			return 0, errors.Errorf("unknown task type %v", taskType)
+		}
+		selfCost = getCardinality(p.children[0], costFlag) * cpuFactor
+	case modelVer2: // selection cost: rows * num-filters * cpu-factor
+		var cpuFactor float64
+		switch taskType {
+		case property.RootTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCPUFactor()
+		case property.MppTaskType: // use a dedicated cpu-factor for TiFlash
+			cpuFactor = p.ctx.GetSessionVars().GetTiFlashCPUFactor()
+		case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+			cpuFactor = p.ctx.GetSessionVars().GetCopCPUFactor()
+		default:
+			return 0, errors.Errorf("unknown task type %v", taskType)
+		}
+		selfCost = getCardinality(p.children[0], costFlag) * float64(len(p.Conditions)) * cpuFactor
 	}
+
 	childCost, err := p.children[0].GetPlanCost(taskType, costFlag)
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = childCost
-	p.planCost += getCardinality(p.children[0], costFlag) * cpuFactor // selection cost: rows * cpu-factor
+	p.planCost = childCost + selfCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -175,12 +199,14 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	for tmp = p.tablePlan; len(tmp.Children()) > 0; tmp = tmp.Children()[0] {
 	}
 	ts := tmp.(*PhysicalTableScan)
-	tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
-	if err != nil {
-		return 0, err
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
+		tblCost, err := ts.GetPlanCost(property.CopDoubleReadTaskType, costFlag)
+		if err != nil {
+			return 0, err
+		}
+		p.planCost -= tblCost
+		p.planCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 	}
-	p.planCost -= tblCost
-	p.planCost += getCardinality(p.indexPlan, costFlag) * ts.getScanRowSize() * p.SCtx().GetSessionVars().GetScanFactor(ts.Table)
 
 	// index-side net I/O cost: rows * row-size * net-factor
 	netFactor := getTableNetFactor(p.tablePlan)
@@ -197,6 +223,12 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	// table-side seek cost
 	p.planCost += estimateNetSeekCost(p.tablePlan)
 
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+		// accumulate the real double-read cost: numDoubleReadTasks * seekFactor
+		numDoubleReadTasks := p.estNumDoubleReadTasks(costFlag)
+		p.planCost += numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(ts.Table)
+	}
+
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -204,6 +236,16 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	p.planCost += p.GetCost(costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+func (p *PhysicalIndexLookUpReader) estNumDoubleReadTasks(costFlag uint64) float64 {
+	doubleReadRows := p.indexPlan.StatsCount()
+	batchSize := float64(p.ctx.GetSessionVars().IndexLookupSize)
+	// distRatio indicates how many requests corresponding to a batch, current value is from experiments.
+	// TODO: estimate it by using index correlation or make it configurable.
+	distRatio := 40.0
+	numDoubleReadTasks := (doubleReadRows / batchSize) * distRatio
+	return numDoubleReadTasks // use Float64 instead of Int like `Ceil(...)` to make the cost continuous
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -270,7 +312,12 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 			rowSize = getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 			seekCost = estimateNetSeekCost(p.tablePlan)
-			childCost, err := p.tablePlan.GetPlanCost(property.CopSingleReadTaskType, costFlag)
+			tType := property.MppTaskType
+			if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
+				// regard the underlying tasks as cop-task on modelVer1 for compatibility
+				tType = property.CopSingleReadTaskType
+			}
+			childCost, err := p.tablePlan.GetPlanCost(tType, costFlag)
 			if err != nil {
 				return 0, err
 			}
@@ -284,7 +331,8 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 		// consider concurrency
 		p.planCost /= concurrency
 		// consider tidb_enforce_mpp
-		if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() {
+		if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() &&
+			!hasCostFlag(costFlag, CostFlagRecalculate) { // show the real cost in explain-statements
 			p.planCost /= 1000000000
 		}
 	}
@@ -343,12 +391,34 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	// scan cost: rows * row-size * scan-factor
-	scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-	if p.Desc {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+
+	var selfCost float64
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case modelVer1: // scan cost: rows * row-size * scan-factor
+		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		if p.Desc {
+			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+	case modelVer2: // scan cost: rows * log2(row-size) * scan-factor
+		var scanFactor float64
+		switch taskType {
+		case property.MppTaskType: // use a dedicated scan-factor for TiFlash
+			// no need to distinguish `Scan` and `DescScan` for TiFlash for now
+			scanFactor = p.ctx.GetSessionVars().GetTiFlashScanFactor()
+		default: // for TiKV
+			scanFactor = p.ctx.GetSessionVars().GetScanFactor(p.Table)
+			if p.Desc {
+				scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+			}
+		}
+		// the formula `log(rowSize)` is based on experiment results
+		rowSize := math.Max(p.getScanRowSize(), 2.0) // to guarantee logRowSize >= 1
+		logRowSize := math.Log2(rowSize)
+		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
 	}
-	p.planCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+
+	p.planCost = selfCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -358,12 +428,26 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
 		return p.planCost, nil
 	}
-	// scan cost: rows * row-size * scan-factor
-	scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-	if p.Desc {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+
+	var selfCost float64
+	switch p.ctx.GetSessionVars().CostModelVersion {
+	case modelVer1: // scan cost: rows * row-size * scan-factor
+		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		if p.Desc {
+			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+	case modelVer2:
+		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
+		if p.Desc {
+			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
+		}
+		rowSize := math.Max(p.getScanRowSize(), 2.0)
+		logRowSize := math.Log2(rowSize)
+		selfCost = getCardinality(p, costFlag) * logRowSize * scanFactor
 	}
-	p.planCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
+
+	p.planCost = selfCost
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -814,12 +898,19 @@ func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType, costFlag uint
 }
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
-func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool, costFlag uint64) float64 {
+func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFlag uint64) float64 {
 	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	if isRoot {
 		cpuCost = inputRows * sessVars.GetCPUFactor() * aggFuncFactor
+	} else if isMPP {
+		if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+			// use the dedicated CPU factor for TiFlash on modelVer2
+			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
+		} else {
+			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
+		}
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 	}
@@ -838,7 +929,7 @@ func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType, costFlag uin
 		return 0, err
 	}
 	p.planCost = childCost
-	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), taskType == property.RootTaskType, costFlag)
+	p.planCost += p.GetCost(getCardinality(p.children[0], costFlag), taskType == property.RootTaskType, taskType == property.MppTaskType, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -857,6 +948,13 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot, isMPP bool, costFla
 			cpuCost /= divisor
 			// Cost of additional goroutines.
 			cpuCost += (con + 1) * sessVars.GetConcurrencyFactor()
+		}
+	} else if isMPP {
+		if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
+			// use the dedicated CPU factor for TiFlash on modelVer2
+			cpuCost = inputRows * sessVars.GetTiFlashCPUFactor() * aggFuncFactor
+		} else {
+			cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
 		}
 	} else {
 		cpuCost = inputRows * sessVars.GetCopCPUFactor() * aggFuncFactor
@@ -1058,14 +1156,17 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, costF
 		return 0, err
 	}
 	p.planCost = childCost
-	// accumulate net cost
-	// TODO: this formula is wrong since it doesn't consider tableRowSize, fix it later
-	p.planCost += getCardinality(p.children[0], costFlag) * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	// accumulate net cost: rows * row-size * net-factor
+	rowSize := getTblStats(p.children[0]).GetAvgRowSize(p.ctx, p.children[0].Schema().Columns, false, false)
+	p.planCost += getCardinality(p.children[0], costFlag) * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
 func getOperatorActRows(operator PhysicalPlan) float64 {
+	if operator == nil {
+		return 0
+	}
 	runtimeInfo := operator.SCtx().GetSessionVars().StmtCtx.RuntimeStatsColl
 	id := operator.ID()
 	actRows := 0.0

@@ -273,6 +273,30 @@ const (
 	// TiDBOptConcurrencyFactor is the CPU cost of additional one goroutine.
 	TiDBOptConcurrencyFactor = "tidb_opt_concurrency_factor"
 
+	// Variables for the Cost Model Ver2
+	// TiDBOptCPUFactorV2 is the CPU factor for the Cost Model Ver2
+	TiDBOptCPUFactorV2 = "tidb_opt_cpu_factor_v2"
+	// TiDBOptCopCPUFactorV2 is the CopCPU factor for the Cost Model Ver2
+	TiDBOptCopCPUFactorV2 = "tidb_opt_copcpu_factor_v2"
+	// TiDBOptTiFlashCPUFactorV2 is the TiFlashCPU factor for the Cost Model Ver2
+	TiDBOptTiFlashCPUFactorV2 = "tidb_opt_tiflash_cpu_factor_v2"
+	// TiDBOptNetworkFactorV2 is the network factor for the Cost Model Ver2
+	TiDBOptNetworkFactorV2 = "tidb_opt_network_factor_v2"
+	// TiDBOptScanFactorV2 is the scan factor for the Cost Model Ver2
+	TiDBOptScanFactorV2 = "tidb_opt_scan_factor_v2"
+	// TiDBOptDescScanFactorV2 is the desc scan factor for the Cost Model Ver2
+	TiDBOptDescScanFactorV2 = "tidb_opt_desc_factor_v2"
+	// TiDBOptTiFlashScanFactorV2 is the TiFlashScan factor for the Cost Model Ver2
+	TiDBOptTiFlashScanFactorV2 = "tidb_opt_tiflash_scan_factor_v2"
+	// TiDBOptSeekFactorV2 is the seek factor for the Cost Model Ver2
+	TiDBOptSeekFactorV2 = "tidb_opt_seek_factor_v2"
+	// TiDBOptMemoryFactorV2 is the memory factor for the Cost Model Ver2
+	TiDBOptMemoryFactorV2 = "tidb_opt_memory_factor_v2"
+	// TiDBOptDiskFactorV2 is the disk factor for the Cost Model Ver2
+	TiDBOptDiskFactorV2 = "tidb_opt_disk_factor_v2"
+	// TiDBOptConcurrencyFactorV2 is the concurrency factor for the Cost Model Ver2
+	TiDBOptConcurrencyFactorV2 = "tidb_opt_concurrency_factor_v2"
+
 	// TiDBIndexJoinBatchSize is used to set the batch size of an index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
 	// This value controls how much of data in a batch to do the index join.
@@ -637,11 +661,17 @@ const (
 	// TiDBEnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	TiDBEnableNewCostInterface = "tidb_enable_new_cost_interface"
 
+	// TiDBCostModelVersion is a internal switch to indicates the cost model version.
+	TiDBCostModelVersion = "tidb_cost_model_version"
+
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 
 	// TiDBQueryLogMaxLen is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// TiDBEnableNoopVariables is used to indicate if noops appear in SHOW [GLOBAL] VARIABLES
+	TiDBEnableNoopVariables = "tidb_enable_noop_variables"
 
 	// TiDBNonTransactionalIgnoreError is used to ignore error in non-transactional DMLs.
 	// When set to false, a non-transactional DML returns when it meets the first error.
@@ -756,6 +786,17 @@ const (
 	DefOptMemoryFactor                           = 0.001
 	DefOptDiskFactor                             = 1.5
 	DefOptConcurrencyFactor                      = 3.0
+	DefOptCPUFactorV2                            = 30.0
+	DefOptCopCPUFactorV2                         = 30.0
+	DefOptTiFlashCPUFactorV2                     = 2.0
+	DefOptNetworkFactorV2                        = 4.0
+	DefOptScanFactorV2                           = 100.0
+	DefOptDescScanFactorV2                       = 150.0
+	DefOptTiFlashScanFactorV2                    = 15.0
+	DefOptSeekFactorV2                           = 9500000.0
+	DefOptMemoryFactorV2                         = 0.001
+	DefOptDiskFactorV2                           = 1.5
+	DefOptConcurrencyFactorV2                    = 3.0
 	DefOptInSubqToJoinAndAgg                     = true
 	DefOptPreferRangeScan                        = false
 	DefBatchInsert                               = false
@@ -817,6 +858,7 @@ const (
 	DefTiDBWaitSplitRegionFinish                 = true
 	DefWaitSplitRegionTimeout                    = 300 // 300s
 	DefTiDBEnableNoopFuncs                       = Off
+	DefTiDBEnableNoopVariables                   = true
 	DefTiDBAllowRemoveAutoInc                    = false
 	DefTiDBUsePlanBaselines                      = true
 	DefTiDBEvolvePlanBaselines                   = false
@@ -947,6 +989,7 @@ var (
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
+	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 )
 
 var (
