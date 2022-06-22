@@ -47,6 +47,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
