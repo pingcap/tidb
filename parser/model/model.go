@@ -1302,14 +1302,18 @@ func (t *TableInfo) FindColumnNameByID(id int64) string {
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-	ID       int64       `json:"id"`
-	Name     CIStr       `json:"fk_name"`
-	RefTable CIStr       `json:"ref_table"`
-	RefCols  []CIStr     `json:"ref_cols"`
-	Cols     []CIStr     `json:"cols"`
-	OnDelete int         `json:"on_delete"`
-	OnUpdate int         `json:"on_update"`
-	State    SchemaState `json:"state"`
+	ID       int64 `json:"id"`
+	Name     CIStr `json:"fk_name"`
+	RefTable CIStr `json:"ref_table"`
+	// Deprecated: use RefColIDs instead
+	RefCols []CIStr `json:"ref_cols"`
+	// Deprecated: use ColIDs instead
+	Cols      []CIStr     `json:"cols"`
+	RefColIDs []int64     `json:"ref_col_ids"`
+	ColIDs    []int64     `json:"col_ids"`
+	OnDelete  int         `json:"on_delete"`
+	OnUpdate  int         `json:"on_update"`
+	State     SchemaState `json:"state"`
 }
 
 // Clone clones FKInfo.
