@@ -82,6 +82,7 @@ nogo(
         "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
         "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
         "//build/linter/durationcheck:durationcheck",
+        "//build/linter/ineffassign:ineffassign",
         "//build/linter/prealloc:prealloc",
     ] + staticcheck_analyzers(STATICHECK_ANALYZERS),
 )

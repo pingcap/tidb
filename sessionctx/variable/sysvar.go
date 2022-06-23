@@ -431,6 +431,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", ReadOnly: true, GetGlobal: func(s *SessionVars) (string, error) {
 		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
+	{Scope: ScopeInstance, Name: MaxConnections, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000, SetGlobal: func(s *SessionVars, val string) error {
+		config.GetGlobalConfig().Instance.MaxConnections = uint32(TidbOptInt64(val, 0))
+		return nil
+	}, GetGlobal: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(uint64(config.GetGlobalConfig().Instance.MaxConnections), 10), nil
+	}},
 
 	/* The system variables below have GLOBAL scope  */
 	{Scope: ScopeGlobal, Name: MaxPreparedStmtCount, Value: strconv.FormatInt(DefMaxPreparedStmtCount, 10), Type: TypeInt, MinValue: -1, MaxValue: 1048576},
