@@ -513,6 +513,8 @@ func TestExprPushDownToFlash(t *testing.T) {
 	intColumn := genColumn(mysql.TypeLonglong, 2)
 	realColumn := genColumn(mysql.TypeDouble, 3)
 	decimalColumn := genColumn(mysql.TypeNewDecimal, 4)
+	decimalColumn.RetType.SetDecimal(mysql.MaxDecimalScale)
+	decimalColumn.RetType.SetFlen(mysql.MaxDecimalWidth)
 	stringColumn := genColumn(mysql.TypeString, 5)
 	datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)

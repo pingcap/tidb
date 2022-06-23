@@ -81,10 +81,17 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 
+	var err error
+
 	d.metrics = newMetrics(conf.PromFactory, conf.Labels)
 	d.metrics.registerTo(conf.PromRegistry)
+	defer func() {
+		if err != nil {
+			d.metrics.unregisterFrom(conf.PromRegistry)
+		}
+	}()
 
-	err := adjustConfig(conf,
+	err = adjustConfig(conf,
 		registerTLSConfig,
 		validateSpecifiedSQL,
 		adjustFileFormat)
