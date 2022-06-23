@@ -831,7 +831,7 @@ const (
 	DefTiDBTxnMode                               = ""
 	DefTiDBRowFormatV1                           = 1
 	DefTiDBRowFormatV2                           = 2
-	DefTiDBDDLReorgWorkerCount                   = 4
+	DefTiDBDDLReorgWorkerCount                   = -1
 	DefTiDBDDLReorgBatchSize                     = 256
 	DefTiDBDDLErrorCountLimit                    = 512
 	DefTiDBMaxDeltaSchemaCount                   = 1024

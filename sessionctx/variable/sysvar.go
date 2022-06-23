@@ -482,7 +482,7 @@ var defaultSysVars = []*SysVar{
 		SetDDLReorgRowFormat(TidbOptInt64(val, DefTiDBRowFormatV2))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeInt, AllowAutoValue: true, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetGlobal: func(s *SessionVars, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 		return nil
 	}},

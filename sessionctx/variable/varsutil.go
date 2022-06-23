@@ -16,6 +16,7 @@ package variable
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,7 +44,11 @@ func SetDDLReorgWorkerCounter(cnt int32) {
 
 // GetDDLReorgWorkerCounter gets ddlReorgWorkerCounter.
 func GetDDLReorgWorkerCounter() int32 {
-	return atomic.LoadInt32(&ddlReorgWorkerCounter)
+	cnt := atomic.LoadInt32(&ddlReorgWorkerCounter)
+	if cnt > 0 {
+		return cnt
+	}
+	return int32(runtime.NumCPU() - 2)
 }
 
 // SetDDLReorgBatchSize sets ddlReorgBatchSize size.
