@@ -31,8 +31,8 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-// WithTiKV flag makes the test case run with real TiKV
-var WithTiKV = flag.String("with-tikv", "", "whether tests run with real TiKV")
+// WithTiKV flag is only used for debugging locally with real tikv cluster.
+var WithTiKV = flag.String("with-tikv", "", "address of tikv cluster, if set, running test with real tikv cluster")
 
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
