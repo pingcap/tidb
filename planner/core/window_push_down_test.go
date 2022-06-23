@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -121,4 +122,24 @@ func TestWindowPlanWithOtherOperators(t *testing.T) {
 	suiteData := plannercore.GetWindowPushDownSuiteData()
 	suiteData.GetTestCases(t, &input, &output)
 	testWithData(t, tk, input, output)
+}
+
+func TestIssue34765(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 varchar(32), c2 datetime, c3 bigint, c4 varchar(64));")
+	tk.MustExec("create table t2(b2 varchar(64));")
+	tk.MustExec("set tidb_enforce_mpp=1;")
+	SetTiFlashReplica(t, dom, "test", "t1")
+	SetTiFlashReplica(t, dom, "test", "t2")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/CheckMPPWindowSchemaLength", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/CheckMPPWindowSchemaLength"))
+	}()
+	tk.MustExec("explain select count(*) from (select row_number() over (partition by c1 order by c2) num from (select * from t1 left join t2 on t1.c4 = t2.b2) tem2 ) tx where num = 1;")
 }

@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -464,7 +465,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		return
 	}
 
-	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	requireTLS := tlsutil.RequireSecureTransport.Load()
+
 	var minTLSVersion uint16 = tls.VersionTLS11
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
 	case "TLSv1.0":

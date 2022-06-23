@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This file contains tests about backup restore (br) which need running with real TiKV.
-// Only tests under /session will be run with real TiKV, so we put them here instead of /br.
-
 package brietest
 
 import (

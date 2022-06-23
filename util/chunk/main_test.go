@@ -19,12 +19,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	path, _ := os.MkdirTemp("", "oom-use-tmp-storage")
 	config.UpdateGlobal(func(conf *config.Config) {

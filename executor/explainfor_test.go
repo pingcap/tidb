@@ -474,14 +474,11 @@ func TestExplainTiFlashSystemTables(t *testing.T) {
 }
 
 func TestPointGetUserVarPlanCache(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tmp := testkit.NewTestKit(t, store)
+	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
+	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 

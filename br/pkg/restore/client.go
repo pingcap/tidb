@@ -1452,6 +1452,7 @@ func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
+	skipTiflash bool,
 ) error {
 	tiFlashStores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.TiFlashOnly)
 	if err != nil {
@@ -1459,7 +1460,8 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	}
 	tiFlashStoreCount := len(tiFlashStores)
 	for _, table := range tables {
-		if table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount) {
+		if skipTiflash ||
+			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount)) {
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 			// see details at https://github.com/pingcap/br/issues/931
@@ -1681,7 +1683,11 @@ func (rc *Client) RestoreKVFiles(
 					summary.CollectInt("File", 1)
 					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 				}()
-				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.restoreTS)
+				startTS := rc.startTS
+				if file.Cf == stream.DefaultCF {
+					startTS = rc.shiftStartTS
+				}
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, startTS, rc.restoreTS)
 			})
 		}
 	}
@@ -1795,12 +1801,19 @@ func (rc *Client) RestoreMetaKVFiles(
 ) error {
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
-	// The k-v envets in default CF should be restored firstly. The reason is that:
+	// The k-v events in default CF should be restored firstly. The reason is that:
 	// The error of transactions of meta will happen,
 	// if restore default CF events successfully, but failed to restore write CF events.
 	for _, f := range files {
 		if f.Cf == stream.WriteCF {
 			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
+
+		if f.Type == backuppb.FileType_Delete {
+			// this should happen abnormally.
+			// only do some preventive checks here.
+			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
 			continue
 		}
 
@@ -1869,7 +1882,14 @@ func (rc *Client) RestoreMetaKVFile(
 		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
 			continue
 		}
-
+		if len(txnEntry.Value) == 0 {
+			// we might record duplicated prewrite keys in some conor cases.
+			// the first prewrite key has the value but the second don't.
+			// so we can ignore the empty value key.
+			// see details at https://github.com/pingcap/tiflow/issues/5468.
+			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
+			continue
+		}
 		log.Debug("txn entry", zap.Uint64("key-ts", ts), zap.Int("txnKey-len", len(txnEntry.Key)),
 			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
@@ -1948,7 +1968,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			var e error
-			schemaVersion, e = t.GenSchemaVersion()
+			schemaVersion, e = t.GenSchemaVersions(128)
 			return e
 		},
 	); err != nil {
@@ -1995,4 +2015,9 @@ func (rc *Client) SaveSchemas(
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// MockClient create a fake client used to test.
+func MockClient(dbs map[string]*utils.Database) *Client {
+	return &Client{databases: dbs}
 }

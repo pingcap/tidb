@@ -171,8 +171,6 @@ func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path st
 const (
 	// TruncateSafePointFileName is the filename that the ts(the log have been truncated) is saved into.
 	TruncateSafePointFileName = "v1_stream_trancate_safepoint.txt"
-	// GlobalCheckpointFileName is the filename that the ts(the global checkpoint) is saved into.
-	GlobalCheckpointFileName = "v1_stream_global_checkpoint.txt"
 )
 
 // GetTSFromFile gets the current truncate safepoint.

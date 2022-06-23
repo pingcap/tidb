@@ -55,6 +55,7 @@ func NewStreamCommand() *cobra.Command {
 		command.Root().HelpFunc()(command, strings)
 	})
 
+	command.Hidden = true
 	return command
 }
 
@@ -150,7 +151,7 @@ func newStreamCheckCommand() *cobra.Command {
 		Short: "get the metadata of log dir.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return streamCommand(cmd, task.StreamCheck)
+			return streamCommand(cmd, task.StreamMetadata)
 		},
 	}
 	return command
@@ -171,7 +172,7 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	switch cmdName {
-	case task.StreamCheck:
+	case task.StreamMetadata:
 		{
 			// do nothing.
 		}

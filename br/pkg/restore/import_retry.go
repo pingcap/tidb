@@ -27,13 +27,13 @@ type OverRegionsInRangeController struct {
 	metaClient SplitClient
 
 	errors error
-	rs     utils.RetryState
+	rs     *utils.RetryState
 }
 
 // OverRegionsInRange creates a controller that cloud be used to scan regions in a range and
 // apply a function over these regions.
 // You can then call the `Run` method for applying some functions.
-func OverRegionsInRange(start, end []byte, metaClient SplitClient, retryStatus utils.RetryState) OverRegionsInRangeController {
+func OverRegionsInRange(start, end []byte, metaClient SplitClient, retryStatus *utils.RetryState) OverRegionsInRangeController {
 	// IMPORTANT: we record the start/end key with TimeStamp.
 	// but scanRegion will drop the TimeStamp and the end key is exclusive.
 	// if we do not use PrefixNextKey. we might scan fewer regions than we expected.
@@ -84,7 +84,6 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 
 // handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
 func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *RegionInfo) (cont bool) {
-
 	if nl := result.StoreError.GetNotLeader(); nl != nil {
 		if nl.Leader != nil {
 			region.Leader = nl.Leader
@@ -92,7 +91,7 @@ func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, 
 			return true
 		}
 		// we retry manually, simply record the retry event.
-		o.rs.RecordRetry()
+		time.Sleep(o.rs.ExponentialBackoff())
 		// There may not be leader, waiting...
 		leader, err := o.tryFindLeader(ctx, region)
 		if err != nil {
@@ -152,16 +151,16 @@ func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f Region
 	if !result.OK() {
 		o.onError(ctx, result, region)
 		switch result.StrategyForRetry() {
-		case giveUp:
+		case StrategyGiveUp:
 			logutil.CL(ctx).Warn("unexpected error, should stop to retry", logutil.ShortError(&result), logutil.Region(region.Region))
 			return false, o.errors
-		case fromThisRegion:
+		case StrategyFromThisRegion:
 			logutil.CL(ctx).Warn("retry for region", logutil.Region(region.Region), logutil.ShortError(&result))
 			if !o.handleInRegionError(ctx, result, region) {
 				return false, o.Run(ctx, f)
 			}
 			return o.runInRegion(ctx, f, region)
-		case fromStart:
+		case StrategyFromStart:
 			logutil.CL(ctx).Warn("retry for execution over regions", logutil.ShortError(&result))
 			// TODO: make a backoffer considering more about the error info,
 			//       instead of ingore the result and retry.
@@ -197,48 +196,48 @@ func RPCResultOK() RPCResult {
 	return RPCResult{}
 }
 
-type retryStrategy int
+type RetryStrategy int
 
 const (
-	giveUp retryStrategy = iota
-	fromThisRegion
-	fromStart
+	StrategyGiveUp RetryStrategy = iota
+	StrategyFromThisRegion
+	StrategyFromStart
 )
 
-func (r *RPCResult) StrategyForRetry() retryStrategy {
+func (r *RPCResult) StrategyForRetry() RetryStrategy {
 	if r.Err != nil {
 		return r.StrategyForRetryGoError()
 	}
 	return r.StrategyForRetryStoreError()
 }
 
-func (r *RPCResult) StrategyForRetryStoreError() retryStrategy {
+func (r *RPCResult) StrategyForRetryStoreError() RetryStrategy {
 	if r.StoreError == nil && r.ImportError == "" {
-		return giveUp
+		return StrategyGiveUp
 	}
 
 	if r.StoreError.GetServerIsBusy() != nil ||
 		r.StoreError.GetRegionNotInitialized() != nil ||
 		r.StoreError.GetNotLeader() != nil {
-		return fromThisRegion
+		return StrategyFromThisRegion
 	}
 
-	return fromStart
+	return StrategyFromStart
 }
 
-func (r *RPCResult) StrategyForRetryGoError() retryStrategy {
+func (r *RPCResult) StrategyForRetryGoError() RetryStrategy {
 	if r.Err == nil {
-		return giveUp
+		return StrategyGiveUp
 	}
-
-	if gRPCErr, ok := status.FromError(r.Err); ok {
+	// we should unwrap the error or we cannot get the write gRPC status.
+	if gRPCErr, ok := status.FromError(errors.Cause(r.Err)); ok {
 		switch gRPCErr.Code() {
 		case codes.Unavailable, codes.Aborted, codes.ResourceExhausted:
-			return fromThisRegion
+			return StrategyFromThisRegion
 		}
 	}
 
-	return giveUp
+	return StrategyGiveUp
 }
 
 func (r *RPCResult) Error() string {

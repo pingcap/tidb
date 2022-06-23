@@ -348,6 +348,11 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
+// GenSchemaVersions increases the schema version.
+func (m *Meta) GenSchemaVersions(count int64) (int64, error) {
+	return m.txn.Inc(mSchemaVersionKey, count)
+}
+
 func (m *Meta) checkPolicyExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mPolicies, policyKey)
 	if err == nil && v == nil {
@@ -1040,23 +1045,28 @@ func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 }
 
 // LastJobIterator is the iterator for gets latest history.
-type LastJobIterator struct {
-	iter *structure.ReverseHashIterator
+type LastJobIterator interface {
+	GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error)
 }
 
 // GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
-func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
+func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
 		return nil, err
 	}
-	return &LastJobIterator{
+	return &HLastJobIterator{
 		iter: iter,
 	}, nil
 }
 
+// HLastJobIterator is the iterator for gets the latest history.
+type HLastJobIterator struct {
+	iter *structure.ReverseHashIterator
+}
+
 // GetLastJobs gets last several jobs.
-func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
+func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	if len(jobs) < num {
 		jobs = make([]*model.Job, 0, num)
 	}
@@ -1214,7 +1224,6 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, phy
 }
 
 // RemoveReorgElement removes the element of the reorganization information.
-// It's used for testing.
 func (m *Meta) RemoveReorgElement(job *model.Job) error {
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
 	if err != nil {

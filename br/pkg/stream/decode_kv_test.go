@@ -3,22 +3,13 @@
 package stream_test
 
 import (
-	"bytes"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/stretchr/testify/require"
 )
 
-type testDecodeKVSuite struct{}
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testDecodeKVSuite{})
-
-func (s *testDecodeKVSuite) TestDecodeKVEntry(c *C) {
+func TestDecodeKVEntry(t *testing.T) {
 	var (
 		pairs = map[string]string{
 			"db":       "tidb",
@@ -37,17 +28,17 @@ func (s *testDecodeKVSuite) TestDecodeKVEntry(c *C) {
 	for ei.Valid() {
 		ei.Next()
 		err := ei.GetError()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		key := ei.Key()
 		value := ei.Value()
 		v, exist := pairs[string(key)]
-		c.Assert(exist, IsTrue)
-		c.Assert(string(value), Equals, v)
+		require.True(t, exist)
+		require.Equal(t, v, string(value))
 	}
 }
 
-func (s *testDecodeKVSuite) TestDecodeKVEntryError(c *C) {
+func TestDecodeKVEntryError(t *testing.T) {
 	var (
 		k    = []byte("db")
 		v    = []byte("tidb")
@@ -59,10 +50,10 @@ func (s *testDecodeKVSuite) TestDecodeKVEntryError(c *C) {
 
 	ei := stream.NewEventIterator(buff)
 	ei.Next()
-	c.Assert(bytes.Equal(k, ei.Key()), IsTrue)
-	c.Assert(bytes.Equal(v, ei.Value()), IsTrue)
-	c.Assert(ei.Valid(), IsTrue)
+	require.Equal(t, k, ei.Key())
+	require.Equal(t, v, ei.Value())
+	require.True(t, ei.Valid())
 
 	ei.Next()
-	c.Assert(ei.GetError(), NotNil)
+	require.Error(t, ei.GetError())
 }

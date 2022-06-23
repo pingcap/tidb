@@ -61,12 +61,13 @@ func TestJoinInDisk(t *testing.T) {
 	defer origin()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
-		conf.OOMAction = config.OOMActionLog
 	})
 
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
 
 	sm := &testkit.MockSessionManager{
@@ -2331,14 +2332,11 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 }
 
 func TestIssue18070(t *testing.T) {
-	restoreFunc := config.RestoreFunc()
-	defer restoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, index(a))")
@@ -2770,14 +2768,8 @@ func TestIssue30211(t *testing.T) {
 	tk.MustExec("insert into t2 values(1),(1),(2),(2);")
 	tk.MustExec("set @@tidb_mem_quota_query=8000;")
 	tk.MustExec("set tidb_index_join_batch_size = 1;")
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = config.OOMActionLog
-		})
-	}()
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()
 	require.True(t, strings.Contains(err, "Out Of Memory Quota"))
 	err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a;").Error()

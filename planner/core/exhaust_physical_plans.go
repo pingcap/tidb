@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
@@ -592,7 +592,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		for i, idxOff := range keyOffMapList {
 			keyOffMap[idxOff] = i
 		}
-		sort.Slice(keyOffMapList, func(i, j int) bool { return keyOffMapList[i] < keyOffMapList[j] })
+		slices.Sort(keyOffMapList)
 		keyIsIndexPrefix := true
 		for keyOff, idxOff := range keyOffMapList {
 			if keyOff != idxOff {
@@ -1657,7 +1657,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			case hasINLMJHint:
 				errMsg = "Optimizer Hint INL_MERGE_JOIN is inapplicable"
 			}
-			if p.hintInfo != nil {
+			if p.hintInfo != nil && p.preferJoinType > 0 {
 				t := p.hintInfo.indexNestedLoopJoinTables
 				switch {
 				case len(t.inljTables) != 0:
@@ -2589,6 +2589,11 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil
 	}
+
+	// Is this aggregate a final stage aggregate?
+	// Final agg can't be split into multi-stage aggregate
+	hasFinalAgg := len(la.AggFuncs) > 0 && la.AggFuncs[0].Mode == aggregation.FinalMode
+
 	if len(la.GroupByItems) > 0 {
 		partitionCols := la.GetPotentialPartitionKeys()
 		// trying to match the required parititions.
@@ -2612,6 +2617,11 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			hashAggs = append(hashAggs, agg)
 		}
 
+		// Final agg can't be split into multi-stage aggregate, so exit early
+		if hasFinalAgg {
+			return
+		}
+
 		// 2-phase agg
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -2628,7 +2638,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 			agg.MppRunMode = MppTiDB
 			hashAggs = append(hashAggs, agg)
 		}
-	} else {
+	} else if !hasFinalAgg {
 		// TODO: support scalar agg in MPP, merge the final result to one node
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
@@ -2671,6 +2681,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
+
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
 			mppAggs := la.tryToGetMppHashAggs(prop)

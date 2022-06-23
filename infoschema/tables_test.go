@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1362,12 +1361,9 @@ func TestStmtSummaryHistoryTableOther(t *testing.T) {
 func TestPerformanceSchemaforPlanCache(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
+	tmp := testkit.NewTestKit(t, store)
+	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
+	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
 
 	tk := newTestKitWithPlanCache(t, store)
 
@@ -1481,6 +1477,37 @@ func TestTiDBTrx(t *testing.T) {
 	tk.MustQuery("select tidb_decode_sql_digests(all_sql_digests) from information_schema.tidb_trx").Check(testkit.Rows(
 		"[]",
 		"[null,null,\"update `test_tidb_trx` set `i` = `i` + ?\"]"))
+}
+
+func TestTiDBTrxSummary(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("drop table if exists test_tidb_trx")
+	tk.MustExec("create table test_tidb_trx(i int)")
+	_, beginDigest := parser.NormalizeDigest("begin")
+	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
+	_, commitDigest := parser.NormalizeDigest("commit")
+	txninfo.Recorder.Clean()
+	txninfo.Recorder.SetMinDuration(500 * time.Millisecond)
+	defer txninfo.Recorder.SetMinDuration(2147483647)
+	txninfo.Recorder.ResizeSummaries(128)
+	defer txninfo.Recorder.ResizeSummaries(0)
+	tk.MustExec("begin")
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	time.Sleep(1 * time.Second)
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	tk.MustExec("commit")
+	// it is possible for TRX_SUMMARY to have other rows (due to parallel execution of tests)
+	for _, row := range tk.MustQuery("select * from information_schema.TRX_SUMMARY;").Rows() {
+		// so we just look for the row we are looking for
+		if row[0] == "1bb679108d0012a8" {
+			require.Equal(t, strings.TrimSpace(row[1].(string)), "[\""+beginDigest.String()+"\",\""+digest.String()+"\",\""+digest.String()+"\",\""+commitDigest.String()+"\"]")
+			return
+		}
+	}
+	t.Fatal("cannot find the expected row")
 }
 
 func TestInfoSchemaDeadlockPrivilege(t *testing.T) {

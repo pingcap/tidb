@@ -460,6 +460,7 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
+	tk.MustExec(`set @@tidb_enable_paging = off`)
 
 	queries := []string{
 		`SELECT a FROM t WHERE a is null AND d in (5307, 15677, 57970)`,
@@ -938,4 +939,31 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 	for _, q := range queries {
 		checkCost(t, tk, q, "")
 	}
+}
+
+func TestTrueCardCost(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, key(b))`)
+
+	checkPlanCost := func(sql string) {
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
+		rs := tk.MustQuery(`explain analyze format=verbose ` + sql).Rows()
+		planCost1 := rs[0][2].(string)
+
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
+		rs = tk.MustQuery(`explain analyze format=true_card_cost ` + sql).Rows()
+		planCost2 := rs[0][2].(string)
+
+		// `true_card_cost` can work since the plan cost is changed
+		require.NotEqual(t, planCost1, planCost2)
+	}
+
+	checkPlanCost(`select * from t`)
+	checkPlanCost(`select * from t where a>10`)
+	checkPlanCost(`select * from t where a>10 limit 10`)
+	checkPlanCost(`select sum(a), b*2 from t use index(b) group by b order by sum(a) limit 10`)
 }

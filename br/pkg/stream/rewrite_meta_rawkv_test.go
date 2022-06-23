@@ -4,17 +4,14 @@ package stream_test
 
 import (
 	"encoding/json"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-type testRewriteMetaRawKvSuite struct{}
-
-var _ = Suite(&testRewriteMetaRawKvSuite{})
 
 func ProduceValue(tableName string, dbID int64) ([]byte, error) {
 	tableInfo := model.TableInfo{
@@ -25,7 +22,7 @@ func ProduceValue(tableName string, dbID int64) ([]byte, error) {
 	return json.Marshal(tableInfo)
 }
 
-func (s *testRewriteMetaRawKvSuite) TestRewriteValueForTable(c *C) {
+func TestRewriteValueForTable(t *testing.T) {
 	var (
 		tableName  = "person"
 		tableID    = 57
@@ -33,10 +30,10 @@ func (s *testRewriteMetaRawKvSuite) TestRewriteValueForTable(c *C) {
 	)
 
 	v, err := ProduceValue(tableName, int64(tableID))
-	c.Assert(err, Equals, nil)
+	require.NoError(t, err)
 	log.Info("old-value", zap.Int("value-len", len(v)), zap.ByteString("old-value", v), logutil.Key("old-value", v))
 
 	v, err = ProduceValue(tableName, int64(newTableID))
-	c.Assert(err, Equals, nil)
+	require.NoError(t, err)
 	log.Info("new-value", zap.Int("value-len", len(v)), zap.ByteString("new-value", v), logutil.Key("new-value", v))
 }

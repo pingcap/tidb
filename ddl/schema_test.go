@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
@@ -223,6 +224,8 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo1, model.StatePublic)
 	testCheckJobDone(t, store, tJob1.ID, true)
 	tbl1 := testGetTable(t, domain, tblInfo1.ID)
+	err = sessiontxn.NewTxn(context.Background(), tk.Session())
+	require.NoError(t, err)
 	for i := 1; i <= 100; i++ {
 		_, err := tbl1.AddRecord(tk.Session(), types.MakeDatums(i, i, i))
 		require.NoError(t, err)
@@ -235,6 +238,8 @@ func TestSchema(t *testing.T) {
 	testCheckTableState(t, store, dbInfo, tblInfo2, model.StatePublic)
 	testCheckJobDone(t, store, tJob2.ID, true)
 	tbl2 := testGetTable(t, domain, tblInfo2.ID)
+	err = sessiontxn.NewTxn(context.Background(), tk2.Session())
+	require.NoError(t, err)
 	for i := 1; i <= 1034; i++ {
 		_, err := tbl2.AddRecord(tk2.Session(), types.MakeDatums(i, i, i))
 		require.NoError(t, err)
@@ -283,7 +288,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
 		return testkit.NewTestKit(t, store).Session(), nil
-	}, 2, 2, 5))
+	}, 20, 20, 5))
 	require.NoError(t, err)
 	defer func() {
 		err := d2.Stop()
@@ -292,6 +297,8 @@ func TestSchemaWaitJob(t *testing.T) {
 
 	// d2 must not be owner.
 	d2.OwnerManager().RetireOwner()
+	// wait one-second makes d2 stop pick up jobs.
+	time.Sleep(1 * time.Second)
 
 	dbInfo, err := testSchemaInfo(store, "test_schema")
 	require.NoError(t, err)
@@ -305,7 +312,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, se, d2, store)
+	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
 }
 
 func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d ddl.DDL, store kv.Storage) *model.Job {
@@ -317,6 +324,7 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	// TODO: check error detail
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.Error(t, d.DoDDLJob(ctx, job))
 	testCheckJobCancelled(t, store, job, nil)
 
@@ -324,14 +332,11 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 }
 
 func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		historyJob, err := m.GetHistoryDDLJob(job.ID)
-		require.NoError(t, err)
-		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
-		if state != nil {
-			require.Equal(t, historyJob.SchemaState, *state)
-		}
-		return nil
-	}))
+	se := testkit.NewTestKit(t, store).Session()
+	historyJob, err := ddl.GetHistoryJobByID(se, job.ID)
+	require.NoError(t, err)
+	require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+	if state != nil {
+		require.Equal(t, historyJob.SchemaState, *state)
+	}
 }

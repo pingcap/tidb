@@ -6260,6 +6260,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
+<<<<<<< HEAD
           "description": "TiDB read table cache hit total",
           "editable": true,
           "error": false,
@@ -6269,14 +6270,26 @@
           },
           "fill": 1,
           "fillGradient": 0,
+=======
+          "description": "TiDB plan cache miss total",
+          "editable": true,
+          "error": false,
+          "fill": 1,
+>>>>>>> master
           "grid": {},
           "gridPos": {
             "h": 8,
             "w": 12,
+<<<<<<< HEAD
             "x": 0,
             "y": 29
           },
           "hiddenSeries": false,
+=======
+            "x": 12,
+            "y": 98
+          },
+>>>>>>> master
           "id": 249,
           "legend": {
             "alignAsTable": true,
@@ -6297,11 +6310,15 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
+<<<<<<< HEAD
           "options": {
             "alertThreshold": true
           },
           "percentage": false,
           "pluginVersion": "7.5.11",
+=======
+          "percentage": false,
+>>>>>>> master
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -6311,12 +6328,19 @@
           "steppedLine": false,
           "targets": [
             {
+<<<<<<< HEAD
               "exemplar": true,
               "expr": "sum(rate(tidb_server_read_from_tablecache_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
               "legendFormat": "qps",
+=======
+              "expr": "sum(rate(tidb_server_plan_cache_miss_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}",
+>>>>>>> master
               "refId": "A",
               "step": 30
             }
@@ -6325,7 +6349,11 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
+<<<<<<< HEAD
           "title": "Read From Table Cache OPS",
+=======
+          "title": "Plan Cache Miss OPS",
+>>>>>>> master
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -6342,7 +6370,10 @@
           },
           "yaxes": [
             {
+<<<<<<< HEAD
               "$$hashKey": "object:68",
+=======
+>>>>>>> master
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -6351,7 +6382,10 @@
               "show": true
             },
             {
+<<<<<<< HEAD
               "$$hashKey": "object:69",
+=======
+>>>>>>> master
               "format": "short",
               "label": null,
               "logBase": 1,

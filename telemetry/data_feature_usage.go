@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -44,6 +45,7 @@ type featureUsage struct {
 	AutoCapture           bool                           `json:"autoCapture"`
 	PlacementPolicyUsage  *placementPolicyUsage          `json:"placementPolicy"`
 	NonTransactionalUsage *m.NonTransactionalStmtCounter `json:"nonTransactional"`
+	GlobalKill            bool                           `json:"globalKill"`
 }
 
 type placementPolicyUsage struct {
@@ -73,6 +75,8 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 	collectFeatureUsageFromInfoschema(ctx, &usage)
 
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
+
+	usage.GlobalKill = getGlobalKillUsageInfo()
 
 	return &usage, nil
 }
@@ -257,4 +261,8 @@ func getNonTransactionalUsage() *m.NonTransactionalStmtCounter {
 
 func postReportNonTransactionalCounter() {
 	initialNonTransactionalCounter = m.GetNonTransactionalStmtCounter()
+}
+
+func getGlobalKillUsageInfo() bool {
+	return config.GetGlobalConfig().EnableGlobalKill
 }

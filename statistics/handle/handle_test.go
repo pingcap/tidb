@@ -1070,18 +1070,6 @@ partition by range (a) (
 	checkHealthy(60, 50, 66)
 }
 
-func TestHideGlobalStatsSwitch(t *testing.T) {
-	// NOTICE: remove this test when this global-stats is GA.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_partition_prune_mode", strings.ToLower(r[0].(string)))
-	}
-	require.Len(t, tk.MustQuery("show variables where variable_name like '%tidb_partition_prune_mode%'").Rows(), 0)
-}
-
 func TestGlobalStatsData(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -2220,6 +2208,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
+		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
@@ -3167,17 +3156,19 @@ func TestIssues24401(t *testing.T) {
 	testKit.MustExec("create table tp(a int, index(a)) partition by hash(a) partitions 3")
 	testKit.MustExec("insert into tp values (1), (2), (3)")
 	testKit.MustExec("analyze table tp")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// normal table with dynamic prune mode
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// partition table with dynamic prune mode
 	testKit.MustExec("analyze table tp")
-	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
 	lenRows := len(rows)
 	require.Equal(t, 6, lenRows)
 
@@ -3343,6 +3334,36 @@ func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertEvictIndex", `return(true)`))
 	tk.MustExec("analyze incremental table test.t index idx_b")
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertEvictIndex"))
+}
+
+func TestEvictedColumnLoadedStatus(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	dom.StatsHandle().SetLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsCMSEvicted())
+	}
 }
 
 func TestAnalyzeTableLRUPut(t *testing.T) {

@@ -335,11 +335,12 @@ func (importer *FileImporter) ImportKVFileForRegion(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
 	rule *RewriteRules,
-	restoreTs uint64,
+	startTS uint64,
+	restoreTS uint64,
 	info *RegionInfo,
 ) RPCResult {
 	// Try to download file.
-	result := importer.downloadAndApplyKVFile(ctx, file, rule, info, restoreTs)
+	result := importer.downloadAndApplyKVFile(ctx, file, rule, info, startTS, restoreTS)
 	if !result.OK() {
 		errDownload := result.Err
 		for _, e := range multierr.Errors(errDownload) {
@@ -380,11 +381,13 @@ func (importer *FileImporter) ClearFiles(ctx context.Context, pdClient pd.Client
 	return nil
 }
 
+// ImportKVFiles restores the kv events.
 func (importer *FileImporter) ImportKVFiles(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
 	rule *RewriteRules,
-	restoreTs uint64,
+	startTS uint64,
+	restoreTS uint64,
 ) error {
 	startTime := time.Now()
 	log.Debug("import kv files", zap.String("file", file.Path))
@@ -398,10 +401,11 @@ func (importer *FileImporter) ImportKVFiles(
 		logutil.Key("startKey", startKey),
 		logutil.Key("endKey", endKey))
 
-	rs := utils.InitialRetryState(16, 100*time.Millisecond, 4*time.Second)
-	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, rs)
+	// This RetryState will retry 48 time, for 5 min - 6 min.
+	rs := utils.InitialRetryState(48, 100*time.Millisecond, 8*time.Second)
+	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *RegionInfo) RPCResult {
-		return importer.ImportKVFileForRegion(ctx, file, rule, restoreTs, r)
+		return importer.ImportKVFileForRegion(ctx, file, rule, startTS, restoreTS, r)
 	})
 
 	log.Debug("download and apply file done",
@@ -801,7 +805,8 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	file *backuppb.DataFileInfo,
 	rules *RewriteRules,
 	regionInfo *RegionInfo,
-	restoreTs uint64,
+	startTS uint64,
+	restoreTS uint64,
 ) RPCResult {
 	leader := regionInfo.Leader
 	if leader == nil {
@@ -823,12 +828,13 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		Name: file.Path,
 		Cf:   file.Cf,
 		// TODO fill the length
-		Length:    0,
-		IsDelete:  file.Type == backuppb.FileType_Delete,
-		RestoreTs: restoreTs,
-		StartKey:  regionInfo.Region.GetStartKey(),
-		EndKey:    regionInfo.Region.GetEndKey(),
-		Sha256:    file.GetSha256(),
+		Length:          0,
+		IsDelete:        file.Type == backuppb.FileType_Delete,
+		StartSnapshotTs: startTS,
+		RestoreTs:       restoreTS,
+		StartKey:        regionInfo.Region.GetStartKey(),
+		EndKey:          regionInfo.Region.GetEndKey(),
+		Sha256:          file.GetSha256(),
 	}
 
 	reqCtx := &kvrpcpb.Context{
@@ -849,7 +855,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		return RPCResultFromError(errors.Trace(err))
 	}
 	if resp.GetError() != nil {
-		logutil.CL(ctx).Warn("backup meet error", zap.Stringer("error", resp.GetError()))
+		logutil.CL(ctx).Warn("import meet error", zap.Stringer("error", resp.GetError()))
 		return RPCResultFromPBError(resp.GetError())
 	}
 	return RPCResultOK()

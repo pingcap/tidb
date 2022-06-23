@@ -127,7 +127,7 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 func (s *WindowFuncDesc) CanPushDownToTiFlash() bool {
 	// window functions
 	switch s.Name {
-	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag:
+	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		return true
 		// TODO: support aggregate functions
 		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:

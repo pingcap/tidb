@@ -55,11 +55,12 @@ const (
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
 
-	defaultRestoreConcurrency = 128
-	maxRestoreBatchSizeLimit  = 10240
-	defaultPDConcurrency      = 1
-	defaultBatchFlushInterval = 16 * time.Second
-	defaultFlagDdlBatchSize   = 128
+	defaultRestoreConcurrency       = 128
+	defaultRestoreStreamConcurrency = 64
+	maxRestoreBatchSizeLimit        = 10240
+	defaultPDConcurrency            = 1
+	defaultBatchFlushInterval       = 16 * time.Second
+	defaultFlagDdlBatchSize         = 128
 )
 
 const (
@@ -150,8 +151,9 @@ type RestoreConfig struct {
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// [startTs, RestoreTS] is used to `restore log` from StartTS to RestoreTS.
-	StartTS   uint64 `json:"start-ts" toml:"start-ts"`
-	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
+	StartTS     uint64 `json:"start-ts" toml:"start-ts"`
+	RestoreTS   uint64 `json:"restore-ts" toml:"restore-ts"`
+	skipTiflash bool   `json:"-" toml:"-"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -263,7 +265,7 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.Config.Concurrency == 0 {
-		cfg.Config.Concurrency = 32
+		cfg.Config.Concurrency = 16
 	}
 }
 
@@ -298,9 +300,9 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	schemasMap := make(map[string]struct{})
 	tablesMap := make(map[string]struct{})
 	for _, db := range schemas {
-		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
-			dbName = name
+		dbName := db.Info.Name.L
+		if dbCIStrName, ok := utils.GetSysDBCIStrName(db.Info.Name); utils.IsSysDB(dbCIStrName.O) && ok {
+			dbName = dbCIStrName.L
 		}
 		schemasMap[utils.EncloseName(dbName)] = struct{}{}
 		for _, table := range db.Tables {
@@ -308,19 +310,21 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 				// we may back up empty database.
 				continue
 			}
-			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.O)] = struct{}{}
+			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.L)] = struct{}{}
 		}
 	}
 	restoreSchemas := cfg.Schemas
 	restoreTables := cfg.Tables
 	for schema := range restoreSchemas {
-		if _, ok := schemasMap[schema]; !ok {
+		schemaLName := strings.ToLower(schema)
+		if _, ok := schemasMap[schemaLName]; !ok {
 			return errors.Annotatef(berrors.ErrUndefinedRestoreDbOrTable,
 				"[database: %v] has not been backup, please ensure you has input a correct database name", schema)
 		}
 	}
 	for table := range restoreTables {
-		if _, ok := tablesMap[table]; !ok {
+		tableLName := strings.ToLower(table)
+		if _, ok := tablesMap[tableLName]; !ok {
 			return errors.Annotatef(berrors.ErrUndefinedRestoreDbOrTable,
 				"[table: %v] has not been backup, please ensure you has input a correct table name", table)
 		}
@@ -487,7 +491,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	err = client.PreCheckTableTiFlashReplica(ctx, tables)
+	err = client.PreCheckTableTiFlashReplica(ctx, tables, cfg.skipTiflash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -558,7 +562,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	summary.CollectInt("restore ranges", rangeSize)
 	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
 
-	restoreSchedulers, err := restorePreWork(ctx, client, mgr)
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -687,13 +691,15 @@ func filterRestoreFiles(
 
 // restorePreWork executes some prepare work before restore.
 // TODO make this function returns a restore post work.
-func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr) (pdutil.UndoFunc, error) {
+func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, error) {
 	if client.IsOnline() {
 		return pdutil.Nop, nil
 	}
 
-	// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-	client.SwitchToImportMode(ctx)
+	if switchToImport {
+		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
+		client.SwitchToImportMode(ctx)
+	}
 
 	return mgr.RemoveSchedulers(ctx)
 }

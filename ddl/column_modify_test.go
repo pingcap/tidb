@@ -438,6 +438,11 @@ func TestRenameColumn(t *testing.T) {
 
 	tk.MustExec("drop view test_rename_column_view")
 	tk.MustExec("drop table test_rename_column")
+
+	// Test rename a non-exists column. See https://github.com/pingcap/tidb/issues/34811.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustGetErrCode("alter table t rename column b to b;", errno.ErrBadField)
 }
 
 func TestVirtualColumnDDL(t *testing.T) {
@@ -636,6 +641,30 @@ func TestColumnModifyingDefinition(t *testing.T) {
 	tk.MustExec("insert into test2(c2) values (null);")
 	tk.MustGetErrMsg("alter table test2 change c2 a int not null", "[ddl:1265]Data truncated for column 'a' at row 1")
 	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
+}
+
+func TestColumnModifyingDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int default 1);")
+	tk.MustExec("alter table t change a a int default 0.00;")
+	ret := tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '0'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1.25);")
+	tk.MustExec("alter table t change a a int default 2.8;")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` int(11) DEFAULT '3'"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a float default 1.25);")
+	tk.MustExec("alter table t change a a float default '0012.32';")
+	ret = tk.MustQuery("show create table t").Rows()[0][1]
+	require.True(t, strings.Contains(ret.(string), "`a` float DEFAULT '12.32'"))
 }
 
 func TestTransactionWithWriteOnlyColumn(t *testing.T) {

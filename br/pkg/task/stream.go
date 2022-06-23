@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -67,7 +68,7 @@ var (
 	StreamResume   = "log resume"
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
-	StreamCheck    = "log check"
+	StreamMetadata = "log metadata"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -87,7 +88,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamResume:   RunStreamResume,
 	StreamStatus:   RunStreamStatus,
 	StreamTruncate: RunStreamTruncate,
-	StreamCheck:    RunStreamCheck,
+	StreamMetadata: RunStreamMetadata,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -137,14 +138,14 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	_ = flags.MarkHidden(flagStreamEndTS)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultBRGCSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamStartSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 	_ = flags.MarkHidden(flagGCSafePointTTS)
 }
 
 func DefineStreamPauseFlags(flags *pflag.FlagSet) {
 	DefineStreamCommonFlags(flags)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamPauseSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 }
 
@@ -230,7 +231,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultBRGCSafePointTTL
+		cfg.SafePointTTL = utils.DefaultStreamStartSafePointTTL
 	}
 
 	return nil
@@ -247,7 +248,7 @@ func (cfg *StreamConfig) ParseStreamPauseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultStreamGCSafePointTTL
+		cfg.SafePointTTL = utils.DefaultStreamPauseSafePointTTL
 	}
 	return nil
 }
@@ -295,6 +296,10 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if backend.GetS3() == nil {
+			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
+				"Only support s3 storage currently.")
 		}
 
 		opts := storage.ExternalStorageOptions{
@@ -351,20 +356,14 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 	return nil
 }
 
-// setGCSafePoint specifies currentTS should belong to (gcSafePoint, currentTS),
-// and set startTS as a serverSafePoint to PD
-func (s *streamMgr) setGCSafePoint(ctx context.Context, safePoint uint64) error {
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), safePoint)
+// setGCSafePoint sets the server safe point to PD.
+func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
 	if err != nil {
 		return errors.Annotatef(err,
-			"failed to check gc safePoint, ts %v", safePoint)
+			"failed to check gc safePoint, ts %v", sp.BackupTS)
 	}
 
-	sp := utils.BRServiceSafePoint{
-		ID:       utils.MakeSafePointID(),
-		TTL:      s.cfg.SafePointTTL,
-		BackupTS: safePoint,
-	}
 	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
@@ -508,7 +507,15 @@ func RunStreamStart(
 	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.setGCSafePoint(ctx, streamMgr.cfg.StartTS); err != nil {
+
+	if err = streamMgr.setGCSafePoint(
+		ctx,
+		utils.BRServiceSafePoint{
+			ID:       utils.MakeSafePointID(),
+			TTL:      cfg.SafePointTTL,
+			BackupTS: cfg.StartTS,
+		},
+	); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -558,7 +565,7 @@ func RunStreamStart(
 	return nil
 }
 
-func RunStreamCheck(
+func RunStreamMetadata(
 	c context.Context,
 	g glue.Glue,
 	cmdName string,
@@ -614,11 +621,6 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	storage, err := cfg.makeStorage(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
@@ -626,22 +628,18 @@ func RunStreamStop(
 		return errors.Trace(err)
 	}
 
-	globalCheckpointTS, err := ti.GetGlobalCheckPointTS(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = restore.SetTSToFile(
-		ctx,
-		storage,
-		globalCheckpointTS,
-		restore.GlobalCheckpointFileName,
-	); err != nil {
-		return errors.Trace(err)
-	}
-
 	if err = cli.DeleteTask(ctx, cfg.TaskName); err != nil {
 		return errors.Trace(err)
+	}
+
+	if err := streamMgr.setGCSafePoint(ctx,
+		utils.BRServiceSafePoint{
+			ID:       buildPauseSafePointName(ti.Info.Name),
+			TTL:      0,
+			BackupTS: 0,
+		},
+	); err != nil {
+		log.Warn("failed to remove safe point", zap.String("error", err.Error()))
 	}
 
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
@@ -686,7 +684,14 @@ func RunStreamPause(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = streamMgr.setGCSafePoint(ctx, globalCheckPointTS); err != nil {
+	if err = streamMgr.setGCSafePoint(
+		ctx,
+		utils.BRServiceSafePoint{
+			ID:       buildPauseSafePointName(ti.Info.Name),
+			TTL:      cfg.SafePointTTL,
+			BackupTS: globalCheckPointTS,
+		},
+	); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -694,6 +699,7 @@ func RunStreamPause(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
@@ -752,6 +758,18 @@ func RunStreamResume(
 	if err != nil {
 		return err
 	}
+
+	if err := streamMgr.setGCSafePoint(ctx,
+		utils.BRServiceSafePoint{
+			ID:       buildPauseSafePointName(ti.Info.Name),
+			TTL:      0,
+			BackupTS: globalCheckPointTS,
+		},
+	); err != nil {
+		log.Warn("failed to remove safe point",
+			zap.Uint64("safe-point", globalCheckPointTS), zap.String("error", err.Error()))
+	}
+
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
@@ -914,7 +932,17 @@ func RunStreamRestore(
 	g glue.Glue,
 	cmdName string,
 	cfg *RestoreConfig,
-) error {
+) (err error) {
+	startTime := time.Now()
+	defer func() {
+		dur := time.Since(startTime)
+		if err != nil {
+			summary.Log(cmdName+" failed summary", zap.Error(err))
+		} else {
+			summary.Log(cmdName+" success summary", zap.Duration("total-take", dur),
+				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS))
+		}
+	}()
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -933,7 +961,7 @@ func RunStreamRestore(
 	}
 
 	if len(cfg.FullBackupStorage) > 0 {
-		if cfg.StartTS, err = getFullBakcupTS(ctx, cfg); err != nil {
+		if cfg.StartTS, err = getFullBackupTS(ctx, cfg); err != nil {
 			return errors.Trace(err)
 		}
 		if cfg.StartTS < logMinTS {
@@ -955,6 +983,8 @@ func RunStreamRestore(
 	if len(cfg.FullBackupStorage) > 0 {
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
+		// TiFlash replica is restored to down-stream on 'pitr' currently.
+		cfg.skipTiflash = true
 		if err = RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
 			return errors.Trace(err)
 		}
@@ -986,7 +1016,14 @@ func restoreStream(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	client, err := createRestoreClient(ctx, g, cfg)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	client, err := createRestoreClient(ctx, g, cfg, mgr)
 	if err != nil {
 		return errors.Annotate(err, "failed to create restore client")
 	}
@@ -998,6 +1035,14 @@ func restoreStream(
 	}
 	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, ShiftTS(cfg.StartTS))
 	client.SetCurrentTS(currentTS)
+
+	restoreSchedulers, err := restorePreWork(ctx, client, mgr, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Always run the post-work even on error, so we don't stuck in the import
+	// mode or emptied schedulers
+	defer restorePostWork(ctx, client, restoreSchedulers)
 
 	// read meta by given ts.
 	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
@@ -1042,6 +1087,10 @@ func restoreStream(
 	updateRewriteRules(rewriteRules, schemasReplace)
 
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	if cfg.Concurrency > defaultRestoreStreamConcurrency {
+		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
+		client.SetConcurrency(defaultRestoreConcurrency)
+	}
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
@@ -1059,19 +1108,8 @@ func restoreStream(
 	return nil
 }
 
-func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig) (*restore.Client, error) {
+func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *conn.Mgr) (*restore.Client, error) {
 	var err error
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		if err != nil {
-			mgr.Close()
-		}
-	}()
-
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
@@ -1176,25 +1214,18 @@ func getLogRange(
 	}
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
-	// get log global checkpoint ts from GlobalCheckpointFileName.
-	// If globalCheckpointTS equals 0, which represents the log task has not been stop.
-	logMaxTS, err := restore.GetTSFromFile(ctx, s, restore.GlobalCheckpointFileName)
+	// get max global resolved ts from metas.
+	logMaxTS, err := getGlobalResolvedTS(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	// get max global resolved ts from metas.
-	if logMaxTS == 0 {
-		if logMaxTS, err = getGlobalResolvedTS(ctx, s); err != nil {
-			return 0, 0, errors.Trace(err)
-		}
-	}
+	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
 }
 
-// getFullBakcupTS gets the snapshot-ts of full bakcup
-func getFullBakcupTS(
+// getFullBackupTS gets the snapshot-ts of full bakcup
+func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, error) {
@@ -1429,4 +1460,8 @@ func ShiftTS(startTS uint64) uint64 {
 	} else {
 		return oracle.ComposeTS(shiftPhysical, logical)
 	}
+}
+
+func buildPauseSafePointName(taskName string) string {
+	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }

@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"context"
+	"strconv"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -32,20 +34,17 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/metadata"
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
-	}
-
-	encodeType := tipb.EncodeType_TypeDefault
-	if canUseChunkRPC(sctx) {
-		encodeType = tipb.EncodeType_TypeChunk
 	}
 	// TODO: Add metric label and set open tracing.
 	return &selectResult{
@@ -55,7 +54,6 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		encodeType: encodeType,
 		copPlanIDs: planIDs,
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
@@ -77,7 +75,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	kvReq.Streaming = false
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
 	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
@@ -97,6 +94,11 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		EventCb:                    eventCb,
 		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
 	}
+
+	if kvReq.StoreType == kv.TiFlash {
+		ctx = SetTiFlashMaxThreadsInContext(ctx, sctx)
+	}
+
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -108,24 +110,8 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
-	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
-	if kvReq.Streaming {
-		return &streamResult{
-			label:      "dag-stream",
-			sqlType:    label,
-			resp:       resp,
-			rowLen:     len(fieldTypes),
-			fieldTypes: fieldTypes,
-			ctx:        sctx,
-			feedback:   fb,
-		}, nil
-	}
-	encodetype := tipb.EncodeType_TypeDefault
-	if canUseChunkRPC(sctx) {
-		encodetype = tipb.EncodeType_TypeChunk
-	}
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
@@ -135,10 +121,17 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		feedback:   fb,
 		sqlType:    label,
 		memTracker: kvReq.MemTracker,
-		encodeType: encodetype,
 		storeType:  kvReq.StoreType,
 		paging:     kvReq.Paging,
 	}, nil
+}
+
+// SetTiFlashMaxThreadsInContext set the config TiFlash max threads in context.
+func SetTiFlashMaxThreadsInContext(ctx context.Context, sctx sessionctx.Context) context.Context {
+	if sctx.GetSessionVars().TiFlashMaxThreads != -1 {
+		ctx = metadata.AppendToOutgoingContext(ctx, variable.TiDBMaxTiFlashThreads, strconv.FormatInt(sctx.GetSessionVars().TiFlashMaxThreads, 10))
+	}
+	return ctx
 }
 
 // SelectWithRuntimeStats sends a DAG request, returns SelectResult.
@@ -170,12 +163,11 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 		label = metrics.LblInternal
 	}
 	result := &selectResult{
-		label:      "analyze",
-		resp:       resp,
-		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:    label,
-		encodeType: tipb.EncodeType_TypeDefault,
-		storeType:  kvReq.StoreType,
+		label:     "analyze",
+		resp:      resp,
+		feedback:  statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:   label,
+		storeType: kvReq.StoreType,
 	}
 	return result, nil
 }
@@ -189,12 +181,11 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars int
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		label:      "checksum",
-		resp:       resp,
-		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:    metrics.LblGeneral,
-		encodeType: tipb.EncodeType_TypeDefault,
-		storeType:  kvReq.StoreType,
+		label:     "checksum",
+		resp:      resp,
+		feedback:  statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:   metrics.LblGeneral,
+		storeType: kvReq.StoreType,
 	}
 	return result, nil
 }
