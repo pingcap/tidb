@@ -2529,6 +2529,7 @@ const (
 	AlterTableAddPartitions
 	// A tombstone for `AlterTableAlterPartition`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
+	//nolint: deadcode
 	__DEPRECATED_AlterTableAlterPartition
 	AlterTablePartitionAttributes
 	AlterTablePartitionOptions
@@ -2562,6 +2563,7 @@ const (
 	AlterTableSetTiFlashReplica
 	// A tombstone for `AlterTablePlacement`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
+	//nolint: deadcode
 	__DEPRECATED_AlterTablePlacement
 	AlterTableAddStatistics
 	AlterTableDropStatistics
