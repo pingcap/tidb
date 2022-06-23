@@ -43,6 +43,26 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func runEBSRestoreCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.RestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}
+	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+	if err := task.RunRestoreEBS(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+		log.Error("failed to restore", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.RestoreRawConfig{
 		RawKvConfig: task.RawKvConfig{Config: task.Config{LogProgress: HasLogFile()}},
@@ -90,6 +110,7 @@ func NewRestoreCommand() *cobra.Command {
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
 		newStreamRestoreCommand(),
+		newEBSRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -160,6 +181,20 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
+	command.Hidden = true
+	return command
+}
+
+func newEBSRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "ebs",
+		Short: "restore data from ebs snapshot volume",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runEBSRestoreCommand(command, task.EBSRestoreCmd)
+		},
+	}
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
 	command.Hidden = true
 	return command
 }
