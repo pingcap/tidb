@@ -77,6 +77,9 @@ var defaultSysVars = []*SysVar{
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
 		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
+	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
+		timestamp, ok := s.systems[Timestamp]
+		return timestamp, ok && timestamp != DefTimestamp, nil
 	}},
 	{Scope: ScopeSession, Name: WarningCount, Value: "0", ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.Itoa(s.SysWarningCount), nil
@@ -86,9 +89,13 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: LastInsertID, Value: "", skipInit: true, Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
+	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
+		return "", false, nil
 	}},
 	{Scope: ScopeSession, Name: Identity, Value: "", skipInit: true, Type: TypeInt, AllowEmpty: true, MinValue: 0, MaxValue: math.MaxInt64, GetSession: func(s *SessionVars) (string, error) {
 		return strconv.FormatUint(s.StmtCtx.PrevLastInsertID, 10), nil
+	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
+		return "", false, nil
 	}},
 	/* TiDB specific variables */
 	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
@@ -140,11 +147,11 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptProjectionPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBOptProjectionPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowProjectionPushDown = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
 	}},
@@ -192,6 +199,11 @@ var defaultSysVars = []*SysVar{
 		s.txnIsolationLevelOneShot.state = oneShotSet
 		s.txnIsolationLevelOneShot.value = val
 		return nil
+	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
+		if s.txnIsolationLevelOneShot.state != oneShotDef {
+			return s.txnIsolationLevelOneShot.value, true, nil
+		}
+		return "", false, nil
 	}},
 	{Scope: ScopeSession, Name: TiDBOptimizerSelectivityLevel, Value: strconv.Itoa(DefTiDBOptimizerSelectivityLevel), skipInit: true, Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
@@ -307,12 +319,16 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return "0", nil
+	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
+		return strconv.FormatUint(uint64(s.Rng.GetSeed1()), 10), true, nil
 	}},
 	{Scope: ScopeSession, Name: RandSeed2, Type: TypeInt, Value: "0", skipInit: true, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.Rng.SetSeed2(uint32(tidbOptPositiveInt32(val, 0)))
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return "0", nil
+	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
+		return strconv.FormatUint(uint64(s.Rng.GetSeed2()), 10), true, nil
 	}},
 	{Scope: ScopeSession, Name: TiDBReadConsistency, Value: string(ReadConsistencyStrict), Type: TypeStr, Hidden: true,
 		Validation: func(_ *SessionVars, normalized string, _ string, _ ScopeFlag) (string, error) {
@@ -1548,7 +1564,10 @@ var defaultSysVars = []*SysVar{
 		s.RegardNULLAsPoint = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePaging, Value: Off, Type: TypeBool, Hidden: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePaging, Value: BoolToOnOff(DefTiDBEnablePaging), Type: TypeBool, Hidden: true, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePaging = TiDBOptOn(val)
+		return nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},

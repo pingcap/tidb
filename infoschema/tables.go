@@ -1580,6 +1580,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	})
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	//nolint: prealloc
 	var servers []ServerInfo
 	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo} {
 		nodes, err := r(ctx)
