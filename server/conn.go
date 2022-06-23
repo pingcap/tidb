@@ -324,6 +324,8 @@ func closeConn(cc *clientConn, connections int) error {
 			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 		}
 	}
+	// Close statements and session
+	// This will release advisory locks, row locks, etc.
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
