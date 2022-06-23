@@ -374,7 +374,7 @@ func NewRestoreControllerWithPauser(
 		cfg:              cfg,
 		dbMetas:          p.DBMetas,
 		srcStorage:       p.DumpFileStorage,
-		kvEncBuilder:     backend,
+		encBuilder:       backend,
 		targetInfoGetter: targetInfoGetter,
 		ioWorkers:        ioWorkers,
 	}

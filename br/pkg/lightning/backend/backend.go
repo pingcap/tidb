@@ -145,8 +145,8 @@ type TargetInfoGetter interface {
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 }
 
-// KVEncodingBuilder consists of operations to handle encoding KVs from source.
-type KVEncodingBuilder interface {
+// EncodingBuilder consists of operations to handle encoding backend row data formats from source.
+type EncodingBuilder interface {
 	// NewEncoder creates an encoder of a TiDB table.
 	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
 	// MakeEmptyRows creates an empty collection of encoded rows.
@@ -157,7 +157,7 @@ type KVEncodingBuilder interface {
 // Implementations of this interface must be goroutine safe: you can share an
 // instance and execute any method anywhere.
 type AbstractBackend interface {
-	KVEncodingBuilder
+	EncodingBuilder
 	TargetInfoGetter
 	// Close the connection to the backend.
 	Close()

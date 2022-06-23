@@ -77,8 +77,8 @@ type TargetInfoGetter interface {
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
 	// CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 	CheckVersionRequirements(ctx context.Context) error
-	// DoesTableContainData checks whether the specified table on the target DB contains data or not.
-	DoesTableContainData(ctx context.Context, schemaName string, tableName string) (bool, error)
+	// IsTableEmpty checks whether the specified table on the target DB contains data or not.
+	IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error)
 	// GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 	GetTargetSysVariablesForImport(ctx context.Context) map[string]string
 	// GetReplicationConfig gets the replication config on the target.
@@ -95,7 +95,7 @@ const (
 	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
 )
 
-func withPreInfoGetterKeyValue(ctx context.Context, key preInfoGetterKey, val any) context.Context {
+func withPreInfoGetterValue(ctx context.Context, key preInfoGetterKey, val any) context.Context {
 	return context.WithValue(ctx, key, val)
 }
 
@@ -158,16 +158,17 @@ func (g *TargetInfoGetterImpl) CheckVersionRequirements(ctx context.Context) err
 	})
 }
 
-// DoesTableContainData checks whether the specified table on the target DB contains data or not.
+// IsTableEmpty checks whether the specified table on the target DB contains data or not.
 // It implements the TargetInfoGetter interface.
 // It tries to select the row count from the target DB.
-func (g *TargetInfoGetterImpl) DoesTableContainData(ctx context.Context, schemaName string, tableName string) (bool, error) {
+func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
+	var result bool
 	failpoint.Inject("CheckTableEmptyFailed", func() {
-		failpoint.Return(false, errors.New("mock error"))
+		failpoint.Return(nil, errors.New("mock error"))
 	})
 	db, err := g.targetDBGlue.GetDB()
 	if err != nil {
-		return false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	exec := common.SQLWithRetry{
 		DB:     db,
@@ -181,15 +182,16 @@ func (g *TargetInfoGetterImpl) DoesTableContainData(ctx context.Context, schemaN
 
 	switch {
 	case errors.ErrorEqual(err, sql.ErrNoRows):
-		return false, nil
+		result = true
 	case err != nil:
-		return false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	default:
-		return true, nil
+		result = false
 	}
+	return &result, nil
 }
 
-// GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
+// GetTargetSysVariablesForImport gets some important system variables for importing on the target.
 // It implements the TargetInfoGetter interface.
 // It uses the SQL to fetch sys variables from the target.
 func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context) map[string]string {
@@ -237,7 +239,7 @@ type PreRestoreInfoGetterImpl struct {
 	cfg              *config.Config
 	srcStorage       storage.ExternalStorage
 	ioWorkers        *worker.Pool
-	kvEncBuilder     backend.KVEncodingBuilder
+	encBuilder       backend.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
 
 	dbMetas          []*mydump.MDDatabaseMeta
@@ -260,12 +262,12 @@ func NewPreRestoreInfoGetter(
 	if ioWorkers == nil {
 		ioWorkers = worker.NewPool(context.Background(), cfg.App.IOConcurrency, "pre_info_getter_io")
 	}
-	var kvEncBuilder backend.KVEncodingBuilder
+	var encBuilder backend.EncodingBuilder
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
-		kvEncBuilder = tidb.NewKVEncodingBuilder()
+		encBuilder = tidb.NewEncodingBuilder()
 	case config.BackendLocal:
-		kvEncBuilder = local.NewKVEncodingBuilder(context.Background())
+		encBuilder = local.NewEncodingBuilder(context.Background())
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -275,7 +277,7 @@ func NewPreRestoreInfoGetter(
 		dbMetas:          dbMetas,
 		srcStorage:       srcStorage,
 		ioWorkers:        ioWorkers,
-		kvEncBuilder:     kvEncBuilder,
+		encBuilder:       encBuilder,
 		targetInfoGetter: targetInfoGetter,
 	}
 	result.Init()
@@ -576,7 +578,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	kvEncoder, err := p.kvEncBuilder.NewEncoder(ctx, tbl, &kv.SessionOptions{
+	kvEncoder, err := p.encBuilder.NewEncoder(ctx, tbl, &kv.SessionOptions{
 		SQLMode:        p.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        sysVars,
@@ -622,8 +624,8 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 	var kvSize uint64 = 0
 	var rowSize uint64 = 0
 	rowCount := 0
-	dataKVs := p.kvEncBuilder.MakeEmptyRows()
-	indexKVs := p.kvEncBuilder.MakeEmptyRows()
+	dataKVs := p.encBuilder.MakeEmptyRows()
+	indexKVs := p.encBuilder.MakeEmptyRows()
 	lastKey := make([]byte, 0)
 	isRowOrdered = true
 outloop:
@@ -720,10 +722,10 @@ func (p *PreRestoreInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pd
 	return p.targetInfoGetter.GetEmptyRegionsInfo(ctx)
 }
 
-// DoesTableContainData checks whether the specified table on the target DB contains data or not.
+// IsTableEmpty checks whether the specified table on the target DB contains data or not.
 // It implements the PreRestoreInfoGetter interface.
-func (p *PreRestoreInfoGetterImpl) DoesTableContainData(ctx context.Context, schemaName string, tableName string) (bool, error) {
-	return p.targetInfoGetter.DoesTableContainData(ctx, schemaName, tableName)
+func (p *PreRestoreInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
+	return p.targetInfoGetter.IsTableEmpty(ctx, schemaName, tableName)
 }
 
 // FetchRemoteTableModels fetches the table structures from the remote target.

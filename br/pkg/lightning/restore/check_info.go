@@ -161,7 +161,7 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	checkCtx := withPreInfoGetterKeyValue(ctx, preInfoGetterKeyDBMetas, rc.dbMetas)
+	checkCtx := withPreInfoGetterValue(ctx, preInfoGetterKeyDBMetas, rc.dbMetas)
 	if err := rc.preInfoGetter.CheckVersionRequirements(checkCtx); err != nil {
 		err = common.NormalizeError(err)
 		passed = false
@@ -887,11 +887,11 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 					}
 				}
 
-				hasData, err1 := rc.preInfoGetter.DoesTableContainData(gCtx, tblNameComp.DBName, tblNameComp.TableName)
+				isEmptyPtr, err1 := rc.preInfoGetter.IsTableEmpty(gCtx, tblNameComp.DBName, tblNameComp.TableName)
 				if err1 != nil {
 					return err1
 				}
-				if hasData {
+				if !(*isEmptyPtr) {
 					lock.Lock()
 					tableNames = append(tableNames, fullTableName)
 					lock.Unlock()

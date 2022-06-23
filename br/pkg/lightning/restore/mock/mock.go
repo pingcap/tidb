@@ -258,18 +258,22 @@ func (t *MockTargetInfo) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.Regi
 	}, nil
 }
 
-// DoesTableContainData checks whether the specified table on the target DB contains data or not.
+// IsTableEmpty checks whether the specified table on the target DB contains data or not.
 // It implements the TargetInfoGetter interface.
-func (t *MockTargetInfo) DoesTableContainData(ctx context.Context, schemaName string, tableName string) (bool, error) {
+func (t *MockTargetInfo) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
+	var result bool
 	tblInfoMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
-		return false, nil
+		result = true
+		return &result, nil
 	}
 	tblInfo, ok := tblInfoMap[tableName]
 	if !ok {
-		return false, nil
+		result = true
+		return &result, nil
 	}
-	return (tblInfo.RowCount > 0), nil
+	result = (tblInfo.RowCount == 0)
+	return &result, nil
 }
 
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.

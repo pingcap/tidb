@@ -189,10 +189,12 @@ func TestMockTargetInfoBasic(t *testing.T) {
 		require.Equal(t, 2, len(tblInfo.Columns))
 	}
 
-	hasData, err := ti.DoesTableContainData(ctx, "testdb", "testtbl1")
+	isEmptyPtr, err := ti.IsTableEmpty(ctx, "testdb", "testtbl1")
 	require.NoError(t, err)
-	require.False(t, hasData)
-	hasData, err = ti.DoesTableContainData(ctx, "testdb", "testtbl2")
+	require.NotNil(t, isEmptyPtr)
+	require.True(t, *isEmptyPtr)
+	isEmptyPtr, err = ti.IsTableEmpty(ctx, "testdb", "testtbl2")
 	require.NoError(t, err)
-	require.True(t, hasData)
+	require.NotNil(t, isEmptyPtr)
+	require.False(t, *isEmptyPtr)
 }

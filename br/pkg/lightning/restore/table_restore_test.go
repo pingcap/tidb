@@ -1399,7 +1399,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	preInfoGetter := &PreRestoreInfoGetterImpl{
 		cfg:              s.cfg,
 		srcStorage:       s.store,
-		kvEncBuilder:     importer,
+		encBuilder:       importer,
 		ioWorkers:        ioWorkers,
 		dbMetas:          dbMetas,
 		targetInfoGetter: mockTarget,

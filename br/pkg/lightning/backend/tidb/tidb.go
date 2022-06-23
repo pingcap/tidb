@@ -90,16 +90,16 @@ type tidbEncoder struct {
 	columnCnt int
 }
 
-type kvEncodingBuilder struct{}
+type encodingBuilder struct{}
 
-// NewKVEncodingBuilder creates an KVEncodingBuilder with TiDB backend implementation.
-func NewKVEncodingBuilder() backend.KVEncodingBuilder {
-	return new(kvEncodingBuilder)
+// NewEncodingBuilder creates an EncodingBuilder with TiDB backend implementation.
+func NewEncodingBuilder() backend.EncodingBuilder {
+	return new(encodingBuilder)
 }
 
 // NewEncoder creates a KV encoder.
-// It implements the `backend.KVEncodingBuilder` interface.
-func (b *kvEncodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
 	se := kv.NewSession(options, log.FromContext(ctx))
 	if options.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
@@ -109,9 +109,9 @@ func (b *kvEncodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, opt
 	return &tidbEncoder{mode: options.SQLMode, tbl: tbl, se: se}, nil
 }
 
-// NewEncoder creates an empty KV rows.
-// It implements the `backend.KVEncodingBuilder` interface.
-func (b *kvEncodingBuilder) MakeEmptyRows() kv.Rows {
+// MakeEmptyRows creates an empty KV rows.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
 	return tidbRows(nil)
 }
 
@@ -126,7 +126,9 @@ func NewTargetInfoGetter(db *sql.DB) backend.TargetInfoGetter {
 	}
 }
 
-// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
+// FetchRemoteTableModels obtains the models of all tables given the schema name.
+// It implements the `backend.TargetInfoGetter` interface.
+// TODO: refactor
 func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	var err error
 	tables := []*model.TableInfo{}
@@ -232,6 +234,8 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 	return tables, err
 }
 
+// CheckRequirements performs the check whether the backend satisfies the version requirements.
+// It implements the `backend.TargetInfoGetter` interface.
 func (b *targetInfoGetter) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
 	log.FromContext(ctx).Info("skipping check requirements for tidb backend")
 	return nil
@@ -241,7 +245,7 @@ type tidbBackend struct {
 	db               *sql.DB
 	onDuplicate      string
 	errorMgr         *errormanager.ErrorManager
-	kvEncBuilder     backend.KVEncodingBuilder
+	encBuilder       backend.EncodingBuilder
 	targetInfoGetter backend.TargetInfoGetter
 }
 
@@ -260,7 +264,7 @@ func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMg
 		db:               db,
 		onDuplicate:      onDuplicate,
 		errorMgr:         errorMgr,
-		kvEncBuilder:     NewKVEncodingBuilder(),
+		encBuilder:       NewEncodingBuilder(),
 		targetInfoGetter: NewTargetInfoGetter(db),
 	})
 }
@@ -530,7 +534,7 @@ func (be *tidbBackend) Close() {
 }
 
 func (be *tidbBackend) MakeEmptyRows() kv.Rows {
-	return be.kvEncBuilder.MakeEmptyRows()
+	return be.encBuilder.MakeEmptyRows()
 }
 
 func (be *tidbBackend) RetryImportDelay() time.Duration {
@@ -553,7 +557,7 @@ func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCt
 }
 
 func (be *tidbBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return be.kvEncBuilder.NewEncoder(ctx, tbl, options)
+	return be.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
 func (be *tidbBackend) OpenEngine(context.Context, *backend.EngineConfig, uuid.UUID) error {
@@ -731,7 +735,6 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 	return nil
 }
 
-// TODO: refactor
 func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return be.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }

@@ -201,13 +201,13 @@ type Range struct {
 	end   []byte
 }
 
-type kvEncodingBuilder struct {
+type encodingBuilder struct {
 	metrics *metric.Metrics
 }
 
-// NewKVEncodingBuilder creates an KVEncodingBuilder with local backend implementation.
-func NewKVEncodingBuilder(ctx context.Context) backend.KVEncodingBuilder {
-	result := new(kvEncodingBuilder)
+// NewEncodingBuilder creates an KVEncodingBuilder with local backend implementation.
+func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
+	result := new(encodingBuilder)
 	if m, ok := metric.FromContext(ctx); ok {
 		result.metrics = m
 	}
@@ -215,14 +215,14 @@ func NewKVEncodingBuilder(ctx context.Context) backend.KVEncodingBuilder {
 }
 
 // NewEncoder creates a KV encoder.
-// It implements the `backend.KVEncodingBuilder` interface.
-func (b *kvEncodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
 	return kv.NewTableKVEncoder(tbl, options, b.metrics, log.FromContext(ctx))
 }
 
-// NewEncoder creates an empty KV rows.
-// It implements the `backend.KVEncodingBuilder` interface.
-func (b *kvEncodingBuilder) MakeEmptyRows() kv.Rows {
+// MakeEmptyRows creates an empty KV rows.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
 	return kv.MakeRowsFromKvPairs(nil)
 }
 
@@ -241,12 +241,14 @@ func NewTargetInfoGetter(tls *common.TLS, g glue.Glue, pdAddr string) backend.Ta
 	}
 }
 
-// FetchRemoteTableModels fetches the remote table models.
-// It implements the TargetInfoGetter interface.
+// FetchRemoteTableModels obtains the models of all tables given the schema name.
+// It implements the `TargetInfoGetter` interface.
 func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	return tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
 }
 
+// CheckRequirements performs the check whether the backend satisfies the version requirements.
+// It implements the `TargetInfoGetter` interface.
 func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
 	// TODO: support lightning via SQL
 	db, _ := g.targetDBGlue.GetDB()
@@ -368,7 +370,7 @@ type local struct {
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
 
-	kvEncBuilder     backend.KVEncodingBuilder
+	encBuilder       backend.EncodingBuilder
 	targetInfoGetter backend.TargetInfoGetter
 }
 
@@ -478,7 +480,7 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
-		kvEncBuilder:            NewKVEncodingBuilder(ctx),
+		encBuilder:              NewEncodingBuilder(ctx),
 		targetInfoGetter:        NewTargetInfoGetter(tls, g, cfg.TiDB.PdAddr),
 	}
 	if m, ok := metric.FromContext(ctx); ok {
@@ -1771,11 +1773,11 @@ func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName strin
 }
 
 func (local *local) MakeEmptyRows() kv.Rows {
-	return local.kvEncBuilder.MakeEmptyRows()
+	return local.encBuilder.MakeEmptyRows()
 }
 
 func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return local.kvEncBuilder.NewEncoder(ctx, tbl, options)
+	return local.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {
