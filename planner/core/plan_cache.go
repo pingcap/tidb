@@ -15,90 +15,61 @@
 package core
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func parseRawArgs(sctx sessionctx.Context, rawArgs []string) ([]types.Datum, []*types.FieldType, error) {
+func parseRawArgs(sctx sessionctx.Context, rawArgs []string) ([]types.Datum, error) {
 	// TODO
-	return nil, nil, nil
+	return nil, nil
 }
 
-func getBindingByRawSQL(sctx sessionctx.Context, rawSQL string) (binding string, err error) {
+func getStmtIDByRawSQL(sctx sessionctx.Context, rawSQL string) (stmtID uint32, existed bool) {
 	// TODO
-	return "", nil
+	return 0, false
 }
 
-func getPlanFromCache(sctx sessionctx.Context, rawSQL string, rawArgs []string) (plan PhysicalPlan, existed bool, err error) {
+type prepExecHandler interface {
+	// PrepareStmt executes prepare statement in binary protocol.
+	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
+	// ExecutePreparedStmt executes a prepared statement.
+	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
+}
+
+func getPlanFromCache(ctx context.Context, sctx sessionctx.Context, handler prepExecHandler, rawSQL string, rawArgs []string) (rs sqlexec.RecordSet, existed bool, err error) {
 	if !sctx.GetSessionVars().EnableGeneralPlanCache {
 		return nil, false, nil
 	}
 
-	db := sctx.GetSessionVars().CurrentDB
-	schema := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
-	schemaVer := schema.SchemaMetaVersion()
-	latestSchemaVer := int64(0) // TODO: check RC or read-for-update
-	cacheKey, err := NewPlanCacheKey(sctx.GetSessionVars(), rawSQL, db, schemaVer, latestSchemaVer)
-	if err != nil {
-		return nil, false, err
-	}
-
-	rawCachedVals, existed := sctx.PreparedPlanCache().Get(cacheKey)
+	stmtID, existed := getStmtIDByRawSQL(sctx, rawSQL)
 	if !existed {
-		return nil, false, nil
+		stmtID, _, _, err = handler.PrepareStmt(rawSQL)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 
-	// TODO: check privileges
-
-	params, varTypes, err := parseRawArgs(sctx, rawArgs)
+	params, err := parseRawArgs(sctx, rawArgs)
 	if err != nil {
 		return nil, false, err
 	}
-	sctx.GetSessionVars().PreparedParams = params
 
-	bindSQL, err := getBindingByRawSQL(sctx, rawSQL)
+	rs, err = handler.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
 		return nil, false, err
 	}
-	cachedVals := rawCachedVals.([]*PlanCacheValue)
-	for _, cachedVal := range cachedVals {
-		if cachedVal.BindSQL != bindSQL {
-			continue
-		}
-		if !cachedVal.varTypesUnchanged(nil, varTypes) {
-			continue
-		}
-		planValid := true
-		for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
-			if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
-				planValid = false
-				// TODO we can inject UnionScan into cached plan to avoid invalidating it, though
-				// rebuilding the filters in UnionScan is pretty trivial.
-				sctx.PreparedPlanCache().Delete(cacheKey)
-				break
-			}
-		}
-		if planValid {
-			if err := RebuildPlan(cachedVal.Plan); err != nil {
-				return nil, false, err
-			}
-			err = setFoundInPlanCache(sctx, true)
-			if err != nil {
-				return nil, false, err
-			}
-			// TODO: metrics
 
-			return cachedVal.Plan.(PhysicalPlan), true, nil
-		}
-	}
-	return nil, false, nil
+	return rs, true, nil
 }
 
 // RebuildPlan will rebuild this plan under current user parameters.
