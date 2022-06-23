@@ -80,7 +80,7 @@ func TestMutRow(t *testing.T) {
 
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
-	dur, err := types.ParseDuration(sc, "01:23:45", 0)
+	dur, _, err := types.ParseDuration(sc, "01:23:45", 0)
 	require.NoError(t, err)
 	chk.AppendDuration(0, dur)
 	mutRow = MutRowFromTypes(retTypes)
