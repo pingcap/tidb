@@ -7,7 +7,6 @@ import (
 	"time"
 
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	pd "github.com/tikv/pd/client"
@@ -45,7 +44,7 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key []byte, endKey []by
 
 type tidbEnv struct {
 	clis *utils.StoreManager
-	*stream.TaskEventClient
+	*TaskEventClient
 	PDRegionScanner
 }
 
@@ -64,12 +63,12 @@ func (t tidbEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (logbac
 func CliEnv(cli *utils.StoreManager, etcdCli *clientv3.Client) Env {
 	return tidbEnv{
 		clis:            cli,
-		TaskEventClient: &stream.TaskEventClient{MetaDataClient: *stream.NewMetaDataClient(etcdCli)},
+		TaskEventClient: &TaskEventClient{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner: PDRegionScanner{cli.PDClient()},
 	}
 }
 
-func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf config.Config) (Env, error) {
+func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf *config.Config) (Env, error) {
 	tconf, err := conf.GetTiKVConfig().Security.ToTLSConfig()
 	if err != nil {
 		return nil, err
@@ -79,7 +78,7 @@ func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf config.Config) (Env
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime),
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout),
 		}, tconf),
-		TaskEventClient: &stream.TaskEventClient{MetaDataClient: *stream.NewMetaDataClient(etcdCli)},
+		TaskEventClient: &TaskEventClient{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner: PDRegionScanner{Client: pdCli},
 	}, nil
 }
@@ -91,7 +90,7 @@ type LogBackupService interface {
 
 type StreamMeta interface {
 	// Begin begins listen the task event change.
-	Begin(ctx context.Context, ch chan<- stream.TaskEvent) error
+	Begin(ctx context.Context, ch chan<- TaskEvent) error
 	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store.
 	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error
 }

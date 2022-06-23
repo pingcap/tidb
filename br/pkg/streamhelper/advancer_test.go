@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -312,9 +312,9 @@ type testEnv struct {
 	mu sync.Mutex
 }
 
-func (t *testEnv) Begin(ctx context.Context, ch chan<- stream.TaskEvent) error {
-	tsk := stream.TaskEvent{
-		Type: stream.EventAdd,
+func (t *testEnv) Begin(ctx context.Context, ch chan<- streamhelper.TaskEvent) error {
+	tsk := streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name: "whole",
@@ -369,7 +369,7 @@ func TestTick(t *testing.T) {
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(cac *streamhelper.CheckpointAdvancerConfig) {
+	adv.UpdateConfigWith(func(cac *config.Config) {
 		cac.FullScanTick = 0
 	})
 	require.NoError(t, adv.OnTick(ctx))

@@ -4,6 +4,7 @@ package stream
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,12 +18,13 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	. "github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -250,10 +252,15 @@ func (p *printByJSON) PrintTasks() {
 
 var logCountSumRe = regexp.MustCompile(`tikv_stream_handle_kv_batch_sum ([0-9]+)`)
 
+type PDInfoProvider interface {
+	GetPDClient() pd.Client
+	GetTLSConfig() *tls.Config
+}
+
 // MaybeQPS get a number like the QPS of last seconds for each store via the prometheus interface.
 // TODO: this is a temporary solution(aha, like in a Hackthon),
 //       we MUST find a better way for providing this information.
-func MaybeQPS(ctx context.Context, mgr *conn.Mgr) (float64, error) {
+func MaybeQPS(ctx context.Context, mgr PDInfoProvider) (float64, error) {
 	c := mgr.GetPDClient()
 	prefix := "http://"
 	if mgr.GetTLSConfig() != nil {
@@ -325,12 +332,12 @@ func MaybeQPS(ctx context.Context, mgr *conn.Mgr) (float64, error) {
 // StatusController is the controller type (or context type) for the command `stream status`.
 type StatusController struct {
 	meta *MetaDataClient
-	mgr  *conn.Mgr
+	mgr  PDInfoProvider
 	view TaskPrinter
 }
 
 // NewStatusContorller make a status controller via some resource accessors.
-func NewStatusController(meta *MetaDataClient, mgr *conn.Mgr, view TaskPrinter) *StatusController {
+func NewStatusController(meta *MetaDataClient, mgr PDInfoProvider, view TaskPrinter) *StatusController {
 	return &StatusController{
 		meta: meta,
 		mgr:  mgr,

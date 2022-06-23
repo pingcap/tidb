@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
@@ -115,7 +116,7 @@ type StreamConfig struct {
 	JSONOutput bool `json:"json-output" toml:"json-output"`
 
 	// Spec for the command `advancer`.
-	AdvancerCfg streamhelper.CheckpointAdvancerConfig `json:"advancer-config" toml:"advancer-config"`
+	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
 }
 
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
@@ -525,7 +526,7 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// It supports single stream log task currently.
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
@@ -552,7 +553,7 @@ func RunStreamStart(
 		return errors.Annotate(berrors.ErrInvalidArgument, "nothing need to observe")
 	}
 
-	ti := stream.TaskInfo{
+	ti := streamhelper.TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
 			Storage:     streamMgr.bc.GetStorageBackend(),
 			StartTs:     cfg.StartTS,
@@ -627,7 +628,7 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
@@ -677,7 +678,7 @@ func RunStreamPause(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -735,7 +736,7 @@ func RunStreamResume(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -816,7 +817,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	if err != nil {
 		return nil, err
 	}
-	cli := stream.NewMetaDataClient(etcdCLI)
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
 	var printer stream.TaskPrinter
 	if !cfg.JSONOutput {
 		printer = stream.PrintTaskByTable(console)

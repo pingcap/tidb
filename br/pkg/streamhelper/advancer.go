@@ -5,7 +5,6 @@ package streamhelper
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sort"
 	"sync"
@@ -17,25 +16,14 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
-	"github.com/spf13/pflag"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
-
-type CheckpointAdvancerConfig struct {
-	// The gap between two retries.
-	BackoffTime time.Duration
-	// When after this time we cannot collect the safe resolved ts, give up.
-	MaxBackoffTime time.Duration
-	// The gap between calculating checkpoints.
-	TickDuration time.Duration
-	// The backoff time of full scan.
-	FullScanTick int
-}
 
 type CheckpointAdvancer struct {
 	env Env
@@ -43,7 +31,7 @@ type CheckpointAdvancer struct {
 	task   *backuppb.StreamBackupTaskInfo
 	taskMu sync.Mutex
 
-	cfg CheckpointAdvancerConfig
+	cfg config.Config
 
 	cache Checkpoints
 
@@ -64,59 +52,16 @@ type getCheckpointInRangeFunc func(ctx context.Context, start, end []byte) (uint
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
 		env:   env,
-		cfg:   DefaultAdvancerConfig(),
+		cfg:   config.Default(),
 		cache: NewCheckpoints(),
 	}
 }
 
-func DefaultAdvancerConfig() CheckpointAdvancerConfig {
-	return CheckpointAdvancerConfig{
-		BackoffTime:    5 * time.Second,
-		MaxBackoffTime: 5 * time.Minute,
-		TickDuration:   5 * time.Second,
-	}
-}
-
-const (
-	flagBackoffTime      = "backoff-time"
-	flagMaxBackoffTime   = "max-backoff-time"
-	flagTickInterval     = "tick-interval"
-	flagFullScanDiffTick = "full-scan-tick"
-)
-
-func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
-	f.Duration(flagBackoffTime, 5*time.Second, "The gap between two retries.")
-	f.Duration(flagMaxBackoffTime, 5*time.Minute, "After how long we should advance the checkpoint.")
-	f.Duration(flagTickInterval, 5*time.Second, "From how log we trigger the tick (advancing the checkpoint).")
-	f.Int(flagFullScanDiffTick, 60, "The backoff of full scan.")
-}
-
-func (conf *CheckpointAdvancerConfig) GetFromFlags(f *pflag.FlagSet) error {
-	var err error
-	conf.BackoffTime, err = f.GetDuration(flagBackoffTime)
-	if err != nil {
-		return err
-	}
-	conf.MaxBackoffTime, err = f.GetDuration(flagMaxBackoffTime)
-	if err != nil {
-		return err
-	}
-	conf.TickDuration, err = f.GetDuration(flagTickInterval)
-	if err != nil {
-		return err
-	}
-	conf.FullScanTick, err = f.GetInt(flagFullScanDiffTick)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *CheckpointAdvancer) UpdateConfig(newConf CheckpointAdvancerConfig) {
+func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
 	c.cfg = newConf
 }
 
-func (c *CheckpointAdvancer) UpdateConfigWith(f func(*CheckpointAdvancerConfig)) {
+func (c *CheckpointAdvancer) UpdateConfigWith(f func(*config.Config)) {
 	f(&c.cfg)
 }
 
@@ -141,8 +86,12 @@ func (c *CheckpointAdvancer) getCheckpointsOfStore(ctx context.Context, store ui
 	return resp.Checkpoints, nil
 }
 
+func (c *CheckpointAdvancer) Config() config.Config {
+	return c.cfg
+}
+
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte) (uint64, []kv.KeyRange, error) {
-	log.Info("scanning range", logutil.Key("start", start), logutil.Key("end", end))
+	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
 	cp := uint64(math.MaxUint64)
 	iter := IterateRegion(c.env, start, end)
 	rm := map[uint64]RegionWithLeader{}
@@ -152,7 +101,7 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 		if err != nil {
 			return 0, nil, err
 		}
-		log.Info("scan region", zap.Int("len", len(rs)))
+		log.Debug("scan region", zap.Int("len", len(rs)))
 		partitioned := map[uint64][]RegionWithLeader{}
 		for _, r := range rs {
 			partitioned[r.Leader.GetStoreId()] = append(partitioned[r.Leader.GetStoreId()], r)
@@ -201,7 +150,7 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 	now := time.Now()
 	return func() {
 		fields = append(fields, zap.Stringer("take", time.Since(now)))
-		log.Info(message, fields...)
+		log.Debug(message, fields...)
 	}
 }
 
@@ -259,7 +208,7 @@ collect:
 }
 
 func (c *CheckpointAdvancer) UpdateGlobalCheckpointLight(ctx context.Context) (uint64, error) {
-	log.Info("current tree", zap.Stringer("ct", &c.cache))
+	log.Debug("current tree", zap.Stringer("ct", &c.cache))
 	rsts := c.cache.PopRangesWithGapGT(3 * time.Minute)
 	if len(rsts) == 0 {
 		return 0, nil
@@ -302,7 +251,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context, getC
 		}
 		thisRun = nextRun
 		nextRun = nil
-		log.Info("backoffing with subranges", zap.Int("subranges", len(thisRun)))
+		log.Debug("backoffing with subranges", zap.Int("subranges", len(thisRun)))
 		time.Sleep(c.cfg.BackoffTime)
 	}
 }
@@ -361,7 +310,7 @@ func (c *CheckpointAdvancer) Loop(ctx context.Context) error {
 	}
 }
 
-func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan stream.TaskEvent) error {
+func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
 	for {
 		select {
 		case e, ok := <-ch:
@@ -382,8 +331,8 @@ func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan strea
 	}
 }
 
-func (c *CheckpointAdvancer) beginListenTaskChange(ctx context.Context) (<-chan stream.TaskEvent, error) {
-	ch := make(chan stream.TaskEvent, 1024)
+func (c *CheckpointAdvancer) beginListenTaskChange(ctx context.Context) (<-chan TaskEvent, error) {
+	ch := make(chan TaskEvent, 1024)
 	if err := c.env.Begin(ctx, ch); err != nil {
 		return nil, err
 	}
@@ -396,7 +345,7 @@ func (c *CheckpointAdvancer) beginListenTaskChange(ctx context.Context) (<-chan 
 
 func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 	cx, cancel := context.WithCancel(ctx)
-	var ch <-chan stream.TaskEvent
+	var ch <-chan TaskEvent
 	for {
 		if cx.Err() != nil {
 			// make linter happy.
@@ -408,7 +357,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 		if err == nil {
 			break
 		}
-		log.Info("failed to begin listening, retrying...", logutil.ShortError(err))
+		log.Warn("failed to begin listening, retrying...", logutil.ShortError(err))
 		time.Sleep(c.cfg.BackoffTime)
 	}
 
@@ -435,15 +384,15 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 	}()
 }
 
-func (c *CheckpointAdvancer) onTaskEvent(e stream.TaskEvent) error {
+func (c *CheckpointAdvancer) onTaskEvent(e TaskEvent) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 	switch e.Type {
-	case stream.EventAdd:
+	case EventAdd:
 		c.task = e.Info
-	case stream.EventDel:
+	case EventDel:
 		c.task = nil
-	case stream.EventErr:
+	case EventErr:
 		return e.Err
 	}
 	return nil
@@ -456,10 +405,10 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 		return err
 	}
 	if cp < c.lastCheckpoint {
-		log.Info("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
+		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
 		return nil
 	}
-	log.Info("uploading checkpoint for task",
+	log.Debug("uploading checkpoint for task",
 		zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
 		zap.String("task", c.task.Name),
 		zap.Stringer("take", time.Since(start)))
@@ -467,6 +416,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
 	c.lastCheckpoint = cp
+	metrics.LastCheckpoint.Set(float64(c.lastCheckpoint))
 	return nil
 }
 
@@ -492,7 +442,7 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 			break
 		}
 		if c.task == nil {
-			log.Info("No tasks yet, skipping advancing.")
+			log.Debug("No tasks yet, skipping advancing.")
 			return nil
 		}
 		defer func() {
@@ -510,19 +460,5 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
-}
-
-func (c *CheckpointAdvancer) RunGetStreamCheckpoint(ctx context.Context) error {
-	begin := time.Now()
-	defer func() {
-		log.Info("getting checkpoint done", zap.Stringer("take", time.Since(begin)))
-	}()
-	cp, err := c.CalculateGlobalCheckpoint(ctx, c.GetCheckpointInRange)
-	if err != nil {
-		return err
-	}
-	log.Info("checkpoint", zap.Uint64("checkpoint", cp))
-	fmt.Println("Your Checkpoint: ", oracle.GetTimeFromTS(cp), "; now = ", time.Now())
 	return nil
 }
