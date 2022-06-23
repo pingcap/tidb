@@ -716,20 +716,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.O) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
-	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
+	if isIncorrectName(stmt.Name.O) && !stmt.AlterDefaultDatabase {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.O) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
