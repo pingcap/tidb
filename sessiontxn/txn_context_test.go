@@ -746,10 +746,10 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 						tk2.MustExec("set autocommit=0")
 					}
 
-					tk2.SetBreakPoints([]string{
+					tk2.SetBreakPoints(
 						sessiontxn.BreakPointBeforeExecutorFirstRun,
 						sessiontxn.BreakPointOnStmtRetryAfterLockError,
-					})
+					)
 
 					var isSelect, isUpdate bool
 					switch {

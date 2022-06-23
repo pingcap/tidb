@@ -129,7 +129,7 @@ func (tk *SteppedTestKit) ExpectStopOnAnyBreakPoint() {
 }
 
 // SetBreakPoints sets the break points we want to stop at
-func (tk *SteppedTestKit) SetBreakPoints(breakPoints []string) {
+func (tk *SteppedTestKit) SetBreakPoints(breakPoints ...string) {
 	tk.breakPoints = breakPoints
 }
 
