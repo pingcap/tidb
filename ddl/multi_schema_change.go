@@ -70,9 +70,6 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				proxyJob := sub.ToProxyJob(job)
 				ver, err = w.runDDLJob(d, t, proxyJob)
 				sub.FromProxyJob(proxyJob)
-				if i == 0 && sub.IsFinished() {
-					job.State = model.JobStateRollbackDone
-				}
 				return ver, err
 			}
 			// The last rollback/cancelling sub-job is done.
