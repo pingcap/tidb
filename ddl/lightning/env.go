@@ -129,6 +129,7 @@ func InitGolbalLightningBackendEnv() {
 
 	GlobalLightningEnv.IsInited = true	
 	log.L().Info(LINFO_ENV_INIT_SUCC,
+		zap.String("Current memory usage:", strconv.FormatUint(uint64(GlobalLightningEnv.LitMemRoot.currUsage), 10)),
 		zap.String("Memory limitation set to:", strconv.FormatUint(maxMemLimit, 10)),
 		zap.String("Sort Path disk quota:", strconv.FormatUint(uint64(GlobalLightningEnv.diskQuota), 10)),
 		zap.String("Max open file number:", strconv.FormatInt(GlobalLightningEnv.limit, 10)),

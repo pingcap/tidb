@@ -414,8 +414,10 @@ type reorgInfo struct {
 type reorgMeta struct {
 	// Mark whether the lightning execution environment is built or not
 	IsLightningEnabled bool
-	// it is an empty table
+	// It is an empty table
 	IsEmptyTable bool
+	// Need restore job
+	needRestoreJob bool
 }
 
 func (r *reorgInfo) String() string {
