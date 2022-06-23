@@ -75,6 +75,7 @@ go_library(
         "//util/memory",
         "//util/parser",
         "//util/rowcodec",
+        "//util/sem",
         "//util/sli",
         "//util/sqlexec",
         "//util/tableutil",
