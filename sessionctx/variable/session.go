@@ -2018,6 +2018,8 @@ const (
 	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogBinaryPlanPrefix is the prefix of the binary plan value.
+	SlowLogBinaryPlanPrefix = ast.TiDBDecodeBinaryPlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
