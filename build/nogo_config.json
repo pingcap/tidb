@@ -80,7 +80,7 @@
       ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo",
       "br/pkg/lightning/manual/allocator.go": "ignore code",
-      "parser/ast/ddl.go": "ignore code"
+      "parser/": "ignore code"
     }
   },
   "deepequalerrors": {
