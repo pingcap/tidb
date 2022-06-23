@@ -59,9 +59,9 @@ var _ DB = (*GlueCheckpointsDB)(nil)
 
 // dropPreparedStmt drops the statement and when meet an error,
 // print an error message.
-func dropPreparedStmt(session Session, stmtID uint32) {
+func dropPreparedStmt(ctx context.Context, session Session, stmtID uint32) {
 	if err := session.DropPreparedStmt(stmtID); err != nil {
-		log.L().Error("failed to drop prepared statement", log.ShortError(err))
+		log.FromContext(ctx).Error("failed to drop prepared statement", log.ShortError(err))
 	}
 }
 
@@ -69,7 +69,7 @@ func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, er
 	var escapedSchemaName strings.Builder
 	common.WriteMySQLIdentifier(&escapedSchemaName, schemaName)
 	schema := escapedSchemaName.String()
-	logger := log.With(zap.String("schema", schemaName))
+	logger := log.FromContext(ctx).With(zap.String("schema", schemaName))
 
 	sql := fmt.Sprintf(CreateDBTemplate, schema)
 	err := common.Retry("create checkpoints database", logger, func() error {
@@ -123,7 +123,7 @@ func NewGlueCheckpointsDB(ctx context.Context, se Session, f func() (Session, er
 }
 
 func (g GlueCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
-	logger := log.L()
+	logger := log.FromContext(ctx)
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return errors.Trace(err)
@@ -135,7 +135,7 @@ func (g GlueCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, d
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, stmtID)
+		defer dropPreparedStmt(ctx, s, stmtID)
 		_, err = s.ExecutePreparedStmt(c, stmtID, []types.Datum{
 			types.NewIntDatum(cfg.TaskID),
 			types.NewStringDatum(cfg.Mydumper.SourceDir),
@@ -155,7 +155,7 @@ func (g GlueCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, d
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, stmtID2)
+		defer dropPreparedStmt(ctx, s, stmtID2)
 
 		for _, db := range dbInfo {
 			for _, table := range db.Tables {
@@ -177,7 +177,7 @@ func (g GlueCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, d
 }
 
 func (g GlueCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
-	logger := log.L()
+	logger := log.FromContext(ctx)
 	sql := fmt.Sprintf(ReadTaskTemplate, g.schema, CheckpointTableNameTask)
 	se, err := g.getSessionFunc()
 	if err != nil {
@@ -225,7 +225,7 @@ func (g GlueCheckpointsDB) Get(ctx context.Context, tableName string) (*TableChe
 	cp := &TableCheckpoint{
 		Engines: map[int32]*EngineCheckpoint{},
 	}
-	logger := log.With(zap.String("table", tableName))
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -351,7 +351,7 @@ func (g GlueCheckpointsDB) Close() error {
 }
 
 func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpointMap map[int32]*EngineCheckpoint) error {
-	logger := log.With(zap.String("table", tableName))
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return errors.Trace(err)
@@ -363,13 +363,13 @@ func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableNam
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, engineStmt)
+		defer dropPreparedStmt(ctx, s, engineStmt)
 
 		chunkStmt, _, _, err := s.PrepareStmt(fmt.Sprintf(ReplaceChunkTemplate, g.schema, CheckpointTableNameChunk))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, chunkStmt)
+		defer dropPreparedStmt(ctx, s, chunkStmt)
 
 		for engineID, engine := range checkpointMap {
 			_, err := s.ExecutePreparedStmt(c, engineStmt, []types.Datum{
@@ -411,11 +411,11 @@ func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableNam
 	return errors.Trace(err)
 }
 
-func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) error {
-	logger := log.L()
+func (g GlueCheckpointsDB) Update(ctx context.Context, checkpointDiffs map[string]*TableCheckpointDiff) error {
+	logger := log.FromContext(ctx)
 	se, err := g.getSessionFunc()
 	if err != nil {
-		log.L().Error("can't get a session to update GlueCheckpointsDB", zap.Error(errors.Trace(err)))
+		log.FromContext(ctx).Error("can't get a session to update GlueCheckpointsDB", zap.Error(errors.Trace(err)))
 		return err
 	}
 	defer se.Close()
@@ -429,22 +429,22 @@ func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDif
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, chunkStmt)
+		defer dropPreparedStmt(ctx, s, chunkStmt)
 		rebaseStmt, _, _, err := s.PrepareStmt(rebaseQuery)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, rebaseStmt)
+		defer dropPreparedStmt(ctx, s, rebaseStmt)
 		tableStatusStmt, _, _, err := s.PrepareStmt(tableStatusQuery)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, tableStatusStmt)
+		defer dropPreparedStmt(ctx, s, tableStatusStmt)
 		engineStatusStmt, _, _, err := s.PrepareStmt(engineStatusQuery)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		defer dropPreparedStmt(s, engineStatusStmt)
+		defer dropPreparedStmt(ctx, s, engineStatusStmt)
 
 		for tableName, cpd := range checkpointDiffs {
 			if cpd.hasStatus {
@@ -504,7 +504,7 @@ func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDif
 }
 
 func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {
-	logger := log.With(zap.String("table", tableName))
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return errors.Trace(err)
@@ -541,7 +541,7 @@ func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName strin
 
 func (g GlueCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64) error {
 	newSchema := fmt.Sprintf("`%s.%d.bak`", g.schema[1:len(g.schema)-1], taskID)
-	logger := log.With(zap.Int64("taskID", taskID))
+	logger := log.FromContext(ctx).With(zap.Int64("taskID", taskID))
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return errors.Trace(err)
@@ -596,7 +596,7 @@ func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[strin
 		CheckpointStatusMaxInvalid, CheckpointStatusIndexImported,
 		CheckpointStatusMaxInvalid, CheckpointStatusImported)
 
-	err = common.Retry("get local storing tables", log.L(), func() error {
+	err = common.Retry("get local storing tables", log.FromContext(ctx), func() error {
 		targetTables = make(map[string][]int32)
 		rs, err := se.Execute(ctx, query)
 		if err != nil {
@@ -622,7 +622,7 @@ func (g GlueCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[strin
 }
 
 func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName string) error {
-	logger := log.With(zap.String("table", tableName))
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return errors.Trace(err)
@@ -658,7 +658,7 @@ func (g GlueCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, tableName 
 }
 
 func (g GlueCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error) {
-	logger := log.With(zap.String("table", tableName))
+	logger := log.FromContext(ctx).With(zap.String("table", tableName))
 	se, err := g.getSessionFunc()
 	if err != nil {
 		return nil, errors.Trace(err)

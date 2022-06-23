@@ -893,6 +893,7 @@ var hintTokenMap = map[string]int{
 	"BNL":                   hintBNL,
 	"NO_BNL":                hintNoBNL,
 	"HASH_JOIN":             hintHashJoin,
+	"ORDERED_HASH_JOIN":     hintOrderedHashJoin,
 	"NO_HASH_JOIN":          hintNoHashJoin,
 	"MERGE":                 hintMerge,
 	"NO_MERGE":              hintNoMerge,

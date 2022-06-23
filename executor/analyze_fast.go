@@ -633,3 +633,10 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 	e.Collectors = e.collectors
 	return err
 }
+
+func pkColsCount(handleCols core.HandleCols) int {
+	if handleCols == nil {
+		return 0
+	}
+	return handleCols.NumCols()
+}

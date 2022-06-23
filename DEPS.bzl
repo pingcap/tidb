@@ -5,8 +5,9 @@ def go_deps():
         name = "co_honnef_go_tools",
         build_file_proto_mode = "disable_global",
         importpath = "honnef.co/go/tools",
-        sum = "h1:UoveltGrhghAA7ePc+e+QYDHXrBps2PqFZiHkGR/xK8=",
-        version = "v0.0.1-2020.1.4",
+        replace = "honnef.co/go/tools",
+        sum = "h1:ytYb4rOqyp1TSa2EPvNVwtPQJctSELKaMyLfqNP4+34=",
+        version = "v0.3.2",
     )
     go_repository(
         name = "com_github_ajg_form",
@@ -167,15 +168,15 @@ def go_deps():
         name = "com_github_blacktear23_go_proxyprotocol",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/blacktear23/go-proxyprotocol",
-        sum = "h1:rQlvB2AYWme2bIB18r/SipGiMEVJYE9U0z+MGoU/LtQ=",
-        version = "v0.0.0-20180807104634-af7a81e8dd0d",
+        sum = "h1:WmMmtZanGEfIHnJN9N3A4Pl6mM69D+GxEph2eOaCf7g=",
+        version = "v1.0.0",
     )
     go_repository(
         name = "com_github_burntsushi_toml",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/BurntSushi/toml",
-        sum = "h1:WXkYYl6Yr3qBf1K79EBnL4mak0OimBfB0XUf9Vl28OQ=",
-        version = "v0.3.1",
+        sum = "h1:GaI7EiDXDRfa8VshkTj7Fym7ha+y8/XxIgD2okUIjLw=",
+        version = "v0.4.1",
     )
     go_repository(
         name = "com_github_burntsushi_xgb",
@@ -918,6 +919,14 @@ def go_deps():
         sum = "h1:yAGX7huGHXlcLOEtBnF4w7FQwA26wojNCwOYAEhLjQM=",
         version = "v0.0.4",
     )
+    go_repository(
+        name = "com_github_golangci_prealloc",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/golangci/prealloc",
+        sum = "h1:leSNB7iYzLYSSx3J/s5sVf4Drkc68W2wm4Ixh/mr0us=",
+        version = "v0.0.0-20180630174525-215b22d4de21",
+    )
+
     go_repository(
         name = "com_github_gomodule_redigo",
         build_file_proto_mode = "disable_global",
@@ -1914,8 +1923,8 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:+46isFI9fR9R+nJVDMI55tCC/TCwp+bvVA4HLGEv1rY=",
-        version = "v0.0.0-20220314125451-bfb5c2c55188",
+        sum = "h1:L4nZwfYSrIsWPAZR8zMwHaNQJy0Rjy3Od6Smj5mlOms=",
+        version = "v0.0.0-20220602075447-4847c5d68e73",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -2244,8 +2253,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:KhOkCnqpxh/B2gGZdXSUyKgNRZaPzYsCIWGjNdrFmOA=",
-        version = "v2.0.1-0.20220531081749-2807409d4968",
+        sum = "h1:N5ivsNkDQDgimY0ZVqMnWqXjEnxy5uFChoB4wPIKpPI=",
+        version = "v2.0.1-0.20220613112734-be31f33ba03b",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
@@ -2929,6 +2938,14 @@ def go_deps():
         version = "v0.0.0-20220426173459-3bcf042a4bf5",
     )
     go_repository(
+        name = "org_golang_x_exp_typeparams",
+        build_file_proto_mode = "disable",
+        importpath = "golang.org/x/exp/typeparams",
+        sum = "h1:qyrTQ++p1afMkO4DPEeLGq/3oTsdlvdH4vqZUBWzUKM=",
+        version = "v0.0.0-20220218215828-6cf2b201936e",
+    )
+
+    go_repository(
         name = "org_golang_x_image",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/image",
@@ -2953,8 +2970,8 @@ def go_deps():
         name = "org_golang_x_mod",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/mod",
-        sum = "h1:LQmS1nU0twXLA96Kt7U9qtHJEbBk3z6Q0V4UXjZkpr4=",
-        version = "v0.6.0-dev.0.20211013180041-c96bc1413d57",
+        sum = "h1:6zppjxzCulZykYSLyVDYbneBfbaBIQPYMevg0bEwv2s=",
+        version = "v0.6.0-dev.0.20220419223038-86c51ed26bb4",
     )
     go_repository(
         name = "org_golang_x_net",
@@ -3009,8 +3026,8 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
-        sum = "h1:P1HhGGuLW4aAclzjtmJdf0mJOjVUZUzOTqkAkWL+l6w=",
-        version = "v0.1.8",
+        sum = "h1:OKYpQQVE3DKSc3r3zHVzq46vq5YH7x8xpR3/k9ixmUg=",
+        version = "v0.1.11-0.20220513221640-090b14e8501f",
     )
     go_repository(
         name = "org_golang_x_xerrors",

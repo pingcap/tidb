@@ -142,11 +142,11 @@ func (c chainRouters) Route(path string) (*RouteResult, error) {
 	return nil, nil
 }
 
-func NewFileRouter(cfg []*config.FileRouteRule) (FileRouter, error) {
+func NewFileRouter(cfg []*config.FileRouteRule, logger log.Logger) (FileRouter, error) {
 	res := make([]FileRouter, 0, len(cfg))
 	p := regexRouterParser{}
 	for _, c := range cfg {
-		rule, err := p.Parse(c)
+		rule, err := p.Parse(c, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -180,7 +180,7 @@ func (r *RegexRouter) Route(path string) (*RouteResult, error) {
 
 type regexRouterParser struct{}
 
-func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) {
+func (p regexRouterParser) Parse(r *config.FileRouteRule, logger log.Logger) (*RegexRouter, error) {
 	rule := &RegexRouter{}
 	if r.Path == "" && r.Pattern == "" {
 		return nil, errors.New("`path` and `pattern` must not be both empty in [[mydumper.files]]")
@@ -225,7 +225,7 @@ func (p regexRouterParser) Parse(r *config.FileRouteRule) (*RegexRouter, error) 
 		if unescape {
 			val, err := url.PathUnescape(value)
 			if err != nil {
-				log.L().Warn("unescape string failed, will be ignored", zap.String("value", value),
+				logger.Warn("unescape string failed, will be ignored", zap.String("value", value),
 					zap.Error(err))
 			} else {
 				value = val
