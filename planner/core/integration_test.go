@@ -155,6 +155,48 @@ func (s *testIntegrationSuite) TestBitColErrorMessage(c *C) {
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
 }
 
+func (s *testIntegrationSuite) TestAggPushDownLeftJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists customer")
+	tk.MustExec("create table customer (C_CUSTKEY bigint(20) NOT NULL, C_NAME varchar(25) NOT NULL, " +
+		"C_ADDRESS varchar(25) NOT NULL, PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("drop table if exists orders")
+	tk.MustExec("create table orders (O_ORDERKEY bigint(20) NOT NULL, O_CUSTKEY bigint(20) NOT NULL, " +
+		"O_TOTALPRICE decimal(15,2) NOT NULL, PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("insert into customer values (6, \"xiao zhang\", \"address1\");")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1;")
+
+	tk.MustQuery("select c_custkey, count(o_orderkey) as c_count from customer left outer join orders " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
+	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from customer left outer join orders " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
+		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
+		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"  └─HashJoin 10000.00 root  left outer join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
+		"    │ └─TableReader 8000.00 root  data:HashAgg",
+		"    │   └─HashAgg 8000.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#9",
+		"    │     └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo"))
+
+	tk.MustQuery("select c_custkey, count(o_orderkey) as c_count from orders right outer join customer " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows("6 0"))
+	tk.MustQuery("explain format='brief' select c_custkey, count(o_orderkey) as c_count from orders right outer join customer " +
+		"on c_custkey = o_custkey group by c_custkey").Check(testkit.Rows(
+		"Projection 10000.00 root  test.customer.c_custkey, Column#7",
+		"└─Projection 10000.00 root  if(isnull(Column#8), 0, 1)->Column#7, test.customer.c_custkey",
+		"  └─HashJoin 10000.00 root  right outer join, equal:[eq(test.orders.o_custkey, test.customer.c_custkey)]",
+		"    ├─HashAgg(Build) 8000.00 root  group by:test.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
+		"    │ └─TableReader 8000.00 root  data:HashAgg",
+		"    │   └─HashAgg 8000.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#9",
+		"    │     └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo"))
+}
+
 func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -3378,6 +3420,28 @@ func (s *testIntegrationSuite) TestIssue26719(c *C) {
 	tk.MustExec(`rollback`)
 }
 
+func (s *testIntegrationSuite) TestIssue32428(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table `t1` (`a` enum('aa') DEFAULT NULL, KEY `k` (`a`))")
+	tk.MustExec("insert into t1 values('aa')")
+	tk.MustExec("insert into t1 values(null)")
+	tk.MustQuery("select a from t1 where a<=>'aa'").Check(testkit.Rows("aa"))
+	tk.MustQuery("select a from t1 where a<=>null").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec(`CREATE TABLE IDT_MULTI15860STROBJSTROBJ (
+	  COL1 enum('aa') DEFAULT NULL,
+	  COL2 int(41) DEFAULT NULL,
+	  COL3 year(4) DEFAULT NULL,
+	  KEY U_M_COL4 (COL1,COL2),
+	  KEY U_M_COL5 (COL3,COL2))`)
+	tk.MustExec(`insert into IDT_MULTI15860STROBJSTROBJ  values("aa", 1013610488, 1982)`)
+	tk.MustQuery(`SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = "aa"`).Check(testkit.Rows()) // empty result
+	tk.MustExec(`prepare stmt from "SELECT * FROM IDT_MULTI15860STROBJSTROBJ t1 RIGHT JOIN IDT_MULTI15860STROBJSTROBJ t2 ON t1.col1 <=> t2.col1 where t1.col1 is null and t2.col1 = ?"`)
+	tk.MustExec(`set @a="aa"`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows()) // empty result
+}
+
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5225,6 +5289,25 @@ func (s *testIntegrationSuite) TestIssue31202(c *C) {
 		"TableReader 10000.00 root  data:TableFullScan",
 		"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
 	tk.MustExec("drop table if exists t31202")
+}
+
+func (s *testIntegrationSuite) TestIssue33042(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int primary key, col1 int)")
+	tk.MustExec("create table t2(id int primary key, col1 int)")
+	tk.MustQuery("explain format='brief' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;").Check(
+		testkit.Rows(
+			"Sort 12500.00 root  test.t2.id",
+			"└─MergeJoin 12500.00 root  left outer join, left key:test.t1.col1, right key:test.t2.id",
+			"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+			"  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+			"  └─Sort(Probe) 10000.00 root  test.t1.col1",
+			"    └─TableReader 10000.00 root  data:TableFullScan",
+			"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		),
+	)
 }
 
 // TestDNFCondSelectivityWithConst test selectivity calculation with DNF conditions with one is const.
