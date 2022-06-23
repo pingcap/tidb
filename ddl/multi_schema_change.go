@@ -97,7 +97,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 
 		// Save table info and sub-jobs for rolling back.
-		tblInfo, _ := t.GetTable(job.SchemaID, job.TableID)
+		var tblInfo *model.TableInfo
+		tblInfo, err = t.GetTable(job.SchemaID, job.TableID)
+		if err != nil {
+			return ver, err
+		}
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
@@ -119,7 +123,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 		}
 		// All the sub-jobs are non-revertible.
-		job.MultiSchemaInfo.Revertible = false
+		job.MarkNonRevertible()
 		return ver, err
 	}
 	// Run the rest non-revertible sub-jobs one by one.
