@@ -5735,6 +5735,7 @@ func TestNotExistsSubquery(t *testing.T) {
 }
 
 func TestWindowFunctionIdentifier(t *testing.T) {
+	//nolint: prealloc
 	var table []testCase
 	for key := range parser.WindowFuncTokenMapForTest {
 		table = append(table, testCase{fmt.Sprintf("select 1 %s", key), false, fmt.Sprintf("SELECT 1 AS `%s`", key)})

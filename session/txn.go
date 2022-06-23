@@ -136,6 +136,9 @@ func (txn *LazyTxn) resetTxnInfo(
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
@@ -270,6 +273,9 @@ func (txn *LazyTxn) changeToInvalid() {
 
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 }
 

@@ -1768,7 +1768,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
 			strings.ToLower(infoschema.TableAttributes),
-			strings.ToLower(infoschema.TablePlacementPolicies):
+			strings.ToLower(infoschema.TablePlacementPolicies),
+			strings.ToLower(infoschema.TableTrxSummary),
+			strings.ToLower(infoschema.ClusterTableTrxSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2435,6 +2437,15 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
+// From the paper "Random sampling for histogram construction: how much is enough?"'s Corollary 1 to Theorem 5,
+// for a table size n, histogram size k, maximum relative error in bin size f, and error probability gamma,
+// the minimum random sample size is
+//         r = 4 * k * ln(2*n/gamma) / f^2
+// If we take f = 0.5, gamma = 0.01, n =1e6, we would got r = 305.82* k.
+// Since the there's log function over the table size n, the r grows slowly when the n increases.
+// If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
+// So if we don't consider the top-n values, we can keep the sample size at 300*256.
+// But we may take some top-n before building the histogram, so we increase the sample a little.
 func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	defaultRate := 0.001
@@ -4099,6 +4110,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
+	//nolint: prealloc
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
