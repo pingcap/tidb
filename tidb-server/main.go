@@ -559,6 +559,8 @@ func setGlobalVars() {
 					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
 				case "enable-collect-execution-info":
 					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
+				case "max-server-connections":
+					cfg.Instance.MaxConnections = cfg.MaxServerConnections
 				case "run-ddl":
 					cfg.Instance.TiDBEnableDDL.Store(cfg.RunDDL)
 				}

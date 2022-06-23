@@ -117,6 +117,7 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
+				"max-server-connections":        "max_connections",
 				"run-ddl":                       "tidb_enable_ddl",
 			},
 		},
@@ -475,6 +476,7 @@ type Instance struct {
 	EnableCollectExecutionInfo bool       `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	MaxConnections             uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL              AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 }
 
@@ -852,6 +854,7 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  true,
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 	},
 	Status: Status{
