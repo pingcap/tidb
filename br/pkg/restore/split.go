@@ -50,7 +50,7 @@ const (
 )
 
 var (
-	ScanRegionAttemptTimes = 30
+	ScanRegionAttemptTimes = 60
 )
 
 // RegionSplitter is a executor of region split by rules.
@@ -490,9 +490,9 @@ func newScanRegionBackoffer() utils.Backoffer {
 // NextBackoff returns a duration to wait before retrying again
 func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		// 500ms * 30 could be enough for splitting remain regions in the hole.
+		// 1s * 60 could be enough for splitting remain regions in the hole.
 		b.attempt--
-		return 500 * time.Millisecond
+		return time.Second
 	}
 	b.attempt = 0
 	return 0
