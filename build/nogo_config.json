@@ -92,6 +92,12 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "exportloopref": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "findcall": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
