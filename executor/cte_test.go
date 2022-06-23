@@ -408,38 +408,6 @@ func TestSpillToDisk(t *testing.T) {
 	}
 	rows.Check(testkit.Rows(resRows...))
 }
-<<<<<<< HEAD
-=======
-
-func TestCTEExecError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists src;")
-	tk.MustExec("create table src(first int, second int);")
-
-	insertStr := fmt.Sprintf("insert into src values (%d, %d)", rand.Intn(1000), rand.Intn(1000))
-	for i := 0; i < 1000; i++ {
-		insertStr += fmt.Sprintf(",(%d, %d)", rand.Intn(1000), rand.Intn(1000))
-	}
-	insertStr += ";"
-	tk.MustExec(insertStr)
-
-	// Increase projection concurrency and decrease chunk size
-	// to increase the probability of reproducing the problem.
-	tk.MustExec("set tidb_max_chunk_size = 32")
-	tk.MustExec("set tidb_projection_concurrency = 20")
-	for i := 0; i < 10; i++ {
-		err := tk.QueryToErr("with recursive cte(iter, first, second, result) as " +
-			"(select 1, first, second, first+second from src " +
-			" union all " +
-			"select iter+1, second, result, second+result from cte where iter < 80 )" +
-			"select * from cte")
-		require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
-	}
-}
 
 // https://github.com/pingcap/tidb/issues/33965.
 func TestCTEsInView(t *testing.T) {
@@ -460,4 +428,3 @@ func TestCTEsInView(t *testing.T) {
 	tk.MustExec("use test1;")
 	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 }
->>>>>>> 3cf6b08e6... parser: skip restoring schema name of CTE table columns (#33991)
