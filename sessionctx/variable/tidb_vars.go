@@ -944,7 +944,7 @@ const (
 	DefTiDBEnableConcurrentDDL                   = true
 	DefTiDBSimplifiedMetrics                     = false
 	DefTiDBEnablePaging                          = true
-	DefTiDBGenerateBinaryPlan                    = false
+	DefTiDBGenerateBinaryPlan                    = true
 )
 
 // Process global variables.
