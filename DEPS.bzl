@@ -221,6 +221,14 @@ def go_deps():
         version = "v2.1.2",
     )
     go_repository(
+        name = "com_github_charithe_durationcheck",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/charithe/durationcheck",
+        sum = "h1:mPP4ucLrf/rKZiIG/a9IPXHGlh8p4CzgpyTy6EEutYk=",
+        version = "v0.0.9",
+    )
+
+    go_repository(
         name = "com_github_cheggaaa_pb_v3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cheggaaa/pb/v3",
