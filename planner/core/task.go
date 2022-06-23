@@ -1337,6 +1337,10 @@ func BuildFinalModeAggregation(
 
 			finalAggFunc.OrderByItems = byItems
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
 			if aggFunc.Mode == aggregation.CompleteMode {
 				finalAggFunc.Mode = aggregation.CompleteMode
 			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
@@ -1421,6 +1425,10 @@ func BuildFinalModeAggregation(
 				}
 			}
 
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
 			if aggFunc.Mode == aggregation.CompleteMode {
 				finalAggFunc.Mode = aggregation.FinalMode
 			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
