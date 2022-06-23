@@ -744,6 +744,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
+		reorgInfo.Meta.needRestoreJob = false
 		return false, ver, nil
 	}
 	return true, ver, errors.Trace(err)
