@@ -63,7 +63,7 @@ import (
 			continue
 		}{{ end }}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, err := types.ParseDuration(sc, arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc, arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
@@ -191,7 +191,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			continue
 		}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		arg1Duration, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		arg1Duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 				sc.AppendWarning(err)
