@@ -19,6 +19,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/testkit"
@@ -49,6 +50,8 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
+	failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`)
+	defer failpoint.Disable("tikvclient/injectLiveness")
 	tmpDir := config.GetGlobalConfig().TempStoragePath
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
 	_ = os.MkdirAll(tmpDir, 0755)
