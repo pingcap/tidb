@@ -142,11 +142,20 @@ func (p *printByTable) AddTask(task TaskStatus) {
 }
 
 func (p *printByTable) addCheckpoints(task *TaskStatus, table *glue.Table, formatTS func(uint64) string) {
+	items := make([][2]string, 0, len(task.Checkpoints))
+outer:
 	for _, cp := range task.Checkpoints {
 		switch cp.Type() {
 		case CheckpointTypeStore:
-			table.Add(fmt.Sprintf("checkpoint[store=%d]", cp.ID), formatTS(cp.TS))
+			items = append(items, [2]string{fmt.Sprintf("checkpoint[store=%d]", cp.ID), formatTS(cp.TS)})
+		case CheckpointTypeGlobal:
+			items = [][2]string{{"checkpoint[central-global]", formatTS(cp.TS)}}
+			break outer
 		}
+	}
+
+	for _, item := range items {
+		table.Add(item[0], item[1])
 	}
 }
 

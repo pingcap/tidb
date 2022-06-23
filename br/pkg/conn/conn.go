@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -113,19 +114,38 @@ func NewConnPool(capacity int, newConn func(ctx context.Context) (*grpc.ClientCo
 	}
 }
 
-// Mgr manages connections to a TiDB cluster.
-type Mgr struct {
-	*pdutil.PdController
-	tlsConf   *tls.Config
-	dom       *domain.Domain
-	storage   kv.Storage   // Used to access SQL related interfaces.
-	tikvStore tikv.Storage // Used to access TiKV specific interfaces.
-	grpcClis  struct {
+type StoreManager struct {
+	pdClient pd.Client
+	grpcClis struct {
 		mu   sync.Mutex
 		clis map[uint64]*grpc.ClientConn
 	}
-	keepalive   keepalive.ClientParameters
+	keepalive keepalive.ClientParameters
+	tlsConf   *tls.Config
+}
+
+// NewStoreManager create a new manager for gRPC connections to stores.
+func NewStoreManager(pdCli pd.Client, kl keepalive.ClientParameters, tlsConf *tls.Config) *StoreManager {
+	return &StoreManager{
+		pdClient: pdCli,
+		grpcClis: struct {
+			mu   sync.Mutex
+			clis map[uint64]*grpc.ClientConn
+		}{clis: make(map[uint64]*grpc.ClientConn)},
+		keepalive: kl,
+		tlsConf:   tlsConf,
+	}
+}
+
+// Mgr manages connections to a TiDB cluster.
+type Mgr struct {
+	*pdutil.PdController
+	dom         *domain.Domain
+	storage     kv.Storage   // Used to access SQL related interfaces.
+	tikvStore   tikv.Storage // Used to access TiKV specific interfaces.
 	ownsStorage bool
+
+	*StoreManager
 }
 
 // StoreBehavior is the action to do in GetAllTiKVStores when a non-TiKV
@@ -298,18 +318,21 @@ func NewMgr(
 		storage:      storage,
 		tikvStore:    tikvStorage,
 		dom:          dom,
-		tlsConf:      tlsConf,
 		ownsStorage:  g.OwnsStorage(),
-		grpcClis: struct {
-			mu   sync.Mutex
-			clis map[uint64]*grpc.ClientConn
-		}{clis: make(map[uint64]*grpc.ClientConn)},
-		keepalive: keepalive,
+		StoreManager: &StoreManager{
+			tlsConf: tlsConf,
+			grpcClis: struct {
+				mu   sync.Mutex
+				clis map[uint64]*grpc.ClientConn
+			}{clis: make(map[uint64]*grpc.ClientConn)},
+			keepalive: keepalive,
+			pdClient:  controller.GetPDClient(),
+		},
 	}
 	return mgr, nil
 }
 
-func (mgr *Mgr) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
 	failpoint.Inject("hint-get-backup-client", func(v failpoint.Value) {
 		log.Info("failpoint hint-get-backup-client injected, "+
 			"process will notify the shell.", zap.Uint64("store", storeID))
@@ -324,7 +347,7 @@ func (mgr *Mgr) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.Cl
 		}
 		time.Sleep(3 * time.Second)
 	})
-	store, err := mgr.GetPDClient().GetStore(ctx, storeID)
+	store, err := mgr.pdClient.GetStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -356,8 +379,28 @@ func (mgr *Mgr) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.Cl
 
 // GetBackupClient get or create a backup client.
 func (mgr *Mgr) GetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+	var cli backuppb.BackupClient
+	if err := mgr.WithConn(ctx, storeID, func(cc *grpc.ClientConn) {
+		cli = backuppb.NewBackupClient(cc)
+	}); err != nil {
+		return nil, err
+	}
+	return cli, nil
+}
+
+func (mgr *Mgr) GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error) {
+	var cli logbackup.LogBackupClient
+	if err := mgr.WithConn(ctx, storeID, func(cc *grpc.ClientConn) {
+		cli = logbackup.NewLogBackupClient(cc)
+	}); err != nil {
+		return nil, err
+	}
+	return cli, nil
+}
+
+func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*grpc.ClientConn)) error {
 	if ctx.Err() != nil {
-		return nil, errors.Trace(ctx.Err())
+		return errors.Trace(ctx.Err())
 	}
 
 	mgr.grpcClis.mu.Lock()
@@ -365,20 +408,22 @@ func (mgr *Mgr) GetBackupClient(ctx context.Context, storeID uint64) (backuppb.B
 
 	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
 		// Find a cached backup client.
-		return backuppb.NewBackupClient(conn), nil
+		f(conn)
+		return nil
 	}
 
 	conn, err := mgr.getGrpcConnLocked(ctx, storeID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	// Cache the conn.
 	mgr.grpcClis.clis[storeID] = conn
-	return backuppb.NewBackupClient(conn), nil
+	f(conn)
+	return nil
 }
 
 // ResetBackupClient reset the connection for backup client.
-func (mgr *Mgr) ResetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
+func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
 	if ctx.Err() != nil {
 		return nil, errors.Trace(ctx.Err())
 	}
@@ -423,7 +468,7 @@ func (mgr *Mgr) GetStorage() kv.Storage {
 
 // GetTLSConfig returns the tls config.
 func (mgr *Mgr) GetTLSConfig() *tls.Config {
-	return mgr.tlsConf
+	return mgr.StoreManager.tlsConf
 }
 
 // GetLockResolver gets the LockResolver.
@@ -437,7 +482,7 @@ func (mgr *Mgr) GetDomain() *domain.Domain {
 }
 
 // Close closes all client in Mgr.
-func (mgr *Mgr) Close() {
+func (mgr *StoreManager) Close() {
 	mgr.grpcClis.mu.Lock()
 	for _, cli := range mgr.grpcClis.clis {
 		err := cli.Close()
@@ -446,7 +491,10 @@ func (mgr *Mgr) Close() {
 		}
 	}
 	mgr.grpcClis.mu.Unlock()
+}
 
+func (mgr *Mgr) Close() {
+	mgr.StoreManager.Close()
 	// Gracefully shutdown domain so it does not affect other TiDB DDL.
 	// Must close domain before closing storage, otherwise it gets stuck forever.
 	if mgr.ownsStorage {

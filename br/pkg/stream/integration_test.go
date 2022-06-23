@@ -137,6 +137,7 @@ func TestIntegration(t *testing.T) {
 	metaCli := stream.MetaDataClient{Client: cli}
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
 	t.Run("TestForwardProgress", func(t *testing.T) { testForwardProgress(t, metaCli, etcd) })
+	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, stream.TaskEventClient{MetaDataClient: metaCli}) })
 }
 
 func TestChecking(t *testing.T) {
@@ -227,4 +228,35 @@ func testForwardProgress(t *testing.T, metaCli stream.MetaDataClient, etcd *embe
 	store2Checkpoint, err := task.MinNextBackupTS(ctx, 2)
 	require.NoError(t, err)
 	require.Equal(t, store2Checkpoint, uint64(40))
+}
+
+func testStreamListening(t *testing.T, metaCli stream.TaskEventClient) {
+	ctx, cancel := context.WithCancel(context.Background())
+	taskName := "simple"
+	taskInfo := simpleTask(taskName, 4)
+
+	require.NoError(t, metaCli.PutTask(ctx, taskInfo))
+	ch := make(chan stream.TaskEvent, 1024)
+	require.NoError(t, metaCli.Begin(ctx, ch))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName))
+
+	taskName2 := "simple2"
+	taskInfo2 := simpleTask(taskName2, 4)
+	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
+	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+	first := <-ch
+	require.Equal(t, first.Type, stream.EventAdd)
+	require.Equal(t, first.Name, taskName)
+	second := <-ch
+	require.Equal(t, second.Type, stream.EventDel)
+	require.Equal(t, second.Name, taskName)
+	third := <-ch
+	require.Equal(t, third.Type, stream.EventAdd)
+	require.Equal(t, third.Name, taskName2)
+	forth := <-ch
+	require.Equal(t, forth.Type, stream.EventDel)
+	require.Equal(t, forth.Name, taskName2)
+	cancel()
+	_, ok := <-ch
+	require.False(t, ok)
 }

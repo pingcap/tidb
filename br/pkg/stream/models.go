@@ -21,10 +21,13 @@ const (
 	streamKeyPrefix = "/tidb/br-stream"
 	taskInfoPath    = "/info"
 	// nolint:deadcode,varcheck
-	taskCheckpointPath = "/checkpoint"
-	taskRangesPath     = "/ranges"
-	taskPausePath      = "/pause"
-	taskLastErrorPath  = "/last-error"
+	taskCheckpointPath   = "/checkpoint"
+	taskRangesPath       = "/ranges"
+	taskPausePath        = "/pause"
+	taskLastErrorPath    = "/last-error"
+	checkpointTypeGlobal = "central_global"
+	checkpointTypeRegion = "region"
+	checkpointTypeStore  = "store"
 )
 
 var (
@@ -76,6 +79,11 @@ func CheckPointsOf(task string) string {
 	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, taskCheckpointPath, task), "/"))
 	buf.WriteRune('/')
 	return buf.String()
+}
+
+// GlobalCheckpointOf returns the path to the "global" checkpoint of some task.
+func GlobalCheckpointOf(task string) string {
+	return path.Join(streamKeyPrefix, taskCheckpointPath, task, checkpointTypeGlobal)
 }
 
 // CheckpointOf returns the checkpoint prefix of some store.

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
@@ -69,6 +70,7 @@ var (
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
 	StreamMetadata = "log metadata"
+	StreamCtl      = "log ctl"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -89,6 +91,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamStatus:   RunStreamStatus,
 	StreamTruncate: RunStreamTruncate,
 	StreamMetadata: RunStreamMetadata,
+	StreamCtl:      RunStreamAdvancer,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -110,6 +113,9 @@ type StreamConfig struct {
 
 	// Spec for the command `status`.
 	JSONOutput bool `json:"json-output" toml:"json-output"`
+
+	// Spec for the command `advancer`.
+	AdvancerCfg streamhelper.CheckpointAdvancerConfig `json:"advancer-config" toml:"advancer-config"`
 }
 
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
@@ -772,6 +778,30 @@ func RunStreamResume(
 
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
+}
+
+func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+	ctx, cancel := context.WithCancel(c)
+	defer cancel()
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, false)
+	if err != nil {
+		return err
+	}
+
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return err
+	}
+	cli := stream.NewMetaDataClient(etcdCLI)
+	env := streamhelper.CliEnv{
+		PDRegionScanner: streamhelper.PDRegionScanner{Client: mgr.GetPDClient()},
+		Mgr:             mgr,
+		TaskEventClient: stream.TaskEventClient{MetaDataClient: *cli},
+	}
+	advancer := streamhelper.NewCheckpointAdvancer(&env)
+	advancer.UpdateConfig(cfg.AdvancerCfg)
+	return advancer.Loop(ctx)
 }
 
 func checkConfigForStatus(cfg *StreamConfig) error {
