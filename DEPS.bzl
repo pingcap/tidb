@@ -1558,6 +1558,14 @@ def go_deps():
         version = "v0.2.0",
     )
     go_repository(
+        name = "com_github_kyoh86_exportloopref",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/kyoh86/exportloopref",
+        sum = "h1:5Ry/at+eFdkX9Vsdw3qU4YkvGtzuVfzT4X7S77LoN/M=",
+        version = "v0.1.8",
+    )
+
+    go_repository(
         name = "com_github_labstack_echo_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/labstack/echo/v4",
