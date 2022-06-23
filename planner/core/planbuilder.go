@@ -98,10 +98,15 @@ type tableHintInfo struct {
 	timeRangeHint       ast.HintTimeRange
 	limitHints          limitHintInfo
 	leadingJoinOrder    []hintTableInfo
+	inHints             inHintInfo
 }
 
 type limitHintInfo struct {
 	preferLimitToCop bool
+}
+
+type inHintInfo struct {
+	allowInExpansion bool
 }
 
 type hintTableInfo struct {

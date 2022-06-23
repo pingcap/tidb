@@ -57,6 +57,7 @@ const (
 	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagInExpansion
 	flagEliminateAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
@@ -77,6 +78,7 @@ var optRuleList = []logicalOptRule{
 	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&inExpansionSolver{},
 	&aggregationEliminator{},
 	&projectionEliminator{},
 	&maxMinEliminator{},

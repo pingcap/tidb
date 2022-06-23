@@ -274,6 +274,9 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
+	// expandInExpr will expand `IN` expr to `UNION` + `EQ`(s) during logical optimization
+	expandInExpr(opt *logicalOptimizeOp) LogicalPlan
+
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)
 
