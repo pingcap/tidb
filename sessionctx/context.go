@@ -152,8 +152,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
-	// GetPreparedTSFuture returns the prepared ts future
-	GetPreparedTSFuture() oracle.Future
+	// GetPreparedTxnFuture returns the prepared ts future
+	GetPreparedTxnFuture() TxnFuture
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
@@ -174,6 +174,10 @@ type Context interface {
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
 	ReleaseAllAdvisoryLocks() int
+}
+
+type TxnFuture interface {
+	Wait(ctx context.Context, sctx Context) (kv.Transaction, error)
 }
 
 type basicCtxType int

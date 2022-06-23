@@ -17,6 +17,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -135,12 +136,11 @@ func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePo
 }
 
 // ActivateTxn decides to activate txn according to the parameter `active`
-func (m *txnManager) ActivateTxn() error {
+func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 	if m.ctxProvider == nil {
-		return errors.New("context provider not set")
+		return nil, errors.New("context provider not set")
 	}
-	_, err := m.ctxProvider.ActivateTxn()
-	return err
+	return m.ctxProvider.ActivateTxn()
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry

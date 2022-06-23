@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"github.com/pingcap/tidb/table/temptable"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -101,7 +102,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if err != nil {
 		return err
 	}
-	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTSFuture() != nil
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
 		_, err = p.ActivateTxn()
 	}
@@ -175,24 +176,33 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	txn, err := p.sctx.Txn(false)
+	txn, err := p.sctx.GetPreparedTxnFuture().Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
 	}
 
-	//// Transaction is lazy initialized.
-	//// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
-	//// If Txn() is called later, wait for the future to get a valid txn.
-	//if err = txn.changePendingToValid(s.currentCtx); err != nil {
-	//	logutil.BgLogger().Error("active transaction fail",
-	//		zap.Error(err))
-	//	s.txn.cleanup()
-	//	s.sessionVars.TxnCtx.StartTS = 0
-	//	return &s.txn, err
-	//}
-
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
+
+	if !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+		sessVars.SetInTxn(true)
+	}
+
+	sessVars.TxnCtx.CouldRetry = sessiontxn.IsTxnRetryable(sessVars)
+	txn.SetVars(sessVars.KVVars)
+
+	readReplicaType := sessVars.GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, readReplicaType)
+	}
+
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if sessVars.StmtCtx.WeakConsistency {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+	}
+
+	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
 
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)

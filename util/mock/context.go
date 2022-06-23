@@ -360,8 +360,8 @@ func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	return nil
 }
 
-// GetPreparedTSFuture returns the prepared ts future
-func (c *Context) GetPreparedTSFuture() oracle.Future {
+// GetPreparedTxnFuture returns the prepared ts future
+func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
 	return nil
 }
 

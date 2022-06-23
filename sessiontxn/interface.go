@@ -162,7 +162,7 @@ type TxnManager interface {
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
 	// ActivateTxn activates the transaction.
-	ActivateTxn() error
+	ActivateTxn() (kv.Transaction, error)
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
