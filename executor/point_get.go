@@ -58,6 +58,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
+		b.err = err
 		return nil
 	}
 
