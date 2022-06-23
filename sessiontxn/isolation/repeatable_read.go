@@ -205,12 +205,13 @@ func optimizeForNotFetchingLatestTS(plan plannercore.Plan, inLockOrWriteStmt boo
 		if v.Children() == nil {
 			return false
 		}
-		allChildrenArePointGet := true
 		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
 		for _, p := range v.Children() {
-			allChildrenArePointGet = allChildrenArePointGet && optimizeForNotFetchingLatestTS(p, isPhysicalLock || inLockOrWriteStmt)
+			if !optimizeForNotFetchingLatestTS(p, isPhysicalLock || inLockOrWriteStmt) {
+				return false
+			}
 		}
-		return allChildrenArePointGet
+		return true
 	case *plannercore.Update:
 		return optimizeForNotFetchingLatestTS(v.SelectPlan, true)
 	case *plannercore.Delete:
