@@ -37,6 +37,7 @@ type Session interface {
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error
 	Close()
+	GetGlobalVariable(name string) (string, error)
 }
 
 // Progress is an interface recording the current execution progress.
