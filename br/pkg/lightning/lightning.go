@@ -266,6 +266,7 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 		glue:         glue,
 		promFactory:  l.promFactory,
 		promRegistry: l.promRegistry,
+		logger:       log.L(),
 	}
 	return l.run(taskCtx, taskCfg, o)
 }
@@ -287,6 +288,7 @@ func (l *Lightning) RunServer() error {
 		o := &options{
 			promFactory:  l.promFactory,
 			promRegistry: l.promRegistry,
+			logger:       log.L(),
 		}
 		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
@@ -310,6 +312,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	o := &options{
 		promFactory:  l.promFactory,
 		promRegistry: l.promRegistry,
+		logger:       log.L(),
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -357,7 +360,7 @@ var (
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
-	log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
+	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
 
 	utils.LogEnvVariables()
 
@@ -368,6 +371,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}()
 
 	ctx := metric.NewContext(taskCtx, metrics)
+	ctx = log.NewContext(ctx, o.logger)
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
@@ -457,7 +461,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}
 
-	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
+	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
 	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
 	loadTask.End(zap.ErrorLevel, err)
@@ -466,13 +470,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		log.L().Error("check system requirements failed", zap.Error(err))
+		o.logger.Error("check system requirements failed", zap.Error(err))
 		return common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
 	}
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		log.L().Error("checkpoint schema conflicts with data files", zap.Error(err))
+		o.logger.Error("checkpoint schema conflicts with data files", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -493,7 +497,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
-		log.L().Error("restore failed", log.ShortError(err))
+		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
 	defer procedure.Close()
@@ -835,7 +839,9 @@ func handleLogLevel(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		oldLevel := log.SetLevel(zapcore.InfoLevel)
-		log.L().Info("changed log level", zap.Stringer("old", oldLevel), zap.Stringer("new", logLevel.Level))
+		log.L().Info("changed log level. No effects if task has specified its logger",
+			zap.Stringer("old", oldLevel),
+			zap.Stringer("new", logLevel.Level))
 		log.SetLevel(logLevel.Level)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{}"))
@@ -941,7 +947,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 	if err != nil || !exist {
 		return errors.Trace(err)
 	}
-	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
+	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
