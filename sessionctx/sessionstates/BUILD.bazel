@@ -16,6 +16,7 @@ go_test(
     srcs = ["session_states_test.go"],
     deps = [
         "//errno",
+        "//parser/mysql",
         "//sessionctx/variable",
         "//testkit",
         "//util/sem",
