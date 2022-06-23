@@ -324,15 +324,8 @@ func closeConn(cc *clientConn, connections int) error {
 			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 		}
 	}
-<<<<<<< HEAD
 	if cc.ctx != nil {
 		return cc.ctx.Close()
-=======
-	// Close statements and session
-	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
->>>>>>> 854c68d99... server: fix connection close on network timeout/read error (#34757)
 	}
 	return nil
 }
