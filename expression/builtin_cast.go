@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -916,7 +917,7 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.GetDecimal())
+	res, _, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.GetDecimal())
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
@@ -1094,7 +1095,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	if isNull || err != nil {
 		return res, true, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.GetDecimal())
+	res, _, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		// ErrTruncatedWrongVal needs to be considered NULL.
@@ -1317,16 +1318,12 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.GetDecimal())
+	res, isNull, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
-		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-		if res == types.ZeroDuration {
-			return res, true, err
-		}
 	}
-	return res, false, err
+	return res, isNull, err
 }
 
 type builtinCastTimeAsTimeSig struct {
@@ -1764,7 +1761,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, b.tp.GetDecimal())
+	res, _, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
@@ -1840,6 +1837,15 @@ func BuildCastCollationFunction(ctx sessionctx.Context, expr Expression, ec *Exp
 		} else {
 			return expr
 		}
+	} else if ec.Charset == charset.CharsetBin {
+		// When cast character string to binary string, if we still use fixed length representation,
+		// then 0 padding will be used, which can affect later execution.
+		// e.g. https://github.com/pingcap/tidb/issues/34823.
+		// On the other hand, we can not directly return origin expr back,
+		// since we need binary collation to do string comparison later.
+		// e.g. https://github.com/pingcap/tidb/pull/35053#discussion_r894155052
+		// Here we use VarString type of cast, i.e `cast(a as binary)`, to avoid this problem.
+		tp.SetType(mysql.TypeVarString)
 	}
 	tp.SetCharset(ec.Charset)
 	tp.SetCollate(ec.Collation)
@@ -1934,8 +1940,8 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tp.SetFlen(expr.GetType().GetFlen())
-	tp.SetDecimal(expr.GetType().GetDecimal())
+	tp.SetFlenUnderLimit(expr.GetType().GetFlen())
+	tp.SetDecimalUnderLimit(expr.GetType().GetDecimal())
 
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.SetFlen(mysql.MaxIntWidth)
@@ -1952,14 +1958,8 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()
 			castTp := castExpr.GetType()
-			castTp.SetDecimal(frac)
-			castTp.SetFlen(precision)
-			if castTp.GetFlen() > mysql.MaxDecimalWidth {
-				castTp.SetFlen(mysql.MaxDecimalWidth)
-			}
-			if castTp.GetDecimal() > mysql.MaxDecimalScale {
-				castTp.SetDecimal(mysql.MaxDecimalScale)
-			}
+			castTp.SetDecimalUnderLimit(frac)
+			castTp.SetFlenUnderLimit(precision)
 		}
 	}
 	return castExpr

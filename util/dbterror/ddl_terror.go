@@ -390,4 +390,7 @@ var (
 	ErrCannotCancelDDLJob = ClassDDL.NewStd(mysql.ErrCannotCancelDDLJob)
 	// ErrDDLSetting returns when failing to enable/disable DDL
 	ErrDDLSetting = ClassDDL.NewStd(mysql.ErrDDLSetting)
+
+	// ErrColumnInChange indicates there is modification on the column in parallel.
+	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
 )

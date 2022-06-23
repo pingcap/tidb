@@ -23,7 +23,7 @@ header:
     - '**/*.result'
     - '**/*.example'
     - '**/*.patch'
-    - 'DEPS.bzl'
+    - '**/*.bzl'
     - '.codecov.yml'
     - 'Jenkinsfile'
     - '.editorconfig'

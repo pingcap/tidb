@@ -1023,6 +1023,8 @@ const (
 	ErrAssertionFailed                     = 8141
 	ErrInstanceScope                       = 8142
 	ErrNonTransactionalJobFailure          = 8143
+	ErrSettingNoopVariable                 = 8144
+	ErrGettingNoopVariable                 = 8145
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1069,7 +1071,8 @@ const (
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244
-	ErrDDLSetting                         = 8245
+	ErrColumnInChange                     = 8245
+	ErrDDLSetting                         = 8246
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
