@@ -27,6 +27,8 @@ import (
 
 var errCommandRunFailed = errors.New("command run failed")
 
+var defaultChanTimeout = time.Second * 10
+
 type steppedTestkitMsgType int
 
 const (
@@ -46,7 +48,7 @@ func (ch steppedTestKitMsgChan) sendMsg(tp steppedTestkitMsgType, val any) error
 	select {
 	case ch <- &steppedTestKitMsg{tp: tp, val: val}:
 		return nil
-	case <-time.After(time.Second * 10):
+	case <-time.After(defaultChanTimeout):
 		return errors.New("send msg timeout")
 	}
 }
@@ -59,7 +61,7 @@ func (ch steppedTestKitMsgChan) recvMsg() (*steppedTestKitMsg, error) {
 	select {
 	case msg := <-ch:
 		return msg, nil
-	case <-time.After(time.Second * 10):
+	case <-time.After(defaultChanTimeout):
 		return nil, errors.New("send msg timeout")
 	}
 }
