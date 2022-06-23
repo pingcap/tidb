@@ -213,7 +213,7 @@ require (
 
 replace github.com/pingcap/tidb/parser => ./parser
 
-replace github.com/pingcap/tipb => github.com/time-and-fate/tipb v0.0.0-20220620062228-0abb96df1346
+replace github.com/pingcap/tipb => github.com/time-and-fate/tipb v0.0.0-20220623133307-79af59a330f5
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible

@@ -99,13 +99,28 @@ func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 	pb.AccessObject = &tipb.ExplainOperator_DynamicPartitionObjects{DynamicPartitionObjects: &pbObjs}
 }
 
-type ScanAccessObject struct {
-	Database         string
-	Table            string
-	Index            string
-	IndexCols        []string
+type IndexAccess struct {
+	Name             string
+	Cols             []string
 	IsClusteredIndex bool
-	Partition        string
+}
+
+func (a *IndexAccess) ToPB() *tipb.IndexAccess {
+	if a == nil {
+		return nil
+	}
+	return &tipb.IndexAccess{
+		Name:             a.Name,
+		Cols:             a.Cols,
+		IsClusteredIndex: a.IsClusteredIndex,
+	}
+}
+
+type ScanAccessObject struct {
+	Database   string
+	Table      string
+	Indexes    []IndexAccess
+	Partitions []string
 }
 
 func (s *ScanAccessObject) NormalizedString() string {
@@ -113,16 +128,16 @@ func (s *ScanAccessObject) NormalizedString() string {
 	if len(s.Table) > 0 {
 		b.WriteString("table:" + s.Table)
 	}
-	if len(s.Partition) > 0 {
+	if len(s.Partitions) > 0 {
 		b.WriteString(", partition:?")
 	}
-	if len(s.Index) > 0 {
-		if s.IsClusteredIndex {
+	for _, index := range s.Indexes {
+		if index.IsClusteredIndex {
 			b.WriteString(", clustered index:")
 		} else {
 			b.WriteString(", index:")
 		}
-		b.WriteString(s.Index + "(" + strings.Join(s.IndexCols, ",") + ")")
+		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ",") + ")")
 	}
 	return b.String()
 }
@@ -132,16 +147,16 @@ func (s *ScanAccessObject) String() string {
 	if len(s.Table) > 0 {
 		b.WriteString("table:" + s.Table)
 	}
-	if len(s.Partition) > 0 {
-		b.WriteString(", partition:" + s.Partition)
+	if len(s.Partitions) > 0 {
+		b.WriteString(", partition:" + strings.Join(s.Partitions, ","))
 	}
-	if len(s.Index) > 0 {
-		if s.IsClusteredIndex {
+	for _, index := range s.Indexes {
+		if index.IsClusteredIndex {
 			b.WriteString(", clustered index:")
 		} else {
 			b.WriteString(", index:")
 		}
-		b.WriteString(s.Index + "(" + strings.Join(s.IndexCols, ",") + ")")
+		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ",") + ")")
 	}
 	return b.String()
 }
@@ -151,12 +166,12 @@ func (s *ScanAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 		return
 	}
 	pbObj := tipb.ScanAccessObject{
-		Database:         s.Database,
-		Table:            s.Table,
-		Index:            s.Index,
-		IndexCols:        s.IndexCols,
-		IsClusteredIndex: s.IsClusteredIndex,
-		Partition:        s.Partition,
+		Database:   s.Database,
+		Table:      s.Table,
+		Partitions: s.Partitions,
+	}
+	for i := range s.Indexes {
+		pbObj.Indexes = append(pbObj.Indexes, s.Indexes[i].ToPB())
 	}
 	pb.AccessObject = &tipb.ExplainOperator_ScanObject{ScanObject: &pbObj}
 }
@@ -192,18 +207,21 @@ func (p *PhysicalIndexScan) AccessObject() AccessObject {
 		pi := p.Table.GetPartitionInfo()
 		if pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
-			res.Partition = partitionName
+			res.Partitions = []string{partitionName}
 		}
 	}
 	if len(p.Index.Columns) > 0 {
-		res.Index = p.Index.Name.O
+		index := IndexAccess{
+			Name: p.Index.Name.O,
+		}
 		for _, idxCol := range p.Index.Columns {
 			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				res.IndexCols = append(res.IndexCols, tblCol.GeneratedExprString)
+				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
 			} else {
-				res.IndexCols = append(res.IndexCols, idxCol.Name.O)
+				index.Cols = append(index.Cols, idxCol.Name.O)
 			}
 		}
+		res.Indexes = []IndexAccess{index}
 	}
 	return res
 }
@@ -222,7 +240,7 @@ func (p *PhysicalTableScan) AccessObject() AccessObject {
 		pi := p.Table.GetPartitionInfo()
 		if pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
-			res.Partition = partitionName
+			res.Partitions = []string{partitionName}
 		}
 	}
 	return res
@@ -240,20 +258,21 @@ func (p *PointGetPlan) AccessObject() AccessObject {
 		Table:    p.TblInfo.Name.O,
 	}
 	if p.PartitionInfo != nil {
-		res.Partition = p.PartitionInfo.Name.O
+		res.Partitions = []string{p.PartitionInfo.Name.O}
 	}
 	if p.IndexInfo != nil {
-		res.Index = p.IndexInfo.Name.O
-		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			res.IsClusteredIndex = true
+		index := IndexAccess{
+			Name:             p.IndexInfo.Name.O,
+			IsClusteredIndex: p.IndexInfo.Primary && p.TblInfo.IsCommonHandle,
 		}
 		for _, idxCol := range p.IndexInfo.Columns {
 			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				res.IndexCols = append(res.IndexCols, tblCol.GeneratedExprString)
+				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
 			} else {
-				res.IndexCols = append(res.IndexCols, idxCol.Name.O)
+				index.Cols = append(index.Cols, idxCol.Name.O)
 			}
 		}
+		res.Indexes = []IndexAccess{index}
 	}
 	return res
 }
@@ -264,18 +283,22 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
+	for _, partitionInfo := range p.PartitionInfos {
+		res.Partitions = append(res.Partitions, partitionInfo.Name.O)
+	}
 	if p.IndexInfo != nil {
-		res.Index = p.IndexInfo.Name.O
-		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			res.IsClusteredIndex = true
+		index := IndexAccess{
+			Name:             p.IndexInfo.Name.O,
+			IsClusteredIndex: p.IndexInfo.Primary && p.TblInfo.IsCommonHandle,
 		}
 		for _, idxCol := range p.IndexInfo.Columns {
 			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				res.IndexCols = append(res.IndexCols, tblCol.GeneratedExprString)
+				index.Cols = append(index.Cols, tblCol.GeneratedExprString)
 			} else {
-				res.IndexCols = append(res.IndexCols, idxCol.Name.O)
+				index.Cols = append(index.Cols, idxCol.Name.O)
 			}
 		}
+		res.Indexes = []IndexAccess{index}
 	}
 	return res
 }

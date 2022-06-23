@@ -252,16 +252,16 @@ func printAccessObject(op *tipb.ExplainOperator) string {
 		if len(scanAO.Table) > 0 {
 			b.WriteString("table:" + scanAO.Table)
 		}
-		if len(scanAO.Partition) > 0 {
-			b.WriteString(", partition:" + scanAO.Partition)
+		if len(scanAO.Partitions) > 0 {
+			b.WriteString(", partition:" + strings.Join(scanAO.Partitions, ","))
 		}
-		if len(scanAO.Index) > 0 {
-			if scanAO.IsClusteredIndex {
+		for _, index := range scanAO.Indexes {
+			if index.IsClusteredIndex {
 				b.WriteString(", clustered index:")
 			} else {
 				b.WriteString(", index:")
 			}
-			b.WriteString(scanAO.Index + "(" + strings.Join(scanAO.IndexCols, ",") + ")")
+			b.WriteString(index.Name + "(" + strings.Join(index.Cols, ",") + ")")
 		}
 		return b.String()
 	case *tipb.ExplainOperator_OtherObject:
