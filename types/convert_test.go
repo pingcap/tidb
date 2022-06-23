@@ -352,7 +352,7 @@ func TestConvertToString(t *testing.T) {
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
-	td, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testToString(t, td, "11:11:11.999999")
 
@@ -819,7 +819,9 @@ func TestConvert(t *testing.T) {
 	signedDeny(t, mysql.TypeDate, "2012-08-x", "0000-00-00")
 	signedDeny(t, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
 	signedDeny(t, mysql.TypeTimestamp, "2012-08-x", "0000-00-00 00:00:00")
-	signedDeny(t, mysql.TypeDuration, "2012-08-x", "00:00:00")
+	signedDeny(t, mysql.TypeDuration, "2012-08-x", "00:20:12")
+	signedDeny(t, mysql.TypeDuration, "0000-00-00", "00:00:00")
+	signedDeny(t, mysql.TypeDuration, "1234abc", "00:12:34")
 
 	// string from string
 	signedAccept(t, mysql.TypeString, "abc", "abc")
