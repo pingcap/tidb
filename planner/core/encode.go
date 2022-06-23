@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"hash"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/failpoint"
@@ -44,14 +45,25 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 			op.Origin.statsInfo().RowCount = float64(val.(int))
 		}
 	})
-	var buf bytes.Buffer
+	pn := encoderPool.Get().(*planEncoder)
+	defer func() {
+		pn.buf.Reset()
+		encoderPool.Put(pn)
+	}()
+	buf := pn.buf
+	buf.Reset()
 	opCount := len(flat.Main)
 	for _, cte := range flat.CTEs {
 		opCount += len(cte)
 	}
 	// assume an operator costs around 80 bytes, preallocate space for them
 	buf.Grow(80 * opCount)
-	for _, op := range flat.Main {
+	encodeFlatPlanTree(flat.Main, 0, &buf)
+	for _, cte := range flat.CTEs {
+		op := cte[0]
+		cteDef := cte[0].Origin.(*CTEDefinition)
+		id := cteDef.CTE.IDForStorage
+		tp := plancodec.TypeCTEDefinition
 		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
 		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
@@ -61,8 +73,8 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		}
 		plancodec.EncodePlanNode(
 			int(op.Depth),
-			op.Origin.ID(),
-			op.Origin.TP(),
+			strconv.Itoa(id)+op.DriverSide.String(),
+			tp,
 			estRows,
 			taskTypeInfo,
 			op.Origin.ExplainInfo(),
@@ -72,42 +84,46 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 			diskInfo,
 			&buf,
 		)
-	}
-	for _, cte := range flat.CTEs {
-		for i, op := range cte {
-			id := 0
-			tp := ""
-			if i == 0 {
-				cteDef := cte[0].Origin.(*CTEDefinition)
-				id = cteDef.CTE.IDForStorage
-				tp = plancodec.TypeCTEDefinition
-			} else {
-				id = op.Origin.ID()
-				tp = op.Origin.TP()
-			}
-			taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
-			p := op.Origin
-			actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
-			var estRows float64
-			if statsInfo := p.statsInfo(); statsInfo != nil {
-				estRows = statsInfo.RowCount
-			}
-			plancodec.EncodePlanNode(
-				int(op.Depth),
-				id,
-				tp,
-				estRows,
-				taskTypeInfo,
-				op.Origin.ExplainInfo(),
-				actRows,
-				analyzeInfo,
-				memoryInfo,
-				diskInfo,
-				&buf,
-			)
+		if len(cte) > 1 {
+			encodeFlatPlanTree(cte[1:], 1, &buf)
 		}
 	}
 	return plancodec.Compress(buf.Bytes())
+}
+
+func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
+	for _, op := range flatTree {
+		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
+		p := op.Origin
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
+		var estRows float64
+		if statsInfo := p.statsInfo(); statsInfo != nil {
+			estRows = statsInfo.RowCount
+		}
+		plancodec.EncodePlanNode(
+			int(op.Depth),
+			strconv.Itoa(op.Origin.ID())+op.DriverSide.String(),
+			op.Origin.TP(),
+			estRows,
+			taskTypeInfo,
+			op.Origin.ExplainInfo(),
+			actRows,
+			analyzeInfo,
+			memoryInfo,
+			diskInfo,
+			buf,
+		)
+
+		// If NeedReverseDriverSide is true, we stop using the order of the slice and switch to recursively
+		// call encodeFlatPlanTree to keep build side before probe side.
+		if op.NeedReverseDriverSide {
+			buildSide := flatTree[op.ChildrenIdx[1]-offset:]
+			probeSide := flatTree[op.ChildrenIdx[0]-offset : op.ChildrenIdx[1]-offset]
+			encodeFlatPlanTree(buildSide, op.ChildrenIdx[1], buf)
+			encodeFlatPlanTree(probeSide, op.ChildrenIdx[0], buf)
+			break
+		}
+	}
 }
 
 var encoderPool = sync.Pool{
@@ -168,7 +184,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 		if statsInfo := x.statsInfo(); statsInfo != nil {
 			rowCount = x.statsInfo().RowCount
 		}
-		plancodec.EncodePlanNode(0, x.CTE.IDForStorage, plancodec.TypeCTEDefinition, rowCount, taskTypeInfo, x.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+		plancodec.EncodePlanNode(0, strconv.Itoa(x.CTE.IDForStorage), plancodec.TypeCTEDefinition, rowCount, taskTypeInfo, x.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 		pn.encodePlan(x.SeedPlan, true, kv.TiKV, 1)
 		if x.RecurPlan != nil {
 			pn.encodePlan(x.RecurPlan, true, kv.TiKV, 1)
@@ -184,7 +200,7 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 	if statsInfo := p.statsInfo(); statsInfo != nil {
 		rowCount = p.statsInfo().RowCount
 	}
-	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+	plancodec.EncodePlanNode(depth, strconv.Itoa(p.ID()), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
 	depth++
 

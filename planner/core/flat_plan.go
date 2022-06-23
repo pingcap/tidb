@@ -25,6 +25,8 @@ type FlatPhysicalPlan struct {
 	Main FlatPlanTree
 	CTEs []FlatPlanTree
 
+	// InExecute and InExplain are expected to handle some special cases. Usually you don't need to use them.
+
 	// InExecute means if the original plan tree contains Execute operator.
 	//
 	// Be careful when trying to use this, InExecute is true doesn't mean we are handling an EXECUTE statement.
@@ -32,7 +34,7 @@ type FlatPhysicalPlan struct {
 	// in Execute.Plan, not Execute itself, so InExecute will be false.
 	//
 	// When will InExecute be true? When you're using "EXPLAIN FOR CONNECTION" to get the last plan of
-	// a connection (yes, usually we will record Explain.TargetPlan for an EXPLAIN statement) and that plan
+	// a connection (usually we will record Explain.TargetPlan for an EXPLAIN statement) and that plan
 	// is from an EXECUTE statement, we will collect from Execute itself, not directly from Execute.Plan,
 	// then InExecute will be true.
 	InExecute bool
@@ -53,7 +55,7 @@ type FlatPlanTree []*FlatOperator
 // GetSelectPlan skips Insert, Delete and Update at the beginning of the FlatPlanTree.
 // Note:
 //     It returns a reference to the original FlatPlanTree, please avoid modifying the returned value.
-//     Since you get a part of the original slice, you may need to adjust the FlatOperator.Depth when using it.
+//     Since you get a part of the original slice, you need to adjust the FlatOperator.Depth and FlatOperator.ChildrenIdx when using them.
 func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 	if len(e) == 0 {
 		return nil
@@ -73,6 +75,17 @@ func (e FlatPlanTree) GetSelectPlan() FlatPlanTree {
 type FlatOperator struct {
 	// A reference to the original operator.
 	Origin Plan
+
+	ChildrenIdx []int
+
+	// NeedReverseDriverSide means if we need to reverse the order of children to keep build side before probe side.
+	//
+	// Specifically, it means if the below are all true:
+	// 1. this operator has two children
+	// 2. the first child's DriverSide is the probe side and the second's is the build side.
+	//
+	// If you call FlattenPhysicalPlan with buildSideFirst true, NeedReverseDriverSide will be useless.
+	NeedReverseDriverSide bool
 
 	TextTreeExplainID string
 	Depth             uint32
@@ -141,7 +154,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 		indent:      "",
 		isLastChild: true,
 	}
-	res.Main = res.flattenRecursively(p, initInfo, nil)
+	res.Main, _ = res.flattenRecursively(p, initInfo, nil)
 
 	flattenedCTEPlan := make(map[int]struct{}, len(res.ctesToFlatten))
 
@@ -184,12 +197,15 @@ func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperato
 }
 
 // Note that info should not be modified in this method.
-func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
+func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target FlatPlanTree) (res FlatPlanTree, idx int) {
+	idx = -1
 	flat := f.flattenSingle(p, info)
 	if flat != nil {
 		target = append(target, flat)
+		idx = len(target) - 1
 	}
-
+	childIdxs := make([]int, 0)
+	var childIdx int
 	childCtx := &operatorCtx{
 		depth:  info.depth + 1,
 		indent: texttree.Indent4Child(info.indent, info.isLastChild),
@@ -232,13 +248,17 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 
 		children := make([]PhysicalPlan, len(physPlan.Children()))
 		copy(children, physPlan.Children())
-		// Put the build side before the probe side if buildSideFirst is true.
-		if f.buildSideFirst &&
-			len(driverSideInfo) == 2 &&
+		if len(driverSideInfo) == 2 &&
 			driverSideInfo[0] == ProbeSide &&
 			driverSideInfo[1] == BuildSide {
-			driverSideInfo[0], driverSideInfo[1] = driverSideInfo[1], driverSideInfo[0]
-			children[0], children[1] = children[1], children[0]
+			if f.buildSideFirst {
+				// Put the build side before the probe side if buildSideFirst is true.
+				driverSideInfo[0], driverSideInfo[1] = driverSideInfo[1], driverSideInfo[0]
+				children[0], children[1] = children[1], children[0]
+			} else if flat != nil {
+				// Set NeedReverseDriverSide to true if buildSideFirst is false.
+				flat.NeedReverseDriverSide = true
+			}
 		}
 
 		for i := range children {
@@ -247,7 +267,8 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childCtx.reqType = info.reqType
 			childCtx.driverSide = driverSideInfo[i]
 			childCtx.isLastChild = i == len(children)-1
-			target = f.flattenRecursively(children[i], childCtx, target)
+			target, childIdx = f.flattenRecursively(children[i], childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
 		}
 	}
 
@@ -260,24 +281,28 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		childCtx.reqType = plan.ReadReqType
 		childCtx.driverSide = Empty
 		childCtx.isLastChild = true
-		target = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexReader:
 		childCtx.isRoot = false
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
 		childCtx.driverSide = Empty
 		childCtx.isLastChild = true
-		target = f.flattenRecursively(plan.indexPlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.indexPlan, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexLookUpReader:
 		childCtx.isRoot = false
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
 		childCtx.driverSide = BuildSide
 		childCtx.isLastChild = false
-		target = f.flattenRecursively(plan.indexPlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.indexPlan, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
 		childCtx.driverSide = ProbeSide
 		childCtx.isLastChild = true
-		target = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalIndexMergeReader:
 		childCtx.isRoot = false
 		childCtx.reqType = Cop
@@ -285,16 +310,19 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		for _, pchild := range plan.partialPlans {
 			childCtx.driverSide = BuildSide
 			childCtx.isLastChild = false
-			target = f.flattenRecursively(pchild, childCtx, target)
+			target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
 		}
 		childCtx.driverSide = ProbeSide
 		childCtx.isLastChild = true
-		target = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalShuffleReceiverStub:
 		childCtx.isRoot = true
 		childCtx.driverSide = Empty
 		childCtx.isLastChild = true
-		target = f.flattenRecursively(plan.DataSource, childCtx, target)
+		target, childIdx = f.flattenRecursively(plan.DataSource, childCtx, target)
+		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalCTE:
 		f.ctesToFlatten = append(f.ctesToFlatten, plan)
 	case *Insert:
@@ -302,21 +330,24 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childCtx.isRoot = true
 			childCtx.driverSide = Empty
 			childCtx.isLastChild = true
-			target = f.flattenRecursively(plan.SelectPlan, childCtx, target)
+			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
 		}
 	case *Update:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
 			childCtx.driverSide = Empty
 			childCtx.isLastChild = true
-			target = f.flattenRecursively(plan.SelectPlan, childCtx, target)
+			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
 		}
 	case *Delete:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
 			childCtx.driverSide = Empty
 			childCtx.isLastChild = true
-			target = f.flattenRecursively(plan.SelectPlan, childCtx, target)
+			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
 		}
 	case *Execute:
 		f.InExecute = true
@@ -325,7 +356,8 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childCtx.indent = info.indent
 			childCtx.driverSide = Empty
 			childCtx.isLastChild = true
-			target = f.flattenRecursively(plan.Plan, childCtx, target)
+			target, childIdx = f.flattenRecursively(plan.Plan, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
 		}
 	case *Explain:
 		f.InExplain = true
@@ -339,10 +371,14 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 				indent:      "",
 				isLastChild: true,
 			}
-			target = f.flattenRecursively(plan.TargetPlan, initInfo, target)
+			target, childIdx = f.flattenRecursively(plan.TargetPlan, initInfo, target)
+			childIdxs = append(childIdxs, childIdx)
 		}
 	}
-	return target
+	if flat != nil {
+		flat.ChildrenIdx = childIdxs
+	}
+	return target, idx
 }
 
 func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *operatorCtx, target FlatPlanTree) FlatPlanTree {
@@ -350,6 +386,8 @@ func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *op
 	if flat != nil {
 		target = append(target, flat)
 	}
+	childIdxs := make([]int, 0)
+	var childIdx int
 	childInfo := &operatorCtx{
 		depth:       info.depth + 1,
 		driverSide:  SeedPart,
@@ -358,11 +396,16 @@ func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *op
 		indent:      texttree.Indent4Child(info.indent, info.isLastChild),
 		isLastChild: cteDef.RecurPlan == nil,
 	}
-	target = f.flattenRecursively(cteDef.SeedPlan, childInfo, target)
+	target, childIdx = f.flattenRecursively(cteDef.SeedPlan, childInfo, target)
+	childIdxs = append(childIdxs, childIdx)
 	if cteDef.RecurPlan != nil {
 		childInfo.driverSide = RecursivePart
 		childInfo.isLastChild = true
-		target = f.flattenRecursively(cteDef.RecurPlan, childInfo, target)
+		target, childIdx = f.flattenRecursively(cteDef.RecurPlan, childInfo, target)
+		childIdxs = append(childIdxs, childIdx)
+	}
+	if flat != nil {
+		flat.ChildrenIdx = childIdxs
 	}
 	return target
 }
