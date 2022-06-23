@@ -52,7 +52,7 @@
   "gnetId": null,
   "graphTooltip": 1,
   "id": null,
-  "iteration": 1655989598590,
+  "iteration": 1655990780337,
   "links": [],
   "panels": [
     {
@@ -73,13 +73,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB query durations by histogram buckets with different percents",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 12,
             "x": 0,
             "y": 1
           },
+          "hiddenSeries": false,
           "id": 80,
           "legend": {
             "alignAsTable": false,
@@ -98,7 +104,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -186,7 +196,12 @@
           "description": "MySQL commands processing numbers per second. See https://dev.mysql.com/doc/internals/en/text-protocol.html and https://dev.mysql.com/doc/internals/en/prepared-statements.html",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "grid": {},
           "gridPos": {
             "h": 6,
@@ -194,6 +209,7 @@
             "x": 12,
             "y": 1
           },
+          "hiddenSeries": false,
           "id": 42,
           "legend": {
             "alignAsTable": false,
@@ -216,7 +232,11 @@
           "links": [],
           "maxPerRow": 1,
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -307,7 +327,12 @@
           "description": "TiDB statement statistics",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "grid": {},
           "gridPos": {
             "h": 6,
@@ -315,6 +340,7 @@
             "x": 0,
             "y": 7
           },
+          "hiddenSeries": false,
           "id": 21,
           "legend": {
             "alignAsTable": true,
@@ -335,7 +361,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -411,7 +441,12 @@
           "description": "TiDB command total statistics including both successful and failed ones",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "grid": {},
           "gridPos": {
             "h": 6,
@@ -419,6 +454,7 @@
             "x": 12,
             "y": 7
           },
+          "hiddenSeries": false,
           "id": 2,
           "legend": {
             "alignAsTable": true,
@@ -441,7 +477,11 @@
           "links": [],
           "maxPerRow": 1,
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -514,13 +554,19 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
           "description": "TiDB failed query statistics by query type",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 24,
             "x": 0,
             "y": 13
           },
+          "hiddenSeries": false,
           "id": 137,
           "legend": {
             "alignAsTable": true,
@@ -540,7 +586,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -605,13 +655,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB slow query statistics with slow query durations and coprocessor waiting/executing durations",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 12,
             "x": 0,
-            "y": 25
+            "y": 19
           },
+          "hiddenSeries": false,
           "id": 112,
           "legend": {
             "avg": false,
@@ -626,7 +682,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -705,13 +765,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB connection idle durations",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 12,
             "x": 12,
-            "y": 25
+            "y": 19
           },
+          "hiddenSeries": false,
           "id": 218,
           "legend": {
             "avg": false,
@@ -726,7 +792,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -832,13 +902,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB durations for different query types with 99.9 percent buckets",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 12,
             "x": 0,
             "y": 25
           },
+          "hiddenSeries": false,
           "id": 136,
           "legend": {
             "avg": false,
@@ -853,7 +929,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -918,13 +998,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB durations for different query types with 99 percent buckets",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 12,
             "x": 12,
             "y": 25
           },
+          "hiddenSeries": false,
           "id": 134,
           "legend": {
             "avg": false,
@@ -939,7 +1025,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -1004,13 +1094,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB durations for different query types with 95 percent buckets",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 12,
             "x": 0,
             "y": 31
           },
+          "hiddenSeries": false,
           "id": 132,
           "legend": {
             "avg": false,
@@ -1025,7 +1121,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -1090,13 +1190,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB durations for different query types with 80 percent buckets",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 1,
+          "fillGradient": 0,
           "gridPos": {
             "h": 6,
             "w": 12,
             "x": 12,
             "y": 31
           },
+          "hiddenSeries": false,
           "id": 130,
           "legend": {
             "avg": false,
@@ -1111,7 +1217,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.11",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -6260,7 +6370,6 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
-<<<<<<< HEAD
           "description": "TiDB read table cache hit total",
           "editable": true,
           "error": false,
@@ -6270,26 +6379,14 @@
           },
           "fill": 1,
           "fillGradient": 0,
-=======
-          "description": "TiDB plan cache miss total",
-          "editable": true,
-          "error": false,
-          "fill": 1,
->>>>>>> master
           "grid": {},
           "gridPos": {
             "h": 8,
             "w": 12,
-<<<<<<< HEAD
             "x": 0,
             "y": 29
           },
           "hiddenSeries": false,
-=======
-            "x": 12,
-            "y": 98
-          },
->>>>>>> master
           "id": 249,
           "legend": {
             "alignAsTable": true,
@@ -6310,15 +6407,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null as zero",
-<<<<<<< HEAD
           "options": {
             "alertThreshold": true
           },
           "percentage": false,
           "pluginVersion": "7.5.11",
-=======
-          "percentage": false,
->>>>>>> master
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -6328,19 +6421,12 @@
           "steppedLine": false,
           "targets": [
             {
-<<<<<<< HEAD
               "exemplar": true,
               "expr": "sum(rate(tidb_server_read_from_tablecache_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
               "legendFormat": "qps",
-=======
-              "expr": "sum(rate(tidb_server_plan_cache_miss_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{type}}",
->>>>>>> master
               "refId": "A",
               "step": 30
             }
@@ -6349,11 +6435,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-<<<<<<< HEAD
           "title": "Read From Table Cache OPS",
-=======
-          "title": "Plan Cache Miss OPS",
->>>>>>> master
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -6370,10 +6452,7 @@
           },
           "yaxes": [
             {
-<<<<<<< HEAD
-              "$$hashKey": "object:68",
-=======
->>>>>>> master
+              "$$hashKey": "object:469",
               "format": "short",
               "label": null,
               "logBase": 2,
@@ -6382,10 +6461,7 @@
               "show": true
             },
             {
-<<<<<<< HEAD
-              "$$hashKey": "object:69",
-=======
->>>>>>> master
+              "$$hashKey": "object:470",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -10042,7 +10118,7 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:140",
+              "$$hashKey": "object:541",
               "format": "short",
               "label": null,
               "logBase": 10,
@@ -10051,7 +10127,7 @@
               "show": true
             },
             {
-              "$$hashKey": "object:141",
+              "$$hashKey": "object:542",
               "format": "short",
               "label": null,
               "logBase": 1,
@@ -14933,6 +15009,6 @@
   },
   "timezone": "browser",
   "title": "Test-Cluster-TiDB",
-  "uid": "000000100",
-  "version": 2
+  "uid": "000000011",
+  "version": 1
 }
