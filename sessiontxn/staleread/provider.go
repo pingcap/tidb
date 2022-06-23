@@ -16,10 +16,10 @@ package staleread
 
 import (
 	"context"
-	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -91,6 +91,7 @@ func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
 	return nil
 }
 
+// ActivateTxn activates the transaction.
 func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	return nil, nil
 }

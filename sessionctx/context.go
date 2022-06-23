@@ -176,7 +176,9 @@ type Context interface {
 	ReleaseAllAdvisoryLocks() int
 }
 
+// TxnFuture todo: add comments
 type TxnFuture interface {
+	// Wait converts pending txn to valid
 	Wait(ctx context.Context, sctx Context) (kv.Transaction, error)
 }
 

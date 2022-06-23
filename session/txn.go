@@ -441,6 +441,7 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	return keys, nil
 }
 
+// Wait converts pending txn to valid
 func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
 	if txn.pending() {
 		defer func(begin time.Time) {

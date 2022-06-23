@@ -16,9 +16,9 @@ package sessiontxn
 
 import (
 	"context"
-	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 )

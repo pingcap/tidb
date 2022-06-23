@@ -2479,48 +2479,6 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	return &s.txn, nil
 }
 
-// isTxnRetryable (if returns true) means the transaction could retry.
-// If the transaction is in pessimistic mode, do not retry.
-// If the session is already in transaction, enable retry or internal SQL could retry.
-// If not, the transaction could always retry, because it should be auto committed transaction.
-// Anyway the retry limit is 0, the transaction could not retry.
-func (s *session) isTxnRetryable() bool {
-	sessVars := s.sessionVars
-
-	// The pessimistic transaction no need to retry.
-	if sessVars.TxnCtx.IsPessimistic {
-		return false
-	}
-
-	// If retry limit is 0, the transaction could not retry.
-	if sessVars.RetryLimit == 0 {
-		return false
-	}
-
-	// When `@@tidb_snapshot` is set, it is a ready-only statement and will not cause the errors that should retry a transaction in optimistic mode.
-	if sessVars.SnapshotTS != 0 {
-		return false
-	}
-
-	// If the session is not InTxn, it is an auto-committed transaction.
-	// The auto-committed transaction could always retry.
-	if !sessVars.InTxn() {
-		return true
-	}
-
-	// The internal transaction could always retry.
-	if sessVars.InRestrictedSQL {
-		return true
-	}
-
-	// If the retry is enabled, the transaction could retry.
-	if !sessVars.DisableTxnAutoRetry {
-		return true
-	}
-
-	return false
-}
-
 func (s *session) NewTxn(ctx context.Context) error {
 	if err := s.checkBeforeNewTxn(ctx); err != nil {
 		return err
