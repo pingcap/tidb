@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -48,7 +49,7 @@ func GetDDLReorgWorkerCounter() int32 {
 	if cnt > 0 {
 		return cnt
 	}
-	return int32(runtime.NumCPU() - 2)
+	return mathutil.Max(int32(runtime.NumCPU()-2), 1)
 }
 
 // SetDDLReorgBatchSize sets ddlReorgBatchSize size.
