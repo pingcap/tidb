@@ -652,7 +652,7 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 // In MySQL variables are always lowercase, and can be set in a case-insensitive way.
 func TestSysVarNameIsLowerCase(t *testing.T) {
 	for _, sv := range GetSysVars() {
-		require.Equal(t, strings.ToLower(sv.Name), sv.Name, "sysvar name countains uppercase characters")
+		require.Equal(t, strings.ToLower(sv.Name), sv.Name, "sysvar name contains uppercase characters")
 	}
 }
 
