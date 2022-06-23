@@ -1020,6 +1020,14 @@ def go_deps():
         version = "v0.0.0-20181017120253-0766667cb4d1",
     )
     go_repository(
+        name = "com_github_gordonklaus_ineffassign",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/gordonklaus/ineffassign",
+        sum = "h1:PVRE9d4AQKmbelZ7emNig1+NT27DUmKZn5qXxfio54U=",
+        version = "v0.0.0-20210914165742-4cc7213b9bc8",
+    )
+
+    go_repository(
         name = "com_github_gorilla_handlers",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/gorilla/handlers",
