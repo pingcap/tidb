@@ -32,6 +32,7 @@ go_library(
         "//util/dbterror",
         "//util/logutil",
         "//util/memory",
+        "//util/set",
         "//util/trxevents",
         "@com_github_coocood_freecache//:freecache",
         "@com_github_pingcap_errors//:errors",

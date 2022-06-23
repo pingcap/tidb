@@ -55,7 +55,7 @@ func parseDirective(s string) (cmd skipType, args []string) {
 		}
 		return skipNone, nil
 	}
-	s = strings.TrimPrefix(s, "//nolint: ")
+	s = strings.TrimPrefix(s, "//nolint:")
 	return skipLinter, []string{s}
 }
 
