@@ -172,7 +172,7 @@ run_test() {
         --key "$TEST_DIR/certs/br.key" \
         --mode scan --start-key 745f3132385f725f3131 --end-key 745f3132385f725f3134
 
-    checksum_new=$(checksum 745f3132385f725f3131 745f3132385f725f3133)
+    checksum_new=$(checksum 745f3132385f725f3131 745f3132385f725f3134)
 
     if [ "$checksum_new" != "$checksum_t_prefix" ];then
         echo "checksum failed after restore"
