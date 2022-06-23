@@ -453,7 +453,7 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 }
 
 // GetCost computes the cost of index join operator and its children.
-func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt float64, outerCost, innerCost float64) float64 {
+func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
@@ -490,6 +490,9 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt float64, outerCost, inner
 			numPairs = 0
 		}
 	}
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
+		numPairs = getOperatorActRows(p)
+	}
 	probeCost := numPairs * sessVars.GetCPUFactor()
 	// Cost of additional concurrent goroutines.
 	cpuCost += probeCost + (innerConcurrency+1.0)*sessVars.GetConcurrencyFactor()
@@ -498,7 +501,20 @@ func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt float64, outerCost, inner
 	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.GetMemoryFactor()
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerCost
-	return outerCost + innerPlanCost + cpuCost + memoryCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
+}
+
+func (p *PhysicalIndexJoin) estDoubleReadCost(doubleReadRows float64) float64 {
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
+		// only consider double-read cost on modelVer2
+		return 0
+	}
+	batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
+	// distRatio indicates how many requests corresponding to a batch, current value is from experiments.
+	// TODO: estimate it by using index correlation or make it configurable.
+	distRatio := 40.0
+	numDoubleReadTasks := (doubleReadRows / batchSize) * distRatio
+	return numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -517,13 +533,17 @@ func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType, costFlag uin
 	}
 	outerCnt := getCardinality(outerChild, costFlag)
 	innerCnt := getCardinality(innerChild, costFlag)
-	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) && outerCnt > 0 {
+		innerCnt /= outerCnt // corresponding to one outer row when calculating IndexJoin costs
+		innerCost /= outerCnt
+	}
+	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64) float64 {
+func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
@@ -561,6 +581,9 @@ func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost
 			numPairs = 0
 		}
 	}
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
+		numPairs = getOperatorActRows(p)
+	}
 	// Inner workers do hash join in parallel, but they can only save ONE outer
 	// batch results. So as the number of outer batch exceeds inner concurrency,
 	// it would fall back to linear execution. In a word, the hash join only runs
@@ -579,7 +602,7 @@ func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost
 	memoryCost := concurrency * (batchSize * distinctFactor) * innerCnt * sessVars.GetMemoryFactor()
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
 	innerPlanCost := outerCnt * innerCost
-	return outerCost + innerPlanCost + cpuCost + memoryCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -598,13 +621,17 @@ func (p *PhysicalIndexHashJoin) GetPlanCost(taskType property.TaskType, costFlag
 	}
 	outerCnt := getCardinality(outerChild, costFlag)
 	innerCnt := getCardinality(innerChild, costFlag)
-	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) && outerCnt > 0 {
+		innerCnt /= outerCnt // corresponding to one outer row when calculating IndexJoin costs
+		innerCost /= outerCnt
+	}
+	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64) float64 {
+func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
@@ -644,6 +671,9 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCos
 			numPairs = 0
 		}
 	}
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) {
+		numPairs = getOperatorActRows(p)
+	}
 	avgProbeCnt := numPairs / outerCnt
 	var probeCost float64
 	// Inner workers do merge join in parallel, but they can only save ONE outer batch
@@ -662,7 +692,7 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCos
 	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * sessVars.GetMemoryFactor()
 
 	innerPlanCost := outerCnt * innerCost
-	return outerCost + innerPlanCost + cpuCost + memoryCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost + p.estDoubleReadCost(outerCnt)
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
@@ -681,7 +711,11 @@ func (p *PhysicalIndexMergeJoin) GetPlanCost(taskType property.TaskType, costFla
 	}
 	outerCnt := getCardinality(outerChild, costFlag)
 	innerCnt := getCardinality(innerChild, costFlag)
-	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost)
+	if hasCostFlag(costFlag, CostFlagUseTrueCardinality) && outerCnt > 0 {
+		innerCnt /= outerCnt // corresponding to one outer row when calculating IndexJoin costs
+		innerCost /= outerCnt
+	}
+	p.planCost = p.GetCost(outerCnt, innerCnt, outerCost, innerCost, costFlag)
 	p.planCostInit = true
 	return p.planCost, nil
 }
