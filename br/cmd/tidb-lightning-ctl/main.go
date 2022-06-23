@@ -262,7 +262,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 }
 
 func getLocalStoringTables(ctx context.Context, cfg *config.Config) (err2 error) {
-	//nolint:prealloc // This is a placeholder.
+	//nolint: prealloc
 	var tables []string
 	defer func() {
 		if err2 == nil {
