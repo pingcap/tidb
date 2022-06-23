@@ -69,8 +69,8 @@ func makeTag(tableName string, engineID int32) string {
 	return fmt.Sprintf("%s:%d", tableName, engineID)
 }
 
-func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
-	return log.With(
+func makeLogger(logger log.Logger, tag string, engineUUID uuid.UUID) log.Logger {
+	return logger.With(
 		zap.String("engineTag", tag),
 		zap.Stringer("engineUUID", engineUUID),
 	)
@@ -141,14 +141,14 @@ type TargetInfoGetter interface {
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
 
-	// CheckRequirements performs the check whether the backend satisfies the version requirements.
+	// CheckRequirements performs the check whether the backend satisfies the version requirements
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
 }
 
 // KVEncodingBuilder consists of operations to handle encoding KVs from source.
 type KVEncodingBuilder interface {
 	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
+	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
 	// MakeEmptyRows creates an empty collection of encoded rows.
 	MakeEmptyRows() kv.Rows
 }
@@ -266,8 +266,8 @@ func (be Backend) MakeEmptyRows() kv.Rows {
 	return be.abstract.MakeEmptyRows()
 }
 
-func (be Backend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return be.abstract.NewEncoder(tbl, options)
+func (be Backend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	return be.abstract.NewEncoder(ctx, tbl, options)
 }
 
 func (be Backend) ShouldPostProcess() bool {
@@ -327,7 +327,7 @@ func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID
 	closedEngine := ClosedEngine{
 		engine: engine{
 			backend: be.abstract,
-			logger:  makeLogger("<import-and-reset>", engineUUID),
+			logger:  makeLogger(log.FromContext(ctx), "<import-and-reset>", engineUUID),
 			uuid:    engineUUID,
 		},
 	}
@@ -340,7 +340,7 @@ func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID
 // OpenEngine opens an engine with the given table name and engine ID.
 func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableName string, engineID int32) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
-	logger := makeLogger(tag, engineUUID)
+	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 
 	if err := be.abstract.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
@@ -443,7 +443,7 @@ func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tabl
 func (be Backend) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
 	return engine{
 		backend: be.abstract,
-		logger:  makeLogger(tag, engineUUID),
+		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
 		uuid:    engineUUID,
 	}.unsafeClose(ctx, cfg)
 }

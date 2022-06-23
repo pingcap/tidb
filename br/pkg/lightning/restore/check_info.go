@@ -395,7 +395,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, int64, boo
 }
 
 // localResource checks the local node has enough resources for this import when local backend enabled;
-func (rc *Controller) localResource(sourceSize int64) error {
+func (rc *Controller) localResource(ctx context.Context, sourceSize int64) error {
 	if rc.isSourceInLocal() {
 		sourceDir := strings.TrimPrefix(rc.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
 		same, err := common.SameDisk(sourceDir, rc.cfg.TikvImporter.SortedKVDir)
@@ -429,7 +429,7 @@ func (rc *Controller) localResource(sourceSize int64) error {
 			units.BytesSize(float64(sourceSize)),
 			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(localAvailable)))
 		passed = false
-		log.L().Error(message)
+		log.FromContext(ctx).Error(message)
 	default:
 		message = fmt.Sprintf("local disk space may not enough to finish import, "+
 			"estimate sorted data size is %s, but local available is %s,"+
@@ -437,7 +437,7 @@ func (rc *Controller) localResource(sourceSize int64) error {
 			units.BytesSize(float64(sourceSize)),
 			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
 		passed = true
-		log.L().Warn(message)
+		log.FromContext(ctx).Warn(message)
 	}
 	rc.checkTemplate.Collect(Critical, passed, message)
 	return nil
@@ -450,7 +450,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 	tableCheckPoint, err := rc.checkpointsDB.Get(ctx, uniqueName)
 	if err != nil {
 		// there is no checkpoint
-		log.L().Debug("no checkpoint detected", zap.String("table", uniqueName))
+		log.FromContext(ctx).Debug("no checkpoint detected", zap.String("table", uniqueName))
 		return nil, true
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
@@ -511,12 +511,12 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 		}
 	}
 	if len(columns) == 0 {
-		log.L().Debug("no valid checkpoint detected", zap.String("table", uniqueName))
+		log.FromContext(ctx).Debug("no valid checkpoint detected", zap.String("table", uniqueName))
 		return nil, false
 	}
 	info := dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if info != nil {
-		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil)
+		permFromTiDB, err := parseColumnPermutations(info.Core, columns, nil, log.FromContext(ctx))
 		if err != nil {
 			msgs = append(msgs, fmt.Sprintf("failed to calculate columns %s, table %s's info has changed,"+
 				"consider remove this checkpoint, and start import again.", err.Error(), uniqueName))
@@ -550,7 +550,7 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 // SchemaIsValid checks the import file and cluster schema is match.
 func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
 	if len(tableInfo.DataFiles) == 0 {
-		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
+		log.FromContext(ctx).Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
 		return nil, nil
 	}
 
@@ -586,7 +586,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 
 	// only check the first file of this table.
 	dataFile := tableInfo.DataFiles[0]
-	log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
+	log.FromContext(ctx).Info("datafile to check", zap.String("db", tableInfo.DB),
 		zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 	// get columns name from data file.
 	dataFileMeta := dataFile.FileMeta
@@ -600,7 +600,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		return nil, errors.Trace(err)
 	}
 	if colsFromDataFile == nil && len(row) == 0 {
-		log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
+		log.FromContext(ctx).Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
 		return msgs, nil
 	}
 
@@ -815,7 +815,7 @@ outer:
 	level := Warn
 	if hasUniqueField && len(rows) > 1 {
 		level = Critical
-	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0]) {
+	} else if !checkFieldCompatibility(tableInfo.Core, ignoreColsSet, rows[0], log.FromContext(ctx)) {
 		// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
 		level = Critical
 	}
@@ -824,10 +824,15 @@ outer:
 	return nil
 }
 
-func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{}, values []types.Datum) bool {
+func checkFieldCompatibility(
+	tbl *model.TableInfo,
+	ignoreCols map[string]struct{},
+	values []types.Datum,
+	logger log.Logger,
+) bool {
 	se := kv.NewSession(&kv.SessionOptions{
 		SQLMode: mysql.ModeStrictTransTables,
-	})
+	}, logger)
 	for i, col := range tbl.Columns {
 		// do not check ignored columns
 		if _, ok := ignoreCols[col.Name.L]; ok {
@@ -838,7 +843,7 @@ func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{
 		}
 		_, err := table.CastValue(se, values[i], col, true, false)
 		if err != nil {
-			log.L().Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
+			logger.Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
 				zap.Any("column_info", col), zap.Error(err))
 			return false
 		}

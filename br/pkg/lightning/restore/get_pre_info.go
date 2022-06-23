@@ -171,7 +171,7 @@ func (g *TargetInfoGetterImpl) DoesTableContainData(ctx context.Context, schemaN
 	}
 	exec := common.SQLWithRetry{
 		DB:     db,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 	var dump int
 	err = exec.QueryRow(ctx, "check table empty",
@@ -494,7 +494,7 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 	sourceTotalSize := int64(0)
 	tableCount := 0
 	unSortedBigTableCount := 0
-	errMgr := errormanager.New(nil, p.cfg)
+	errMgr := errormanager.New(nil, p.cfg, log.FromContext(ctx))
 	dbInfos, err := p.GetAllTableStructures(ctx)
 	if err != nil {
 		return 0.0, 0.0, false, errors.Trace(err)
@@ -576,7 +576,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
-	kvEncoder, err := p.kvEncBuilder.NewEncoder(tbl, &kv.SessionOptions{
+	kvEncoder, err := p.kvEncBuilder.NewEncoder(ctx, tbl, &kv.SessionOptions{
 		SQLMode:        p.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        sysVars,
@@ -611,7 +611,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", sampleFile.Path, sampleFile.Type.String()))
 	}
 	defer parser.Close()
-	logTask := log.With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
+	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
 	igCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -636,7 +636,11 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
+					columnPermutation, err = createColumnPermutation(
+						columnNames,
+						igCols.ColumnsMap(),
+						tableInfo,
+						log.FromContext(ctx))
 					if err != nil {
 						return 0.0, false, errors.Trace(err)
 					}
@@ -655,7 +659,7 @@ outloop:
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
 		if encodeErr != nil {
-			encodeErr = errMgr.RecordTypeError(ctx, log.L(), tableInfo.Name.O, sampleFile.Path, offset,
+			encodeErr = errMgr.RecordTypeError(ctx, log.FromContext(ctx), tableInfo.Name.O, sampleFile.Path, offset,
 				"" /* use a empty string here because we don't actually record */, encodeErr)
 			if encodeErr != nil {
 				return 0.0, false, errors.Annotatef(encodeErr, "in file at offset %d", offset)
@@ -694,7 +698,7 @@ outloop:
 	if rowSize > 0 && kvSize > rowSize {
 		resultIndexRatio = float64(kvSize) / float64(rowSize)
 	}
-	log.L().Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", resultIndexRatio), zap.Bool("IsSourceOrder", isRowOrdered))
+	log.FromContext(ctx).Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
 	return resultIndexRatio, isRowOrdered, nil
 }
 

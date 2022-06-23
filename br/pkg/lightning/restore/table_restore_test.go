@@ -164,7 +164,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableRestore structure
 	var err error
-	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -359,12 +359,12 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
-	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
+	realBackend := tidb.NewTiDBBackend(ctx, nil, "replace", nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
-		Return(realBackend.NewEncoder(tbl, &kv.SessionOptions{})).
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(realBackend.NewEncoder(ctx, tbl, &kv.SessionOptions{})).
 		AnyTimes()
 	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
@@ -456,7 +456,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -721,7 +721,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -953,7 +953,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		closedEngineLimit: worker.NewPool(ctx, 1, "closed_engine"),
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
-		errorMgr:          errormanager.New(nil, cfg),
+		errorMgr:          errormanager.New(nil, cfg, log.L()),
 		taskMgr:           noopTaskMetaMgr{},
 		preInfoGetter:     preInfoGetter,
 	}
@@ -1006,7 +1006,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
 	rc.checkpointsWg.Add(1)
-	go rc.listenCheckpointUpdates()
+	go rc.listenCheckpointUpdates(log.L())
 
 	rc.errorSummaries = makeErrorSummaries(log.L())
 
@@ -1375,11 +1375,11 @@ func (s *tableRestoreSuite) TestEstimate() {
 	require.NoError(s.T(), err)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        s.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		AutoRandomSeed: 0,
-	}, nil)).AnyTimes()
+	}, nil, log.L())).AnyTimes()
 	importer := backend.MakeBackend(mockBackend)
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 
