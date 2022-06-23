@@ -701,7 +701,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 		// Only when SubState is in BackFill state, then need start to start new backfill task.
 		if indexInfo.SubState != model.StateBackFill || !doReorg {
-			return done, ver, err
+			return doReorg, ver, err
 		}
 	}
 
