@@ -40,8 +40,13 @@ type prepExecHandler interface {
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
 }
 
-func getPlanFromCache(ctx context.Context, sctx sessionctx.Context, handler prepExecHandler, rawSQL string, rawArgs []string) (rs sqlexec.RecordSet, existed bool, err error) {
+func getPlanFromCache(ctx context.Context, sctx sessionctx.Context, handler prepExecHandler, originalSQL string) (rs sqlexec.RecordSet, existed bool, err error) {
 	if !sctx.GetSessionVars().EnableGeneralPlanCache {
+		return nil, false, nil
+	}
+
+	rawSQL, rawArgs, ok := FastLexer(originalSQL)
+	if !ok {
 		return nil, false, nil
 	}
 
