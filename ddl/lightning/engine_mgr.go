@@ -41,8 +41,7 @@ func (em *EngineManager) LoadEngineInfo(key string) (*engineInfo, bool) {
 }
 
 func (em *EngineManager) ReleaseEngine(key string) {
-	log.L().Info(LINFO_ENGINE_DELETE, zap.String("Engine info key:", key),
-				zap.Stack("stack"))
+	log.L().Info(LINFO_ENGINE_DELETE, zap.String("Engine info key:", key))
 	delete(em.enginePool, key)
 	return
 }

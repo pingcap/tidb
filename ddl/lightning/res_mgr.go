@@ -253,7 +253,7 @@ func (m *LightningMemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, eng
 			zap.String("Currnt alloc wroker count:", strconv.Itoa(newWorkerCount)))
 		return 0, errors.New(LERR_CREATE_ENGINE_FAILED)
 	}
-	_, exist1 := bc.EngineCache[engineKey]
+	en, exist1 := bc.EngineCache[engineKey]
 	if !exist1 {
 		// Firstly, update and check the memory usage
 		m.totalMemoryConsume()
@@ -274,6 +274,9 @@ func (m *LightningMemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, eng
 		// Count memory usage.
 		m.currUsage += m.structSize[string(ALLOC_ENGINE_INFO)]
 		m.engineUsage += m.structSize[string(ALLOC_ENGINE_INFO)]
+	} else {
+		// If engine exist, then add newWorkerCount.
+		en.WriterCount += newWorkerCount
 	}
 	log.L().Info(LINFO_OPEN_ENGINE, zap.String("backend key", bcKey),
 		zap.String("Engine key", engineKey),
@@ -319,7 +322,7 @@ func (m *LightningMemoryRoot) RegistWorkerContext(engineInfoKey string, id int) 
 	}
 
 	// Count memory usage.
-	m.currUsage += memRequire
+	m.currUsage += memRequire 
 	log.L().Info(LINFO_CREATE_WRITER, zap.String("Engine key", engineInfoKey),
 		zap.String("worer Id:", strconv.Itoa(id)),
 		zap.String("Memory allocate:", strconv.FormatInt(memRequire, 10)),
@@ -341,9 +344,11 @@ func (m *LightningMemoryRoot) deleteBackendEngines(bcKey string) error {
 	// Delete EngienInfo registed in m.engineManager.engineCache
 	for _, ei := range bc.EngineCache {
 		eiKey := ei.key
+		wCnt := ei.WriterCount
 		m.currUsage -= m.structSize[eiKey]
 		delete(m.structSize, eiKey)
 		delete(m.EngineMgr.enginePool, eiKey)
+		m.currUsage -= m.structSize[string(ALLOC_WORKER_CONTEXT)] * int64(wCnt)
 		count++
 	}
 
