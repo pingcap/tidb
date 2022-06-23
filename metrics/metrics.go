@@ -180,6 +180,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
+	prometheus.MustRegister(LastCheckpoint)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

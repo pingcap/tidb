@@ -128,7 +128,7 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 			}
 			for _, checkpoint := range checkpoints {
 				if checkpoint.Err != nil {
-					log.Warn("failed to get region checkpoint", zap.Stringer("err", checkpoint.Err))
+					log.Debug("failed to get region checkpoint", zap.Stringer("err", checkpoint.Err))
 					failed = append(failed, checkpoint)
 				} else {
 					log.Debug("get checkpoint of region", zap.Stringer("region", checkpoint.Region), zap.Uint64("checkpoint", checkpoint.Checkpoint))

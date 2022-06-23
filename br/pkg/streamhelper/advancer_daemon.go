@@ -36,23 +36,26 @@ func OwnerManagerForLogBackup(ctx context.Context, etcdCli *clientv3.Client) own
 }
 
 // Begin starts the daemon.
-func (ad *AdvancerDaemon) Begin(ctx context.Context) error {
+func (ad *AdvancerDaemon) Begin(ctx context.Context) (func(), error) {
 	if err := ad.manager.CampaignOwner(); err != nil {
-		return err
+		return nil, err
 	}
 
 	ad.adv.StartTaskListener(ctx)
 	tick := time.NewTicker(ad.adv.cfg.TickDuration)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-tick.C:
-			if ad.manager.IsOwner() {
-				if err := ad.adv.OnTick(ctx); err != nil {
-					log.Warn("failed on tick", logutil.ShortError(err))
+	loop := func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				if ad.manager.IsOwner() {
+					if err := ad.adv.OnTick(ctx); err != nil {
+						log.Warn("failed on tick", logutil.ShortError(err))
+					}
 				}
 			}
 		}
 	}
+	return loop, nil
 }
