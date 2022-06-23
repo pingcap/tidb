@@ -1662,6 +1662,14 @@ AlterTablePartitionOpt:
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
 		}
 	}
+|	"MERGE" "FIRST" "PARTITION" '(' BitExpr ')'
+	{
+		partitionMethod := ast.PartitionMethod{Expr: $5}
+		$$ = &ast.AlterTableSpec{
+			Tp:        ast.AlterTableReorganizeFirstPartition,
+			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
+		}
+	}
 |	"PARTITION" Identifier AttributesOpt
 	{
 		$$ = &ast.AlterTableSpec{
