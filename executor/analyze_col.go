@@ -760,6 +760,7 @@ workLoop:
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
 				bufferedMemSize := int64(0)
+				bufferedReleaseSize := int64(0)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
 				// When it's new collation data, we need to use its collate key instead of original value because only
@@ -782,13 +783,18 @@ workLoop:
 						deltaSize := int64(cap(val.GetBytes()))
 						collectorMemSize += deltaSize
 						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+						e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
 						Ordinal: j,
 					})
+					deltaSize := val.MemUsage() + 4
+					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
 				e.memTracker.Consume(bufferedMemSize)
+				e.memTracker.Release(bufferedReleaseSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -807,6 +813,8 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
+				bufferedMemSize := int64(0)
+				bufferedReleaseSize := int64(0)
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
@@ -837,7 +845,12 @@ workLoop:
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value: types.NewBytesDatum(b),
 					})
+					deltaSize := sampleItems[len(sampleItems)-1].Value.MemUsage()
+					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
+				e.memTracker.Consume(bufferedMemSize)
+				e.memTracker.Release(bufferedReleaseSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],

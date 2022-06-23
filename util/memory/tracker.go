@@ -422,6 +422,15 @@ func (t *Tracker) Release(bytes int64) {
 	}
 }
 
+// BufferedRelease is used to buffer memory release and do late release
+func (t *Tracker) BufferedRelease(bufferedMemSize *int64, bytes int64) {
+	*bufferedMemSize += bytes
+	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
+		t.Release(*bufferedMemSize)
+		*bufferedMemSize = int64(0)
+	}
+}
+
 func (t *Tracker) shouldRecordRelease() bool {
 	return EnableGCMemoryTrack.Load() && t.label == LabelForGlobalAnalyzeMemory
 }
