@@ -57,3 +57,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	}
 	return nil, nil
 }
+
+func init() {
+	util.SkipAnalyzer(Analyzer)
+}
