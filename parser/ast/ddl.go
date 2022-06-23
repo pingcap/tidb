@@ -2570,6 +2570,7 @@ const (
 	AlterTableNoCache
 	AlterTableStatsOptions
 	AlterTableLastPartition
+	AlterTableReorganizeLastPartition
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3152,6 +3153,12 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteName(name.O)
 		}
+	case AlterTableReorganizeLastPartition:
+		ctx.WriteKeyWord("SPLIT MAX PARTITION (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
 	case AlterTableReorganizePartition:
 		ctx.WriteKeyWord("REORGANIZE PARTITION")
 		if n.NoWriteToBinlog {
