@@ -509,6 +509,7 @@ func (p *PhysicalIndexJoin) estDoubleReadCost(doubleReadRows float64) float64 {
 		// only consider double-read cost on modelVer2
 		return 0
 	}
+	// estimate the double read cost for IndexJoin: double-read-tasks * seek-factor
 	batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
 	// distRatio indicates how many requests corresponding to a batch, current value is from experiments.
 	// TODO: estimate it by using index correlation or make it configurable.
