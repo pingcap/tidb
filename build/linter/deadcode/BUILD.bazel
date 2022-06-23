@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "deadcode",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/deadcode",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_golangci_go_misc//deadcode:go_default_library",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/loader",
+    ],
+)

@@ -80,7 +80,7 @@ require (
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.21.0
 	golang.org/x/exp v0.0.0-20220426173459-3bcf042a4bf5
-	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd
+	golang.org/x/net v0.0.0-20220325170049-de3da57026de
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8
 	golang.org/x/sync v0.0.0-20220513210516-0976fa681c29
 	golang.org/x/sys v0.0.0-20220408201424-a24fb2fb8a0f
@@ -98,6 +98,7 @@ require (
 require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/charithe/durationcheck v0.0.9
+	github.com/golangci/go-misc v0.0.0-20220329215616-d24fe342adfe
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
 	github.com/kyoh86/exportloopref v0.1.8
