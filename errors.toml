@@ -1456,6 +1456,11 @@ error = '''
 modifying %s will require SET GLOBAL in a future version of TiDB
 '''
 
+["executor:8144"]
+error = '''
+setting %s has no effect in TiDB
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2074,6 +2079,11 @@ invalid as of timestamp: %s
 ["planner:8137"]
 error = '''
 Column '%s' in ANALYZE column option does not exist in table '%s'
+'''
+
+["planner:8145"]
+error = '''
+variable %s has no effect in TiDB
 '''
 
 ["planner:8242"]
