@@ -2417,6 +2417,15 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
+// From the paper "Random sampling for histogram construction: how much is enough?"'s Corollary 1 to Theorem 5,
+// for a table size n, histogram size k, maximum relative error in bin size f, and error probability gamma,
+// the minimum random sample size is
+//         r = 4 * k * ln(2*n/gamma) / f^2
+// If we take f = 0.5, gamma = 0.01, n =1e6, we would got r = 305.82* k.
+// Since the there's log function over the table size n, the r grows slowly when the n increases.
+// If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
+// So if we don't consider the top-n values, we can keep the sample size at 300*256.
+// But we may take some top-n before building the histogram, so we increase the sample a little.
 func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	defaultRate := 0.001
@@ -4069,6 +4078,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
+	//nolint: prealloc
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
@@ -4479,6 +4489,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		concurrency:  v.Concurrency,
 	}
 
+	// 1. initialize the splitters
 	splitters := make([]partitionSplitter, len(v.ByItemArrays))
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
@@ -4494,6 +4505,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	}
 	shuffle.splitters = splitters
 
+	// 2. initialize the data sources (build the data sources from physical plan to executors)
 	shuffle.dataSources = make([]Executor, len(v.DataSources))
 	for i, dataSource := range v.DataSources {
 		shuffle.dataSources[i] = b.build(dataSource)
@@ -4502,13 +4514,24 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		}
 	}
 
+	// 3. initialize the workers
 	head := v.Children()[0]
+	// A `PhysicalShuffleReceiverStub` for every worker have the same `DataSource` but different `Receiver`.
+	// We preallocate `PhysicalShuffleReceiverStub`s here and reuse them below.
+	stubs := make([]*plannercore.PhysicalShuffleReceiverStub, 0, len(v.DataSources))
+	for _, dataSource := range v.DataSources {
+		stub := plannercore.PhysicalShuffleReceiverStub{
+			DataSource: dataSource,
+		}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
+		stub.SetSchema(dataSource.Schema())
+		stubs = append(stubs, stub)
+	}
 	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
 		receivers := make([]*shuffleReceiver, len(v.DataSources))
 		for j, dataSource := range v.DataSources {
 			receivers[j] = &shuffleReceiver{
-				baseExecutor: newBaseExecutor(b.ctx, dataSource.Schema(), dataSource.ID()),
+				baseExecutor: newBaseExecutor(b.ctx, dataSource.Schema(), stubs[j].ID()),
 			}
 		}
 
@@ -4516,12 +4539,9 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 			receivers: receivers,
 		}
 
-		for j, dataSource := range v.DataSources {
-			stub := plannercore.PhysicalShuffleReceiverStub{
-				Receiver:   (unsafe.Pointer)(receivers[j]),
-				DataSource: dataSource,
-			}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
-			stub.SetSchema(dataSource.Schema())
+		for j := range v.DataSources {
+			stub := stubs[j]
+			stub.Receiver = (unsafe.Pointer)(receivers[j])
 			v.Tails[j].SetChildren(stub)
 		}
 
