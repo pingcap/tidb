@@ -620,6 +620,10 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	// TiDBFastDDL sysvars is true or false at this time. Also if IsLightningEnabled mean 
 	// restore lightning reorg task, no need to init the lightning environment another time.
 	if IsAllowFastDDL() && !reorgInfo.Meta.IsLightningEnabled {
+		// If it is a empty table, do not need start lightning backfiller.
+		if reorgInfo.StartKey == nil && reorgInfo.EndKey == nil {
+			return false, ver, nil
+		}
 		// Check if the reorg task is re-entry task, If TiDB is restarted, then currently
 		// reorg task should be restart.
 		err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
