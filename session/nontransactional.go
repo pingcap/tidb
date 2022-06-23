@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -94,8 +94,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 
 	// TODO: choose an appropriate quota.
 	// Use the mem-quota-query as a workaround. As a result, a NT-DML may consume 2x of the memory quota.
-	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, se.GetSessionVars().MemQuotaQuery)
-	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	memTracker := setMemTracker(se)
 	defer memTracker.DetachFromGlobalTracker()
 	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo, memTracker)
 	if err != nil {
@@ -112,13 +111,31 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	return buildExecuteResults(ctx, jobs, se.GetSessionVars().BatchSize.MaxChunkSize, se.GetSessionVars().EnableRedactLog)
 }
 
+func setMemTracker(se Session) *memory.Tracker {
+	memTracker := memory.NewTracker(memory.LabelForNonTransactionalDML, se.GetSessionVars().MemQuotaQuery)
+	switch variable.OOMAction.Load() {
+	case variable.OOMActionCancel:
+		action := &memory.PanicOnExceed{ConnID: se.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		memTracker.SetActionOnExceed(action)
+	case variable.OOMActionLog:
+		fallthrough
+	default:
+		action := &memory.LogOnExceed{ConnID: se.GetSessionVars().ConnectionID}
+		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		memTracker.SetActionOnExceed(action)
+	}
+	memTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	return memTracker
+}
+
 func checkConstraint(stmt *ast.NonTransactionalDeleteStmt, se Session) error {
 	sessVars := se.GetSessionVars()
 	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
 		return errors.Errorf("non-transactional DML can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
-	if config.GetGlobalConfig().EnableBatchDML && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
+	if variable.EnableBatchDML.Load() && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
 		return errors.Errorf("can't run non-transactional DML with batch-dml")
 	}
 
@@ -154,13 +171,15 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 	for _, col := range tableName.TableInfo.Columns {
 		if col.Name.L == stmt.ShardColumn.Name.L {
 			shardColumnRefer = &ast.ResultField{
-				Column: col,
-				Table:  tableName.TableInfo,
+				Column:    col,
+				Table:     tableName.TableInfo,
+				DBName:    tableName.Schema,
+				TableName: tableName,
 			}
 			shardColumnType = col.FieldType
 		}
 	}
-	if shardColumnRefer == nil && stmt.ShardColumn.Name.O != "_tidb_rowid" {
+	if shardColumnRefer == nil && stmt.ShardColumn.Name.L != model.ExtraHandleName.L {
 		return nil, errors.New("Non-transactional delete, column not found")
 	}
 
@@ -185,6 +204,16 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 		default:
 		}
 
+		// _tidb_rowid
+		if shardColumnRefer == nil {
+			shardColumnType = *types.NewFieldType(mysql.TypeLonglong)
+			shardColumnRefer = &ast.ResultField{
+				Column:    model.NewExtraHandleColInfo(),
+				Table:     tableName.TableInfo,
+				DBName:    tableName.Schema,
+				TableName: tableName,
+			}
+		}
 		stmtBuildInfo := statementBuildInfo{
 			stmt:              stmt,
 			shardColumnType:   shardColumnType,
@@ -476,10 +505,10 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 				if index.Primary {
 					if len(index.Columns) == 1 {
 						shardColumnInfo = tableInfo.Columns[index.Columns[0].Offset]
-					} else {
-						// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
-						return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
+						break
 					}
+					// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
+					return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
 				}
 			}
 			if shardColumnInfo == nil {
@@ -487,20 +516,25 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 			}
 		}
 
-		shardColumnName := "_tidb_rowid"
+		shardColumnName := model.ExtraHandleName.L
 		if shardColumnInfo != nil {
 			shardColumnName = shardColumnInfo.Name.L
 		}
+
+		outputTableName := tableName.Name
+		if tableAsName.L != "" {
+			outputTableName = tableAsName
+		}
 		stmt.ShardColumn = &ast.ColumnName{
 			Schema: tableName.Schema,
-			Table:  tableAsName, // so that table alias works
+			Table:  outputTableName, // so that table alias works
 			Name:   model.NewCIStr(shardColumnName),
 		}
 		return true, shardColumnInfo, nil
 	}
 	shardColumnName = stmt.ShardColumn.Name.L
 
-	if shardColumnName == "_tidb_rowid" && !tableInfo.HasClusteredIndex() {
+	if shardColumnName == model.ExtraHandleName.L && !tableInfo.HasClusteredIndex() {
 		return true, nil, nil
 	}
 

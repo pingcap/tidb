@@ -1,0 +1,52 @@
+[
+  {
+    "name": "TestWindowPushDownPlans",
+    "cases": [
+      "set @@tidb_enforce_mpp=1",
+      "explain select *, row_number() over () FROM employee -- 1. empty partition",
+      "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
+      "explain select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
+      "explain select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
+      "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
+      "explain select *, rank() over w, dense_rank() over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
+      "explain select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
+      "explain select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
+      "explain select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
+      // "explain select *, max(salary) over (), max(salary) over (partition by deptid order by salary), row_number() over (partition by deptid order by salary), max(salary) over (partition by deptid order by empid), row_number() over (partition by deptid order by empid), count(empid) over (partition by salary order by deptid) from employee; -- 7. complex",
+      "explain select *, sum(a) over (partition by deptid) FROM  (select *, row_number() over (order by md5(deptid)) a from employee) tmp; -- 8. some scalar function not supported."
+    ]
+  },
+  {
+    "name": "TestWindowFunctionDescCanPushDown",
+    "cases": [
+      "set @@tidb_enforce_mpp=1",
+      "explain select *, row_number() over () FROM employee -- 1. pure window functions",
+      "explain select *, rank() over () FROM employee",
+      "explain select *, dense_rank() over () FROM employee",
+      "explain select *, lead(empid) over () FROM employee",
+      "explain select *, lag(empid) over () FROM employee",
+      "explain select *, sum(empid) over () FROM employee -- 2. agg functions",
+      "explain select *, count(empid) over () FROM employee",
+      "explain select *, min(empid) over () FROM employee",
+      "explain select *, max(empid) over () FROM employee",
+      "explain select *, avg(empid) over () FROM employee",
+      // "explain select *, group_concat(empid) over () FROM employee -- will report error"
+      "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame",
+      "explain select *, sum(salary) over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee"
+    ]
+  },
+  {
+    "name": "TestWindowPlanWithOtherOperators",
+    "cases": [
+      "set @@tidb_enforce_mpp=1",
+      "explain select *, row_number() over () from (select count(distinct empid) from employee) t",
+      "explain select *, row_number() over () from (select count(empid) from employee group by deptid) t",
+      "explain select *, row_number() over (partition by a) from (select count(distinct empid) a from employee) t",
+      "explain select *, row_number() over (partition by deptid) from (select count(empid), deptid from employee group by deptid) t",
+      "explain select count(distinct empid) from (select *, row_number() over () from employee) t",
+      "explain select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
+      "explain select count(empid) from (select *, row_number() over () a from employee) t group by a",
+      "explain select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a"
+    ]
+  }
+]

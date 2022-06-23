@@ -16,36 +16,67 @@ package core_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
+func skipPostOptimizedProjection(plan [][]interface{}) int {
+	for i, r := range plan {
+		cost := r[2].(string)
+		if cost == "0.00" && strings.Contains(r[0].(string), "Projection") {
+			// projection injected in post-optimization, whose cost is always 0 under the old cost implementation
+			continue
+		}
+		return i
+	}
+	return 0
+}
+
 func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 	//| id | estRows | estCost   | task | access object | operator info |
 	tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
 	rs := tk.MustQuery("explain format=verbose " + q).Rows()
-	oldRoot := fmt.Sprintf("%v", rs[0])
+	idx := skipPostOptimizedProjection(rs)
+	oldRoot := fmt.Sprintf("%v", rs[idx])
 	oldPlan := ""
+	oldOperators := make([]string, 0, len(rs))
 	for _, r := range rs {
 		oldPlan = oldPlan + fmt.Sprintf("%v\n", r)
+		oldOperators = append(oldOperators, r[0].(string))
 	}
 	tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
 	rs = tk.MustQuery("explain format=verbose " + q).Rows()
-	newRoot := fmt.Sprintf("%v", rs[0])
+	newRoot := fmt.Sprintf("%v", rs[idx])
 	newPlan := ""
+	newOperators := make([]string, 0, len(rs))
 	for _, r := range rs {
 		newPlan = newPlan + fmt.Sprintf("%v\n", r)
+		newOperators = append(newOperators, r[0].(string))
 	}
-	if oldRoot != newRoot {
+	sameOperators := len(oldOperators) == len(newOperators)
+	for i := range newOperators {
+		if oldOperators[i] != newOperators[i] {
+			sameOperators = false
+			break
+		}
+	}
+	if oldRoot != newRoot || !sameOperators {
 		t.Fatalf("run %v failed, info: %v, expected \n%v\n, but got \n%v\n", q, info, oldPlan, newPlan)
 	}
 }
 
 func TestNewCostInterfaceTiKV(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -230,11 +261,17 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 }
 
 func TestNewCostInterfaceTiFlash(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+	tk.MustExec(`create table tx (id int, value decimal(6,3))`)
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -242,7 +279,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tx" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
@@ -376,6 +413,20 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)",
 		"select * from t where a = 1",
 		"select * from t where a in (1, 2, 3, 4, 5)",
+		"select * from tx join ( select count(*), id from tx group by id) as A on A.id = tx.id",
+		`select * from tx join ( select count(*), id from tx group by id) as A on A.id = tx.id`,
+		`select * from tx join ( select count(*)+id as v from tx group by id) as A on A.v = tx.id`,
+		`select * from tx join ( select count(*) as v, id from tx group by value,id having value+v <10) as A on A.id = tx.id`,
+		`select * from tx join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = tx.id`,
+		`select sum(b) from (select tx.id, t1.id as b from tx join tx t1 on tx.id=t1.id)A group by id`,
+		`select * from (select id from tx group by id) C join (select sum(value),id from tx group by id)B on C.id=B.id`,
+		`select * from (select id from tx group by id) C join (select sum(b),id from (select tx.id, t1.id as b from tx join (select id, count(*) as c from tx group by id) t1 on tx.id=t1.id)A group by id)B on C.id=b.id`,
+		`select * from tx join tx t1 on tx.id = t1.id order by tx.value limit 1`,
+		`select * from tx join tx t1 on tx.id = t1.id order by tx.value % 100 limit 1`,
+		`select count(*) from (select tx.id, tx.value v1 from tx join tx t1 on tx.id = t1.id order by tx.value limit 20) v group by v.v1`,
+		`select * from tx join tx t1 on tx.id = t1.id limit 1`,
+		`select * from tx join tx t1 on tx.id = t1.id limit 1`,
+		`select count(*) from (select tx.id, tx.value v1 from tx join tx t1 on tx.id = t1.id limit 20) v group by v.v1`,
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
@@ -398,12 +449,18 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 }
 
 func TestNewCostInterfaceRandGen(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
+	tk.MustExec(`set @@tidb_enable_paging = off`)
 
 	queries := []string{
 		`SELECT a FROM t WHERE a is null AND d in (5307, 15677, 57970)`,
@@ -882,4 +939,31 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 	for _, q := range queries {
 		checkCost(t, tk, q, "")
 	}
+}
+
+func TestTrueCardCost(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, key(b))`)
+
+	checkPlanCost := func(sql string) {
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
+		rs := tk.MustQuery(`explain analyze format=verbose ` + sql).Rows()
+		planCost1 := rs[0][2].(string)
+
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
+		rs = tk.MustQuery(`explain analyze format=true_card_cost ` + sql).Rows()
+		planCost2 := rs[0][2].(string)
+
+		// `true_card_cost` can work since the plan cost is changed
+		require.NotEqual(t, planCost1, planCost2)
+	}
+
+	checkPlanCost(`select * from t`)
+	checkPlanCost(`select * from t where a>10`)
+	checkPlanCost(`select * from t where a>10 limit 10`)
+	checkPlanCost(`select sum(a), b*2 from t use index(b) group by b order by sum(a) limit 10`)
 }

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -35,7 +35,7 @@ var executorSuiteData testdata.TestData
 var pointGetSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
 	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
@@ -51,7 +51,6 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
-		conf.OOMAction = config.OOMActionLog
 	})
 	tikv.EnableFailpoints()
 

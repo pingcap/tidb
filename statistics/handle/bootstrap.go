@@ -19,6 +19,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -384,6 +385,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 
 // InitStats will init the stats cache using full load strategy.
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
+	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	h.mu.Lock()
 	defer func() {
 		_, err1 := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "commit")
@@ -408,9 +410,11 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
-	err = h.initStatsFMSketch(&cache)
-	if err != nil {
-		return err
+	if loadFMSketch {
+		err = h.initStatsFMSketch(&cache)
+		if err != nil {
+			return err
+		}
 	}
 	err = h.initStatsBuckets(&cache)
 	if err != nil {
@@ -418,6 +422,17 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	cache.FreshMemUsage()
 	h.updateStatsCache(cache)
+	v := h.statsCache.Load()
+	if v == nil {
+		return nil
+	}
+	healthyChange := &statsHealthyChange{}
+	for _, tbl := range v.(statsCache).Values() {
+		if healthy, ok := tbl.GetStatsHealthy(); ok {
+			healthyChange.add(healthy)
+		}
+	}
+	healthyChange.apply()
 	return nil
 }
 

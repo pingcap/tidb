@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"runtime"
 	"runtime/trace"
 	"sort"
 	"strconv"
@@ -361,10 +360,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			ow.lookup.finished.Store(true)
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("outerWorker panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			err := errors.Errorf("%v", r)
 			task.doneCh <- err
@@ -481,10 +477,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			iw.lookup.finished.Store(true)
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			logutil.Logger(ctx).Error("innerWorker panicked", zap.String("stack", string(buf)))
+			logutil.Logger(ctx).Error("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := errors.Errorf("%v", r)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- err

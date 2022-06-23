@@ -523,6 +523,7 @@ type TikvImporter struct {
 	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
 	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
 	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	RegionSplitKeys     int                          `toml:"region-split-keys" json:"region-split-keys"`
 	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
 	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
@@ -531,6 +532,7 @@ type TikvImporter struct {
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
+	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 }
 
 type Checkpoint struct {

@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 )
 
 type mockStoreWithMultiPD struct {
@@ -55,19 +55,17 @@ func (s *mockStoreWithMultiPD) Name() string                 { return "mockStore
 func (s *mockStoreWithMultiPD) Describe() string             { return "" }
 
 type hotRegionsHistoryTableSuite struct {
-	suite.Suite
 	store       kv.Storage
 	clean       func()
 	httpServers []*httptest.Server
 	startTime   time.Time
 }
 
-func TestHotRegionsHistoryTable(t *testing.T) {
-	suite.Run(t, new(hotRegionsHistoryTableSuite))
-}
+func createHotRegionsHistoryTableSuite(t *testing.T) *hotRegionsHistoryTableSuite {
+	var clean func()
 
-func (s *hotRegionsHistoryTableSuite) SetupSuite() {
-	s.store, s.clean = testkit.CreateMockStore(s.T())
+	s := new(hotRegionsHistoryTableSuite)
+	s.store, clean = testkit.CreateMockStore(t)
 	store := &mockStoreWithMultiPD{
 		s.store.(helper.Storage),
 		make([]string, 3),
@@ -75,12 +73,19 @@ func (s *hotRegionsHistoryTableSuite) SetupSuite() {
 	// start 3 PD server with hotRegionsServer and store them in s.store
 	for i := 0; i < 3; i++ {
 		httpServer, mockAddr := s.setUpMockPDHTTPServer()
-		s.Require().NotNil(httpServer)
+		require.NotNil(t, httpServer)
 		s.httpServers = append(s.httpServers, httpServer)
 		store.hosts[i] = mockAddr
 	}
 	s.store = store
 	s.startTime = time.Now()
+	s.clean = func() {
+		for _, server := range s.httpServers {
+			server.Close()
+		}
+		clean()
+	}
+	return s
 }
 
 func writeResp(w http.ResponseWriter, resp interface{}) {
@@ -153,24 +158,20 @@ func (s *hotRegionsHistoryTableSuite) setUpMockPDHTTPServer() (*httptest.Server,
 	return server, mockAddr
 }
 
-func (s *hotRegionsHistoryTableSuite) TearDownSuite() {
-	for _, server := range s.httpServers {
-		server.Close()
-	}
-	s.clean()
-}
+func TestTiDBHotRegionsHistory(t *testing.T) {
+	s := createHotRegionsHistoryTableSuite(t)
+	defer s.clean()
 
-func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 	var unixTimeMs = func(v string) int64 {
-		t, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.Local)
-		s.Require().NoError(err)
-		return t.UnixNano() / int64(time.Millisecond)
+		tt, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.Local)
+		require.NoError(t, err)
+		return tt.UnixNano() / int64(time.Millisecond)
 	}
 
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tablesPrivTid := external.GetTableByName(s.T(), tk, "mysql", "TABLES_PRIV").Meta().ID
+	tk := testkit.NewTestKit(t, s.store)
+	tablesPrivTid := external.GetTableByName(t, tk, "mysql", "TABLES_PRIV").Meta().ID
 	tablesPrivTidStr := strconv.FormatInt(tablesPrivTid, 10)
-	statsMetaTid := external.GetTableByName(s.T(), tk, "mysql", "STATS_META").Meta().ID
+	statsMetaTid := external.GetTableByName(t, tk, "mysql", "STATS_META").Meta().ID
 	statsMetaTidStr := strconv.FormatInt(statsMetaTid, 10)
 
 	fullHotRegions := [][]string{
@@ -496,7 +497,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 		}
 		result := tk.MustQuery(sql)
 		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-		s.Require().Lenf(warnings, 0, "unexpected warnings: %+v, sql: %s", warnings, sql)
+		require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v, sql: %s", warnings, sql))
 		var expected []string
 		for _, row := range cas.expected {
 			expectedRow := row
@@ -506,20 +507,23 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 	}
 }
 
-func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistoryError() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestTiDBHotRegionsHistoryError(t *testing.T) {
+	s := createHotRegionsHistoryTableSuite(t)
+	defer s.clean()
+
+	tk := testkit.NewTestKit(t, s.store)
 
 	// Test without start time error
 	rs, err := tk.Exec("select * from information_schema.tidb_hot_regions_history")
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
-	s.Require().EqualError(err, "denied to scan hot regions, please specified the start time, such as `update_time > '2020-01-01 00:00:00'`")
-	s.NoError(rs.Close())
+	require.EqualError(t, err, "denied to scan hot regions, please specified the start time, such as `update_time > '2020-01-01 00:00:00'`")
+	require.NoError(t, rs.Close())
 
 	// Test without end time error.
 	rs, err = tk.Exec("select * from information_schema.tidb_hot_regions_history where update_time>='2019/08/26 06:18:13.011'")
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
-	s.Require().EqualError(err, "denied to scan hot regions, please specified the end time, such as `update_time < '2020-01-01 00:00:00'`")
-	s.NoError(rs.Close())
+	require.EqualError(t, err, "denied to scan hot regions, please specified the end time, such as `update_time < '2020-01-01 00:00:00'`")
+	require.NoError(t, rs.Close())
 }

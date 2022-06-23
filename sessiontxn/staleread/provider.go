@@ -89,3 +89,23 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
 	return nil
 }
+
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
+	return sessiontxn.NoIdea()
+}
+
+// OnStmtRetry is the hook that should be called when a statement retry
+func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
+	return nil
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *StalenessTxnContextProvider) AdviseWarmup() error {
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
+}

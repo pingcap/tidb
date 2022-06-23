@@ -283,12 +283,6 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
 	}
-	if p.Paging {
-		if p.PushedLimit != nil {
-			str.WriteString(", ")
-		}
-		str.WriteString("paging:true")
-	}
 	return str.String()
 }
 

@@ -29,6 +29,8 @@ var (
 	ExplainFormatVerbose = "verbose"
 	// ExplainFormatTraditional is the same as ExplainFormatROW.
 	ExplainFormatTraditional = "traditional"
+	// ExplainFormatTrueCardCost indicates the optimizer to use true cardinality to calculate the cost.
+	ExplainFormatTrueCardCost = "true_card_cost"
 	// ExplainFormatBinary prints the proto for binary plan.
 	ExplainFormatBinary = "binary"
 
@@ -41,6 +43,7 @@ var (
 		ExplainFormatROW,
 		ExplainFormatVerbose,
 		ExplainFormatTraditional,
+		ExplainFormatTrueCardCost,
 		ExplainFormatBinary,
 	}
 )

@@ -20,6 +20,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -33,17 +34,20 @@ type sessionPool struct {
 		closed bool
 	}
 	resPool *pools.ResourcePool
+	store   kv.Storage
 }
 
-func newSessionPool(resPool *pools.ResourcePool) *sessionPool {
-	return &sessionPool{resPool: resPool}
+func newSessionPool(resPool *pools.ResourcePool, store kv.Storage) *sessionPool {
+	return &sessionPool{resPool: resPool, store: store}
 }
 
 // get gets sessionctx from context resource pool.
 // Please remember to call put after you finished using sessionctx.
 func (sg *sessionPool) get() (sessionctx.Context, error) {
 	if sg.resPool == nil {
-		return mock.NewContext(), nil
+		ctx := mock.NewContext()
+		ctx.Store = sg.store
+		return ctx, nil
 	}
 
 	sg.mu.Lock()

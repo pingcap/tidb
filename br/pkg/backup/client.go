@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -311,7 +312,7 @@ func BuildBackupRangeAndSchema(
 	}
 
 	ranges := make([]rtree.Range, 0)
-	backupSchemas := newBackupSchemas()
+	backupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -330,7 +331,7 @@ func BuildBackupRangeAndSchema(
 
 		if len(tables) == 0 {
 			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
-			backupSchemas.addSchema(dbInfo, nil)
+			backupSchemas.AddSchema(dbInfo, nil)
 			continue
 		}
 
@@ -399,7 +400,7 @@ func BuildBackupRangeAndSchema(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
-			backupSchemas.addSchema(dbInfo, tableInfo)
+			backupSchemas.AddSchema(dbInfo, tableInfo)
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
@@ -419,6 +420,37 @@ func BuildBackupRangeAndSchema(
 		return nil, nil, nil, nil
 	}
 	return ranges, backupSchemas, policies, nil
+}
+
+// BuildFullSchema builds a full backup schemas for databases and tables.
+func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
+	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
+	m := meta.NewSnapshotMeta(snapshot)
+
+	newBackupSchemas := NewBackupSchemas()
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, db := range dbs {
+		tables, err := m.ListTables(db.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// backup this empty db if this schema is empty.
+		if len(tables) == 0 {
+			newBackupSchemas.AddSchema(db, nil)
+		}
+
+		for _, table := range tables {
+			// add table
+			newBackupSchemas.AddSchema(db, table)
+		}
+	}
+
+	return newBackupSchemas, nil
 }
 
 func skipUnsupportedDDLJob(job *model.Job) bool {
@@ -449,20 +481,12 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs := make([]*model.Job, 0)
-	defaultJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
-	allJobs = append(allJobs, defaultJobs...)
-	addIndexJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
-	allJobs = append(allJobs, addIndexJobs...)
-	historyJobs, err := snapMeta.GetAllHistoryDDLJobs()
+	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}

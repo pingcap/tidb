@@ -570,10 +570,10 @@ var funcs = map[string]functionClass{
 	ast.Truncate: &truncateFunctionClass{baseFunctionClass{ast.Truncate, 2, 2}},
 
 	// time functions
-	ast.AddDate:          &addDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}},
-	ast.DateAdd:          &addDateFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}},
-	ast.SubDate:          &subDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}},
-	ast.DateSub:          &subDateFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}},
+	ast.AddDate:          &addSubDateFunctionClass{baseFunctionClass{ast.AddDate, 3, 3}, addTime, addDuration, setAdd},
+	ast.DateAdd:          &addSubDateFunctionClass{baseFunctionClass{ast.DateAdd, 3, 3}, addTime, addDuration, setAdd},
+	ast.SubDate:          &addSubDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, subTime, subDuration, setSub},
+	ast.DateSub:          &addSubDateFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}, subTime, subDuration, setSub},
 	ast.AddTime:          &addTimeFunctionClass{baseFunctionClass{ast.AddTime, 2, 2}},
 	ast.ConvertTz:        &convertTzFunctionClass{baseFunctionClass{ast.ConvertTz, 3, 3}},
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
@@ -888,11 +888,11 @@ func GetBuiltinList() []string {
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
-	b.tp.SetDecimal(fsp)
-	b.tp.SetFlen(mysql.MaxDatetimeWidthNoFsp + fsp)
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDatetimeWidthNoFsp + fsp)
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.SetFlen(b.tp.GetFlen() + 1)
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
 	}
 }
 
@@ -903,10 +903,10 @@ func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
 }
 
 func (b *baseBuiltinFunc) setDecimalAndFlenForTime(fsp int) {
-	b.tp.SetDecimal(fsp)
-	b.tp.SetFlen(mysql.MaxDurationWidthNoFsp + fsp)
+	b.tp.SetDecimalUnderLimit(fsp)
+	b.tp.SetFlenUnderLimit(mysql.MaxDurationWidthNoFsp + fsp)
 	if fsp > 0 {
 		// Add the length for `.`.
-		b.tp.SetFlen(b.tp.GetFlen() + 1)
+		b.tp.SetFlenUnderLimit(b.tp.GetFlen() + 1)
 	}
 }

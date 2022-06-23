@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	atomicutil "go.uber.org/atomic"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -70,8 +71,8 @@ type Tracker struct {
 	label         int   // Label of this "Tracker".
 	bytesConsumed int64 // Consumed bytes.
 	bytesLimit    atomic.Value
-	maxConsumed   int64 // max number of bytes consumed during execution.
-	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
+	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -103,7 +104,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 		bytesHardLimit: bytesLimit,
 		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
 	})
-	t.maxConsumed = 0
+	t.maxConsumed.Store(0)
 	t.isGlobal = false
 }
 
@@ -217,7 +218,12 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 
 // SetLabel sets the label of a Tracker.
 func (t *Tracker) SetLabel(label int) {
+	parent := t.getParent()
+	t.Detach()
 	t.label = label
+	if parent != nil {
+		t.AttachTo(parent)
+	}
 }
 
 // Label gets the label of a Tracker.
@@ -229,6 +235,10 @@ func (t *Tracker) Label() int {
 // already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.
 func (t *Tracker) AttachTo(parent *Tracker) {
+	if parent.isGlobal {
+		t.AttachToGlobalTracker(parent)
+		return
+	}
 	oldParent := t.getParent()
 	if oldParent != nil {
 		oldParent.remove(t)
@@ -344,9 +354,9 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 
 		for {
-			maxNow := atomic.LoadInt64(&tracker.maxConsumed)
+			maxNow := tracker.maxConsumed.Load()
 			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-			if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
+			if consumed > maxNow && !tracker.maxConsumed.CAS(maxNow, consumed) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
@@ -393,7 +403,7 @@ func (t *Tracker) BytesConsumed() int64 {
 // Note: Don't make this method return -1 for special meanings in the future. Because binary plan has used -1 to
 // distinguish between "0 bytes" and "N/A". ref: binaryOpFromFlatOp()
 func (t *Tracker) MaxConsumed() int64 {
-	return atomic.LoadInt64(&t.maxConsumed)
+	return t.maxConsumed.Load()
 }
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
@@ -603,9 +613,9 @@ const (
 	// LabelForNonTransactionalDML represents the label of the non-transactional DML
 	LabelForNonTransactionalDML = -23
 	// LabelForAnalyzeMemory represents the label of the memory of each analyze job
-	LabelForAnalyzeMemory int = -23
+	LabelForAnalyzeMemory int = -24
 	// LabelForGlobalAnalyzeMemory represents the label of the global memory of all analyze jobs
-	LabelForGlobalAnalyzeMemory int = -24
+	LabelForGlobalAnalyzeMemory int = -25
 )
 
 // MetricsTypes is used to get label for metrics

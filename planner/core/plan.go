@@ -73,17 +73,27 @@ type Plan interface {
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if p.TaskTp == property.MppTaskType {
-		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
-			return mpp.enforceExchanger(p)
+		mpp, ok := tsk.(*mppTask)
+		if !ok || mpp.invalid() {
+			return invalidTask
 		}
-		return &mppTask{}
+		if !p.IsSortItemAllForPartition() {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
+			return invalidTask
+		}
+		tsk = mpp.enforceExchanger(p)
 	}
-	if p.IsEmpty() || tsk.plan() == nil {
+	if p.IsSortItemEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = tsk.convertToRootTask(ctx)
+	if p.TaskTp != property.MppTaskType {
+		tsk = tsk.convertToRootTask(ctx)
+	}
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	sort := PhysicalSort{
+		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
+		IsPartialSort: p.IsSortItemAllForPartition(),
+	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}

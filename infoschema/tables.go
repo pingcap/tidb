@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -178,6 +180,8 @@ const (
 	TableAttributes = "ATTRIBUTES"
 	// TablePlacementPolicies is the string constant of placement policies table.
 	TablePlacementPolicies = "PLACEMENT_POLICIES"
+	// TableTrxSummary is the string constant of transaction summary table.
+	TableTrxSummary = "TRX_SUMMARY"
 )
 
 const (
@@ -276,16 +280,27 @@ var tableIDMap = map[string]int64{
 	TableAttributes:                      autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:           autoid.InformationSchemaDBID + 78,
 	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
+	TableTrxSummary:                      autoid.InformationSchemaDBID + 80,
+	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
 }
 
+// columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
 type columnInfo struct {
-	name      string
-	tp        byte
-	size      int
-	decimal   int
-	flag      uint
-	deflt     interface{}
-	comment   string
+	// name of column
+	name string
+	// tp is column type
+	tp byte
+	// represent size of bytes of the column
+	size int
+	// represent decimal length of the column
+	decimal int
+	// flag represent NotNull, Unsigned, PriKey flags etc.
+	flag uint
+	// deflt is default value
+	deflt interface{}
+	// comment for the column
+	comment string
+	// enumElems represent all possible literal string values of an enum column
 	enumElems []string
 }
 
@@ -937,13 +952,13 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "JOB_INFO", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "JOB_INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeDatetime},
 	{name: "END_TIME", tp: mysql.TypeDatetime},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
-	{name: "FAIL_REASON", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
-	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
@@ -1454,6 +1469,11 @@ var tableAttributesCols = []columnInfo{
 	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
+var tableTrxSummaryCols = []columnInfo{
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, comment: "Digest of a transaction"},
+	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+}
+
 var tablePlacementPoliciesCols = []columnInfo{
 	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
@@ -1571,6 +1591,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	})
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	//nolint: prealloc
 	var servers []ServerInfo
 	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo} {
 		nodes, err := r(ctx)
@@ -1647,18 +1668,33 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var servers = make([]ServerInfo, 0, len(members))
+	// TODO: maybe we should unify the PD API request interface.
+	var (
+		memberNum = len(members)
+		servers   = make([]ServerInfo, 0, memberNum)
+		errs      = make([]error, 0, memberNum)
+	)
+	if memberNum == 0 {
+		return servers, nil
+	}
+	// Try on each member until one succeeds or all fail.
 	for _, addr := range members {
 		// Get PD version, git_hash
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("create pd server info request error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		req.Header.Add("PD-Allow-follower-handle", "true")
 		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("request pd server info error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		var content = struct {
 			Version        string `json:"version"`
@@ -1668,7 +1704,10 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		err = json.NewDecoder(resp.Body).Decode(&content)
 		terror.Log(resp.Body.Close())
 		if err != nil {
-			return nil, errors.Trace(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			logutil.BgLogger().Warn("close pd server info request error", zap.String("url", url), zap.Error(err))
+			errs = append(errs, err)
+			continue
 		}
 		if len(content.Version) > 0 && content.Version[0] == 'v' {
 			content.Version = content.Version[1:]
@@ -1682,6 +1721,17 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			GitHash:        content.GitHash,
 			StartTimestamp: content.StartTimestamp,
 		})
+	}
+	// Return the errors if all members' requests fail.
+	if len(errs) == memberNum {
+		errorMsg := ""
+		for idx, err := range errs {
+			errorMsg += err.Error()
+			if idx < memberNum-1 {
+				errorMsg += "; "
+			}
+		}
+		return nil, errors.Trace(fmt.Errorf("%s", errorMsg))
 	}
 	return servers, nil
 }
@@ -1841,6 +1891,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableAttributes:                         tableAttributesCols,
 	TablePlacementPolicies:                  tablePlacementPoliciesCols,
+	TableTrxSummary:                         tableTrxSummaryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

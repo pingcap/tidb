@@ -22,10 +22,16 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
+	tikverr "github.com/tikv/client-go/v2/error"
+	"go.uber.org/zap"
 )
 
 // SimpleTxnContextProvider implements TxnContextProvider
@@ -37,6 +43,7 @@ type SimpleTxnContextProvider struct {
 	InfoSchema         infoschema.InfoSchema
 	GetReadTSFunc      func() (uint64, error)
 	GetForUpdateTSFunc func() (uint64, error)
+	UpdateForUpdateTS  func(seCtx sessionctx.Context, newForUpdateTS uint64) error
 
 	Pessimistic           bool
 	CausalConsistencyOnly bool
@@ -71,12 +78,8 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 	sessVars := p.Sctx.GetSessionVars()
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		txnCtx := sessVars.TxnCtx
-		if tp != sessiontxn.EnterNewTxnWithBeginStmt || txnCtx.History != nil || txnCtx.IsStaleness {
-			// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
-			// need to call NewTxn, which commits the existing transaction and begins a new one.
-			// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
-			// always create a new transaction.
+		shouldReuseTxn := tp == sessiontxn.EnterNewTxnWithBeginStmt && sessiontxn.CanReuseTxnWhenExplicitBegin(p.Sctx)
+		if !shouldReuseTxn {
 			if err := p.Sctx.NewTxn(ctx); err != nil {
 				return err
 			}
@@ -90,7 +93,7 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 		}
 
 		sessVars.TxnCtx.IsPessimistic = p.Pessimistic
-		if _, err := p.activeTxn(); err != nil {
+		if _, err := p.activateTxn(); err != nil {
 			return err
 		}
 
@@ -100,11 +103,13 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 	case sessiontxn.EnterNewTxnBeforeStmt:
 		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.Sctx, domain.GetDomain(p.Sctx).InfoSchema())
 		sessVars.TxnCtx = &variable.TransactionContext{
-			InfoSchema:    p.InfoSchema,
-			CreateTime:    time.Now(),
-			ShardStep:     int(sessVars.ShardAllocateStep),
-			TxnScope:      sessVars.CheckAndGetTxnScope(),
-			IsPessimistic: p.Pessimistic,
+			TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+				InfoSchema:    p.InfoSchema,
+				CreateTime:    time.Now(),
+				ShardStep:     int(sessVars.ShardAllocateStep),
+				TxnScope:      sessVars.CheckAndGetTxnScope(),
+				IsPessimistic: p.Pessimistic,
+			},
 		}
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
@@ -120,8 +125,92 @@ func (p *SimpleTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	return nil
 }
 
-// activeTxn actives the txn
-func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (p *SimpleTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
+	switch point {
+	case sessiontxn.StmtErrAfterPessimisticLock:
+		return p.handleAfterPessimisticLockError(err)
+	default:
+		return sessiontxn.NoIdea()
+	}
+}
+
+func (p *SimpleTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
+	sessVars := p.Sctx.GetSessionVars()
+	if sessVars.IsIsolation(ast.Serializable) {
+		return sessiontxn.ErrorAction(lockErr)
+	}
+
+	txnCtx := sessVars.TxnCtx
+	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok {
+		if !deadlock.IsRetryable {
+			return sessiontxn.ErrorAction(lockErr)
+		}
+		logutil.Logger(p.Ctx).Info("single statement deadlock, retry statement",
+			zap.Uint64("txn", txnCtx.StartTS),
+			zap.Uint64("lockTS", deadlock.LockTs),
+			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
+			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
+	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		errStr := lockErr.Error()
+		forUpdateTS := txnCtx.GetForUpdateTS()
+		logutil.Logger(p.Ctx).Debug("pessimistic write conflict, retry statement",
+			zap.Uint64("txn", txnCtx.StartTS),
+			zap.Uint64("forUpdateTS", forUpdateTS),
+			zap.String("err", errStr))
+		// Always update forUpdateTS by getting a new timestamp from PD.
+		// If we use the conflict commitTS as the new forUpdateTS and async commit
+		// is used, the commitTS of this transaction may exceed the max timestamp
+		// that PD allocates. Then, the change may be invisible to a new transaction,
+		// which means linearizability is broken.
+	} else {
+		// this branch if err not nil, always update forUpdateTS to avoid problem described below
+		// for nowait, when ErrLock happened, ErrLockAcquireFailAndNoWaitSet will be returned, and in the same txn
+		// the select for updateTs must be updated, otherwise there maybe rollback problem.
+		// begin;  select for update key1(here ErrLocked or other errors(or max_execution_time like util),
+		//         key1 lock not get and async rollback key1 is raised)
+		//         select for update key1 again(this time lock succ(maybe lock released by others))
+		//         the async rollback operation rollbacked the lock just acquired
+		tsErr := p.UpdateForUpdateTS(p.Sctx, 0)
+		if tsErr != nil {
+			logutil.Logger(p.Ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
+		}
+		return sessiontxn.ErrorAction(lockErr)
+	}
+
+	if err := p.UpdateForUpdateTS(p.Sctx, 0); err != nil {
+		return sessiontxn.ErrorAction(lockErr)
+	}
+
+	return sessiontxn.RetryReady()
+}
+
+// OnStmtRetry is the hook that should be called when a statement retry
+func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
+	return nil
+}
+
+func (p *SimpleTxnContextProvider) prepareTSFuture() error {
+	if p.Sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.Sctx) || p.Sctx.GetPreparedTSFuture() != nil {
+		return nil
+	}
+
+	txn, err := p.Sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	if txn.Valid() {
+		return nil
+	}
+
+	txnScope := p.Sctx.GetSessionVars().CheckAndGetTxnScope()
+	future := sessiontxn.NewOracleFuture(p.Ctx, p.Sctx, txnScope)
+	return p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope)
+}
+
+// activateTxn actives the txn
+func (p *SimpleTxnContextProvider) activateTxn() (kv.Transaction, error) {
 	if p.isTxnActive {
 		return p.Sctx.Txn(true)
 	}
@@ -141,4 +230,14 @@ func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 
 	p.isTxnActive = true
 	return txn, nil
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *SimpleTxnContextProvider) AdviseWarmup() error {
+	return p.prepareTSFuture()
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *SimpleTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
 }

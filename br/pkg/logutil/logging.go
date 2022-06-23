@@ -94,6 +94,20 @@ func Files(fs []*backuppb.File) zap.Field {
 	return zap.Object("files", zapFilesMarshaler(fs))
 }
 
+type zapStreamBackupTaskInfo struct{ *backuppb.StreamBackupTaskInfo }
+
+func (t zapStreamBackupTaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("taskName", t.Name)
+	enc.AddUint64("startTs", t.StartTs)
+	enc.AddUint64("endTS", t.EndTs)
+	enc.AddString("tableFilter", strings.Join(t.TableFilter, ","))
+	return nil
+}
+
+func StreamBackupTaskInfo(t *backuppb.StreamBackupTaskInfo) zap.Field {
+	return zap.Object("streamTaskInfo", zapStreamBackupTaskInfo{t})
+}
+
 type zapRewriteRuleMarshaler struct{ *import_sstpb.RewriteRule }
 
 func (rewriteRule zapRewriteRuleMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
@@ -106,6 +120,11 @@ func (rewriteRule zapRewriteRuleMarshaler) MarshalLogObject(enc zapcore.ObjectEn
 // RewriteRule make the zap fields for a rewrite rule.
 func RewriteRule(rewriteRule *import_sstpb.RewriteRule) zap.Field {
 	return zap.Object("rewriteRule", zapRewriteRuleMarshaler{rewriteRule})
+}
+
+// RewriteRuleObject make zap object marshaler for a rewrite rule.
+func RewriteRuleObject(rewriteRule *import_sstpb.RewriteRule) zapcore.ObjectMarshaler {
+	return zapRewriteRuleMarshaler{rewriteRule}
 }
 
 type zapMarshalRegionMarshaler struct{ *metapb.Region }

@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -325,7 +326,7 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	p.SetChildren(lTask.plan(), rTask.plan())
 	task := &rootTask{
 		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
+		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count(), false, 0),
 	}
 	p.cost = task.cost()
 	return task
@@ -378,9 +379,8 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 		}
 		lLen, rLen := lType.GetFlen()+lExtend, rType.GetFlen()+rExtend
 		cLen := mathutil.Max(lLen, rLen)
-		cLen = mathutil.Min(65, cLen)
-		commonType.SetDecimal(cDec)
-		commonType.SetFlen(cLen)
+		commonType.SetDecimalUnderLimit(cDec)
+		commonType.SetFlenUnderLimit(cLen)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {
 		if mysql.IsIntegerType(commonType.GetType()) {
 			// If the target type is int, both TiFlash and Mysql only support cast to Int64
@@ -547,7 +547,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 		outerTask = rTask
 	}
 	task := &mppTask{
-		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
+		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0),
 		p:        p,
 		partTp:   outerTask.partTp,
 		hashCols: outerTask.hashCols,
@@ -578,7 +578,7 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...task) task {
 		tblColHists:       rTask.tblColHists,
 		indexPlanFinished: true,
 		tablePlan:         p,
-		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
+		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count(), false, 0),
 	}
 	p.cost = task.cst
 	return task
@@ -590,7 +590,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	p.SetChildren(lTask.plan(), rTask.plan())
 	t := &rootTask{
 		p:   p,
-		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
+		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count(), 0),
 	}
 	p.cost = t.cost()
 	return t
@@ -662,7 +662,7 @@ func calcPagingCost(ctx sessionctx.Context, indexPlan PhysicalPlan, expectCnt ui
 	if sourceRows > indexRows {
 		indexSelectivity = indexRows / sourceRows
 	}
-	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.CPUFactor
+	pagingCst := seekCnt*sessVars.GetSeekFactor(nil) + float64(expectCnt)*sessVars.GetCPUFactor()
 	pagingCst *= indexSelectivity
 
 	// we want the diff between idxCst and pagingCst here,
@@ -739,6 +739,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.idxMergePartPlans[0].SelectBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
+			newTask.addCost(proj.GetCost(newTask.count()))
 			proj.SetCost(newTask.cost())
 			newTask.p = proj
 		}
@@ -788,7 +789,8 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
-			proj.cost = t.cost()
+			newTask.addCost(proj.GetCost(p.StatsCount()))
+			proj.SetCost(newTask.cost())
 			newTask.p = proj
 		} else {
 			newTask.p = p
@@ -1106,7 +1108,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	p.SetChildren(childPlans...)
 	sessVars := p.ctx.GetSessionVars()
 	// Children of UnionExec are executed in parallel.
-	t.cst = childMaxCost + float64(1+len(tasks))*sessVars.ConcurrencyFactor
+	t.cst = childMaxCost + float64(1+len(tasks))*sessVars.GetConcurrencyFactor()
 	p.cost = t.cost()
 	return t
 }
@@ -1116,12 +1118,13 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
 		sc := sel.ctx.GetSessionVars().StmtCtx
 		if expression.CanExprsPushDown(sc, sel.Conditions, sel.ctx.GetClient(), kv.TiFlash) {
+			mppTask.addCost(mppTask.count() * sessVars.GetCPUFactor())
 			sel.cost = mppTask.cost()
 			return attachPlan2Task(sel, mppTask.copy())
 		}
 	}
 	t := tasks[0].convertToRootTask(sel.ctx)
-	t.addCost(t.count() * sessVars.CPUFactor)
+	t.addCost(t.count() * sessVars.GetCPUFactor())
 	sel.cost = t.cost()
 	return attachPlan2Task(sel, t)
 }
@@ -1162,7 +1165,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 				break
 			}
 		}
-		pb := aggregation.AggFuncToPBExpr(sctx, client, aggFunc)
+		pb, _ := aggregation.AggFuncToPBExpr(sctx, client, aggFunc, storeType)
 		if pb == nil {
 			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
 			ret = false
@@ -1662,7 +1665,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 					partialAgg.SetChildren(cop.indexPlan)
 					cop.indexPlan = partialAgg
 				}
-				cop.addCost(partialAgg.(*PhysicalStreamAgg).GetCost(inputRows, false, 0))
+				cop.addCost(partialAgg.(*PhysicalStreamAgg).GetCost(inputRows, false, false, 0))
 				partialAgg.SetCost(cop.cost())
 			}
 			t = cop.convertToRootTask(p.ctx)
@@ -1675,7 +1678,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	} else {
 		attachPlan2Task(p, t)
 	}
-	t.addCost(final.GetCost(inputRows, true, 0))
+	t.addCost(final.GetCost(inputRows, true, false, 0))
 	t.plan().SetCost(t.cost())
 	return t
 }
@@ -1724,12 +1727,14 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
 		// only push down the original agg
 		proj := p.convertAvgForMPP()
-		attachPlan2Task(p.self, mpp)
-		if proj != nil {
-			attachPlan2Task(proj, mpp)
-		}
 		mpp.addCost(p.GetCost(inputRows, false, true, 0))
+		attachPlan2Task(p, mpp)
 		p.cost = mpp.cost()
+		if proj != nil {
+			mpp.addCost(proj.GetCost(mpp.count()))
+			attachPlan2Task(proj, mpp)
+			proj.SetCost(mpp.cost())
+		}
 		return mpp
 	case Mpp2Phase:
 		// TODO: when partition property is matched by sub-plan, we actually needn't do extra an exchange and final agg.
@@ -1738,7 +1743,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if partialAgg == nil {
 			return invalidTask
 		}
+		mpp.addCost(partialAgg.(*PhysicalHashAgg).GetCost(inputRows, false, true, 0))
 		attachPlan2Task(partialAgg, mpp)
+		partialAgg.SetCost(mpp.cost())
 		partitionCols := p.MppPartitionCols
 		if len(partitionCols) == 0 {
 			items := finalAgg.(*PhysicalHashAgg).GroupByItems
@@ -1754,35 +1761,31 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				})
 			}
 		}
-		partialAgg.SetCost(mpp.cost())
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
 		if newMpp.invalid() {
 			return newMpp
 		}
+		newMpp.addCost(finalAgg.(*PhysicalHashAgg).GetCost(newMpp.count(), false, true, 0))
 		attachPlan2Task(finalAgg, newMpp)
 		// TODO: how to set 2-phase cost?
-		newMpp.addCost(p.GetCost(inputRows, false, true, 0))
 		finalAgg.SetCost(newMpp.cost())
 		if proj != nil {
-			attachPlan2Task(proj, newMpp)
 			newMpp.addCost(proj.GetCost(newMpp.count()))
+			attachPlan2Task(proj, newMpp)
 			proj.SetCost(newMpp.cost())
 		}
 		return newMpp
 	case MppTiDB:
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, false)
 		if partialAgg != nil {
+			mpp.addCost(partialAgg.(*PhysicalHashAgg).GetCost(mpp.count(), false, true, 0))
 			attachPlan2Task(partialAgg, mpp)
-		}
-		mpp.addCost(p.GetCost(inputRows, false, true, 0))
-		if partialAgg != nil {
 			partialAgg.SetCost(mpp.cost())
 		}
 		t = mpp.convertToRootTask(p.ctx)
-		inputRows = t.count()
+		t.addCost(finalAgg.(*PhysicalHashAgg).GetCost(t.count(), true, false, 0))
 		attachPlan2Task(finalAgg, t)
-		t.addCost(p.GetCost(inputRows, true, false, 0))
 		finalAgg.SetCost(t.cost())
 		return t
 	case MppScalar:
@@ -1797,10 +1800,14 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		// partial agg would be null if one scalar agg cannot run in two-phase mode
 		if partialAgg != nil {
+			mpp.addCost(partialAgg.(*PhysicalHashAgg).GetCost(mpp.count(), false, true, 0))
 			attachPlan2Task(partialAgg, mpp)
+			partialAgg.SetCost(mpp.cost())
 		}
 		newMpp := mpp.enforceExchanger(prop)
+		newMpp.addCost(finalAgg.(*PhysicalHashAgg).GetCost(newMpp.count(), false, true, 0))
 		attachPlan2Task(finalAgg, newMpp)
+		finalAgg.SetCost(newMpp.cost())
 		if proj == nil {
 			proj = PhysicalProjection{
 				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
@@ -1810,9 +1817,8 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			}
 			proj.SetSchema(p.schema)
 		}
+		newMpp.addCost(proj.GetCost(newMpp.count()))
 		attachPlan2Task(proj, newMpp)
-		newMpp.addCost(p.GetCost(inputRows, false, true, 0))
-		finalAgg.SetCost(newMpp.cost())
 		proj.SetCost(newMpp.cost())
 		return newMpp
 	default:
@@ -1883,6 +1889,34 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t.addCost(final.GetCost(inputRows, true, false, 0))
 	t.plan().SetCost(t.cost())
 	return t
+}
+
+func (p *PhysicalWindow) attach2TaskForMPP(mpp *mppTask) task {
+	// FIXME: currently, tiflash's join has different schema with TiDB,
+	// so we have to rebuild the schema of join and operators which may inherit schema from join.
+	// for window, we take the sub-plan's schema, and the schema generated by windowDescs.
+	columns := p.Schema().Clone().Columns[len(p.Schema().Columns)-len(p.WindowFuncDescs):]
+	p.schema = expression.MergeSchema(mpp.plan().Schema(), expression.NewSchema(columns...))
+
+	failpoint.Inject("CheckMPPWindowSchemaLength", func() {
+		if len(p.Schema().Columns) != len(mpp.plan().Schema().Columns)+len(p.WindowFuncDescs) {
+			panic("mpp physical window has incorrect schema length")
+		}
+	})
+
+	// TODO: find a better way to solve the cost problem.
+	mpp.cst = mpp.cost() * 0.05
+	p.cost = mpp.cost()
+	return attachPlan2Task(p, mpp)
+}
+
+func (p *PhysicalWindow) attach2Task(tasks ...task) task {
+	if mpp, ok := tasks[0].copy().(*mppTask); ok && p.storeTp == kv.TiFlash {
+		return p.attach2TaskForMPP(mpp)
+	}
+	t := tasks[0].convertToRootTask(p.ctx)
+	p.cost = t.cost()
+	return attachPlan2Task(p.self, t)
 }
 
 // mppTask can not :
@@ -2013,10 +2047,6 @@ func (t *mppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 }
 
 func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
-	if len(prop.SortItems) != 0 {
-		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
-		return &mppTask{}
-	}
 	if !t.needEnforceExchanger(prop) {
 		return t
 	}
@@ -2040,7 +2070,8 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
 	receiver.SetChildren(sender)
-	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
+	rowSize := getTblStats(sender.children[0]).GetAvgRowSize(sender.ctx, sender.children[0].Schema().Columns, false, false)
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
 	sender.cost = cst
 	receiver.cost = cst
 	return &mppTask{

@@ -46,13 +46,13 @@ type Schemas struct {
 	schemas map[string]*schemaInfo
 }
 
-func newBackupSchemas() *Schemas {
+func NewBackupSchemas() *Schemas {
 	return &Schemas{
 		schemas: make(map[string]*schemaInfo),
 	}
 }
 
-func (ss *Schemas) addSchema(
+func (ss *Schemas) AddSchema(
 	dbInfo *model.DBInfo, tableInfo *model.TableInfo,
 ) {
 	if tableInfo == nil {
@@ -134,7 +134,9 @@ func (ss *Schemas) BackupSchemas(
 			if err := metaWriter.Send(s, op); err != nil {
 				return errors.Trace(err)
 			}
-			updateCh.Inc()
+			if updateCh != nil {
+				updateCh.Inc()
+			}
 			return nil
 		})
 	}

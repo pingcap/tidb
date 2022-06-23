@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // ExecDetails contains execution detail information.
@@ -381,7 +382,7 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	} else {
 		n := len(procTimes)
-		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+		slices.Sort(procTimes)
 		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
 			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]), FormatDuration(avgTime),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))

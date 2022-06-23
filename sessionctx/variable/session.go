@@ -16,6 +16,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -41,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	ptypes "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
@@ -52,9 +55,10 @@ import (
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/maps"
 )
 
 // PreparedStmtCount is exported for test.
@@ -132,8 +136,28 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
+	TxnCtxNoNeedToRestore
+	TxnCtxNeedToRestore
+}
+
+// TxnCtxNeedToRestore stores transaction variables which need to be restored when rolling back to a savepoint.
+type TxnCtxNeedToRestore struct {
+	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
+	// It's also used in the statistics updating.
+	// Note: for the partitioned table, it stores all the partition IDs.
+	TableDeltaMap map[int64]TableDelta
+
+	// pessimisticLockCache is the cache for pessimistic locked keys,
+	// The value never changes during the transaction.
+	pessimisticLockCache map[string][]byte
+
+	// CachedTables is not nil if the transaction write on cached table.
+	CachedTables map[int64]interface{}
+}
+
+// TxnCtxNoNeedToRestore stores transaction variables which do not need to restored when rolling back to a savepoint.
+type TxnCtxNoNeedToRestore struct {
 	forUpdateTS uint64
-	stmtFuture  oracle.Future
 	Binlog      interface{}
 	InfoSchema  interface{}
 	History     interface{}
@@ -145,18 +169,10 @@ type TransactionContext struct {
 	currentShard int64
 	shardRand    *rand.Rand
 
-	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
-	// It's also used in the statistics updating.
-	// Note: for the partitioned table, it stores all the partition IDs.
-	TableDeltaMap map[int64]TableDelta
-
 	// unchangedRowKeys is used to store the unchanged rows that needs to lock for pessimistic transaction.
 	unchangedRowKeys map[string]struct{}
 
-	// pessimisticLockCache is the cache for pessimistic locked keys,
-	// The value never changes during the transaction.
-	pessimisticLockCache map[string][]byte
-	PessimisticCacheHit  int
+	PessimisticCacheHit int
 
 	// CreateTime For metrics.
 	CreateTime     time.Time
@@ -174,18 +190,26 @@ type TransactionContext struct {
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
+	// Savepoints contains all definitions of the savepoint of a transaction at runtime, the order of the SavepointRecord is the same with the SAVEPOINT statements.
+	// It is used for a lookup when running `ROLLBACK TO` statement.
+	Savepoints []SavepointRecord
+
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
 	TemporaryTables map[int64]tableutil.TempTable
+}
 
-	// CachedTables is not nil if the transaction write on cached table.
-	CachedTables map[int64]interface{}
-
-	// Last ts used by read-consistency read.
-	LastRcReadTs uint64
+// SavepointRecord indicates a transaction's savepoint record.
+type SavepointRecord struct {
+	// name is the name of the savepoint
+	Name string
+	// MemDBCheckpoint is the transaction's memdb checkpoint.
+	MemDBCheckpoint *tikv.MemDBCheckpoint
+	// TxnCtxSavepoint is the savepoint of TransactionContext
+	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -282,6 +306,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
+	tc.Savepoints = nil
 }
 
 // ClearDelta clears the delta map.
@@ -306,14 +331,78 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	}
 }
 
-// SetStmtFutureForRC sets the stmtFuture .
-func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
-	tc.stmtFuture = future
+// GetCurrentSavepoint gets TransactionContext's savepoint.
+func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
+	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
+	for k, v := range tc.TableDeltaMap {
+		tableDeltaMap[k] = v.Clone()
+	}
+	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
+	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
+	cachedTables := make(map[int64]interface{}, len(tc.CachedTables))
+	maps.Copy(cachedTables, tc.CachedTables)
+	return TxnCtxNeedToRestore{
+		TableDeltaMap:        tableDeltaMap,
+		pessimisticLockCache: pessimisticLockCache,
+		CachedTables:         cachedTables,
+	}
 }
 
-// GetStmtFutureForRC gets the stmtFuture.
-func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
-	return tc.stmtFuture
+// RestoreBySavepoint restores TransactionContext to the specify savepoint.
+func (tc *TransactionContext) RestoreBySavepoint(savepoint TxnCtxNeedToRestore) {
+	tc.TableDeltaMap = savepoint.TableDeltaMap
+	tc.pessimisticLockCache = savepoint.pessimisticLockCache
+	tc.CachedTables = savepoint.CachedTables
+}
+
+// AddSavepoint adds a new savepoint.
+func (tc *TransactionContext) AddSavepoint(name string, memdbCheckpoint *tikv.MemDBCheckpoint) {
+	name = strings.ToLower(name)
+	tc.DeleteSavepoint(name)
+
+	record := SavepointRecord{
+		Name:            name,
+		MemDBCheckpoint: memdbCheckpoint,
+		TxnCtxSavepoint: tc.GetCurrentSavepoint(),
+	}
+	tc.Savepoints = append(tc.Savepoints, record)
+}
+
+// DeleteSavepoint deletes the savepoint, return false indicate the savepoint name doesn't exists.
+func (tc *TransactionContext) DeleteSavepoint(name string) bool {
+	name = strings.ToLower(name)
+	for i, sp := range tc.Savepoints {
+		if sp.Name == name {
+			tc.Savepoints = append(tc.Savepoints[:i], tc.Savepoints[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// ReleaseSavepoint deletes the named savepoint and the later savepoints, return false indicate the named savepoint doesn't exists.
+func (tc *TransactionContext) ReleaseSavepoint(name string) bool {
+	name = strings.ToLower(name)
+	for i, sp := range tc.Savepoints {
+		if sp.Name == name {
+			tc.Savepoints = append(tc.Savepoints[:i])
+			return true
+		}
+	}
+	return false
+}
+
+// RollbackToSavepoint rollbacks to the specified savepoint by name.
+func (tc *TransactionContext) RollbackToSavepoint(name string) *SavepointRecord {
+	name = strings.ToLower(name)
+	for idx, sp := range tc.Savepoints {
+		if name == sp.Name {
+			tc.RestoreBySavepoint(sp.TxnCtxSavepoint)
+			tc.Savepoints = tc.Savepoints[:idx+1]
+			return &tc.Savepoints[idx]
+		}
+	}
+	return nil
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.
@@ -626,6 +715,11 @@ type SessionVars struct {
 	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
 	enforceMPPExecution bool
 
+	// TiFlashMaxThreads is the maximum number of threads to execute the request which is pushed down to tiflash.
+	// Default value is -1, means it will not be pushed down to tiflash.
+	// If the value is bigger than -1, it will be pushed down to tiflash and used to create db context in tiflash.
+	TiFlashMaxThreads int64
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -649,12 +743,10 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
-	// CPUFactor is the CPU cost of processing one expression for one row.
-	CPUFactor float64
-	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
-	CopCPUFactor float64
-	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
-	CopTiFlashConcurrencyFactor float64
+	// cpuFactor is the CPU cost of processing one expression for one row.
+	cpuFactor float64
+	// copCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
+	copCPUFactor float64
 	// networkFactor is the network cost of transferring 1 byte data.
 	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -663,12 +755,39 @@ type SessionVars struct {
 	descScanFactor float64
 	// seekFactor is the IO cost of seeking the start value of a range in TiKV or TiFlash.
 	seekFactor float64
-	// MemoryFactor is the memory cost of storing one tuple.
-	MemoryFactor float64
-	// DiskFactor is the IO cost of reading/writing one byte to temporary disk.
-	DiskFactor float64
-	// ConcurrencyFactor is the CPU cost of additional one goroutine.
-	ConcurrencyFactor float64
+	// memoryFactor is the memory cost of storing one tuple.
+	memoryFactor float64
+	// diskFactor is the IO cost of reading/writing one byte to temporary disk.
+	diskFactor float64
+	// concurrencyFactor is the CPU cost of additional one goroutine.
+	concurrencyFactor float64
+
+	// factors for cost model v2
+	// cpuFactorV2 is the CPU factor for the Cost Model Ver2.
+	cpuFactorV2 float64
+	// copCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
+	copCPUFactorV2 float64
+	// tiflashCPUFactorV2 is the cop-cpu factor for the Cost Model Ver2.
+	tiflashCPUFactorV2 float64
+	// networkFactorV2 is the network factor for the Cost Model Ver2.
+	networkFactorV2 float64
+	// scanFactorV2 is the scan factor for the Cost Model Ver2.
+	scanFactorV2 float64
+	// descScanFactorV2 is the desc-scan factor for the Cost Model Ver2.
+	descScanFactorV2 float64
+	// tiflashScanFactorV2 is the tiflash-scan factor for the Cost Model Ver2.
+	tiflashScanFactorV2 float64
+	// seekFactorV2 is the seek factor for the Cost Model Ver2.
+	seekFactorV2 float64
+	// memoryFactorV2 is the memory factor for the Cost Model Ver2.
+	memoryFactorV2 float64
+	// diskFactorV2 is the disk factor for the Cost Model Ver2.
+	diskFactorV2 float64
+	// concurrencyFactorV2 is the concurrency factor for the Cost Model Ver2.
+	concurrencyFactorV2 float64
+
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -716,6 +835,9 @@ type SessionVars struct {
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
+	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
+	EnableOuterJoinReorder bool
+
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
 
@@ -742,9 +864,6 @@ type SessionVars struct {
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
-
-	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
-	EnableChangeMultiSchema bool
 
 	// EnableAutoIncrementInGenerated is used to control whether to allow auto incremented columns in generated columns.
 	EnableAutoIncrementInGenerated bool
@@ -922,10 +1041,10 @@ type SessionVars struct {
 	LastTxnInfo string
 
 	// LastQueryInfo keeps track the info of last query.
-	LastQueryInfo QueryInfo
+	LastQueryInfo sessionstates.QueryInfo
 
 	// LastDDLInfo keeps track the info of last DDL.
-	LastDDLInfo LastDDLInfo
+	LastDDLInfo sessionstates.LastDDLInfo
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
@@ -1025,6 +1144,8 @@ type SessionVars struct {
 	IgnorePreparedCacheCloseStmt bool
 	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	EnableNewCostInterface bool
+	// CostModelVersion is a internal switch to indicates the Cost Model Version.
+	CostModelVersion int
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
@@ -1206,6 +1327,7 @@ func NewSessionVars() *SessionVars {
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
+		EnableOuterJoinReorder:      DefTiDBEnableOuterJoinReorder,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
@@ -1215,16 +1337,16 @@ func NewSessionVars() *SessionVars {
 		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		CPUFactor:                   DefOptCPUFactor,
-		CopCPUFactor:                DefOptCopCPUFactor,
+		cpuFactor:                   DefOptCPUFactor,
+		copCPUFactor:                DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
 		networkFactor:               DefOptNetworkFactor,
 		scanFactor:                  DefOptScanFactor,
 		descScanFactor:              DefOptDescScanFactor,
 		seekFactor:                  DefOptSeekFactor,
-		MemoryFactor:                DefOptMemoryFactor,
-		DiskFactor:                  DefOptDiskFactor,
-		ConcurrencyFactor:           DefOptConcurrencyFactor,
+		memoryFactor:                DefOptMemoryFactor,
+		diskFactor:                  DefOptDiskFactor,
+		concurrencyFactor:           DefOptConcurrencyFactor,
 		EnableVectorizedExpression:  DefEnableVectorizedExpression,
 		CommandValue:                uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
@@ -1253,7 +1375,6 @@ func NewSessionVars() *SessionVars {
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
@@ -1305,6 +1426,7 @@ func NewSessionVars() *SessionVars {
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.TiFlashMaxThreads = DefTiFlashMaxThreads
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	enableChunkRPC := "0"
@@ -1519,6 +1641,25 @@ func (s *SessionVars) IsIsolation(isolation string) bool {
 	return s.TxnCtx.Isolation == isolation
 }
 
+// IsolationLevelForNewTxn returns the isolation level if we want to enter a new transaction
+func (s *SessionVars) IsolationLevelForNewTxn() (isolation string) {
+	if s.InTxn() {
+		if s.txnIsolationLevelOneShot.state == oneShotSet {
+			isolation = s.txnIsolationLevelOneShot.value
+		}
+	} else {
+		if s.txnIsolationLevelOneShot.state == oneShotUse {
+			isolation = s.txnIsolationLevelOneShot.value
+		}
+	}
+
+	if isolation == "" {
+		isolation, _ = s.GetSystemVar(TxnIsolation)
+	}
+
+	return
+}
+
 // SetTxnIsolationLevelOneShotStateForNextTxn sets the txnIsolationLevelOneShot.state for next transaction.
 func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
 	if isoLevelOneShot := &s.txnIsolationLevelOneShot; isoLevelOneShot.state != oneShotDef {
@@ -1696,6 +1837,74 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 	return nil
 }
 
+// EncodeSessionStates saves session states into SessionStates.
+func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	// Encode user-defined variables.
+	s.UsersLock.RLock()
+	sessionStates.UserVars = make(map[string]*types.Datum, len(s.Users))
+	for name, userVar := range s.Users {
+		sessionStates.UserVars[name] = userVar.Clone()
+	}
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.UserVarTypes))
+	for name, userVarType := range s.UserVarTypes {
+		sessionStates.UserVarTypes[name] = userVarType.Clone()
+	}
+	s.UsersLock.RUnlock()
+
+	// Encode other session contexts.
+	sessionStates.PreparedStmtID = s.preparedStmtID
+	sessionStates.Status = s.Status
+	sessionStates.CurrentDB = s.CurrentDB
+	sessionStates.LastTxnInfo = s.LastTxnInfo
+	if s.LastQueryInfo.StartTS != 0 {
+		sessionStates.LastQueryInfo = &s.LastQueryInfo
+	}
+	if s.LastDDLInfo.SeqNum != 0 {
+		sessionStates.LastDDLInfo = &s.LastDDLInfo
+	}
+	sessionStates.LastFoundRows = s.LastFoundRows
+	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
+	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
+	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
+	sessionStates.FoundInBinding = s.PrevFoundInBinding
+	return
+}
+
+// DecodeSessionStates restores session states from SessionStates.
+func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	// Decode user-defined variables.
+	s.UsersLock.Lock()
+	s.Users = make(map[string]types.Datum, len(sessionStates.UserVars))
+	for name, userVar := range sessionStates.UserVars {
+		s.Users[name] = *userVar.Clone()
+	}
+	s.UserVarTypes = make(map[string]*ptypes.FieldType, len(sessionStates.UserVarTypes))
+	for name, userVarType := range sessionStates.UserVarTypes {
+		s.UserVarTypes[name] = userVarType.Clone()
+	}
+	s.UsersLock.Unlock()
+
+	// Decode other session contexts.
+	s.preparedStmtID = sessionStates.PreparedStmtID
+	s.Status = sessionStates.Status
+	s.CurrentDB = sessionStates.CurrentDB
+	s.LastTxnInfo = sessionStates.LastTxnInfo
+	if sessionStates.LastQueryInfo != nil {
+		s.LastQueryInfo = *sessionStates.LastQueryInfo
+	}
+	if sessionStates.LastDDLInfo != nil {
+		s.LastDDLInfo = *sessionStates.LastDDLInfo
+	}
+	s.LastFoundRows = sessionStates.LastFoundRows
+	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
+	if sessionStates.MPPStoreLastFailTime != nil {
+		s.MPPStoreLastFailTime = sessionStates.MPPStoreLastFailTime
+	}
+	s.FoundInPlanCache = sessionStates.FoundInPlanCache
+	s.FoundInBinding = sessionStates.FoundInBinding
+	return
+}
+
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
 	Delta    int64
@@ -1703,6 +1912,19 @@ type TableDelta struct {
 	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
 	TableID  int64
+}
+
+// Clone returns a cloned TableDelta.
+func (td TableDelta) Clone() TableDelta {
+	colSize := make(map[int64]int64, len(td.ColSize))
+	maps.Copy(colSize, td.ColSize)
+	return TableDelta{
+		Delta:    td.Delta,
+		Count:    td.Count,
+		ColSize:  colSize,
+		InitTime: td.InitTime,
+		TableID:  td.TableID,
+	}
 }
 
 // ConcurrencyUnset means the value the of the concurrency related variable is unset.
@@ -2284,20 +2506,6 @@ func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
 }
 
-// QueryInfo represents the information of last executed query. It's used to expose information for test purpose.
-type QueryInfo struct {
-	TxnScope    string `json:"txn_scope"`
-	StartTS     uint64 `json:"start_ts"`
-	ForUpdateTS uint64 `json:"for_update_ts"`
-	ErrMsg      string `json:"error,omitempty"`
-}
-
-// LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.
-type LastDDLInfo struct {
-	Query  string `json:"query"`
-	SeqNum uint64 `json:"seq_num"`
-}
-
 // TxnReadTS indicates the value and used situation for tx_read_ts
 type TxnReadTS struct {
 	readTS uint64
@@ -2349,6 +2557,51 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 	}
 }
 
+// GetCPUFactor returns the session variable cpuFactor
+func (s *SessionVars) GetCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.cpuFactorV2
+	}
+	return s.cpuFactor
+}
+
+// GetCopCPUFactor returns the session variable copCPUFactor
+func (s *SessionVars) GetCopCPUFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.copCPUFactorV2
+	}
+	return s.copCPUFactor
+}
+
+// GetTiFlashCPUFactor returns the session
+func (s *SessionVars) GetTiFlashCPUFactor() float64 {
+	return s.tiflashCPUFactorV2
+}
+
+// GetMemoryFactor returns the session variable memoryFactor
+func (s *SessionVars) GetMemoryFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.memoryFactorV2
+	}
+	return s.memoryFactor
+}
+
+// GetDiskFactor returns the session variable diskFactor
+func (s *SessionVars) GetDiskFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.diskFactorV2
+	}
+	return s.diskFactor
+}
+
+// GetConcurrencyFactor returns the session variable concurrencyFactor
+func (s *SessionVars) GetConcurrencyFactor() float64 {
+	if s.CostModelVersion == 2 {
+		return s.concurrencyFactorV2
+	}
+	return s.concurrencyFactor
+}
+
 // GetNetworkFactor returns the session variable networkFactor
 // returns 0 when tbl is a temporary table.
 func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
@@ -2356,6 +2609,9 @@ func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
 		if tbl.TempTableType != model.TempTableNone {
 			return 0
 		}
+	}
+	if s.CostModelVersion == 2 {
+		return s.networkFactorV2
 	}
 	return s.networkFactor
 }
@@ -2368,6 +2624,9 @@ func (s *SessionVars) GetScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.scanFactorV2
+	}
 	return s.scanFactor
 }
 
@@ -2379,7 +2638,15 @@ func (s *SessionVars) GetDescScanFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
+	if s.CostModelVersion == 2 {
+		return s.descScanFactorV2
+	}
 	return s.descScanFactor
+}
+
+// GetTiFlashScanFactor returns the session variable tiflashScanFactorV2
+func (s *SessionVars) GetTiFlashScanFactor() float64 {
+	return s.tiflashScanFactorV2
 }
 
 // GetSeekFactor returns the session variable seekFactor
@@ -2390,14 +2657,8 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 			return 0
 		}
 	}
-	return s.seekFactor
-}
-
-// IsRcCheckTsRetryable checks if the current error is retryable for `RcReadCheckTS` path.
-func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
-	if err == nil {
-		return false
+	if s.CostModelVersion == 2 {
+		return s.seekFactorV2
 	}
-	// The `RCCheckTS` flag of `stmtCtx` is set.
-	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
+	return s.seekFactor
 }

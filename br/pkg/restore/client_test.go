@@ -223,7 +223,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, false))
 
 	for i := 0; i < len(tables); i++ {
 		if i == 0 || i > 2 {
@@ -233,5 +233,10 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 			obtainCount := int(tables[i].Info.TiFlashReplica.Count)
 			require.Equal(t, i, obtainCount)
 		}
+	}
+
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, true))
+	for i := 0; i < len(tables); i++ {
+		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
 }

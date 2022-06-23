@@ -55,8 +55,65 @@ type EnterNewTxnRequest struct {
 	StaleReadTS uint64
 }
 
+// StmtErrorHandlePoint is where the error is being handled
+type StmtErrorHandlePoint int
+
+const (
+	// StmtErrAfterQuery means we are handling an error after the query failed
+	StmtErrAfterQuery StmtErrorHandlePoint = iota
+	// StmtErrAfterPessimisticLock means we are handling an error after pessimistic lock failed.
+	StmtErrAfterPessimisticLock
+)
+
+// StmtErrorAction is the next action advice when an error occurs when executing a statement
+type StmtErrorAction int
+
+const (
+	// StmtActionError means the error should be returned directly without any retry
+	StmtActionError StmtErrorAction = iota
+	// StmtActionRetryReady means the error is caused by this component, and it is ready for retry.
+	StmtActionRetryReady
+	// StmtActionNoIdea means the error is not caused by this component, and whether retry or not should be determined by other components.
+	// If the user do not know whether to retry or not, it is advised to return the original error.
+	StmtActionNoIdea
+)
+
+// ErrorAction returns StmtActionError with specified error
+func ErrorAction(err error) (StmtErrorAction, error) {
+	return StmtActionError, err
+}
+
+// RetryReady returns StmtActionRetryReady, nil
+func RetryReady() (StmtErrorAction, error) {
+	return StmtActionRetryReady, nil
+}
+
+// NoIdea returns StmtActionNoIdea, nil
+func NoIdea() (StmtErrorAction, error) {
+	return StmtActionNoIdea, nil
+}
+
+// TxnAdvisable providers a collection of optimizations within transaction
+type TxnAdvisable interface {
+	// AdviseWarmup provides warmup for inner state
+	AdviseWarmup() error
+	// AdviseOptimizeWithPlan providers optimization according to the plan
+	AdviseOptimizeWithPlan(plan interface{}) error
+}
+
+// OptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
+// and then do `AdviseWarmup` to do some tso fetch if necessary
+func OptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
+	txnManager := GetTxnManager(sctx)
+	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
+		return err
+	}
+	return txnManager.AdviseWarmup()
+}
+
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
@@ -68,11 +125,18 @@ type TxnContextProvider interface {
 	OnInitialize(ctx context.Context, enterNewTxnType EnterNewTxnType) error
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
+	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
+	// OnStmtRetry is the hook that should be called when a statement is retried internally.
+	OnStmtRetry(ctx context.Context) error
 }
 
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
+	// If the session is not in any transaction, for example: between two autocommit statements,
+	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 	GetStmtReadTS() (uint64, error)
@@ -83,8 +147,17 @@ type TxnManager interface {
 
 	// EnterNewTxn enters a new transaction.
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
+	// OnTxnEnd is the hook that should be called after transaction commit or rollback
+	OnTxnEnd()
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
+	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+	// This method is not required to be called for every error in the statement,
+	// it is only required to be called for some errors handled in some specified points given by the parameter `point`.
+	// When the return error is not nil the return action is 'StmtActionError' and vice versa.
+	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
+	// OnStmtRetry is the hook that should be called when a statement retry
+	OnStmtRetry(ctx context.Context) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
