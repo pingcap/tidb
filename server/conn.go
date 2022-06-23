@@ -318,8 +318,14 @@ func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
-		terror.Log(err)
+		if err != nil {
+			// We need to expect connection might have already disconnected.
+			// This is because closeConn() might be called after a connection read-timeout.
+			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+		}
 	}
+	// Close statements and session
+	// This will release advisory locks, row locks, etc.
 	if cc.ctx != nil {
 		return cc.ctx.Close()
 	}
@@ -1036,10 +1042,6 @@ func (cc *clientConn) Run(ctx context.Context) {
 			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
-		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
 		}
 	}()
 
