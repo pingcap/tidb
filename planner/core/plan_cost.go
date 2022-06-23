@@ -224,9 +224,12 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType, cost
 	p.planCost += estimateNetSeekCost(p.tablePlan)
 
 	if p.ctx.GetSessionVars().CostModelVersion == modelVer2 {
-		// accumulate the real double-read cost: numDoubleReadTasks * seekFactor
+		// accumulate the real double-read cost: (numDoubleReadTasks * seekFactor) / concurrency
 		numDoubleReadTasks := p.estNumDoubleReadTasks(costFlag)
-		p.planCost += numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(ts.Table)
+		concurrency := math.Max(1.0, float64(p.ctx.GetSessionVars().IndexLookupConcurrency()))
+		seekFactor := p.ctx.GetSessionVars().GetSeekFactor(ts.Table)
+		doubleReadCost := (numDoubleReadTasks * seekFactor) / concurrency
+		p.planCost += doubleReadCost
 	}
 
 	// consider concurrency
