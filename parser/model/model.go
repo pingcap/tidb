@@ -309,6 +309,26 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 	return nil
 }
 
+// FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
+func FindIndexByColumns(indices []*IndexInfo, cols ...CIStr) *IndexInfo {
+	for _, index := range indices {
+		if len(index.Columns) < len(cols) {
+			continue
+		}
+		contain := true
+		for i := range cols {
+			if cols[i].L != index.Columns[i].Name.L {
+				contain = false
+				break
+			}
+		}
+		if contain {
+			return index
+		}
+	}
+	return nil
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1
@@ -377,7 +397,9 @@ type TableInfo struct {
 	Indices     []*IndexInfo      `json:"index_info"`
 	Constraints []*ConstraintInfo `json:"constraint_info"`
 	ForeignKeys []*FKInfo         `json:"fk_info"`
-	State       SchemaState       `json:"state"`
+	CitedFKInfo
+	FKChildTableInfo
+	State SchemaState `json:"state"`
 	// PKIsHandle is true when primary key is a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
 	// IsCommonHandle is true when clustered index feature is
@@ -1302,18 +1324,17 @@ func (t *TableInfo) FindColumnNameByID(id int64) string {
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-	ID       int64 `json:"id"`
-	Name     CIStr `json:"fk_name"`
-	RefTable CIStr `json:"ref_table"`
-	// Deprecated: use RefColIDs instead
-	RefCols []CIStr `json:"ref_cols"`
-	// Deprecated: use ColIDs instead
-	Cols      []CIStr     `json:"cols"`
-	RefColIDs []int64     `json:"ref_col_ids"`
-	ColIDs    []int64     `json:"col_ids"`
-	OnDelete  int         `json:"on_delete"`
-	OnUpdate  int         `json:"on_update"`
-	State     SchemaState `json:"state"`
+	ID        int64 `json:"id"`
+	Name      CIStr `json:"fk_name"`
+	RefSchema CIStr
+	RefTable  CIStr   `json:"ref_table"`
+	RefCols   []CIStr `json:"ref_cols"`
+	Cols      []CIStr `json:"cols"`
+	//RefColIDs []int64     `json:"ref_col_ids"`
+	//ColIDs    []int64     `json:"col_ids"`
+	OnDelete int         `json:"on_delete"`
+	OnUpdate int         `json:"on_update"`
+	State    SchemaState `json:"state"`
 }
 
 // Clone clones FKInfo.
@@ -1326,6 +1347,13 @@ func (fk *FKInfo) Clone() *FKInfo {
 	copy(nfk.Cols, fk.Cols)
 
 	return &nfk
+}
+
+// CitedFKInfo provides the cited foreign key in the child table.
+type CitedFKInfo struct {
+	ChildTable CIStr   `json:"child_table"`
+	FKIndex    CIStr   `json:"fk_index"`
+	Cols       []CIStr `json:"cols"`
 }
 
 // DBInfo provides meta data describing a DB.

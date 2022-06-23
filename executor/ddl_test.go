@@ -202,6 +202,17 @@ func TestCreateTable(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
+func TestCreateTableWithForeignKey(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (i int, a int,b int as (a) virtual, index (b));")
+	_, err := tk.Exec("create table t2 (a int, b int, foreign key fk_b(b) references t1(b));")
+	require.Error(t, err)
+	require.Equal(t, "Foreign key 't2_ibfk_1' uses virtual column 'b' which is not supported.", err.Error())
+}
+
 func TestCreateView(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

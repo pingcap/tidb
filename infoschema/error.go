@@ -82,4 +82,8 @@ var (
 	ErrEmptyDatabase = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
 	// ErrForbidSchemaChange returns when the schema change is illegal
 	ErrForbidSchemaChange = dbterror.ClassSchema.NewStd(mysql.ErrForbidSchemaChange)
+	// ErrForeignKeyCannotUseVirtualColumn returns when foreign key refer virtual generated column.
+	ErrForeignKeyCannotUseVirtualColumn = dbterror.ClassSchema.NewStd(mysql.ErrForeignKeyCannotUseVirtualColumn)
+	// ErrFkNoIndexParent returns when foreign key refer columns don't have related index in parent table.
+	ErrFkNoIndexParent = dbterror.ClassSchema.NewStd(mysql.ErrFkNoIndexParent)
 )

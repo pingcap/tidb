@@ -140,6 +140,10 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	if len(tbInfo.ForeignKeys) > 0 {
+
+	}
+
 	tbInfo, err := createTable(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -154,6 +158,59 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 	return ver, errors.Trace(err)
+}
+
+type ForeignKeyChecker struct{}
+
+func (c ForeignKeyChecker) updateForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
+	referTableInfo.ForeignKeys
+}
+
+func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
+	// check refer columns in paren table.
+	for i := range fkInfo.RefCols {
+		refCol := model.FindColumnInfo(referTableInfo.Columns, fkInfo.RefCols[i].L)
+		if refCol == nil {
+			return dbterror.ErrKeyColumnDoesNotExits.GenWithStackByArgs(fkInfo.RefCols[i].O)
+		}
+		if refCol.IsGenerated() && !refCol.GeneratedStored {
+			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefCols[i].O)
+		}
+	}
+	// check refer columns should have index.
+	if model.FindIndexByColumns(referTableInfo.Indices, fkInfo.RefCols...) == nil {
+		return infoschema.ErrFkNoIndexParent.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefTable.O)
+	}
+	return nil
+}
+
+func (c ForeignKeyChecker) getParentTableFromStorage(d *ddlCtx, fkInfo *model.FKInfo, t *meta.Meta) (*model.TableInfo, error) {
+	db, tb, err := c.getParentTableFromInfoCache(d, fkInfo)
+	if err != nil {
+		return nil, err
+	}
+	tbInfo, err := getTableInfo(t, tb.ID, db.ID)
+	if err != nil {
+		return nil, err
+	}
+	// Check if table name is renamed.
+	if tbInfo.Name.L != fkInfo.RefTable.L {
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(fkInfo.RefSchema.O, fkInfo.RefTable.O)
+	}
+	return tbInfo, nil
+}
+
+func (c ForeignKeyChecker) getParentTableFromInfoCache(d *ddlCtx, fkInfo *model.FKInfo) (*model.DBInfo, *model.TableInfo, error) {
+	is := d.infoCache.GetLatest()
+	db, ok := is.SchemaByName(fkInfo.RefSchema)
+	if !ok {
+		return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fkInfo.RefSchema))
+	}
+	tb, err := is.TableByName(fkInfo.RefSchema, fkInfo.RefTable)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return db, tb.Meta(), nil
 }
 
 func onCreateTables(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
