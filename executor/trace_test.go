@@ -33,7 +33,7 @@ func TestTraceExec(t *testing.T) {
 	require.GreaterOrEqual(t, len(rows), 1)
 
 	// +---------------------------+-----------------+------------+
-	// | operation                 | snapshotTS         | duration   |
+	// | operation                 | snapshotTS      | duration   |
 	// +---------------------------+-----------------+------------+
 	// | session.getTxnFuture      | 22:08:38.247834 | 78.909µs   |
 	// |   ├─session.Execute       | 22:08:38.247829 | 1.478487ms |
