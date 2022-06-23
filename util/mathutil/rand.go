@@ -67,3 +67,17 @@ func (rng *MysqlRng) SetSeed2(seed uint32) {
 	defer rng.mu.Unlock()
 	rng.seed2 = seed
 }
+
+// GetSeed1 is an interface to get seed1. It's only used for getting session states.
+func (rng *MysqlRng) GetSeed1() uint32 {
+	rng.mu.Lock()
+	defer rng.mu.Unlock()
+	return rng.seed1
+}
+
+// GetSeed2 is an interface to get seed2. It's only used for getting session states.
+func (rng *MysqlRng) GetSeed2() uint32 {
+	rng.mu.Lock()
+	defer rng.mu.Unlock()
+	return rng.seed2
+}

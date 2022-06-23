@@ -170,7 +170,7 @@ func MakeTableRegions(
 					break
 				}
 				if err != nil {
-					log.L().Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+					log.FromContext(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 					break
 				}
 			}
@@ -240,7 +240,7 @@ func MakeTableRegions(
 		}
 	}
 
-	log.L().Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
@@ -274,10 +274,10 @@ func makeSourceFileRegion(
 	}
 	sizePerRow, err := GetSampledAvgRowSize(&fi, cfg, ioWorkers, store)
 	if err == nil && sizePerRow != 0 {
-		log.L().Warn("fail to sample file", zap.String("path", fi.FileMeta.Path), zap.Error(err))
+		log.FromContext(ctx).Warn("fail to sample file", zap.String("path", fi.FileMeta.Path), zap.Error(err))
 		divisor = sizePerRow
 	}
-	log.L().Debug("avg row size", zap.String("path", fi.FileMeta.Path), zap.Int64("size per row", sizePerRow))
+	log.FromContext(ctx).Debug("avg row size", zap.String("path", fi.FileMeta.Path), zap.Int64("size per row", sizePerRow))
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
 	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
@@ -305,7 +305,7 @@ func makeSourceFileRegion(
 	})
 
 	if tableRegion.Size() > tableRegionSizeWarningThreshold {
-		log.L().Warn(
+		log.FromContext(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
 			zap.Int64("size", dataFileSize))
@@ -467,7 +467,7 @@ func SplitLargeFile(
 				if !errors.ErrorEqual(err, io.EOF) {
 					return 0, nil, nil, err
 				}
-				log.L().Warn("file contains no terminator at end",
+				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
 					zap.String("terminator", cfg.Mydumper.CSV.Terminator))
 				pos = dataFile.FileMeta.FileSize
