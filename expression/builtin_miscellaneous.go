@@ -505,9 +505,16 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil || isNull {
 		return 0, true, err
 	}
+	errWrongValueForType := errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	// Only in select, we will show warnings rather than error
+	shouldWarn := !(stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt)
+	if shouldWarn {
+		stmtCtx.TruncateAsWarning = true
+	}
 	// ip address should not end with '.'.
 	if len(val) == 0 || val[len(val)-1] == '.' {
-		return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+		return 0, true, stmtCtx.HandleTruncate(errWrongValueForType)
 	}
 
 	var (
@@ -519,17 +526,17 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 			digit := uint64(c - '0')
 			byteResult = byteResult*10 + digit
 			if byteResult > 255 {
-				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+				return 0, true, stmtCtx.HandleTruncate(errWrongValueForType)
 			}
 		} else if c == '.' {
 			dotCount++
 			if dotCount > 3 {
-				return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+				return 0, true, stmtCtx.HandleTruncate(errWrongValueForType)
 			}
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
+			return 0, true, stmtCtx.HandleTruncate(errWrongValueForType)
 		}
 	}
 	// 127 		-> 0.0.0.127
@@ -638,14 +645,20 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	if err != nil || isNull {
 		return "", true, err
 	}
-
+	errWrongValueForType := errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
+	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	// Only in select, we will show warnings rather than error
+	shouldWarn := !(stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt)
+	if shouldWarn {
+		stmtCtx.TruncateAsWarning = true
+	}
 	if len(val) == 0 {
-		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
+		return "", true, stmtCtx.HandleTruncate(errWrongValueForType)
 	}
 
 	ip := net.ParseIP(val)
 	if ip == nil {
-		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
+		return "", true, stmtCtx.HandleTruncate(errWrongValueForType)
 	}
 
 	var isMappedIpv6 bool
