@@ -4,17 +4,16 @@ package streamhelper
 
 import (
 	"context"
+	"time"
 
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
-	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/config"
 	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
-)
-
-var (
-	_ Env = &CliEnv{}
-	_ Env = tidbEnv{}
+	"google.golang.org/grpc/keepalive"
 )
 
 type Env interface {
@@ -44,14 +43,8 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key []byte, endKey []by
 	return rls, nil
 }
 
-type CliEnv struct {
-	PDRegionScanner
-	*conn.Mgr
-	stream.TaskEventClient
-}
-
 type tidbEnv struct {
-	clis *conn.StoreManager
+	clis *utils.StoreManager
 	*stream.TaskEventClient
 	PDRegionScanner
 }
@@ -66,6 +59,29 @@ func (t tidbEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (logbac
 		return nil, err
 	}
 	return cli, nil
+}
+
+func CliEnv(cli *utils.StoreManager, etcdCli *clientv3.Client) Env {
+	return tidbEnv{
+		clis:            cli,
+		TaskEventClient: &stream.TaskEventClient{MetaDataClient: *stream.NewMetaDataClient(etcdCli)},
+		PDRegionScanner: PDRegionScanner{cli.PDClient()},
+	}
+}
+
+func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf config.Config) (Env, error) {
+	tconf, err := conf.GetTiKVConfig().Security.ToTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+	return tidbEnv{
+		clis: utils.NewStoreManager(pdCli, keepalive.ClientParameters{
+			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime),
+			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout),
+		}, tconf),
+		TaskEventClient: &stream.TaskEventClient{MetaDataClient: *stream.NewMetaDataClient(etcdCli)},
+		PDRegionScanner: PDRegionScanner{Client: pdCli},
+	}, nil
 }
 
 type LogBackupService interface {

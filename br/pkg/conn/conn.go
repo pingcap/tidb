@@ -9,10 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/opentracing/opentracing-go"
@@ -36,9 +33,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
 )
@@ -50,92 +45,7 @@ const (
 
 	// DefaultMergeRegionKeyCount is the default region key count, 960000.
 	DefaultMergeRegionKeyCount uint64 = 960000
-
-	dialTimeout = 30 * time.Second
-
-	resetRetryTimes = 3
 )
-
-// Pool is a lazy pool of gRPC channels.
-// When `Get` called, it lazily allocates new connection if connection not full.
-// If it's full, then it will return allocated channels round-robin.
-type Pool struct {
-	mu sync.Mutex
-
-	conns   []*grpc.ClientConn
-	next    int
-	cap     int
-	newConn func(ctx context.Context) (*grpc.ClientConn, error)
-}
-
-func (p *Pool) takeConns() (conns []*grpc.ClientConn) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.conns, conns = nil, p.conns
-	p.next = 0
-	return conns
-}
-
-// Close closes the conn pool.
-func (p *Pool) Close() {
-	for _, c := range p.takeConns() {
-		if err := c.Close(); err != nil {
-			log.Warn("failed to close clientConn", zap.String("target", c.Target()), zap.Error(err))
-		}
-	}
-}
-
-// Get tries to get an existing connection from the pool, or make a new one if the pool not full.
-func (p *Pool) Get(ctx context.Context) (*grpc.ClientConn, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.conns) < p.cap {
-		c, err := p.newConn(ctx)
-		if err != nil {
-			return nil, err
-		}
-		p.conns = append(p.conns, c)
-		return c, nil
-	}
-
-	conn := p.conns[p.next]
-	p.next = (p.next + 1) % p.cap
-	return conn, nil
-}
-
-// NewConnPool creates a new Pool by the specified conn factory function and capacity.
-func NewConnPool(capacity int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *Pool {
-	return &Pool{
-		cap:     capacity,
-		conns:   make([]*grpc.ClientConn, 0, capacity),
-		newConn: newConn,
-
-		mu: sync.Mutex{},
-	}
-}
-
-type StoreManager struct {
-	pdClient pd.Client
-	grpcClis struct {
-		mu   sync.Mutex
-		clis map[uint64]*grpc.ClientConn
-	}
-	keepalive keepalive.ClientParameters
-	tlsConf   *tls.Config
-}
-
-// NewStoreManager create a new manager for gRPC connections to stores.
-func NewStoreManager(pdCli pd.Client, kl keepalive.ClientParameters, tlsConf *tls.Config) *StoreManager {
-	return &StoreManager{
-		pdClient: pdCli,
-		grpcClis: struct {
-			mu   sync.Mutex
-			clis map[uint64]*grpc.ClientConn
-		}{clis: make(map[uint64]*grpc.ClientConn)},
-		keepalive: kl,
-		tlsConf:   tlsConf,
-	}
-}
 
 // Mgr manages connections to a TiDB cluster.
 type Mgr struct {
@@ -145,7 +55,7 @@ type Mgr struct {
 	tikvStore   tikv.Storage // Used to access TiKV specific interfaces.
 	ownsStorage bool
 
-	*StoreManager
+	*utils.StoreManager
 }
 
 // StoreBehavior is the action to do in GetAllTiKVStores when a non-TiKV
@@ -319,62 +229,9 @@ func NewMgr(
 		tikvStore:    tikvStorage,
 		dom:          dom,
 		ownsStorage:  g.OwnsStorage(),
-		StoreManager: &StoreManager{
-			tlsConf: tlsConf,
-			grpcClis: struct {
-				mu   sync.Mutex
-				clis map[uint64]*grpc.ClientConn
-			}{clis: make(map[uint64]*grpc.ClientConn)},
-			keepalive: keepalive,
-			pdClient:  controller.GetPDClient(),
-		},
+		StoreManager: utils.NewStoreManager(controller.GetPDClient(), keepalive, tlsConf),
 	}
 	return mgr, nil
-}
-
-func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	failpoint.Inject("hint-get-backup-client", func(v failpoint.Value) {
-		log.Info("failpoint hint-get-backup-client injected, "+
-			"process will notify the shell.", zap.Uint64("store", storeID))
-		if sigFile, ok := v.(string); ok {
-			file, err := os.Create(sigFile)
-			if err != nil {
-				log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
-			}
-			if file != nil {
-				file.Close()
-			}
-		}
-		time.Sleep(3 * time.Second)
-	})
-	store, err := mgr.pdClient.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	opt := grpc.WithInsecure()
-	if mgr.tlsConf != nil {
-		opt = grpc.WithTransportCredentials(credentials.NewTLS(mgr.tlsConf))
-	}
-	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	bfConf := backoff.DefaultConfig
-	bfConf.MaxDelay = time.Second * 3
-	addr := store.GetPeerAddress()
-	if addr == "" {
-		addr = store.GetAddress()
-	}
-	conn, err := grpc.DialContext(
-		ctx,
-		addr,
-		opt,
-		grpc.WithBlock(),
-		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-		grpc.WithKeepaliveParams(mgr.keepalive),
-	)
-	cancel()
-	if err != nil {
-		return nil, berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to make connection to store %d", storeID)
-	}
-	return conn, nil
 }
 
 // GetBackupClient get or create a backup client.
@@ -398,69 +255,6 @@ func (mgr *Mgr) GetLogBackupClient(ctx context.Context, storeID uint64) (logback
 	return cli, nil
 }
 
-func (mgr *StoreManager) WithConn(ctx context.Context, storeID uint64, f func(*grpc.ClientConn)) error {
-	if ctx.Err() != nil {
-		return errors.Trace(ctx.Err())
-	}
-
-	mgr.grpcClis.mu.Lock()
-	defer mgr.grpcClis.mu.Unlock()
-
-	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
-		// Find a cached backup client.
-		f(conn)
-		return nil
-	}
-
-	conn, err := mgr.getGrpcConnLocked(ctx, storeID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Cache the conn.
-	mgr.grpcClis.clis[storeID] = conn
-	f(conn)
-	return nil
-}
-
-// ResetBackupClient reset the connection for backup client.
-func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error) {
-	if ctx.Err() != nil {
-		return nil, errors.Trace(ctx.Err())
-	}
-
-	mgr.grpcClis.mu.Lock()
-	defer mgr.grpcClis.mu.Unlock()
-
-	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
-		// Find a cached backup client.
-		log.Info("Reset backup client", zap.Uint64("storeID", storeID))
-		err := conn.Close()
-		if err != nil {
-			log.Warn("close backup connection failed, ignore it", zap.Uint64("storeID", storeID))
-		}
-		delete(mgr.grpcClis.clis, storeID)
-	}
-	var (
-		conn *grpc.ClientConn
-		err  error
-	)
-	for retry := 0; retry < resetRetryTimes; retry++ {
-		conn, err = mgr.getGrpcConnLocked(ctx, storeID)
-		if err != nil {
-			log.Warn("failed to reset grpc connection, retry it",
-				zap.Int("retry time", retry), logutil.ShortError(err))
-			time.Sleep(time.Duration(retry+3) * time.Second)
-			continue
-		}
-		mgr.grpcClis.clis[storeID] = conn
-		break
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return backuppb.NewBackupClient(conn), nil
-}
-
 // GetStorage returns a kv storage.
 func (mgr *Mgr) GetStorage() kv.Storage {
 	return mgr.storage
@@ -468,7 +262,7 @@ func (mgr *Mgr) GetStorage() kv.Storage {
 
 // GetTLSConfig returns the tls config.
 func (mgr *Mgr) GetTLSConfig() *tls.Config {
-	return mgr.StoreManager.tlsConf
+	return mgr.StoreManager.TLSConfig()
 }
 
 // GetLockResolver gets the LockResolver.
@@ -479,18 +273,6 @@ func (mgr *Mgr) GetLockResolver() *txnlock.LockResolver {
 // GetDomain returns a tikv storage.
 func (mgr *Mgr) GetDomain() *domain.Domain {
 	return mgr.dom
-}
-
-// Close closes all client in Mgr.
-func (mgr *StoreManager) Close() {
-	mgr.grpcClis.mu.Lock()
-	for _, cli := range mgr.grpcClis.clis {
-		err := cli.Close()
-		if err != nil {
-			log.Error("fail to close Mgr", zap.Error(err))
-		}
-	}
-	mgr.grpcClis.mu.Unlock()
 }
 
 func (mgr *Mgr) Close() {

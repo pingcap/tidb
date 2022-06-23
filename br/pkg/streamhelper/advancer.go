@@ -191,7 +191,7 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 			}
 		}
 	}
-	return cp, collectFailureRange(len(failed), func(i int) kv.KeyRange {
+	return cp, CollectFailureRange(len(failed), func(i int) kv.KeyRange {
 		meta := rm[failed[i].Region.Id].Region
 		return kv.KeyRange{StartKey: meta.StartKey, EndKey: meta.EndKey}
 	}), nil
@@ -207,7 +207,7 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 
 func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst *RangesSharesTS) error {
 	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
-	ranges := collectFailureRange(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
+	ranges := CollectFailureRange(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
 	failures := make(chan kv.KeyRange, 1024)
 	workers := utils.NewWorkerPool(4, "subranges")
 	eg, cx := errgroup.WithContext(ctx)
@@ -251,7 +251,7 @@ collect:
 	if len(fr) != 0 || ts <= rst.TS {
 		log.Info("failure regions collected", zap.Int("size", len(fr)))
 		c.cache.insertDirect(RangesSharesTS{
-			TS:     ts,
+			TS:     rst.TS,
 			Ranges: fr,
 		})
 	}
@@ -313,7 +313,7 @@ func appendRegionMap(region []RegionWithLeader, rm map[uint64]RegionWithLeader) 
 	}
 }
 
-func collectFailureRange(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
+func CollectFailureRange(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
 	frs := make([]kv.KeyRange, 0, length)
 	for i := 0; i < length; i++ {
 		frs = append(frs, getRange(i))
@@ -332,7 +332,7 @@ func collectFailureRange(length int, getRange func(int) kv.KeyRange) []kv.KeyRan
 			if i >= len(frs) || bytes.Compare(frs[i].StartKey, item.EndKey) >= 0 {
 				break
 			}
-			if bytes.Compare(item.EndKey, frs[i].EndKey) < 0 {
+			if bytes.Compare(item.EndKey, frs[i].EndKey) < 0 || len(frs[i].EndKey) == 0 {
 				item.EndKey = frs[i].EndKey
 			}
 		}

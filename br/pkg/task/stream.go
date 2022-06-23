@@ -793,13 +793,8 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	cli := stream.NewMetaDataClient(etcdCLI)
-	env := streamhelper.CliEnv{
-		PDRegionScanner: streamhelper.PDRegionScanner{Client: mgr.GetPDClient()},
-		Mgr:             mgr,
-		TaskEventClient: stream.TaskEventClient{MetaDataClient: *cli},
-	}
-	advancer := streamhelper.NewCheckpointAdvancer(&env)
+	env := streamhelper.CliEnv(mgr.StoreManager, etcdCLI)
+	advancer := streamhelper.NewCheckpointAdvancer(env)
 	advancer.UpdateConfig(cfg.AdvancerCfg)
 	return advancer.Loop(ctx)
 }
