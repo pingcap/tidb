@@ -673,7 +673,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			return false, 0, errors.New("Lightning backfill: should not happened")
 		}
 	}
-	return false, ver, nil;
+	return true, ver, nil;
 }
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -691,8 +691,10 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
     if reorgInfo.Meta.IsLightningEnabled {
 		if err != nil {
 			logutil.BgLogger().Error("Lightning: Add index backfill processing:", zap.String("Error:", err.Error()))
+			return done, ver, err
 		}
-		if (indexInfo.SubState != model.StateBackFill) {
+		// Only when SubState is in BackFill state, then need start to start new backfill task.
+		if indexInfo.SubState != model.StateBackFill || !done {
 			return done, ver, err
 		}
 	}
