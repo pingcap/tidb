@@ -114,6 +114,25 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *tiflashTestSuite) TestAggPushDownApplyAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists foo")
+	tk.MustExec("drop table if exists bar")
+	tk.MustExec("create table foo(a int, b int)")
+	tk.MustExec("create table bar(a double not null, b decimal(65,0) not null)")
+	tk.MustExec("alter table foo set tiflash replica 1")
+	tk.MustExec("alter table bar set tiflash replica 1")
+	tk.MustExec("insert into foo values(0, NULL)")
+	tk.MustExec("insert into bar values(0, 0)")
+
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+
+	tk.MustQuery("select * from foo where a=all(select a from bar where bar.b=foo.b)").Check(testkit.Rows("0 <nil>"))
+}
+
 func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -773,6 +792,34 @@ func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
 	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
 }
 
+func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// avg decimal
+	tk.MustExec("drop table if exists td;")
+	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
+	tk.MustExec("alter table td set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "td")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into td values (null, 22876);")
+	tk.MustExec("insert into td values (9220557287087669248, 32767);")
+	tk.MustExec("insert into td values (28030, 32767);")
+	tk.MustExec("insert into td values (-3309864251140603904,32767);")
+	tk.MustExec("insert into td values (4,0);")
+	tk.MustExec("insert into td values (null,0);")
+	tk.MustExec("insert into td values (4,-23828);")
+	tk.MustExec("insert into td values (54720,32767);")
+	tk.MustExec("insert into td values (0,29815);")
+	tk.MustExec("insert into td values (10017,-32661);")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
+	tk.MustExec("drop table if exists td;")
+}
+
 func (s *tiflashTestSuite) TestMppApply(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1013,4 +1060,29 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	res = resBuff.String()
 	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+}
+
+func (s *tiflashTestSuite) TestAggPushDownCountStar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists c")
+	tk.MustExec("drop table if exists o")
+	tk.MustExec("create table c(c_id bigint primary key)")
+	tk.MustExec("create table o(o_id bigint primary key, c_id bigint not null)")
+	tk.MustExec("alter table c set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "c")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("alter table o set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "o")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into c values(1),(2),(3),(4),(5)")
+	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2)")
+
+	tk.MustExec("set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+
+	tk.MustQuery("select count(*) from c, o where c.c_id=o.c_id").Check(testkit.Rows("5"))
 }
