@@ -183,9 +183,9 @@ func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Express
 
 var (
 	// MySQL int8.
-	int8Con = &Constant{RetType: types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()}
+	int8Con = &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()}
 	// MySQL varchar.
-	varcharCon = &Constant{RetType: types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8).BuildP()}
+	varcharCon = &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8).BuildP()}
 )
 
 func getInt8Con() Expression {

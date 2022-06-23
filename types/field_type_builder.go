@@ -19,13 +19,8 @@ type FieldTypeBuilder struct {
 	ft FieldType
 }
 
-// NewFieldTypeBuilder will allocate the builder on the stack.
-func NewFieldTypeBuilder() FieldTypeBuilder {
-	return FieldTypeBuilder{}
-}
-
-// NewFieldTypeBuilderP will allocate the builder on the heap.
-func NewFieldTypeBuilderP() *FieldTypeBuilder {
+// NewFieldTypeBuilder will allocate the builder on the heap.
+func NewFieldTypeBuilder() *FieldTypeBuilder {
 	return &FieldTypeBuilder{}
 }
 

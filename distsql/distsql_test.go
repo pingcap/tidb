@@ -249,7 +249,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 
 			colTypes := make([]*types.FieldType, 4)
 			for i := 0; i < 4; i++ {
-				colTypes[i] = types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).BuildP()
+				colTypes[i] = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP()
 			}
 			chk := chunk.New(colTypes, numRows, numRows)
 

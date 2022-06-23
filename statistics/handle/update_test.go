@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -734,6 +733,10 @@ func TestUpdateErrorRate(t *testing.T) {
 
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
@@ -917,6 +920,10 @@ func TestQueryFeedback(t *testing.T) {
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
@@ -1175,6 +1182,10 @@ func TestUpdateStatsByLocalFeedback(t *testing.T) {
 	defer clean()
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
@@ -1614,6 +1625,10 @@ func TestIndexQueryFeedback4TopN(t *testing.T) {
 	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a bigint(64), index idx(a))")
 	for i := 0; i < 20; i++ {
@@ -1665,6 +1680,10 @@ func TestAbnormalIndexFeedback(t *testing.T) {
 	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
@@ -1742,6 +1761,10 @@ func TestFeedbackRanges(t *testing.T) {
 	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("create table t (a tinyint, b tinyint, primary key(a), index idx(a, b))")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -1821,6 +1844,10 @@ func TestUnsignedFeedbackRanges(t *testing.T) {
 	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("set @@session.tidb_analyze_version = 0")
 	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
 	testKit.MustExec("create table t1 (a bigint unsigned, primary key(a))")
@@ -2014,6 +2041,10 @@ func TestFeedbackCounter(t *testing.T) {
 	err := metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Write(oldNum)
 	require.NoError(t, err)
 	testKit.MustExec("use test")
+
+	// TODO(tiancaiamao): query feedback is broken when paging is on.
+	testKit.MustExec("set @@tidb_enable_paging = off")
+
 	testKit.MustExec("create table t (a int, b int, index idx_a(a))")
 	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (5, 5)")
 	testKit.MustExec("analyze table t with 0 topn")
@@ -2308,14 +2339,11 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 	for _, val := range []bool{false, true} {
 		func(planCache bool) {
-			originalVal1 := plannercore.PreparedPlanCacheEnabled()
-			defer func() {
-				plannercore.SetPreparedPlanCache(originalVal1)
-			}()
-			plannercore.SetPreparedPlanCache(planCache)
-
 			store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 			defer clean()
+			tmp := testkit.NewTestKit(t, store)
+			defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
+			tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(planCache))
 			tk := testkit.NewTestKit(t, store)
 
 			originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)

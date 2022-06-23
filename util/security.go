@@ -93,9 +93,9 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 	if !certPool.AppendCertsFromPEM(ca) {
 		return nil, errors.New("failed to append ca certs")
 	}
-
+	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS10,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,
@@ -109,13 +109,15 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 // ToTLSConfigWithVerifyByRawbytes constructs a `*tls.Config` from the CA, certification and key bytes
 // and add verify for CN.
 func ToTLSConfigWithVerifyByRawbytes(caData, certData, keyData []byte, verifyCN []string) (*tls.Config, error) {
-	// Generate a key pair from your pem-encoded cert and key ([]byte).
-	cert, err := tls.X509KeyPair(certData, keyData)
-	if err != nil {
-		return nil, errors.New("failed to generate cert")
+	var certificates []tls.Certificate
+	if len(certData) != 0 && len(keyData) != 0 {
+		// Generate a key pair from your pem-encoded cert and key ([]byte).
+		cert, err := tls.X509KeyPair(certData, keyData)
+		if err != nil {
+			return nil, errors.New("failed to generate cert")
+		}
+		certificates = []tls.Certificate{cert}
 	}
-	certificates := []tls.Certificate{cert}
-
 	// Create a certificate pool from CA
 	certPool := x509.NewCertPool()
 
@@ -123,9 +125,9 @@ func ToTLSConfigWithVerifyByRawbytes(caData, certData, keyData []byte, verifyCN 
 	if !certPool.AppendCertsFromPEM(caData) {
 		return nil, errors.New("failed to append ca certs")
 	}
-
+	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS10,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,

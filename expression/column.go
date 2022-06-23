@@ -490,6 +490,11 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	return col.hashcode
 }
 
+// CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.
+func (col *Column) CleanHashCode() {
+	col.hashcode = make([]byte, 0, 9)
+}
+
 // ResolveIndices implements Expression interface.
 func (col *Column) ResolveIndices(schema *Schema) (Expression, error) {
 	newCol := col.Clone()
@@ -665,6 +670,9 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
+	if col.repertoire != 0 {
+		return col.repertoire
+	}
 	switch col.RetType.EvalType() {
 	case types.ETJson:
 		return UNICODE

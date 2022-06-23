@@ -24,16 +24,15 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -131,7 +130,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 	}
 
-	if err = e.ctx.NewTxn(ctx); err != nil {
+	if err = sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		return err
 	}
 
@@ -562,16 +561,12 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 // It is built from "recover table" statement,
 // is used to recover the table that deleted by mistake.
 func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	t := meta.NewMeta(txn)
 	dom := domain.GetDomain(e.ctx)
 	var job *model.Job
+	var err error
 	var tblInfo *model.TableInfo
 	if s.JobID != 0 {
-		job, tblInfo, err = e.getRecoverTableByJobID(s, t, dom)
+		job, tblInfo, err = e.getRecoverTableByJobID(s, dom)
 	} else {
 		job, tblInfo, err = e.getRecoverTableByTableName(s.Table)
 	}
@@ -607,13 +602,18 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
-	job, err := t.GetHistoryDDLJob(s.JobID)
+func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
+	se, err := e.getSysSession()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer e.releaseSysSession(se)
+	job, err := ddl.GetHistoryJobByID(se, s.JobID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if job == nil {
-		return nil, nil, admin.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
+		return nil, nil, dbterror.ErrDDLJobNotFound.GenWithStackByArgs(s.JobID)
 	}
 	if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 		return nil, nil, errors.Errorf("Job %v type is %v, not dropped/truncated table", job.ID, job.Type)
@@ -692,7 +692,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	fn := func(jobs []*model.Job) (bool, error) {
 		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-	err = admin.IterHistoryDDLJobs(txn, fn)
+	err = ddl.IterHistoryDDLJobs(txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			return nil, nil, errors.Errorf("Can't find dropped/truncated table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())

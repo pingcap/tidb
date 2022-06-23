@@ -46,15 +46,21 @@ type Schemas struct {
 	schemas map[string]*schemaInfo
 }
 
-func newBackupSchemas() *Schemas {
+func NewBackupSchemas() *Schemas {
 	return &Schemas{
 		schemas: make(map[string]*schemaInfo),
 	}
 }
 
-func (ss *Schemas) addSchema(
+func (ss *Schemas) AddSchema(
 	dbInfo *model.DBInfo, tableInfo *model.TableInfo,
 ) {
+	if tableInfo == nil {
+		ss.schemas[utils.EncloseName(dbInfo.Name.L)] = &schemaInfo{
+			dbInfo: dbInfo,
+		}
+		return
+	}
 	name := fmt.Sprintf("%s.%s",
 		utils.EncloseName(dbInfo.Name.L), utils.EncloseName(tableInfo.Name.L))
 	ss.schemas[name] = &schemaInfo{
@@ -95,30 +101,31 @@ func (ss *Schemas) BackupSchemas(
 		}
 
 		workerPool.ApplyOnErrorGroup(errg, func() error {
-			logger := log.With(
-				zap.String("db", schema.dbInfo.Name.O),
-				zap.String("table", schema.tableInfo.Name.O),
-			)
+			if schema.tableInfo != nil {
+				logger := log.With(
+					zap.String("db", schema.dbInfo.Name.O),
+					zap.String("table", schema.tableInfo.Name.O),
+				)
 
-			if !skipChecksum {
-				logger.Info("table checksum start")
-				start := time.Now()
-				err := schema.calculateChecksum(ectx, store.GetClient(), backupTS, copConcurrency)
-				if err != nil {
-					return errors.Trace(err)
+				if !skipChecksum {
+					logger.Info("table checksum start")
+					start := time.Now()
+					err := schema.calculateChecksum(ectx, store.GetClient(), backupTS, copConcurrency)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					logger.Info("table checksum finished",
+						zap.Uint64("Crc64Xor", schema.crc64xor),
+						zap.Uint64("TotalKvs", schema.totalKvs),
+						zap.Uint64("TotalBytes", schema.totalBytes),
+						zap.Duration("take", time.Since(start)))
 				}
-				logger.Info("table checksum finished",
-					zap.Uint64("Crc64Xor", schema.crc64xor),
-					zap.Uint64("TotalKvs", schema.totalKvs),
-					zap.Uint64("TotalBytes", schema.totalBytes),
-					zap.Duration("take", time.Since(start)))
-			}
-			if statsHandle != nil {
-				if err := schema.dumpStatsToJSON(statsHandle); err != nil {
-					logger.Error("dump table stats failed", logutil.ShortError(err))
+				if statsHandle != nil {
+					if err := schema.dumpStatsToJSON(statsHandle); err != nil {
+						logger.Error("dump table stats failed", logutil.ShortError(err))
+					}
 				}
 			}
-
 			// Send schema to metawriter
 			s, err := schema.encodeToSchema()
 			if err != nil {
@@ -127,7 +134,9 @@ func (ss *Schemas) BackupSchemas(
 			if err := metaWriter.Send(s, op); err != nil {
 				return errors.Trace(err)
 			}
-			updateCh.Inc()
+			if updateCh != nil {
+				updateCh.Inc()
+			}
 			return nil
 		})
 	}
@@ -187,11 +196,14 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 		return nil, errors.Trace(err)
 	}
 
-	tableBytes, err := json.Marshal(s.tableInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	var tableBytes []byte
+	if s.tableInfo != nil {
+		tableBytes, err = json.Marshal(s.tableInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
+	}
 	var statsBytes []byte
 	if s.stats != nil {
 		statsBytes, err = json.Marshal(s.stats)

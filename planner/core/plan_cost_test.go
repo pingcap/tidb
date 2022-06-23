@@ -16,33 +16,67 @@ package core_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
+
+func skipPostOptimizedProjection(plan [][]interface{}) int {
+	for i, r := range plan {
+		cost := r[2].(string)
+		if cost == "0.00" && strings.Contains(r[0].(string), "Projection") {
+			// projection injected in post-optimization, whose cost is always 0 under the old cost implementation
+			continue
+		}
+		return i
+	}
+	return 0
+}
 
 func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 	//| id | estRows | estCost   | task | access object | operator info |
 	tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
 	rs := tk.MustQuery("explain format=verbose " + q).Rows()
-	oldRoot := fmt.Sprintf("%v", rs[0])
+	idx := skipPostOptimizedProjection(rs)
+	oldRoot := fmt.Sprintf("%v", rs[idx])
 	oldPlan := ""
+	oldOperators := make([]string, 0, len(rs))
 	for _, r := range rs {
 		oldPlan = oldPlan + fmt.Sprintf("%v\n", r)
+		oldOperators = append(oldOperators, r[0].(string))
 	}
 	tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
 	rs = tk.MustQuery("explain format=verbose " + q).Rows()
-	newRoot := fmt.Sprintf("%v", rs[0])
+	newRoot := fmt.Sprintf("%v", rs[idx])
 	newPlan := ""
+	newOperators := make([]string, 0, len(rs))
 	for _, r := range rs {
 		newPlan = newPlan + fmt.Sprintf("%v\n", r)
+		newOperators = append(newOperators, r[0].(string))
 	}
-	if oldRoot != newRoot {
+	sameOperators := len(oldOperators) == len(newOperators)
+	for i := range newOperators {
+		if oldOperators[i] != newOperators[i] {
+			sameOperators = false
+			break
+		}
+	}
+	if oldRoot != newRoot || !sameOperators {
 		t.Fatalf("run %v failed, info: %v, expected \n%v\n, but got \n%v\n", q, info, oldPlan, newPlan)
 	}
 }
 
 func TestNewCostInterfaceTiKV(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -226,13 +260,207 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 	}
 }
 
+func TestNewCostInterfaceTiFlash(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
+	}()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+	tk.MustExec(`create table tx (id int, value decimal(6,3))`)
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "tx" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	queries := []string{
+		"select * from t",
+		"select * from t where a < 200",
+		"select * from t where a = 200",
+		"select * from t where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a from t",
+		"select a from t where a < 200",
+		"select * from t where a+200 < 1000",
+		"select * from t where mod(a, 200) < 100",
+		"select b from t where b+200 < 1000",
+		"select b from t where mod(a, 200) < 100",
+		"select * from t where b+200 < 1000",
+		"select * from t where c+200 < 1000",
+		"select * from t where mod(b+c, 200) < 100",
+		"select a, b, d from t",
+		"select a, b, d from t where a < 200",
+		"select a, b, d from t where a = 200",
+		"select a, b, d from t where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a from t where a = 200",
+		"select a from t where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select b from t",
+		"select b from t where b < 200",
+		"select b from t where b = 200",
+		"select b from t where b in (1, 2, 3, 100, 200, 300, 1000)",
+		"select c, d from t",
+		"select c, d from t where c < 200",
+		"select c, d from t where c = 200",
+		"select c, d from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select c, d from t where c = 200 and d < 200",
+		"select d from t",
+		"select d from t where c < 200",
+		"select d from t where c = 200",
+		"select d from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select d from t where c = 200 and d < 200",
+		"select * from t where b < 200",
+		"select * from t where b = 200",
+		"select * from t where b in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a, b from t",
+		"select a, b from t where c < 200",
+		"select a, b from t where c = 200",
+		"select a, b from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a, b from t where c = 200 and d < 200",
+		"select * from t where c < 200",
+		"select * from t where c = 200",
+		"select * from t where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select * from t where c = 200 and d < 200",
+		"select * from t where b<100 or c<100",
+		"select * from t where b<100 or c=100 and d<100",
+		"select * from t where b<100 or c=100 and d<100 and a<100",
+		"select count(*) from t where a < 200",
+		"select max(a) from t where a < 200",
+		"select avg(a) from t",
+		"select sum(a) from t where a < 200",
+		"select * from t where a < 200 limit 10",
+		"select * from t where a = 200  limit 10",
+		"select a, b, d from t where a < 200 limit 10",
+		"select a, b, d from t where a = 200 limit 10",
+		"select a from t where a < 200 limit 10",
+		"select a from t where a = 200 limit 10",
+		"select b from t where b < 200 limit 10",
+		"select b from t where b = 200 limit 10",
+		"select c, d from t where c < 200 limit 10",
+		"select c, d from t where c = 200 limit 10",
+		"select c, d from t where c = 200 and d < 200 limit 10",
+		"select d from t where c < 200 limit 10",
+		"select d from t where c = 200 limit 10",
+		"select d from t where c = 200 and d < 200 limit 10",
+		"select * from t where b < 200 limit 10",
+		"select * from t where b = 200 limit 10",
+		"select a, b from t where c < 200 limit 10",
+		"select a, b from t where c = 200 limit 10",
+		"select a, b from t where c = 200 and d < 200 limit 10",
+		"select * from t where c < 200 limit 10",
+		"select * from t where c = 200 limit 10",
+		"select * from t where c = 200 and d < 200 limit 10",
+		"select * from t where a < 200 order by a",
+		"select * from t where a = 200  order by a",
+		"select a, b, d from t where a < 200 order by a",
+		"select a, b, d from t where a = 200 order by a",
+		"select a from t where a < 200 order by a",
+		"select a from t where a = 200 order by a",
+		"select b from t where b < 200 order by b",
+		"select b from t where b = 200 order by b",
+		"select c, d from t where c < 200 order by c",
+		"select c, d from t where c = 200 order by c",
+		"select c, d from t where c = 200 and d < 200 order by c, d",
+		"select d from t where c < 200 order by c",
+		"select d from t where c = 200 order by c",
+		"select d from t where c = 200 and d < 200 order by c, d",
+		"select * from t where b < 200 order by b",
+		"select * from t where b = 200 order by b",
+		"select a, b from t where c < 200 order by c",
+		"select a, b from t where c = 200 order by c",
+		"select a, b from t where c = 200 and d < 200 order by c, d",
+		"select * from t where c < 200 order by c",
+		"select * from t where c = 200 order by c",
+		"select * from t where c = 200 and d < 200 order by c, d",
+		"select * from t where a < 200 order by a limit 10",
+		"select * from t where a = 200  order by a limit 10",
+		"select a, b, d from t where a < 200 order by a limit 10",
+		"select a, b, d from t where a = 200 order by a limit 10",
+		"select a from t where a < 200 order by a limit 10",
+		"select a from t where a = 200 order by a limit 10",
+		"select b from t where b < 200 order by b limit 10",
+		"select b from t where b = 200 order by b limit 10",
+		"select c, d from t where c < 200 order by c limit 10",
+		"select c, d from t where c = 200 order by c limit 10",
+		"select c, d from t where c = 200 and d < 200 order by c, d limit 10",
+		"select d from t where c < 200 order by c limit 10",
+		"select d from t where c = 200 order by c limit 10",
+		"select d from t where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t where b < 200 order by b limit 10",
+		"select * from t where b = 200 order by b limit 10",
+		"select a, b from t where c < 200 order by c limit 10",
+		"select a, b from t where c = 200 order by c limit 10",
+		"select a, b from t where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t where c < 200 order by c limit 10",
+		"select * from t where c = 200 order by c limit 10",
+		"select * from t where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
+		"select * from t t1, t t2 where t1.a=t2.a and t1.b>1000",
+		"select * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
+		"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)",
+		"select * from t where a = 1",
+		"select * from t where a in (1, 2, 3, 4, 5)",
+		"select * from tx join ( select count(*), id from tx group by id) as A on A.id = tx.id",
+		`select * from tx join ( select count(*), id from tx group by id) as A on A.id = tx.id`,
+		`select * from tx join ( select count(*)+id as v from tx group by id) as A on A.v = tx.id`,
+		`select * from tx join ( select count(*) as v, id from tx group by value,id having value+v <10) as A on A.id = tx.id`,
+		`select * from tx join ( select /*+ hash_agg()*/  count(*) as a from t) as A on A.a = tx.id`,
+		`select sum(b) from (select tx.id, t1.id as b from tx join tx t1 on tx.id=t1.id)A group by id`,
+		`select * from (select id from tx group by id) C join (select sum(value),id from tx group by id)B on C.id=B.id`,
+		`select * from (select id from tx group by id) C join (select sum(b),id from (select tx.id, t1.id as b from tx join (select id, count(*) as c from tx group by id) t1 on tx.id=t1.id)A group by id)B on C.id=b.id`,
+		`select * from tx join tx t1 on tx.id = t1.id order by tx.value limit 1`,
+		`select * from tx join tx t1 on tx.id = t1.id order by tx.value % 100 limit 1`,
+		`select count(*) from (select tx.id, tx.value v1 from tx join tx t1 on tx.id = t1.id order by tx.value limit 20) v group by v.v1`,
+		`select * from tx join tx t1 on tx.id = t1.id limit 1`,
+		`select * from tx join tx t1 on tx.id = t1.id limit 1`,
+		`select count(*) from (select tx.id, tx.value v1 from tx join tx t1 on tx.id = t1.id limit 20) v group by v.v1`,
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+
+	for mppMode := 0; mppMode < 3; mppMode++ {
+		switch mppMode {
+		case 0: // not allow MPP
+			tk.MustExec(`set @@session.tidb_allow_mpp=0`)
+			tk.MustExec(`set @@session.tidb_enforce_mpp=0`)
+		case 1: // allow MPP
+			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
+			tk.MustExec(`set @@session.tidb_enforce_mpp=0`)
+		case 2: // allow and enforce MPP
+			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
+			tk.MustExec(`set @@session.tidb_enforce_mpp=1`)
+		}
+		for _, q := range queries {
+			checkCost(t, tk, q, fmt.Sprintf("mpp-mode=%v", mppMode))
+		}
+	}
+}
+
 func TestNewCostInterfaceRandGen(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/DisableProjectionPostOptimization"))
+	}()
+
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
+	tk.MustExec(`set @@tidb_enable_paging = off`)
 
 	queries := []string{
 		`SELECT a FROM t WHERE a is null AND d in (5307, 15677, 57970)`,
@@ -551,9 +779,191 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 		`SELECT a, count(b), count(d) FROM t WHERE k>=15022 and k<=93122 AND b in (95599, 66247, 61048) GROUP BY a LIMIT 10, 100`,
 		`SELECT k, sum(b), sum(d) FROM t WHERE b in (51268, 70191, 42012) GROUP BY k`,
 		`SELECT k, sum(b), sum(d) FROM t WHERE a is null AND d > 45399 GROUP BY k`,
+		`SELECT a, sum(b), avg(d) FROM t WHERE b is null GROUP BY a`,
+		`SELECT a, sum(b), avg(d) FROM t WHERE d in (2248, 83296, 35076) GROUP BY a`,
+		`SELECT a, sum(b), avg(d) FROM t WHERE a = 70230 AND d = 77678 GROUP BY a`,
+		`SELECT a, sum(b), count(d) FROM t WHERE a>=36138 and a<=8962 AND d > 94937 GROUP BY a`,
+		`SELECT a, avg(b), sum(d) FROM t WHERE a is null AND d < 68643 GROUP BY a`,
+		`SELECT a, avg(b), sum(d) FROM t WHERE a is null AND d>=17339 and d<=91815 GROUP BY a`,
+		`SELECT a, avg(b), avg(d) FROM t WHERE k > 41787 AND b = 85708 GROUP BY a`,
+		`SELECT a, avg(b), count(d) FROM t WHERE a>=72233 and a<=82430 AND d < 74782 GROUP BY a`,
+		`SELECT a, avg(b), count(d) FROM t WHERE k in (43456, 14938, 2836) AND b>=59014 and b<=42379 GROUP BY a`,
+		`SELECT a, avg(b), count(d) FROM t WHERE k < 94524 AND b is null GROUP BY a`,
+		`SELECT a, count(b), sum(d) FROM t WHERE b < 32152 GROUP BY a`,
+		`SELECT a, count(b), sum(d) FROM t WHERE k > 87526 AND b>=66020 and b<=33990 GROUP BY a`,
+		`SELECT a, count(b), avg(d) FROM t WHERE a = 88701 AND d in (57344, 28960, 75810) GROUP BY a`,
+		`SELECT a, count(b), avg(d) FROM t WHERE k is null AND b>=39956 and b<=79330 GROUP BY a`,
+		`SELECT a, sum(b), sum(d) FROM t WHERE a = 69824 AND d in (36759, 70922, 68442) GROUP BY a LIMIT 10`,
+		`SELECT a, sum(b), sum(d) FROM t WHERE a is null AND d = 60609 GROUP BY a LIMIT 10`,
+		`SELECT a, sum(b), sum(d) FROM t WHERE a in (69392, 44280, 87211) AND d>=41827 and d<=70058 GROUP BY a LIMIT 10`,
+		`SELECT a, sum(b), avg(d) FROM t WHERE a = 35212 AND d = 90924 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, sum(b), avg(d) FROM t WHERE a in (75569, 78024, 91137) AND d>=77000 and d<=34670 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, sum(b), avg(d) FROM t WHERE a > 1677 AND d > 21208 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, sum(b), avg(d) FROM t WHERE k < 69851 AND b < 82123 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, sum(b), count(d) FROM t WHERE a in (4748, 15710, 23059) AND d < 5230 GROUP BY a LIMIT 10`,
+		`SELECT a, sum(b), count(d) FROM t WHERE a > 9392 AND d>=96304 and d<=83400 GROUP BY a LIMIT 10`,
+		`SELECT a, sum(b), count(d) FROM t WHERE k is null AND b is null GROUP BY a LIMIT 10, 100`,
+		`SELECT a, sum(b), count(d) FROM t WHERE k in (90954, 35072, 92005) AND b in (20382, 42836, 49946) GROUP BY a LIMIT 10, 100`,
+		`SELECT a, sum(b), count(d) FROM t WHERE k in (22872, 75041, 43211) AND b > 97537 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), sum(d) FROM t WHERE a = 15276 GROUP BY a LIMIT 10`,
+		`SELECT a, avg(b), sum(d) FROM t WHERE k = 93243 AND b > 49775 GROUP BY a LIMIT 10`,
+		`SELECT a, avg(b), sum(d) FROM t WHERE k = 5807 AND b>=59830 and b<=3705 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), avg(d) FROM t WHERE b > 56235 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), avg(d) FROM t WHERE d < 16573 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), avg(d) FROM t WHERE a = 51995 AND d is null GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), avg(d) FROM t WHERE a > 60915 AND d is null GROUP BY a LIMIT 10`,
+		`SELECT a, avg(b), avg(d) FROM t WHERE a < 21665 AND d is null GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), avg(d) FROM t WHERE a>=54752 and a<=2685 AND d in (24217, 38438, 62159) GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), count(d) FROM t WHERE a is null AND d > 26828 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, avg(b), count(d) FROM t WHERE a in (4773, 38292, 31296) AND d < 4798 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), sum(d) FROM t WHERE a is null AND d is null GROUP BY a LIMIT 10`,
+		`SELECT a, count(b), sum(d) FROM t WHERE a is null AND d < 42510 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), sum(d) FROM t WHERE a in (96124, 65999, 40505) AND d = 57305 GROUP BY a LIMIT 10`,
+		`SELECT a, count(b), sum(d) FROM t WHERE a < 91075 AND d < 27748 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), sum(d) FROM t WHERE a>=41070 and a<=63441 AND d>=92748 and d<=54159 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), sum(d) FROM t WHERE k < 4598 AND b in (87638, 84310, 74328) GROUP BY a LIMIT 10`,
+		`SELECT a, count(b), avg(d) FROM t WHERE a > 2202 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), avg(d) FROM t WHERE b in (87832, 93783, 49601) GROUP BY a LIMIT 10`,
+		`SELECT a, count(b), avg(d) FROM t WHERE b>=30722 and b<=77947 GROUP BY a LIMIT 10`,
+		`SELECT a, count(b), count(d) FROM t WHERE a > 26825 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), count(d) FROM t WHERE a > 39963 AND d = 80701 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), count(d) FROM t WHERE a < 90170 AND d>=52364 and d<=20837 GROUP BY a LIMIT 10, 100`,
+		`SELECT a, count(b), count(d) FROM t WHERE k > 26370 AND b is null GROUP BY a LIMIT 10`,
+		`SELECT k, sum(b), sum(d) FROM t WHERE a > 67503 GROUP BY k`,
+		`SELECT k, sum(b), sum(d) FROM t WHERE a>=78526 and a<=16653 AND d is null GROUP BY k`,
+		`SELECT k, sum(b), sum(d) FROM t WHERE k = 88111 AND b = 66673 GROUP BY k`,
+		`SELECT k, sum(b), sum(d) FROM t WHERE k < 81018 AND b > 23525 GROUP BY k`,
+		`SELECT k, sum(b), avg(d) FROM t WHERE b > 12679 GROUP BY k`,
+		`SELECT k, sum(b), avg(d) FROM t WHERE a>=25103 and a<=42298 AND d = 78559 GROUP BY k`,
+		`SELECT k, sum(b), avg(d) FROM t WHERE k > 37175 AND b > 41914 GROUP BY k`,
+		`SELECT k, sum(b), avg(d) FROM t WHERE k>=91640 and k<=69886 AND b in (7549, 93298, 63753) GROUP BY k`,
+		`SELECT k, sum(b), count(d) FROM t WHERE a < 91940 AND d in (86848, 16004, 44675) GROUP BY k`,
+		`SELECT k, avg(b), sum(d) FROM t WHERE k is null AND b > 68997 GROUP BY k`,
+		`SELECT k, avg(b), sum(d) FROM t WHERE k>=8105 and k<=83268 AND b < 6866 GROUP BY k`,
+		`SELECT k, avg(b), count(d) FROM t WHERE a = 34808 AND d in (75160, 26300, 54672) GROUP BY k`,
+		`SELECT k, avg(b), count(d) FROM t WHERE a is null AND d = 15817 GROUP BY k`,
+		`SELECT k, avg(b), count(d) FROM t WHERE k < 79505 AND b > 84884 GROUP BY k`,
+		`SELECT k, count(b), sum(d) FROM t WHERE a > 6445 AND d is null GROUP BY k`,
+		`SELECT k, count(b), avg(d) FROM t WHERE k is null AND b < 56969 GROUP BY k`,
+		`SELECT k, count(b), count(d) FROM t WHERE k in (26798, 16685, 50665) AND b < 75359 GROUP BY k`,
+		`SELECT k, sum(b), sum(d) FROM t WHERE a in (95385, 84836, 4169) AND d is null GROUP BY k LIMIT 10`,
+		`SELECT k, sum(b), avg(d) FROM t WHERE k > 33994 AND b = 28539 GROUP BY k LIMIT 10, 100`,
+		`SELECT k, sum(b), avg(d) FROM t WHERE k>=30848 and k<=40961 AND b = 66265 GROUP BY k LIMIT 10`,
+		`SELECT k, sum(b), avg(d) FROM t WHERE k>=7658 and k<=93561 AND b>=26544 and b<=62174 GROUP BY k LIMIT 10, 100`,
+		`SELECT k, sum(b), count(d) FROM t WHERE a is null AND d in (80955, 9464, 88737) GROUP BY k LIMIT 10, 100`,
+		`SELECT k, sum(b), count(d) FROM t WHERE a in (56523, 17684, 74240) AND d is null GROUP BY k LIMIT 10`,
+		`SELECT k, sum(b), count(d) FROM t WHERE k>=87085 and k<=17995 AND b > 95778 GROUP BY k LIMIT 10, 100`,
+		`SELECT k, avg(b), sum(d) FROM t WHERE a is null GROUP BY k LIMIT 10, 100`,
+		`SELECT k, avg(b), sum(d) FROM t WHERE a = 2422 AND d = 92159 GROUP BY k LIMIT 10, 100`,
+		`SELECT k, avg(b), sum(d) FROM t WHERE a in (44669, 98509, 52972) AND d in (80339, 63761, 27757) GROUP BY k LIMIT 10`,
+		`SELECT k, avg(b), sum(d) FROM t WHERE a > 72997 AND d>=54536 and d<=39707 GROUP BY k LIMIT 10`,
+		`SELECT k, avg(b), sum(d) FROM t WHERE a>=47446 and a<=59380 AND d < 26403 GROUP BY k LIMIT 10`,
+		`SELECT k, avg(b), avg(d) FROM t WHERE a = 3584 AND d>=27957 and d<=16239 GROUP BY k LIMIT 10, 100`,
+		`SELECT k, avg(b), avg(d) FROM t WHERE a > 52521 AND d>=30079 and d<=19862 GROUP BY k LIMIT 10`,
+		`SELECT k, avg(b), avg(d) FROM t WHERE k > 14619 AND b>=18083 and b<=74295 GROUP BY k LIMIT 10, 100`,
+		`SELECT k, count(b), sum(d) FROM t WHERE a = 94171 AND d > 14044 GROUP BY k LIMIT 10, 100`,
+		`SELECT k, count(b), sum(d) FROM t WHERE a is null AND d = 37740 GROUP BY k LIMIT 10`,
+		`SELECT k, count(b), sum(d) FROM t WHERE a in (232, 82512, 20686) AND d is null GROUP BY k LIMIT 10, 100`,
+		`SELECT k, count(b), sum(d) FROM t WHERE a > 60419 AND d is null GROUP BY k LIMIT 10, 100`,
+		`SELECT k, count(b), avg(d) FROM t WHERE a = 11732 AND d is null GROUP BY k LIMIT 10`,
+		`SELECT k, count(b), avg(d) FROM t WHERE a is null AND d in (12615, 3757, 21416) GROUP BY k LIMIT 10`,
+		`SELECT k, count(b), avg(d) FROM t WHERE a>=10973 and a<=69926 AND d is null GROUP BY k LIMIT 10`,
+		`SELECT k, count(b), count(d) FROM t WHERE b < 65294 GROUP BY k LIMIT 10`,
+		`SELECT k, count(b), count(d) FROM t WHERE a in (48344, 81678, 42854) AND d is null GROUP BY k LIMIT 10`,
+		`SELECT k, count(b), count(d) FROM t WHERE k in (70584, 56374, 25542) AND b is null GROUP BY k LIMIT 10`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.k > t2.k WHERE t1.k = 7526 AND t1.b in (70283, 43219, 21555)`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.k > t2.k WHERE t1.k > 48601 AND t1.b in (23462, 61614, 38590)`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b > t2.b WHERE t1.d is null`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b > t2.b WHERE t1.a in (59932, 19444, 80475) AND t1.d in (2627, 92948, 29045)`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b > t2.b WHERE t1.a>=94521 and t1.a<=88167 AND t1.d > 47907`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.b = 21343`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k in (11013, 22381, 40966) AND t1.b < 92416`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k < 31613 AND t1.b>=83744 and t1.b<=10894`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.k > t2.k WHERE t1.a < 72776 AND t1.d is null`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b > t2.b WHERE t1.a > 89310 AND t1.d>=67592 and t1.d<=45360`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.a>=83081 and t1.a<=20997 AND t1.d = 12`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k in (64229, 44754, 59520) AND t1.b>=49588 and t1.b<=47719`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.a = t2.a WHERE t1.k>=88198 and t1.k<=99573 AND t1.b = 24468`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.a < 73392 AND t1.d < 17973`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.a>=96609 and t1.a<=90137 AND t1.d is null`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.k = 90202 AND t1.b < 64497`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b > t2.b WHERE t1.k is null AND t1.b < 43676`,
+		`SELECT /*+ MERGE_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k > 98461 AND t1.b = 40415`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a = t2.a WHERE t1.a is null AND t1.d > 31322`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a = t2.a WHERE t1.k is null AND t1.b>=90899 and t1.b<=64406`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b > t2.b WHERE t1.a = 4324`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b > t2.b WHERE t1.k < 19660 AND t1.b > 98631`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.a = 43284 AND t1.d > 64825`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.a is null AND t1.d is null`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k is null AND t1.b is null`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.a = t2.a WHERE t1.a < 77165 AND t1.d > 15170`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.k > t2.k WHERE t1.a = 95241 AND t1.d>=39952 and t1.d<=41869`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.k > t2.k WHERE t1.a in (27777, 63970, 63208) AND t1.d = 71715`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b > t2.b WHERE t1.a>=45730 and t1.a<=54009 AND t1.d > 91552`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b > t2.b WHERE t1.k in (2343, 70489, 83886) AND t1.b > 69`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k is null AND t1.b < 8746`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.a = t2.a WHERE t1.a is null AND t1.d < 27677`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.a < 20902 AND t1.d < 50495`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.a>=47261 and t1.a<=45326 AND t1.d in (37280, 28990, 47739)`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.k = 62689 AND t1.b = 54884`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.k = 76465 AND t1.b > 30247`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b > t2.b WHERE t1.b < 34810`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b > t2.b WHERE t1.a = 38313 AND t1.d in (56687, 48892, 74221)`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b > t2.b WHERE t1.a in (83245, 35118, 95233) AND t1.d is null`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b > t2.b WHERE t1.k in (39338, 68722, 27052) AND t1.b < 49416`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.d < 1801`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.a>=54747 and t1.a<=88139 AND t1.d < 88883`,
+		`SELECT /*+ INL_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k>=81863 and t1.k<=60855 AND t1.b in (41955, 54589, 43237)`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a = t2.a WHERE t1.k is null AND t1.b>=49906 and t1.b<=35620`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a = t2.a WHERE t1.k in (17077, 68978, 55677) AND t1.b is null`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b > t2.b WHERE t1.b > 8224`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k = 39083 AND t1.b < 71057`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.k < 71444 AND t1.b>=65385 and t1.b<=38435`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.a = t2.a WHERE t1.a = 89065 AND t1.d is null`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.a = t2.a WHERE t1.a in (54336, 54990, 89865) AND t1.d = 36896`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b > t2.b WHERE t1.k is null AND t1.b = 43603`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.a = 11784`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.b is null`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 LEFT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.a > 42704 AND t1.d > 62554`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.a = t2.a WHERE t1.a > 17133 AND t1.d>=17038 and t1.d<=74898`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.b < 92074`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.a > 87289 AND t1.d in (27730, 8946, 65527)`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.a < 41413 AND t1.d > 79707`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.k < 38024 AND t1.b is null`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.k > t2.k WHERE t1.k>=18888 and t1.k<=37329 AND t1.b = 11879`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b > t2.b WHERE t1.b > 30513`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b > t2.b WHERE t1.a = 30054 AND t1.d = 17561`,
+		`SELECT /*+ HASH_JOIN(t1, t2) */ * FROM t t1 RIGHT JOIN t t2 ON t1.b = t2.b AND t1.c = t2.c WHERE t1.a is null AND t1.d in (53427, 38405, 91931)`,
 	}
 
 	for _, q := range queries {
 		checkCost(t, tk, q, "")
 	}
+}
+
+func TestTrueCardCost(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key, b int, key(b))`)
+
+	checkPlanCost := func(sql string) {
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
+		rs := tk.MustQuery(`explain analyze format=verbose ` + sql).Rows()
+		planCost1 := rs[0][2].(string)
+
+		tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
+		rs = tk.MustQuery(`explain analyze format=true_card_cost ` + sql).Rows()
+		planCost2 := rs[0][2].(string)
+
+		// `true_card_cost` can work since the plan cost is changed
+		require.NotEqual(t, planCost1, planCost2)
+	}
+
+	checkPlanCost(`select * from t`)
+	checkPlanCost(`select * from t where a>10`)
+	checkPlanCost(`select * from t where a>10 limit 10`)
+	checkPlanCost(`select sum(a), b*2 from t use index(b) group by b order by sum(a) limit 10`)
 }

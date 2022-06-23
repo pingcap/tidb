@@ -41,7 +41,7 @@ type MDDatabaseMeta struct {
 func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
-		log.L().Warn("failed to extract table schema",
+		log.FromContext(ctx).Warn("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
 			log.ShortError(err),
 		)
@@ -78,7 +78,7 @@ type SourceFileMeta struct {
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {
 	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 	if err != nil {
-		log.L().Error("failed to extract table schema",
+		log.FromContext(ctx).Error("failed to extract table schema",
 			zap.String("Path", m.SchemaFile.FileMeta.Path),
 			log.ShortError(err),
 		)
@@ -157,7 +157,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 		fileRouteRules = append(fileRouteRules, defaultFileRouteRules...)
 	}
 
-	fileRouter, err := NewFileRouter(fileRouteRules)
+	fileRouter, err := NewFileRouter(fileRouteRules, log.FromContext(ctx))
 	if err != nil {
 		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
 	}
@@ -300,7 +300,7 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
 	err := store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
-		logger := log.With(zap.String("path", path))
+		logger := log.FromContext(ctx).With(zap.String("path", path))
 
 		res, err := s.loader.fileRouter.Route(filepath.ToSlash(path))
 		if err != nil {

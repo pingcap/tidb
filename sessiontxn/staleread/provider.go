@@ -15,28 +15,30 @@
 package staleread
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/table/temptable"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
 type StalenessTxnContextProvider struct {
-	is infoschema.InfoSchema
-	ts uint64
+	sctx sessionctx.Context
+	is   infoschema.InfoSchema
+	ts   uint64
 }
 
 // NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider
-func NewStalenessTxnContextProvider(is infoschema.InfoSchema, ts uint64) *StalenessTxnContextProvider {
+func NewStalenessTxnContextProvider(sctx sessionctx.Context, ts uint64, is infoschema.InfoSchema) *StalenessTxnContextProvider {
 	return &StalenessTxnContextProvider{
-		is: is,
-		ts: ts,
+		sctx: sctx,
+		is:   is,
+		ts:   ts,
 	}
-}
-
-// Initialize the provider with session context
-func (p *StalenessTxnContextProvider) Initialize(_ sessionctx.Context) error {
-	return nil
 }
 
 // GetTxnInfoSchema returns the information schema used by txn
@@ -44,12 +46,66 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
-// GetReadTS returns the read timestamp
-func (p *StalenessTxnContextProvider) GetReadTS() (uint64, error) {
+// GetStmtReadTS returns the read timestamp
+func (p *StalenessTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	return p.ts, nil
 }
 
-// GetForUpdateTS will return an error because stale read does not support it
-func (p *StalenessTxnContextProvider) GetForUpdateTS() (uint64, error) {
+// GetStmtForUpdateTS will return an error because stale read does not support it
+func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return 0, errors.New("GetForUpdateTS not supported for stalenessTxnProvider")
+}
+
+// OnInitialize is the hook that should be called when enter a new txn with this provider
+func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
+	switch tp {
+	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
+		if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
+			return err
+		}
+		p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+		if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+			return err
+		}
+	case sessiontxn.EnterNewTxnWithReplaceProvider:
+		if p.is == nil {
+			is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
+			if err != nil {
+				return err
+			}
+			p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+		}
+	default:
+		return errors.Errorf("Unsupported type: %v", tp)
+	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	txnCtx.IsStaleness = true
+	txnCtx.InfoSchema = p.is
+	return nil
+}
+
+// OnStmtStart is the hook that should be called when a new statement started
+func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
+	return nil
+}
+
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
+func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.StmtErrorHandlePoint, _ error) (sessiontxn.StmtErrorAction, error) {
+	return sessiontxn.NoIdea()
+}
+
+// OnStmtRetry is the hook that should be called when a statement retry
+func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
+	return nil
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *StalenessTxnContextProvider) AdviseWarmup() error {
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
 }

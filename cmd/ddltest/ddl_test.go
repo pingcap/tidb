@@ -24,7 +24,6 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store"
 	tidbdriver "github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/table"
@@ -180,9 +180,7 @@ func (s *ddlSuite) teardown(t *testing.T) {
 	go func() {
 		select {
 		case <-time.After(100 * time.Second):
-			buf := make([]byte, 2<<20)
-			size := runtime.Stack(buf, true)
-			log.Error("testing timeout", zap.ByteString("buf", buf[:size]))
+			log.Error("testing timeout", zap.Stack("stack"))
 		case <-quitCh:
 		}
 	}()
@@ -657,7 +655,7 @@ func TestSimple(t *testing.T) {
 				fmt.Printf("[TestSimpleMixed][Mixed][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -735,7 +733,7 @@ func TestSimple(t *testing.T) {
 				fmt.Printf("[TestSimpleInc][Update][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, "test_inc")
@@ -797,7 +795,7 @@ func TestSimpleInsert(t *testing.T) {
 				fmt.Printf("[TestSimpleInsert][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, "test_insert")
@@ -853,7 +851,7 @@ func TestSimpleInsert(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictInsert][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -918,7 +916,7 @@ func TestSimpleUpdate(t *testing.T) {
 				fmt.Printf("[TestSimpleUpdate][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -997,7 +995,7 @@ func TestSimpleUpdate(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictUpdate][Update][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -1060,7 +1058,7 @@ func TestSimpleDelete(t *testing.T) {
 				fmt.Printf("[TestSimpleDelete][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)
@@ -1137,7 +1135,7 @@ func TestSimpleDelete(t *testing.T) {
 				fmt.Printf("[TestSimpleConflictDelete][Delete][Time Cost]%v\n", end.Sub(start))
 
 				ctx := s.ctx
-				err := ctx.NewTxn(goctx.Background())
+				err := sessiontxn.NewTxn(goctx.Background(), ctx)
 				require.NoError(t, err)
 
 				tbl := s.getTable(t, tblName)

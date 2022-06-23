@@ -15,6 +15,7 @@ package auth
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb/parser/format"
 )
 
@@ -62,6 +63,9 @@ func (user *UserIdentity) String() string {
 // It matches the login user.
 func (user *UserIdentity) LoginString() string {
 	// TODO: Escape username and hostname.
+	if user == nil {
+		return ""
+	}
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 

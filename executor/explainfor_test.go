@@ -139,6 +139,10 @@ func TestExplainForVerbose(t *testing.T) {
 			require.Equal(t, rs2[i][j], rs[i][j])
 		}
 	}
+	tk.MustQuery("explain format = 'verbose' select * from t1").Rows()
+	tk.MustQuery("explain format = 'VERBOSE' select * from t1").Rows()
+	tk.MustQuery("explain analyze format = 'verbose' select * from t1").Rows()
+	tk.MustQuery("explain analyze format = 'VERBOSE' select * from t1").Rows()
 }
 
 func TestIssue11124(t *testing.T) {
@@ -470,14 +474,11 @@ func TestExplainTiFlashSystemTables(t *testing.T) {
 }
 
 func TestPointGetUserVarPlanCache(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tmp := testkit.NewTestKit(t, store)
+	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
+	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 

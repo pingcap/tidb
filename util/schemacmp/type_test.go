@@ -27,82 +27,82 @@ const binary = "binary"
 
 var (
 	// INT
-	typeInt = types.NewFieldTypeBuilderP().SetType(mysql.TypeLong).SetFlag(0).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeInt = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(0).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT NOT NULL
-	typeIntNotNull = types.NewFieldTypeBuilderP().SetType(mysql.TypeLong).SetFlag(mysql.NoDefaultValueFlag | mysql.NotNullFlag).SetFlen(10).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeIntNotNull = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.NoDefaultValueFlag | mysql.NotNullFlag).SetFlen(10).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT AUTO_INCREMENT UNIQUE
-	typeIntAutoIncrementUnique = types.NewFieldTypeBuilderP().SetType(mysql.TypeLong).SetFlag(mysql.AutoIncrementFlag | mysql.UniqueKeyFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeIntAutoIncrementUnique = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.AutoIncrementFlag | mysql.UniqueKeyFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT NOT NULL, KEY
-	typeIntNotNullKey = types.NewFieldTypeBuilderP().SetType(mysql.TypeLong).SetFlag(mysql.NoDefaultValueFlag | mysql.MultipleKeyFlag | mysql.NotNullFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeIntNotNullKey = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.NoDefaultValueFlag | mysql.MultipleKeyFlag | mysql.NotNullFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT(1)
-	typeInt1 = types.NewFieldTypeBuilderP().SetType(mysql.TypeLong).SetFlag(0).SetFlen(1).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeInt1 = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(0).SetFlen(1).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// INT(22)
-	typeInt22 = types.NewFieldTypeBuilderP().SetType(mysql.TypeLong).SetFlag(0).SetFlen(22).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeInt22 = types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(0).SetFlen(22).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// BIT(4)
-	typeBit4 = types.NewFieldTypeBuilderP().SetType(mysql.TypeBit).SetFlag(mysql.UnsignedFlag).SetFlen(4).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeBit4 = types.NewFieldTypeBuilder().SetType(mysql.TypeBit).SetFlag(mysql.UnsignedFlag).SetFlen(4).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// BIGINT(22) ZEROFILL
-	typeBigInt22ZeroFill = types.NewFieldTypeBuilderP().SetType(mysql.TypeLonglong).SetFlag(mysql.ZerofillFlag | mysql.UnsignedFlag).SetFlen(22).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeBigInt22ZeroFill = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.ZerofillFlag | mysql.UnsignedFlag).SetFlen(22).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DECIMAL(16, 8) DEFAULT 2.5
-	typeDecimal16_8 = types.NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).SetFlag(0).SetFlen(16).SetDecimal(8).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeDecimal16_8 = types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(0).SetFlen(16).SetDecimal(8).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DECIMAL
-	typeDecimal = types.NewFieldTypeBuilderP().SetType(mysql.TypeNewDecimal).SetFlag(0).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeDecimal = types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(0).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DATE
-	typeDate = types.NewFieldTypeBuilderP().SetType(mysql.TypeDate).SetFlag(mysql.BinaryFlag).SetFlen(10).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeDate = types.NewFieldTypeBuilder().SetType(mysql.TypeDate).SetFlag(mysql.BinaryFlag).SetFlen(10).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// DATETIME(3)
-	typeDateTime3 = types.NewFieldTypeBuilderP().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(23).SetDecimal(3).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeDateTime3 = types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(23).SetDecimal(3).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// TIMESTAMP
-	typeTimestamp = types.NewFieldTypeBuilderP().SetType(mysql.TypeTimestamp).SetFlag(mysql.BinaryFlag).SetFlen(19).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeTimestamp = types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlag(mysql.BinaryFlag).SetFlen(19).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// TIME(6)
-	typeTime6 = types.NewFieldTypeBuilderP().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(17).SetDecimal(6).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeTime6 = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(17).SetDecimal(6).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// YEAR(4)
-	typeYear4 = types.NewFieldTypeBuilderP().SetType(mysql.TypeYear).SetFlag(mysql.ZerofillFlag | mysql.UnsignedFlag).SetFlen(4).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeYear4 = types.NewFieldTypeBuilder().SetType(mysql.TypeYear).SetFlag(mysql.ZerofillFlag | mysql.UnsignedFlag).SetFlen(4).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// CHAR(123)
-	typeChar123 = types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(0).SetFlen(123).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
+	typeChar123 = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(0).SetFlen(123).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
 
 	// VARCHAR(65432) CHARSET ascii
-	typeVarchar65432CharsetASCII = types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(65432).SetDecimal(0).SetCharset("ascii").SetCollate("ascii_bin").SetElems(nil).BuildP()
+	typeVarchar65432CharsetASCII = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(0).SetFlen(65432).SetDecimal(0).SetCharset("ascii").SetCollate("ascii_bin").SetElems(nil).BuildP()
 
 	// BINARY(69)
-	typeBinary69 = types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetFlen(69).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeBinary69 = types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).SetFlen(69).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// VARBINARY(420)
-	typeVarBinary420 = types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).SetFlag(mysql.BinaryFlag).SetFlen(420).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeVarBinary420 = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlag(mysql.BinaryFlag).SetFlen(420).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// LONGBLOB
-	typeLongBlob = types.NewFieldTypeBuilderP().SetType(mysql.TypeLongBlob).SetFlag(mysql.BinaryFlag).SetFlen(0xffffffff).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeLongBlob = types.NewFieldTypeBuilder().SetType(mysql.TypeLongBlob).SetFlag(mysql.BinaryFlag).SetFlen(0xffffffff).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 
 	// MEDIUMTEXT
-	typeMediumText = types.NewFieldTypeBuilderP().SetType(mysql.TypeMediumBlob).SetFlag(0).SetFlen(0xffffffff).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
+	typeMediumText = types.NewFieldTypeBuilder().SetType(mysql.TypeMediumBlob).SetFlag(0).SetFlen(0xffffffff).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems(nil).BuildP()
 
 	// ENUM('tidb', 'tikv', 'tiflash', 'golang', 'rust')
-	typeEnum5 = types.NewFieldTypeBuilderP().SetType(mysql.TypeEnum).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv", "tiflash", "golang", "rust"}).BuildP()
+	typeEnum5 = types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv", "tiflash", "golang", "rust"}).BuildP()
 
 	// ENUM('tidb', 'tikv')
-	typeEnum2 = types.NewFieldTypeBuilderP().SetType(mysql.TypeEnum).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv"}).BuildP()
+	typeEnum2 = types.NewFieldTypeBuilder().SetType(mysql.TypeEnum).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv"}).BuildP()
 
 	// SET('tidb', 'tikv', 'tiflash', 'golang', 'rust')
-	typeSet5 = types.NewFieldTypeBuilderP().SetType(mysql.TypeSet).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv", "tiflash", "golang", "rust"}).BuildP()
+	typeSet5 = types.NewFieldTypeBuilder().SetType(mysql.TypeSet).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv", "tiflash", "golang", "rust"}).BuildP()
 
 	// ENUM('tidb', 'tikv')
-	typeSet2 = types.NewFieldTypeBuilderP().SetType(mysql.TypeSet).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv"}).BuildP()
+	typeSet2 = types.NewFieldTypeBuilder().SetType(mysql.TypeSet).SetFlag(0).SetFlen(types.UnspecifiedLength).SetDecimal(0).SetCharset(mysql.UTF8MB4Charset).SetCollate(mysql.UTF8MB4DefaultCollation).SetElems([]string{"tidb", "tikv"}).BuildP()
 
 	// JSON
-	typeJSON = types.NewFieldTypeBuilderP().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(0xffffffff).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
+	typeJSON = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(0xffffffff).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP()
 )
 
 func TestTypeUnwrap(t *testing.T) {
@@ -188,7 +188,7 @@ func TestTypeCompareJoin(t *testing.T) {
 			a:            typeIntNotNullKey,
 			b:            typeIntAutoIncrementUnique,
 			compareError: `at tuple index \d+: combining contradicting orders.*`,
-			join:         types.NewFieldTypeBuilderP().SetType(mysql.TypeLong).SetFlag(mysql.AutoIncrementFlag | mysql.MultipleKeyFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP(),
+			join:         types.NewFieldTypeBuilder().SetType(mysql.TypeLong).SetFlag(mysql.AutoIncrementFlag | mysql.MultipleKeyFlag).SetFlen(11).SetDecimal(0).SetCharset(binary).SetCollate(binary).SetElems(nil).BuildP(),
 		},
 		{
 			// DECIMAL of differet Flen/Decimal cannot be compared

@@ -26,7 +26,7 @@ import (
 )
 
 func TestVecGroupChecker(t *testing.T) {
-	tp := types.NewFieldTypeBuilderP().SetType(mysql.TypeVarchar).BuildP()
+	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()
 	col0 := &expression.Column{
 		RetType: tp,
 		Index:   0,

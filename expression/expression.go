@@ -17,6 +17,7 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1023,13 +1024,6 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 	return false
 }
 
-func isValidTiFlashDecimalType(tp *types.FieldType) bool {
-	if tp.GetType() != mysql.TypeNewDecimal {
-		return false
-	}
-	return tp.GetFlen() > 0 && tp.GetFlen() <= 65 && tp.GetDecimal() >= 0 && tp.GetDecimal() <= 30 && tp.GetFlen() >= tp.GetDecimal()
-}
-
 func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
 	switch scalarFunc.FuncName.L {
 	case ast.Cast:
@@ -1056,7 +1050,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Concat, ast.ConcatWS,
 		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay,
+		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay, ast.WeekOfYear, ast.ToSeconds,
+		ast.FromDays, ast.ToDays,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
@@ -1099,7 +1094,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return sourceType.GetType() == retType.GetType() || retType.GetType() == mysql.TypeDouble
 		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
 			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
-			return isValidTiFlashDecimalType(function.RetType)
+			return function.RetType.IsDecimalValid()
 		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
 			tipb.ScalarFuncSig_CastStringAsString /*, tipb.ScalarFuncSig_CastDurationAsString, tipb.ScalarFuncSig_CastJsonAsString*/ :
 			return true
@@ -1286,6 +1281,13 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 				pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'."))
 			}
 			return false
+		case mysql.TypeNewDecimal:
+			if !expr.GetType().IsDecimalValid() {
+				if pc.sc.InExplainStmt {
+					pc.sc.AppendWarning(errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "')."))
+				}
+				return false
+			}
 		}
 	}
 	switch x := expr.(type) {
@@ -1422,8 +1424,8 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 					newDecimal = mysql.MaxDecimalScale
 				}
 			}
-			args[0].GetType().SetFlen(newFlen)
-			args[0].GetType().SetDecimal(newDecimal)
+			args[0].GetType().SetFlenUnderLimit(newFlen)
+			args[0].GetType().SetDecimalUnderLimit(newDecimal)
 		}
 	}
 }

@@ -27,7 +27,7 @@ import (
 )
 
 func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll string) Expression {
-	constant := &Constant{RetType: types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetCharset(chs).SetCollate(coll).BuildP()}
+	constant := &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(chs).SetCollate(coll).BuildP()}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repertoire)
 	return constant
@@ -235,7 +235,7 @@ func newConstString(s string, coercibility Coercibility, chs, coll string) *Cons
 			repe = UNICODE
 		}
 	}
-	constant := &Constant{RetType: types.NewFieldTypeBuilderP().SetType(mysql.TypeString).SetCharset(chs).SetCollate(coll).BuildP(), Value: types.NewDatum(s)}
+	constant := &Constant{RetType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(chs).SetCollate(coll).BuildP(), Value: types.NewDatum(s)}
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repe)
 	return constant

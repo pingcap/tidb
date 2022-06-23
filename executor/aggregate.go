@@ -498,7 +498,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	for _, key := range groupKey {
 		mem += int64(cap(key))
 	}
-	mem += 12 * int64(cap(groupKey))
+	mem += aggfuncs.DefSliceSize * int64(cap(groupKey))
 	return mem
 }
 
@@ -602,11 +602,11 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		for _, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta
+			allMemDelta += memDelta + 8 // the memory usage of PartialResult
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++

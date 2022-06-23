@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime/trace"
 	"strings"
 	"sync/atomic"
@@ -239,8 +238,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	})
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
-	startTs := uint64(math.MaxUint64)
-	err := a.Ctx.InitTxnWithStartTS(startTs)
+	startTs, err := sessiontxn.GetTxnManager(a.Ctx).GetStmtReadTS()
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +375,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)
-			ts, err := txnManager.GetReadTS()
+			ts, err := txnManager.GetStmtReadTS()
 			if err != nil {
 				panic(err)
 			}
@@ -416,6 +414,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
+
+	failpoint.Inject("hookBeforeFirstRunExecutor", func() {
+		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookBeforeFirstRunExecutorKey)
+	})
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -490,10 +492,10 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// `rs.Close` in `handleStmt`
 		if sc != nil && rs == nil {
 			if sc.MemTracker != nil {
-				sc.MemTracker.DetachFromGlobalTracker()
+				sc.MemTracker.Detach()
 			}
 			if sc.DiskTracker != nil {
-				sc.DiskTracker.DetachFromGlobalTracker()
+				sc.DiskTracker.Detach()
 			}
 		}
 	}()
@@ -592,6 +594,11 @@ func (c *chunkRowRecordSet) Close() error {
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
+	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		terror.Log(e.Close())
+		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
+	}
+
 	for {
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 		e, err = a.handlePessimisticLockError(ctx, err)
@@ -754,64 +761,45 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
 	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
-	seCtx.GetSessionVars().TxnCtx.LastRcReadTs = newForUpdateTS
 	return nil
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
-func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
-	sessVars := a.Ctx.GetSessionVars()
-	if err != nil && sessVars.IsIsolation(ast.Serializable) {
+func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (_ Executor, err error) {
+	if lockErr == nil {
+		return nil, nil
+	}
+
+	defer func() {
+		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
+			err = ErrDeadlock
+		}
+	}()
+
+	action, err := sessiontxn.GetTxnManager(a.Ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	if err != nil {
 		return nil, err
 	}
-	txnCtx := sessVars.TxnCtx
-	var newForUpdateTS uint64
-	if deadlock, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
-		if !deadlock.IsRetryable {
-			return nil, ErrDeadlock
-		}
-		logutil.Logger(ctx).Info("single statement deadlock, retry statement",
-			zap.Uint64("txn", txnCtx.StartTS),
-			zap.Uint64("lockTS", deadlock.LockTs),
-			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
-			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
-	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
-		errStr := err.Error()
-		forUpdateTS := txnCtx.GetForUpdateTS()
-		logutil.Logger(ctx).Debug("pessimistic write conflict, retry statement",
-			zap.Uint64("txn", txnCtx.StartTS),
-			zap.Uint64("forUpdateTS", forUpdateTS),
-			zap.String("err", errStr))
-		// Always update forUpdateTS by getting a new timestamp from PD.
-		// If we use the conflict commitTS as the new forUpdateTS and async commit
-		// is used, the commitTS of this transaction may exceed the max timestamp
-		// that PD allocates. Then, the change may be invisible to a new transaction,
-		// which means linearizability is broken.
-	} else {
-		// this branch if err not nil, always update forUpdateTS to avoid problem described below
-		// for nowait, when ErrLock happened, ErrLockAcquireFailAndNoWaitSet will be returned, and in the same txn
-		// the select for updateTs must be updated, otherwise there maybe rollback problem.
-		// begin;  select for update key1(here ErrLocked or other errors(or max_execution_time like util),
-		//         key1 lock not get and async rollback key1 is raised)
-		//         select for update key1 again(this time lock succ(maybe lock released by others))
-		//         the async rollback operation rollbacked the lock just acquired
-		if err != nil {
-			tsErr := UpdateForUpdateTS(a.Ctx, 0)
-			if tsErr != nil {
-				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
-			}
-		}
-		return nil, err
+
+	if action != sessiontxn.StmtActionRetryReady {
+		return nil, lockErr
 	}
+
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
 	a.retryStartTime = time.Now()
-	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
+
+	err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	failpoint.Inject("hookAfterOnStmtRetryWithLockError", func() {
+		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookAfterOnStmtRetryWithLockErrorKey)
+	})
+
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -837,36 +825,13 @@ type pessimisticTxn interface {
 	KeysNeedToLock() ([]kv.Key, error)
 }
 
-// buildExecutor build a executor from plan, prepared statement may need additional procedure.
+// buildExecutor build an executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor() (Executor, error) {
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
-		if snapshotTS := ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-			if err := ctx.InitTxnWithStartTS(snapshotTS); err != nil {
-				return nil, err
-			}
-		} else {
-			// Do not sync transaction for Execute statement, because the real optimization work is done in
-			// "ExecuteExec.Build".
-			useMaxTS, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
-			if err != nil {
-				return nil, err
-			}
-			if useMaxTS {
-				logutil.BgLogger().Debug("init txnStartTS with MaxUint64", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.String("text", a.Text))
-				if err := ctx.InitTxnWithStartTS(math.MaxUint64); err != nil {
-					return nil, err
-				}
-			}
-			if stmtPri := stmtCtx.Priority; stmtPri == mysql.NoPriority {
-				switch {
-				case useMaxTS:
-					stmtCtx.Priority = kv.PriorityHigh
-				case a.LowerPriority:
-					stmtCtx.Priority = kv.PriorityLow
-				}
-			}
+		if stmtCtx.Priority == mysql.NoPriority && a.LowerPriority {
+			stmtCtx.Priority = kv.PriorityLow
 		}
 	}
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
@@ -1009,10 +974,10 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
 	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
+			stmtCtx.DiskTracker.Detach()
 		}
 		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
+			stmtCtx.MemTracker.Detach()
 		}
 	}
 }

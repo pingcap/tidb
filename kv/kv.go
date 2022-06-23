@@ -174,6 +174,9 @@ type MemBuffer interface {
 
 	// Size returns sum of keys and values length.
 	Size() int
+
+	// RemoveFromBuffer removes the entry from the buffer. It's used for testing.
+	RemoveFromBuffer(Key)
 }
 
 // LockCtx contains information for LockKeys method.
@@ -235,6 +238,12 @@ type Transaction interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()
+
+	// GetMemDBCheckpoint gets the transaction's memDB checkpoint.
+	GetMemDBCheckpoint() *tikv.MemDBCheckpoint
+
+	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
+	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
 }
 
 // AssertionProto is an interface defined for the assertion protocol.
@@ -332,9 +341,6 @@ type Request struct {
 	Desc bool
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache bool
-	// Streaming indicates using streaming API for this request, result in that one Next()
-	// call would not corresponds to a whole region result.
-	Streaming bool
 	// ReplicaRead is used for reading data from replicas, only follower is supported at this time.
 	ReplicaRead ReplicaReadType
 	// StoreType represents this request is sent to the which type of store.

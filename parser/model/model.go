@@ -299,6 +299,16 @@ func FindColumnInfoByID(cols []*ColumnInfo, id int64) *ColumnInfo {
 	return nil
 }
 
+// FindIndexInfoByID finds IndexInfo in indices by id.
+func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
+	for _, idx := range indices {
+		if idx.ID == id {
+			return idx
+		}
+	}
+	return nil
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1
@@ -798,6 +808,54 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	return colInfo
 }
 
+// GetPrimaryKey extract the primary key in a table and return `IndexInfo`
+// The returned primary key could be explicit or implicit.
+// If there is no explicit primary key in table,
+// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// For more information about implicit primary key, see
+// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
+func (t *TableInfo) GetPrimaryKey() *IndexInfo {
+	var implicitPK *IndexInfo
+
+	for _, key := range t.Indices {
+		if key.Primary {
+			// table has explicit primary key
+			return key
+		}
+		// The case index without any columns should never happen, but still do a check here
+		if len(key.Columns) == 0 {
+			continue
+		}
+		// find the first unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique {
+			// ensure all columns in unique key have NOT NULL flag
+			allColNotNull := true
+			skip := false
+			for _, idxCol := range key.Columns {
+				col := FindColumnInfo(t.Cols(), idxCol.Name.L)
+				// This index has a column in DeleteOnly state,
+				// or it is expression index (it defined on a hidden column),
+				// it can not be implicit PK, go to next index iterator
+				if col == nil || col.Hidden {
+					skip = true
+					break
+				}
+				if !mysql.HasNotNullFlag(col.GetFlag()) {
+					allColNotNull = false
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+			if allColNotNull {
+				implicitPK = key
+			}
+		}
+	}
+	return implicitPK
+}
+
 // ColumnIsInIndex checks whether c is included in any indices of t.
 func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	for _, index := range t.Indices {
@@ -977,6 +1035,29 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
+}
+
+func (pi *PartitionInfo) Clone() *PartitionInfo {
+	newPi := *pi
+	newPi.Columns = make([]CIStr, len(pi.Columns))
+	copy(newPi.Columns, pi.Columns)
+
+	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
+	for i := range pi.Definitions {
+		newPi.Definitions[i] = pi.Definitions[i].Clone()
+	}
+
+	newPi.AddingDefinitions = make([]PartitionDefinition, len(pi.AddingDefinitions))
+	for i := range pi.AddingDefinitions {
+		newPi.AddingDefinitions[i] = pi.AddingDefinitions[i].Clone()
+	}
+
+	newPi.DroppingDefinitions = make([]PartitionDefinition, len(pi.DroppingDefinitions))
+	for i := range pi.DroppingDefinitions {
+		newPi.DroppingDefinitions[i] = pi.DroppingDefinitions[i].Clone()
+	}
+
+	return &newPi
 }
 
 // GetNameByID gets the partition name by ID.
@@ -1201,6 +1282,24 @@ func (t *TableInfo) FindConstraintInfoByName(constrName string) *ConstraintInfo 
 	return nil
 }
 
+// FindIndexNameByID finds index name by id.
+func (t *TableInfo) FindIndexNameByID(id int64) string {
+	indexInfo := FindIndexInfoByID(t.Indices, id)
+	if indexInfo != nil {
+		return indexInfo.Name.L
+	}
+	return ""
+}
+
+// FindColumnNameByID finds column name by id.
+func (t *TableInfo) FindColumnNameByID(id int64) string {
+	colInfo := FindColumnInfoByID(t.Columns, id)
+	if colInfo != nil {
+		return colInfo.Name.L
+	}
+	return ""
+}
+
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
 	ID       int64       `json:"id"`
@@ -1327,8 +1426,7 @@ type PolicyInfo struct {
 }
 
 func (p *PolicyInfo) Clone() *PolicyInfo {
-	var cloned PolicyInfo
-	cloned = *p
+	cloned := *p
 	cloned.PlacementSettings = p.PlacementSettings.Clone()
 	return &cloned
 }
@@ -1390,8 +1488,7 @@ func (p *PlacementSettings) String() string {
 }
 
 func (p *PlacementSettings) Clone() *PlacementSettings {
-	var cloned PlacementSettings
-	cloned = *p
+	cloned := *p
 	return &cloned
 }
 

@@ -732,7 +732,7 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(args[1].GetType().GetFlen())
+	bf.tp.SetFlenUnderLimit(args[1].GetType().GetFlen())
 	switch argTp {
 	case types.ETString:
 		sig = &builtinSetStringVarSig{bf}
@@ -776,7 +776,6 @@ func (b *builtinSetStringVarSig) evalString(row chunk.Row) (res string, isNull b
 	if err != nil {
 		return "", isNull, err
 	}
-	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
 	sessionVars.SetUserVar(varName, stringutil.Copy(res), datum.Collation())
 	sessionVars.UsersLock.Unlock()
@@ -1088,7 +1087,7 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.SetFlen(c.tp.GetFlen())
+	bf.tp.SetFlenUnderLimit(c.tp.GetFlen())
 	sig = &builtinGetDecimalVarSig{bf}
 	return sig, nil
 }
