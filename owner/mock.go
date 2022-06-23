@@ -91,3 +91,8 @@ func (m *mockManager) ResignOwner(ctx context.Context) error {
 func (m *mockManager) RequireOwner(context.Context) error {
 	return nil
 }
+
+// CampaignCancel implements Manager.CampaignCancel interface
+func (m *mockManager) CampaignCancel() {
+	// do nothing
+}

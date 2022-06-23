@@ -50,10 +50,12 @@ type Manager interface {
 	CampaignOwner() error
 	// ResignOwner lets the owner start a new election.
 	ResignOwner(ctx context.Context) error
-	// Cancel cancels this etcd ownerManager campaign.
+	// Cancel cancels this etcd ownerManager.
 	Cancel()
 	// RequireOwner requires the ownerManager is owner.
 	RequireOwner(ctx context.Context) error
+	// CampaignCancel cancels one etcd campaign
+	CampaignCancel()
 }
 
 const (
@@ -68,16 +70,17 @@ type DDLOwnerChecker interface {
 
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
-	id        string // id is the ID of the manager.
-	key       string
-	ctx       context.Context
-	prompt    string
-	logPrefix string
-	logCtx    context.Context
-	etcdCli   *clientv3.Client
-	cancel    context.CancelFunc
-	elec      unsafe.Pointer
-	wg        sync.WaitGroup
+	id             string // id is the ID of the manager.
+	key            string
+	ctx            context.Context
+	prompt         string
+	logPrefix      string
+	logCtx         context.Context
+	etcdCli        *clientv3.Client
+	cancel         context.CancelFunc
+	elec           unsafe.Pointer
+	wg             sync.WaitGroup
+	campaignCancel context.CancelFunc
 }
 
 // NewOwnerManager creates a new Manager.
@@ -174,11 +177,16 @@ func (m *ownerManager) RetireOwner() {
 	atomic.StorePointer(&m.elec, nil)
 }
 
+// CampaignCancel implements Manager.CampaignCancel interface.
+func (m *ownerManager) CampaignCancel() {
+	m.campaignCancel()
+}
+
 func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
-	var cancel context.CancelFunc
-	ctx, cancel := context.WithCancel(m.ctx)
+	var ctx context.Context
+	ctx, m.campaignCancel = context.WithCancel(m.ctx)
 	defer func() {
-		cancel()
+		m.campaignCancel()
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.Stack("buffer"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()

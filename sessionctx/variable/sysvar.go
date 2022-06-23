@@ -417,7 +417,17 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeInstance, Name: TiDBEnableDDL, Value: BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), Type: TypeBool,
 		SetGlobal: func(s *SessionVars, val string) error {
-			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(TiDBOptOn(val))
+			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load(), TiDBOptOn(val)
+			if oldVal != newVal {
+				var err error
+				if newVal && EnableDDL != nil {
+					err = EnableDDL()
+				} else if !newVal && DisableDDL != nil {
+					err = DisableDDL()
+				}
+				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
+				return err
+			}
 			return nil
 		},
 		GetGlobal: func(s *SessionVars) (string, error) {

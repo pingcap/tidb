@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -439,6 +440,9 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 	}
+	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
+	variable.EnableDDL = d.EnableDDL
+	variable.DisableDDL = d.DisableDDL
 
 	return d
 }
@@ -468,46 +472,46 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
+	var err error
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
+	d.workers = make(map[workerType]*worker, 2)
+	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+	d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	for _, worker := range d.workers {
+		worker.wg.Add(1)
+		w := worker
+		go w.start(d.ddlCtx)
+
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
+
+		// When the start function is called, we will send a fake job to let worker
+		// checks owner firstly and try to find whether a job exists and run.
+		asyncNotify(worker.ddlJobCh)
+	}
+
+	d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+	if err != nil {
+		return err
+	}
+
+	go d.schemaSyncer.StartCleanWork()
+	if config.TableLockEnabled() {
+		d.wg.Add(1)
+		go d.startCleanDeadTableLock()
+	}
+	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
-		err := d.ownerManager.CampaignOwner()
+		err = d.ownerManager.CampaignOwner()
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		d.workers = make(map[workerType]*worker, 2)
-		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		for _, worker := range d.workers {
-			worker.wg.Add(1)
-			w := worker
-			go w.start(d.ddlCtx)
-
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
-
-			// When the start function is called, we will send a fake job to let worker
-			// checks owner firstly and try to find whether a job exists and run.
-			asyncNotify(worker.ddlJobCh)
-		}
-
-		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-		if err != nil {
-			return err
-		}
-
-		go d.schemaSyncer.StartCleanWork()
-		if config.TableLockEnabled() {
-			d.wg.Add(1)
-			go d.startCleanDeadTableLock()
-		}
-		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
 	variable.RegisterStatistics(d)
@@ -516,6 +520,43 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
+
+	return nil
+}
+
+// EnableDDL enable this node to execute ddl.
+// Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
+// we should make sure that before invoking EnableDDL(), ddl is DISABLE.
+func (d *ddl) EnableDDL() error {
+	err := d.ownerManager.CampaignOwner()
+	return errors.Trace(err)
+}
+
+// DisableDDL disable this node to execute ddl.
+// We should make sure that before invoking DisableDDL(), ddl is ENABLE.
+func (d *ddl) DisableDDL() error {
+	if d.ownerManager.IsOwner() {
+		// If there is only one node, we should NOT disable ddl.
+		serverInfo, err := infosync.GetAllServerInfo(d.ctx)
+		if err != nil {
+			return err
+		}
+		if len(serverInfo) <= 1 {
+			return dbterror.ErrDDLSetting
+		}
+
+		// FIXME: if possible, when this node is the only node with DDL, ths setting of DisableDDL should fail.
+
+		// lets the owner start a new election.
+		err = d.ownerManager.ResignOwner(d.ctx)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	// disable campaign by interrupting campaignLoop
+	d.ownerManager.CampaignCancel()
 
 	return nil
 }
