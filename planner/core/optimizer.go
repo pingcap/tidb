@@ -526,6 +526,10 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 	}
 
 	tuples := make([]*Tuple, 0)
+
+	// physicalLockMap is a map for mapping PhysicalLock to PhysicalUnionScan. We need this map because when
+	// getLockWaitTime(sctx, physicalLock.Lock) returns false, we delete the relevant PhysicalUnionScan (if it exists)
+	// in the unionScanSet to avoid elimination.
 	physicalLockMap := make(map[PhysicalPlan]PhysicalPlan)
 	unionScanSet := make(map[PhysicalPlan]interface{})
 
@@ -537,26 +541,26 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 					pointGet:     x,
 					physicalLock: physicalLock,
 				})
+				if physicalLock != nil {
+					physicalLockMap[physicalLock] = unionScan
+				}
+				if unionScan != nil {
+					unionScanSet[unionScan] = nil
+				}
 			case *BatchPointGetPlan:
 				tuples = append(tuples, &Tuple{
 					batchPointGet: x,
 					physicalLock:  physicalLock,
 				})
-			case *PhysicalLock:
-				// There may be multiple PhysicalLock nodes in a single chain.
-				// In this case, we only eliminate the last one.
 				if physicalLock != nil {
-					delete(physicalLockMap, physicalLock)
+					physicalLockMap[physicalLock] = unionScan
 				}
-				physicalLockMap[x] = unionScan
+				if unionScan != nil {
+					unionScanSet[unionScan] = nil
+				}
+			case *PhysicalLock:
 				return x, nil, false
 			case *PhysicalUnionScan:
-				// There may be multiple PhysicalUnionScan nodes in a single chain.
-				// In this case, we only eliminate the last one.
-				if unionScan != nil {
-					delete(unionScanSet, unionScan)
-				}
-				unionScanSet[x] = nil
 				return nil, x, false
 			}
 			return nil, nil, false
@@ -611,10 +615,14 @@ func iteratePhysicalPlan(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *
 		return
 	}
 
+	// There may be multiple PhysicalLock nodes in a single chain.
+	// In this case, we only eliminate the last one.
 	if lock != nil {
 		physicalLock = lock
 	}
 
+	// There may be multiple PhysicalUnionScan nodes in a single chain.
+	// In this case, we only eliminate the last one.
 	if scan != nil {
 		unionScan = scan
 	}
