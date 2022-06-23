@@ -747,8 +747,8 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 					}
 
 					tk2.SetBreakPoints([]string{
-						sessiontxn.StopPointBeforeExecutorFirstRun,
-						sessiontxn.StopPointOnStmtRetryAfterLockError,
+						sessiontxn.BreakPointBeforeExecutorFirstRun,
+						sessiontxn.BreakPointOnStmtRetryAfterLockError,
 					})
 
 					var isSelect, isUpdate bool
@@ -764,16 +764,16 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 					}
 
 					// Pause the session before the executor first run and then update the record in another session
-					tk2.ExpectStopOnBreakPoint(sessiontxn.StopPointBeforeExecutorFirstRun)
+					tk2.ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
 					tk.MustExec("update t1 set v=v+1")
 
 					// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
 					// and then update the record in another session again.
-					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.StopPointOnStmtRetryAfterLockError)
+					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
 					tk.MustExec("update t1 set v=v+1")
 
 					// Because the record is updated by another session again, when this session continues, it will get a lock error again.
-					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.StopPointOnStmtRetryAfterLockError)
+					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
 					tk2.Continue().ExpectIdle()
 					switch {
 					case isSelect:

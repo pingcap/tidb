@@ -15,7 +15,7 @@ go_library(
 
 go_library(
     name = "breakpoint",
-    srcs = ["stop.go"],
+    srcs = ["breakpoint.go"],
     importpath = "github.com/pingcap/tidb/util/breakpoint",
     visibility = ["//visibility:public"],
     deps = [
