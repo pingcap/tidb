@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/storage v1.21.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v0.12.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.2.0
-	github.com/BurntSushi/toml v0.3.1
+	github.com/BurntSushi/toml v0.4.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/Shopify/sarama v1.29.0
@@ -87,7 +87,7 @@ require (
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	golang.org/x/text v0.3.7
 	golang.org/x/time v0.0.0-20220224211638-0e9765cccd65
-	golang.org/x/tools v0.1.8
+	golang.org/x/tools v0.1.11-0.20220513221640-090b14e8501f
 	google.golang.org/api v0.69.0
 	google.golang.org/grpc v1.44.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -95,7 +95,11 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-require github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+require (
+	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/charithe/durationcheck v0.0.9
+	honnef.co/go/tools v0.0.1-2020.1.4
+)
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
@@ -128,6 +132,7 @@ require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/golang/glog v1.0.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
+	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/go-cmp v0.5.7 // indirect
 	github.com/googleapis/gax-go/v2 v2.1.1 // indirect
 	github.com/gorilla/handlers v1.5.1 // indirect
@@ -193,6 +198,8 @@ require (
 	go.opentelemetry.io/otel/trace v0.20.0 // indirect
 	go.opentelemetry.io/proto/otlp v0.7.0 // indirect
 	golang.org/x/crypto v0.0.0-20220214200702-86341886e292 // indirect
+	golang.org/x/exp/typeparams v0.0.0-20220218215828-6cf2b201936e // indirect
+	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220216160803-4663080d8bc8 // indirect
@@ -206,3 +213,5 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
+
+replace honnef.co/go/tools => honnef.co/go/tools v0.3.2

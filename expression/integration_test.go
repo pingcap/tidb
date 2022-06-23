@@ -6233,11 +6233,11 @@ func TestGlobalCacheCorrectness(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 151"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 0"))
 	tk.MustExec("SET GLOBAL max_connections=1234")
 	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 1234"))
 	// restore
-	tk.MustExec("SET GLOBAL max_connections=151")
+	tk.MustExec("SET GLOBAL max_connections=0")
 }
 
 func TestRedundantColumnResolve(t *testing.T) {

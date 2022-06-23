@@ -1021,16 +1021,17 @@ func TestValidateSetVar(t *testing.T) {
 	result.Check(testkit.Rows("SYSTEM"))
 
 	// The following cases test value out of range and illegal type when setting system variables.
-	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html for more details.
+	// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html for more details.
 	tk.MustExec("set @@global.max_connections=100001")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
 	result = tk.MustQuery("select @@global.max_connections;")
 	result.Check(testkit.Rows("100000"))
 
+	// "max_connections == 0" means there is no limitation on the number of connections.
 	tk.MustExec("set @@global.max_connections=-1")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
 	result = tk.MustQuery("select @@global.max_connections;")
-	result.Check(testkit.Rows("1"))
+	result.Check(testkit.Rows("0"))
 
 	err = tk.ExecToErr("set @@global.max_connections='hello'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
@@ -1077,7 +1078,7 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustExec("set @@global.max_connections=-1")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
 	result = tk.MustQuery("select @@global.max_connections;")
-	result.Check(testkit.Rows("1"))
+	result.Check(testkit.Rows("0"))
 
 	err = tk.ExecToErr("set @@global.max_connections='hello'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
@@ -1333,15 +1334,15 @@ func TestSelectGlobalVar(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
-	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("151"))
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@global.max_connections=100;")
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("100"))
 	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("100"))
 
-	tk.MustExec("set @@global.max_connections=151;")
+	tk.MustExec("set @@global.max_connections=0;")
 
 	// test for unknown variable.
 	err := tk.ExecToErr("select @@invalid")

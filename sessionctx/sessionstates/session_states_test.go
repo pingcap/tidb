@@ -19,8 +19,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/sem"
@@ -167,7 +169,10 @@ func TestSystemVars(t *testing.T) {
 		},
 	}
 
-	sem.Enable()
+	if !sem.IsEnabled() {
+		sem.Enable()
+		defer sem.Disable()
+	}
 	for _, tt := range tests {
 		tk1 := testkit.NewTestKit(t, store)
 		for _, stmt := range tt.stmts {
@@ -203,6 +208,230 @@ func TestSystemVars(t *testing.T) {
 		tk3 := testkit.NewTestKit(t, store)
 		showSessionStatesAndSet(t, tk1, tk3)
 		tk3.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+	}
+}
+
+func TestSessionCtx(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t1(id int)")
+
+	tests := []struct {
+		setFunc   func(tk *testkit.TestKit) any
+		checkFunc func(tk *testkit.TestKit, param any)
+	}{
+		{
+			// check PreparedStmtID
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, uint32(1), tk.Session().GetSessionVars().GetNextPreparedStmtID())
+			},
+		},
+		{
+			// check PreparedStmtID
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("prepare stmt from 'select ?'")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, uint32(2), tk.Session().GetSessionVars().GetNextPreparedStmtID())
+			},
+		},
+		{
+			// check Status
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, mysql.ServerStatusAutocommit, tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
+			},
+		},
+		{
+			// check Status
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("set autocommit=0")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, uint16(0), tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
+			},
+		},
+		{
+			// check CurrentDB
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select database()").Check(testkit.Rows("<nil>"))
+			},
+		},
+		{
+			// check CurrentDB
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("use test")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select database()").Check(testkit.Rows("test"))
+			},
+		},
+		{
+			// check LastTxnInfo
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@tidb_last_txn_info").Check(testkit.Rows(""))
+			},
+		},
+		{
+			// check LastTxnInfo
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("begin")
+				tk.MustExec("insert test.t1 value(1)")
+				tk.MustExec("commit")
+				rows := tk.MustQuery("select @@tidb_last_txn_info").Rows()
+				require.NotEqual(t, "", rows[0][0].(string))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@tidb_last_txn_info").Check(param.([][]interface{}))
+			},
+		},
+		{
+			// check LastQueryInfo
+			setFunc: func(tk *testkit.TestKit) any {
+				rows := tk.MustQuery("select @@tidb_last_query_info").Rows()
+				require.NotEqual(t, "", rows[0][0].(string))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@tidb_last_query_info").Check(param.([][]interface{}))
+			},
+		},
+		{
+			// check LastQueryInfo
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustQuery("select * from test.t1")
+				startTS := tk.Session().GetSessionVars().LastQueryInfo.StartTS
+				require.NotEqual(t, uint64(0), startTS)
+				return startTS
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				startTS := tk.Session().GetSessionVars().LastQueryInfo.StartTS
+				require.Equal(t, param.(uint64), startTS)
+			},
+		},
+		{
+			// check LastDDLInfo
+			setFunc: func(tk *testkit.TestKit) any {
+				rows := tk.MustQuery("select @@tidb_last_ddl_info").Rows()
+				require.NotEqual(t, "", rows[0][0].(string))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
+			},
+		},
+		{
+			// check LastDDLInfo
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("truncate table test.t1")
+				rows := tk.MustQuery("select @@tidb_last_ddl_info").Rows()
+				require.NotEqual(t, "", rows[0][0].(string))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
+			},
+		},
+		{
+			// check LastFoundRows
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("insert test.t1 value(1), (2), (3), (4), (5)")
+				// SQL_CALC_FOUND_ROWS is not supported now, so we just test normal select.
+				rows := tk.MustQuery("select * from test.t1 limit 3").Rows()
+				require.Equal(t, 3, len(rows))
+				return "3"
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select found_rows()").Check(testkit.Rows(param.(string)))
+			},
+		},
+		{
+			// check SequenceState
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create sequence test.s")
+				tk.MustQuery("select nextval(test.s)").Check(testkit.Rows("1"))
+				tk.MustQuery("select lastval(test.s)").Check(testkit.Rows("1"))
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select lastval(test.s)").Check(testkit.Rows("1"))
+				tk.MustQuery("select nextval(test.s)").Check(testkit.Rows("2"))
+			},
+		},
+		{
+			// check MPPStoreLastFailTime
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.Session().GetSessionVars().MPPStoreLastFailTime = map[string]time.Time{"store1": time.Now()}
+				return tk.Session().GetSessionVars().MPPStoreLastFailTime
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				failTime := tk.Session().GetSessionVars().MPPStoreLastFailTime
+				require.Equal(t, 1, len(failTime))
+				tm, ok := failTime["store1"]
+				require.True(t, ok)
+				require.True(t, param.(map[string]time.Time)["store1"].Equal(tm))
+			},
+		},
+		{
+			// check FoundInPlanCache
+			setFunc: func(tk *testkit.TestKit) any {
+				require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+			},
+		},
+		{
+			// check FoundInPlanCache
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("prepare stmt from 'select * from test.t1'")
+				tk.MustQuery("execute stmt")
+				tk.MustQuery("execute stmt")
+				require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			},
+		},
+		{
+			// check FoundInBinding
+			setFunc: func(tk *testkit.TestKit) any {
+				require.False(t, tk.Session().GetSessionVars().FoundInBinding)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+			},
+		},
+		{
+			// check FoundInBinding
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1")
+				tk.MustQuery("select * from test.t1")
+				require.True(t, tk.Session().GetSessionVars().FoundInBinding)
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tk1 := testkit.NewTestKit(t, store)
+		var param any
+		if tt.setFunc != nil {
+			param = tt.setFunc(tk1)
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		showSessionStatesAndSet(t, tk1, tk2)
+		tt.checkFunc(tk2, param)
 	}
 }
 
