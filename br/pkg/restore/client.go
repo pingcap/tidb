@@ -420,6 +420,7 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
+	log.Debug("new worker pool", zap.Uint("currency-count", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
 }
 

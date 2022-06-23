@@ -932,7 +932,17 @@ func RunStreamRestore(
 	g glue.Glue,
 	cmdName string,
 	cfg *RestoreConfig,
-) error {
+) (err error) {
+	startTime := time.Now()
+	defer func() {
+		dur := time.Since(startTime)
+		if err != nil {
+			summary.Log(cmdName+" failed summary", zap.Error(err))
+		} else {
+			summary.Log(cmdName+" success summary", zap.Duration("total-take", dur),
+				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS))
+		}
+	}()
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -981,6 +991,7 @@ func RunStreamRestore(
 		cfg.Config.Storage = logStorage
 	}
 	// restore log.
+	cfg.adjustRestoreConfigForStreamRestore()
 	if err := restoreStream(ctx, g, cfg, logMinTS, logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
@@ -1077,10 +1088,6 @@ func restoreStream(
 	updateRewriteRules(rewriteRules, schemasReplace)
 
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
-	if cfg.Concurrency > defaultRestoreStreamConcurrency {
-		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
-		client.SetConcurrency(defaultRestoreConcurrency)
-	}
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
