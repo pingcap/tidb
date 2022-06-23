@@ -78,7 +78,8 @@
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      "/cgo/": "no need to vet third party code for cgo"
+      "/cgo/": "no need to vet third party code for cgo",
+      "br/pkg/lightning/manual/allocator.go": "ignore code"
     }
   },
   "deepequalerrors": {
