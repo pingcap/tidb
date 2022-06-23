@@ -443,6 +443,9 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 
 // Wait converts pending txn to valid
 func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+	if !txn.validOrPending() {
+		return txn, errors.AddStack(kv.ErrInvalidTxn)
+	}
 	if txn.pending() {
 		defer func(begin time.Time) {
 			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)

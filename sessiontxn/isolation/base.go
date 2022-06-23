@@ -176,7 +176,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	txn, err := p.sctx.GetPreparedTxnFuture().Wait(p.ctx, p.sctx)
+	txnFuture := p.sctx.GetPreparedTxnFuture()
+	if txnFuture == nil {
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
+	}
+
+	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +193,6 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		sessVars.SetInTxn(true)
 	}
 
-	sessVars.TxnCtx.CouldRetry = sessiontxn.IsTxnRetryable(sessVars)
 	txn.SetVars(sessVars.KVVars)
 
 	readReplicaType := sessVars.GetReplicaRead()

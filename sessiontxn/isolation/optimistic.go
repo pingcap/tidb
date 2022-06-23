@@ -15,6 +15,7 @@
 package isolation
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 
 	"github.com/pingcap/tidb/kv"
@@ -36,12 +37,51 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 		baseTxnContextProvider: baseTxnContextProvider{
 			sctx:                  sctx,
 			causalConsistencyOnly: causalConsistencyOnly,
+			onTxnActive: func(_ kv.Transaction) {
+				sessVars := sctx.GetSessionVars()
+				sessVars.TxnCtx.CouldRetry = isTxnRetryable(sessVars)
+			},
 		},
 	}
 
 	provider.getStmtReadTSFunc = provider.getTxnStartTS
 	provider.getStmtForUpdateTSFunc = provider.getTxnStartTS
 	return provider
+}
+
+// IsTxnRetryable (if returns true) means the transaction could retry.
+// We only consider retry in this optimistic mode.
+// If the session is already in transaction, enable retry or internal SQL could retry.
+// If not, the transaction could always retry, because it should be auto committed transaction.
+// Anyway the retry limit is 0, the transaction could not retry.
+func isTxnRetryable(sessVars *variable.SessionVars) bool {
+	// If retry limit is 0, the transaction could not retry.
+	if sessVars.RetryLimit == 0 {
+		return false
+	}
+
+	// When `@@tidb_snapshot` is set, it is a ready-only statement and will not cause the errors that should retry a transaction in optimistic mode.
+	if sessVars.SnapshotTS != 0 {
+		return false
+	}
+
+	// If the session is not InTxn, it is an auto-committed transaction.
+	// The auto-committed transaction could always retry.
+	if !sessVars.InTxn() {
+		return true
+	}
+
+	// The internal transaction could always retry.
+	if sessVars.InRestrictedSQL {
+		return true
+	}
+
+	// If the retry is enabled, the transaction could retry.
+	if !sessVars.DisableTxnAutoRetry {
+		return true
+	}
+
+	return false
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan

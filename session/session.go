@@ -2469,14 +2469,8 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !active {
 		return &s.txn, nil
 	}
-
-	txnManager := sessiontxn.GetTxnManager(s)
-	_, err := txnManager.ActivateTxn()
-	if err != nil {
-		return nil, err
-	}
-
-	return &s.txn, nil
+	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
+	return &s.txn, err
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
@@ -3134,6 +3128,9 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 }
 
 func (s *session) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	if !s.txn.validOrPending() {
+		return nil
+	}
 	return &s.txn
 }
 

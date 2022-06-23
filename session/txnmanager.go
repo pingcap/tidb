@@ -138,7 +138,7 @@ func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePo
 // ActivateTxn decides to activate txn according to the parameter `active`
 func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 	if m.ctxProvider == nil {
-		return nil, errors.New("context provider not set")
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	return m.ctxProvider.ActivateTxn()
 }
