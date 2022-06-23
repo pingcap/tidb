@@ -251,7 +251,7 @@ func TestConvertType(t *testing.T) {
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	_, err = d.ToDecimal(sc)
-	require.Truef(t, terror.ErrorEqual(err, ErrBadNumber), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, ErrTruncatedWrongVal), "err %v", err)
 
 	sc.IgnoreTruncate = true
 	v, err = d.ToDecimal(sc)
