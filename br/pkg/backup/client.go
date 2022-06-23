@@ -510,7 +510,9 @@ func (bc *Client) BackupRanges(
 	progressCallBack func(ProgressUnit),
 ) error {
 	init := time.Now()
-	defer log.Info("Backup Ranges", zap.Duration("take", time.Since(init)))
+	defer func() {
+		log.Info("Backup Ranges", zap.Duration("take", time.Since(init)))
+	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.BackupRanges", opentracing.ChildOf(span.Context()))
