@@ -509,13 +509,15 @@ func (p *PhysicalIndexJoin) estDoubleReadCost(doubleReadRows float64) float64 {
 		// only consider double-read cost on modelVer2
 		return 0
 	}
-	// estimate the double read cost for IndexJoin: double-read-tasks * seek-factor
-	batchSize := float64(p.ctx.GetSessionVars().IndexJoinBatchSize)
+	// estimate the double read cost for IndexJoin: (double-read-tasks * seek-factor) / concurrency
+	seekFactor := p.ctx.GetSessionVars().GetSeekFactor(nil)
+	batchSize := math.Max(1.0, float64(p.ctx.GetSessionVars().IndexJoinBatchSize))
+	concurrency := math.Max(1.0, float64(p.ctx.GetSessionVars().IndexLookupJoinConcurrency()))
 	// distRatio indicates how many requests corresponding to a batch, current value is from experiments.
 	// TODO: estimate it by using index correlation or make it configurable.
 	distRatio := 40.0
 	numDoubleReadTasks := (doubleReadRows / batchSize) * distRatio
-	return numDoubleReadTasks * p.ctx.GetSessionVars().GetSeekFactor(nil)
+	return (numDoubleReadTasks * seekFactor) / concurrency
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
