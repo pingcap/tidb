@@ -108,6 +108,21 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 
+	var tempKey []byte
+	if c.idxInfo.State == model.StateWriteReorganization {
+		switch c.idxInfo.SubState {
+		case model.StateNone:
+			// do nothing.
+		case model.StateBackFillSync, model.StateBackFill:
+			// Write to the temporary index.
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, key)
+		case model.StateMergeSync, model.StateMerge:
+			// Double write
+			tempKey = append(tempKey, key...)
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
+		}
+	}
+
 	ctx := opt.Ctx
 	if opt.Untouched {
 		txn, err1 := sctx.Txn(true)
@@ -154,6 +169,12 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		if err != nil {
 			return nil, err
 		}
+		if len(tempKey) > 0 {
+			err = txn.GetMemBuffer().Set(tempKey, idxVal)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if !opt.IgnoreAssertion && (!opt.Untouched) {
 			if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
 				err = txn.SetAssertion(key, kv.SetAssertUnknown)
@@ -195,6 +216,16 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		}
 		if err != nil {
 			return nil, err
+		}
+		if len(tempKey) > 0 {
+			if lazyCheck {
+				err = txn.GetMemBuffer().SetWithFlags(tempKey, idxVal, kv.SetPresumeKeyNotExists)
+			} else {
+				err = txn.GetMemBuffer().Set(tempKey, idxVal)
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 		if opt.IgnoreAssertion {
 			return nil, nil

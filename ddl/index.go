@@ -580,6 +580,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		indexInfo.State = model.StatePublic
+		// Set sub state to stateNone to stop double write, if used lightning build index.
+		indexInfo.SubState = model.StateNone
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
