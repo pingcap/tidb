@@ -62,7 +62,7 @@ Here the set of node is shown as an integer. If the i-th bit of its binary repre
 
 ### How other systems solve the same issue?
 
-DP-SUB is the most commonlly used solution in open source databases.
+DP-SUB is the most commonly used solution in open source databases.
 
 ### What is the disadvantage of this design?
 
