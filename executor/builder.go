@@ -87,14 +87,11 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx              sessionctx.Context
-	is               infoschema.InfoSchema
-	snapshotTS       uint64 // The ts for snapshot-read. A select statement without for update will use this ts
-	forUpdateTS      uint64 // The ts should be used by insert/update/delete/select-for-update statement
-	snapshotTSCached bool
-	err              error // err is set when there is error happened during Executor building process.
-	hasLock          bool
-	Ti               *TelemetryInfo
+	ctx     sessionctx.Context
+	is      infoschema.InfoSchema
+	err     error // err is set when there is error happened during Executor building process.
+	hasLock bool
+	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
 	readReplicaScope string
@@ -646,8 +643,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
 		return nil
 	}
-	// Build 'select for update' using the 'for update' ts.
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -858,7 +853,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 			return nil
 		}
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1564,44 +1558,6 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	return txnManager.GetStmtReadTS()
 }
 
-// getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
-// and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
-// the current timestamp in RC isolation
-func (b *executorBuilder) getReadTS() (uint64, error) {
-	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
-		// after refactoring stale read will use its own context provider
-		staleread.AssertStmtStaleness(b.ctx, false)
-	})
-
-	if b.snapshotTSCached {
-		return b.snapshotTS, nil
-	}
-
-	if snapshotTS := b.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		b.snapshotTS = snapshotTS
-		b.snapshotTSCached = true
-		return snapshotTS, nil
-	}
-
-	if b.snapshotTS != 0 {
-		b.snapshotTSCached = true
-		// Return the cached value.
-		return b.snapshotTS, nil
-	}
-
-	txn, err := b.ctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-
-	b.snapshotTS = txn.StartTS()
-	if b.snapshotTS == 0 {
-		return 0, errors.Trace(ErrGetStartTS)
-	}
-	b.snapshotTSCached = true
-	return b.snapshotTS, nil
-}
-
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
@@ -2103,7 +2059,6 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2160,7 +2115,6 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
