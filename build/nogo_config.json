@@ -77,7 +77,8 @@
   "deadcode": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
     }
   },
   "deepequalerrors": {
