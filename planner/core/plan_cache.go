@@ -20,14 +20,20 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
 func parseRawArgs(sctx sessionctx.Context, rawArgs []string) ([]types.Datum, []*types.FieldType, error) {
-	// TODO:
+	// TODO
 	return nil, nil, nil
+}
+
+func getBindingByRawSQL(sctx sessionctx.Context, rawSQL string) (binding string, err error) {
+	// TODO
+	return "", nil
 }
 
 func getPlanFromCache(sctx sessionctx.Context, rawSQL string, rawArgs []string) (plan PhysicalPlan, existed bool, err error) {
@@ -35,9 +41,10 @@ func getPlanFromCache(sctx sessionctx.Context, rawSQL string, rawArgs []string) 
 		return nil, false, nil
 	}
 
-	// TODO: get db, schemaVer, latestSchemaVer
-	db := ""
-	schemaVer, latestSchemaVer := int64(0), int64(0)
+	db := sctx.GetSessionVars().CurrentDB
+	schema := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	schemaVer := schema.SchemaMetaVersion()
+	latestSchemaVer := int64(0) // TODO: check RC or read-for-update
 	cacheKey, err := NewPlanCacheKey(sctx.GetSessionVars(), rawSQL, db, schemaVer, latestSchemaVer)
 	if err != nil {
 		return nil, false, err
@@ -50,15 +57,16 @@ func getPlanFromCache(sctx sessionctx.Context, rawSQL string, rawArgs []string) 
 
 	// TODO: check privileges
 
-	// TODO: parse rawArgs
 	params, varTypes, err := parseRawArgs(sctx, rawArgs)
 	if err != nil {
 		return nil, false, err
 	}
 	sctx.GetSessionVars().PreparedParams = params
 
-	// TODO: get bindSQL
-	bindSQL := ""
+	bindSQL, err := getBindingByRawSQL(sctx, rawSQL)
+	if err != nil {
+		return nil, false, err
+	}
 	cachedVals := rawCachedVals.([]*PlanCacheValue)
 	for _, cachedVal := range cachedVals {
 		if cachedVal.BindSQL != bindSQL {
