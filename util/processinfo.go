@@ -181,6 +181,8 @@ type SessionManager interface {
 	DeleteInternalSession(se interface{})
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
+	// OldRunningTxnExist checks if there is an old transaction running in the current sessions
+	OldRunningTxnExist() bool
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

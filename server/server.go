@@ -33,6 +33,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/sessiontxn"
 	"io"
 	"math/rand"
 	"net"
@@ -835,7 +836,26 @@ func (s *Server) DeleteInternalSession(se interface{}) {
 	s.sessionMapMutex.Unlock()
 }
 
-// GetInternalSessionStartTSList implements SessionManager interface.
+// OldRunningTxnExist implements SessionManager interface.
+func (s *Server) OldRunningTxnExist() bool {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	newestSchemaVer := s.dom.InfoSchema().SchemaMetaVersion()
+	for _, client := range s.clients {
+		if client.ctx.Session != nil && !client.ctx.Session.GetSessionVars().InRestrictedSQL && !client.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
+			info := client.ctx.Session.TxnInfo()
+			if info == nil {
+				continue
+			}
+			logutil.BgLogger().Warn("txninfo", zap.String("info", info.CurrentSQLDigest), zap.Int32("state", info.State), zap.String("session", client.ctx.Session.String()))
+			if sessiontxn.GetTxnManager(client.ctx.Session).GetTxnInfoSchema().SchemaMetaVersion() < newestSchemaVer {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()

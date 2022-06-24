@@ -245,14 +245,14 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 			return nil, ResultFail
 		}
 
-		relatedChanges, changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
-		if changed {
-			if relatedChanges.Amendable {
-				relatedChanges.LatestInfoSchema = s.latestInfoSchema
-				return &relatedChanges, ResultFail
-			}
-			return nil, ResultFail
-		}
+		//relatedChanges, changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
+		//if changed {
+		//	if relatedChanges.Amendable {
+		//		relatedChanges.LatestInfoSchema = s.latestInfoSchema
+		//		return &relatedChanges, ResultFail
+		//	}
+		//	return nil, ResultFail
+		//}
 		return nil, ResultSucc
 	}
 

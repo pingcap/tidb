@@ -423,18 +423,66 @@ func (do *Domain) Reload() error {
 	if !hitCache {
 		// loaded newer schema
 		if oldSchemaVersion < is.SchemaMetaVersion() {
-			// Update self schema version to etcd.
-			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
-			if err != nil {
-				logutil.BgLogger().Info("update self version failed",
-					zap.Int64("oldSchemaVersion", oldSchemaVersion),
-					zap.Int64("neededSchemaVersion", is.SchemaMetaVersion()), zap.Error(err))
-			}
+			go func() {
+				for true {
+					ticker := time.Tick(time.Millisecond * 10)
+					select {
+					case <-ticker:
+						sm := do.InfoSyncer().GetSessionManager()
+						if sm == nil {
+							err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+							if err != nil {
+								logutil.BgLogger().Info("update self version failed",
+									zap.Int64("oldSchemaVersion", oldSchemaVersion),
+									zap.Int64("neededSchemaVersion", is.SchemaMetaVersion()), zap.Error(err))
+							}
+							return
+						}
+						if !sm.OldRunningTxnExist() {
+							err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+							if err != nil {
+								logutil.BgLogger().Info("update self version failed",
+									zap.Int64("oldSchemaVersion", oldSchemaVersion),
+									zap.Int64("neededSchemaVersion", is.SchemaMetaVersion()), zap.Error(err))
+							}
+							return
+						}
+					}
+				}
+			}()
 		}
 
 		// it is full load
 		if changes == nil {
 			logutil.BgLogger().Info("full load and reset schema validator")
+			go func() {
+				for true {
+					ticker := time.Tick(time.Millisecond * 10)
+					select {
+					case <-ticker:
+						logutil.BgLogger().Info("reset schema validator 11111111111111")
+						sm := do.InfoSyncer().GetSessionManager()
+						if sm == nil {
+							err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+							if err != nil {
+								logutil.BgLogger().Info("update self version failed",
+									zap.Int64("oldSchemaVersion", oldSchemaVersion),
+									zap.Int64("neededSchemaVersion", is.SchemaMetaVersion()), zap.Error(err))
+							}
+							return
+						}
+						if !sm.OldRunningTxnExist() {
+							err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
+							if err != nil {
+								logutil.BgLogger().Info("update self version failed",
+									zap.Int64("oldSchemaVersion", oldSchemaVersion),
+									zap.Int64("neededSchemaVersion", is.SchemaMetaVersion()), zap.Error(err))
+							}
+							return
+						}
+					}
+				}
+			}()
 			do.SchemaValidator.Reset()
 		}
 	}

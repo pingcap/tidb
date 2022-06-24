@@ -579,7 +579,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			schemaVer int64
 			runJobErr error
 		)
-		waitTime := 2 * d.lease
+		waitTime := 200 * d.lease
 		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() {
