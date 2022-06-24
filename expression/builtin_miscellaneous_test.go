@@ -53,11 +53,15 @@ func TestInetAton(t *testing.T) {
 	dtbl := tblToDtbl(tbl)
 	fc := funcs[ast.InetAton]
 	for _, tt := range dtbl {
+		stmtCtx := ctx.GetSessionVars().StmtCtx
+		preWarningCnt := stmtCtx.WarningCount()
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
-			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+			require.Equal(t, preWarningCnt+1, stmtCtx.WarningCount())
+			require.True(t, terror.ErrorEqual(
+				stmtCtx.GetWarnings()[preWarningCnt].Err, errWrongValueForType))
 		} else {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, tt["Expected"][0], d)

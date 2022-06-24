@@ -508,8 +508,8 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 	errWrongValueForType := errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	// Only in select, we will show warnings rather than error
-	shouldWarn := !(stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt)
-	if shouldWarn {
+	truncateAsWarning := !(stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt)
+	if truncateAsWarning {
 		stmtCtx.TruncateAsWarning = true
 	}
 	// ip address should not end with '.'.
@@ -648,8 +648,8 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	errWrongValueForType := errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton6")
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
 	// Only in select, we will show warnings rather than error
-	shouldWarn := !(stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt)
-	if shouldWarn {
+	truncateAsWarning := !(stmtCtx.InInsertStmt || stmtCtx.InUpdateStmt || stmtCtx.InDeleteStmt)
+	if truncateAsWarning {
 		stmtCtx.TruncateAsWarning = true
 	}
 	if len(val) == 0 {
