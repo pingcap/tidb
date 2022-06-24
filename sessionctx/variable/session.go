@@ -1158,6 +1158,8 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	ForeignKeyChecks bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1395,6 +1397,7 @@ func NewSessionVars() *SessionVars {
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
+		ForeignKeyChecks:            DefTiDBForeignKeyChecks,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
