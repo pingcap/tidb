@@ -2260,6 +2260,10 @@ func (d *ddl) createTableWithInfoJob(
 	case tbInfo.Sequence != nil:
 		actionType = model.ActionCreateSequence
 	default:
+		if len(tbInfo.ForeignKeys) > 0 {
+			fkIdx := 0
+			args = append(args, fkIdx)
+		}
 		actionType = model.ActionCreateTable
 	}
 

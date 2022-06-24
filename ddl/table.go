@@ -141,7 +141,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	if len(tbInfo.ForeignKeys) > 0 {
-
+		return createTableWithForeignKeys(d, t, job)
 	}
 
 	tbInfo, err := createTable(d, t, job)
@@ -160,27 +160,100 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (ver int64, err error) {
-	switch tbInfo.State {
+func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tbInfo := &model.TableInfo{}
+	fkIdx := 0
+	if err := job.DecodeArgs(tbInfo, &fkIdx); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	fkc := ForeignKeyChecker{}
+	switch job.SchemaState {
 	case model.StateNone:
-		for i := range
+		var referTableInfo *model.TableInfo
+		for _, fkInfo := range tbInfo.ForeignKeys {
+			if referTableInfo == nil || referTableInfo.Name.L != fkInfo.RefTable.L {
+				_, referTableInfo, err = fkc.getParentTableFromStorage(d, fkInfo, t)
+				if err != nil {
+					job.State = model.JobStateCancelled
+					return ver, err
+				}
+			}
+			err = fkc.checkTableForeignKey(referTableInfo, fkInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, err
+			}
+		}
+		// create table in non-public state
 		tbInfo, err = createTable(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tbInfo
-
+		tbInfo.State = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
+		fkIdx := 0
+		job.Args = []interface{}{tbInfo, fkIdx}
+	case model.StateDeleteOnly:
+		// update parent table info.
+		var referTableInfo *model.TableInfo
+		var referDBInfo *model.DBInfo
+		for ; fkIdx < len(tbInfo.ForeignKeys); fkIdx++ {
+			fkInfo := tbInfo.ForeignKeys[fkIdx]
+			if referTableInfo == nil {
+				referDBInfo, referTableInfo, err = fkc.getParentTableFromStorage(d, fkInfo, t)
+				if err != nil {
+					return ver, err
+				}
+			}
+			if referTableInfo.Name.L != fkInfo.RefTable.L {
+				break
+			}
+			referTableInfo.CitedForeignKeys = append(referTableInfo.CitedForeignKeys, &model.CitedFKInfo{
+				ChildSchema:  model.NewCIStr(job.SchemaName),
+				ChildTable:   tbInfo.Name,
+				ChildFKIndex: fkInfo.Name,
+				Cols:         fkInfo.RefCols,
+			})
+		}
+		originalSchemaID, originalTableID := job.SchemaID, job.TableID
+		job.SchemaID, job.TableID = referDBInfo.ID, referTableInfo.ID
+		ver, err = updateVersionAndTableInfo(d, t, job, referTableInfo, true)
+		job.SchemaID, job.TableID = originalSchemaID, originalTableID
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.Args = []interface{}{tbInfo, fkIdx}
+		if fkIdx == len(tbInfo.ForeignKeys) {
+			job.SchemaState = model.StateWriteOnly
+		}
+	case model.StateWriteOnly:
+		// update table into public status.
+		for i := range tbInfo.ForeignKeys {
+			tbInfo.ForeignKeys[i].State = model.StatePublic
+		}
+		tbInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(d, t, job, tbInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		return ver, nil
+	default:
+		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
 	}
+	return ver, errors.Trace(err)
 }
 
 type ForeignKeyChecker struct{}
 
 func (c ForeignKeyChecker) updateForeignKey(tbInfo, referTableInfo *model.TableInfo, fkInfo *model.FKInfo) {
-	referTableInfo.CitedForeignKeys = append(referTableInfo.CitedForeignKeys, &model.CitedFKInfo{
-		ChildTable: tbInfo.Name,
-		FKIndex:    fkInfo.Name,
-		Cols:       fkInfo.RefCols,
-	})
 }
 
 func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
@@ -201,20 +274,20 @@ func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo,
 	return nil
 }
 
-func (c ForeignKeyChecker) getParentTableFromStorage(d *ddlCtx, fkInfo *model.FKInfo, t *meta.Meta) (*model.TableInfo, error) {
+func (c ForeignKeyChecker) getParentTableFromStorage(d *ddlCtx, fkInfo *model.FKInfo, t *meta.Meta) (*model.DBInfo, *model.TableInfo, error) {
 	db, tb, err := c.getParentTableFromInfoCache(d, fkInfo)
 	if err != nil {
-		return nil, err
+		return db, nil, err
 	}
 	tbInfo, err := getTableInfo(t, tb.ID, db.ID)
 	if err != nil {
-		return nil, err
+		return db, nil, err
 	}
 	// Check if table name is renamed.
 	if tbInfo.Name.L != fkInfo.RefTable.L {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(fkInfo.RefSchema.O, fkInfo.RefTable.O)
+		return db, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(fkInfo.RefSchema.O, fkInfo.RefTable.O)
 	}
-	return tbInfo, nil
+	return db, tbInfo, nil
 }
 
 func (c ForeignKeyChecker) getParentTableFromInfoCache(d *ddlCtx, fkInfo *model.FKInfo) (*model.DBInfo, *model.TableInfo, error) {

@@ -397,8 +397,8 @@ type TableInfo struct {
 	Indices          []*IndexInfo      `json:"index_info"`
 	Constraints      []*ConstraintInfo `json:"constraint_info"`
 	ForeignKeys      []*FKInfo         `json:"fk_info"`
-	CitedForeignKeys []*CitedFKInfo
-	State            SchemaState `json:"state"`
+	CitedForeignKeys []*CitedFKInfo    `json:"cited_fk_info"`
+	State            SchemaState       `json:"state"`
 	// PKIsHandle is true when primary key is a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
 	// IsCommonHandle is true when clustered index feature is
@@ -1323,17 +1323,15 @@ func (t *TableInfo) FindColumnNameByID(id int64) string {
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-	ID        int64 `json:"id"`
-	Name      CIStr `json:"fk_name"`
-	RefSchema CIStr
-	RefTable  CIStr   `json:"ref_table"`
-	RefCols   []CIStr `json:"ref_cols"`
-	Cols      []CIStr `json:"cols"`
-	//RefColIDs []int64     `json:"ref_col_ids"`
-	//ColIDs    []int64     `json:"col_ids"`
-	OnDelete int         `json:"on_delete"`
-	OnUpdate int         `json:"on_update"`
-	State    SchemaState `json:"state"`
+	ID        int64       `json:"id"`
+	Name      CIStr       `json:"fk_name"`
+	RefSchema CIStr       `json:"ref_schema"`
+	RefTable  CIStr       `json:"ref_table"`
+	RefCols   []CIStr     `json:"ref_cols"`
+	Cols      []CIStr     `json:"cols"`
+	OnDelete  int         `json:"on_delete"`
+	OnUpdate  int         `json:"on_update"`
+	State     SchemaState `json:"state"`
 }
 
 // Clone clones FKInfo.
@@ -1350,9 +1348,10 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // CitedFKInfo provides the cited foreign key in the child table.
 type CitedFKInfo struct {
-	ChildTable CIStr   `json:"child_table"`
-	FKIndex    CIStr   `json:"fk_index"`
-	Cols       []CIStr `json:"cols"`
+	Cols         []CIStr `json:"cols"`
+	ChildSchema  CIStr   `json:"child_schema"`
+	ChildTable   CIStr   `json:"child_table"`
+	ChildFKIndex CIStr   `json:"child_fk_index"`
 }
 
 // DBInfo provides meta data describing a DB.
