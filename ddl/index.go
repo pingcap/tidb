@@ -581,6 +581,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 		indexInfo.State = model.StatePublic
 		// Set sub state to stateNone to stop double write, if used lightning build index.
+		tempIndexes := genTempIndexes(job.Args, indexInfo)
 		indexInfo.SubState = model.StateNone
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
@@ -595,6 +596,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		// ToDo：clean temp index as needed
+		if tempIndexes != nil {
+			job.Args = append(job.Args, tempIndexes)
+		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -706,7 +711,6 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
