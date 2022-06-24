@@ -534,7 +534,11 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 	unionScanSet := make(map[PhysicalPlan]interface{})
 
 	iteratePhysicalPlan(p, nil, nil,
-		func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan, bool) {
+		func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan) {
+			if len(p.Children()) > 1 {
+				physicalLockMap = make(map[PhysicalPlan]PhysicalPlan)
+				unionScanSet = make(map[PhysicalPlan]interface{})
+			}
 			switch x := p.(type) {
 			case *PointGetPlan:
 				tuples = append(tuples, &Tuple{
@@ -559,11 +563,11 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 					unionScanSet[unionScan] = nil
 				}
 			case *PhysicalLock:
-				return x, nil, false
+				return x, nil
 			case *PhysicalUnionScan:
-				return nil, x, false
+				return nil, x
 			}
-			return nil, nil, false
+			return nil, nil
 		})
 	if len(tuples) == 0 {
 		return p
@@ -609,11 +613,8 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 }
 
 func iteratePhysicalPlan(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan,
-	f func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan, bool)) {
-	lock, scan, exit := f(p, physicalLock, unionScan)
-	if exit {
-		return
-	}
+	f func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan)) {
+	lock, scan := f(p, physicalLock, unionScan)
 
 	// There may be multiple PhysicalLock nodes in a single chain.
 	// In this case, we only eliminate the last one.
