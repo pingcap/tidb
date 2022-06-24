@@ -397,6 +397,8 @@ func (c *CheckpointAdvancer) onTaskEvent(e TaskEvent) error {
 		c.task = e.Info
 	case EventDel:
 		c.task = nil
+		c.state = stateFullScan
+		c.cache.Clear()
 	case EventErr:
 		return e.Err
 	}

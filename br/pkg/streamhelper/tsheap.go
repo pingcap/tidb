@@ -87,6 +87,12 @@ func (h *Checkpoints) InsertRegion(ts uint64, region RegionWithLeader) {
 	})
 }
 
+func (h *Checkpoints) Clear() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tree.Clear(false)
+}
+
 func (h *Checkpoints) PopMinTsRegions() *RangesSharesTS {
 	h.mu.Lock()
 	defer h.mu.Unlock()
