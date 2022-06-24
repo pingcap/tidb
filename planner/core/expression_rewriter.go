@@ -1109,6 +1109,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
+			if arg.GetType().GetType() == mysql.TypeEnum || arg.GetType().GetType() == mysql.TypeSet {
+				er.err = ErrNotSupportedYet.GenWithStackByArgs("use collate clause for enum or set")
+				break
+			}
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
 			exprType := arg.GetType().Clone()
 			exprType.Collate = v.Collate
