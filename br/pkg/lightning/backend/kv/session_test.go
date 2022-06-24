@@ -17,12 +17,13 @@ package kv
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSession(t *testing.T) {
-	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890})
+	session := newSession(&SessionOptions{SQLMode: mysql.ModeNone, Timestamp: 1234567890}, log.L())
 	_, err := session.Txn(true)
 	require.NoError(t, err)
 }
