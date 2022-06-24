@@ -184,14 +184,6 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-<<<<<<< HEAD
-	Name             string
-	UsingVars        []expression.Expression
-	PrepareParams    []types.Datum
-	ExecID           uint32
-	SnapshotTS       uint64
-	IsStaleness      bool
-=======
 	Name         string
 	TxtProtoVars []expression.Expression // parsed variables under text protocol
 	BinProtoVars []types.Datum           // parsed variables under binary protocol
@@ -201,7 +193,6 @@ type Execute struct {
 	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
 	IsStaleness bool
 	// Deprecated: ReadReplicaScope now is only used for asserting after refactoring stale read, it will be removed later.
->>>>>>> 0ac659b4f... planner: fix the issue that the optimizer caches wrong TableDual plans under binary protocol (#34709)
 	ReadReplicaScope string
 	Stmt             ast.StmtNode
 	StmtType         string
@@ -523,11 +514,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
 				}
-<<<<<<< HEAD
-				if !cachedVal.UserVarTypes.Equal(tps) {
-=======
 				if !cachedVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
->>>>>>> 0ac659b4f... planner: fix the issue that the optimizer caches wrong TableDual plans under binary protocol (#34709)
 					continue
 				}
 				planValid := true
@@ -602,11 +589,7 @@ REBUILD:
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-<<<<<<< HEAD
-				if cacheVal.UserVarTypes.Equal(tps) {
-=======
 				if cacheVal.varTypesUnchanged(binVarTypes, txtVarTypes) {
->>>>>>> 0ac659b4f... planner: fix the issue that the optimizer caches wrong TableDual plans under binary protocol (#34709)
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
