@@ -306,7 +306,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 	}
 
-	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, placementPolicyRef)
+	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, s.Name, opt, placementPolicyRef)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
@@ -375,7 +375,7 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
-	dbName := model.NewCIStr(s.Name)
+	dbName := s.Name
 
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
