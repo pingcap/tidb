@@ -21,7 +21,6 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testPrepareSuite{})
@@ -1525,17 +1523,22 @@ func (s *testPlanSerialSuite) TestIssue29303(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
-func TestIssue34725(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+func (s *testPlanSerialSuite) TestIssue34725(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
 	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
-	core.SetPreparedPlanCache(true)
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(false)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, store, se)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -1551,17 +1554,22 @@ func TestIssue34725(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows())
 }
 
-func TestIssue33628(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+func (s *testPlanSerialSuite) TestIssue33628(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
 	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
 	core.SetPreparedPlanCache(false)
 	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKitWithSession(c, store, se)
 
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -1572,9 +1580,11 @@ func TestIssue33628(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
-func TestIssue28942(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+func (s *testPlanSerialSuite) TestIssue28942(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
