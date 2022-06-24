@@ -1838,8 +1838,7 @@ type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
 
-	Extractor    ShowPredicateExtractor
-	buildPattern bool // It depends on ShowPredicateExtractor now
+	Extractor ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.
