@@ -303,12 +303,16 @@ func TestInet6AtoN(t *testing.T) {
 	fc := funcs[ast.Inet6Aton]
 	for _, test := range tests {
 		ip := types.NewDatum(test.ip)
+		stmtCtx := ctx.GetSessionVars().StmtCtx
+		preWarningCnt := stmtCtx.WarningCount()
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		expect := types.NewDatum(test.expect)
 		if expect.IsNull() {
-			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+			require.Equal(t, preWarningCnt+1, stmtCtx.WarningCount())
+			require.True(t, terror.ErrorEqual(
+				stmtCtx.GetWarnings()[preWarningCnt].Err, errWrongValueForType))
 		} else {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, expect, result)
