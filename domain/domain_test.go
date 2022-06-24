@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
@@ -121,13 +122,22 @@ func TestInfo(t *testing.T) {
 	}
 	require.True(t, syncerStarted)
 
-	// Make sure loading schema is normal.
-	cs := &ast.CharsetOpt{
-		Chs: "utf8",
-		Col: "utf8_bin",
+	stmt := &ast.CreateDatabaseStmt{
+		Name: model.NewCIStr("aaa"),
+		// Make sure loading schema is normal.
+		Options: []*ast.DatabaseOption{
+			{
+				Tp:    ast.DatabaseOptionCharset,
+				Value: "utf8",
+			},
+			{
+				Tp:    ast.DatabaseOptionCollate,
+				Value: "utf8_bin",
+			},
+		},
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, nil))
+	require.NoError(t, dom.ddl.CreateSchema(ctx, stmt))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 

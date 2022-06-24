@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -1363,7 +1364,7 @@ func TestDoDDLJobQuit(t *testing.T) {
 	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")) }()
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, nil)
+	err = dom.DDL().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 
