@@ -389,6 +389,14 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
+		d.ownerManager.SetBeOwnerHook(func() {
+			var err error
+			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+			if err != nil {
+				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+			}
+		})
+
 		err := d.ownerManager.CampaignOwner()
 		if err != nil {
 			return errors.Trace(err)
@@ -410,6 +418,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			asyncNotify(worker.ddlJobCh)
 		}
 
+<<<<<<< HEAD
 		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
@@ -419,6 +428,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return err
 		}
 
+=======
+>>>>>>> d0c1d1f9b... ddl, owner: refresh ddl sequence cache after becoming the owner (#35516)
 		go d.schemaSyncer.StartCleanWork()
 		if config.TableLockEnabled() {
 			d.wg.Add(1)
