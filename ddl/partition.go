@@ -490,7 +490,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.Par
 		return nil
 	}
 	if tbInfo.Partition.Type != model.PartitionTypeRange {
-		// Hijacked error from below...
+		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only allowed on RANGE partitioning")
 	}
 	if len(s.Definitions) > 0 {
@@ -499,6 +499,31 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.Par
 	}
 	if s.Interval.FirstRangeEnd == nil || s.Interval.LastRangeEnd == nil {
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
+	}
+	if len(tbInfo.Partition.Columns) > 0 {
+		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, []ast.ExprNode{*s.Interval.FirstRangeEnd}); err != nil {
+			return err
+		}
+		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, []ast.ExprNode{*s.Interval.LastRangeEnd}); err != nil {
+			return err
+		}
+	} else {
+		if err := checkPartitionValuesIsInt(ctx, "FIRST PARTITION", []ast.ExprNode{*s.Interval.FirstRangeEnd}, tbInfo); err != nil {
+			return err
+		}
+		if err := checkPartitionValuesIsInt(ctx, "LAST PARTITION", []ast.ExprNode{*s.Interval.LastRangeEnd}, tbInfo); err != nil {
+			return err
+		}
+	}
+	intervalEnd := s.Interval.FirstRangeEnd
+	lastIntervalEnd := s.Interval.LastRangeEnd
+	partDefs := make([]*ast.PartitionDefinition)
+	lastVal, err := expression.EvalAstExpr(ctx, *lastIntervalEnd)
+	if err != nil {
+		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
+	}
+	for intervalEnd <= lastIntervalEnd {
+
 	}
 	return nil
 }
@@ -577,7 +602,7 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 			}
 		} else {
 			for _, vs := range clause.Values {
-				if err := checkPartitionValuesIsInt(ctx, def, vs, tbInfo); err != nil {
+				if err := checkPartitionValuesIsInt(ctx, def.Name, vs, tbInfo); err != nil {
 					return nil, err
 				}
 			}
@@ -642,7 +667,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 				return nil, err
 			}
 		} else {
-			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs, tbInfo); err != nil {
+			if err := checkPartitionValuesIsInt(ctx, def.Name, clause.Exprs, tbInfo); err != nil {
 				return nil, err
 			}
 		}
@@ -680,7 +705,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 	return definitions, nil
 }
 
-func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
+func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
 		tp.AddFlag(mysql.UnsignedFlag)
@@ -700,7 +725,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 				return dbterror.ErrPartitionConstDomain.GenWithStackByArgs()
 			}
 		default:
-			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
+			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(defName)
 		}
 
 		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
