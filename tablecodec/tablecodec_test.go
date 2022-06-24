@@ -262,7 +262,7 @@ func TestTimeCodec(t *testing.T) {
 		"2016-06-23 11:30:45")
 	require.NoError(t, err)
 	row[2] = types.NewDatum(ts)
-	du, err := types.ParseDuration(nil, "12:59:59.999999", 6)
+	du, _, err := types.ParseDuration(nil, "12:59:59.999999", 6)
 	require.NoError(t, err)
 	row[3] = types.NewDatum(du)
 
