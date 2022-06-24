@@ -458,12 +458,8 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			tps[i] = types.NewFieldType(mysql.TypeNull)
 		}
 	}
-<<<<<<< HEAD
-	if prepared.CachedPlan != nil {
-=======
 
 	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
->>>>>>> 381e870c5... planner: disable plan-cache short path for point-get plans when plan-cache is disabled (#34739)
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
