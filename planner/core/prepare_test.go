@@ -17,7 +17,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"math"
 	"math/rand"
 	"strconv"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testPrepareSuite{})
