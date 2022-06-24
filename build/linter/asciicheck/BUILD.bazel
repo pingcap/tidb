@@ -5,5 +5,5 @@ go_library(
     srcs = ["analysis.go"],
     importpath = "github.com/pingcap/tidb/build/linter/asciicheck",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_tdakkota_asciicheck//:go_default_library"],
+    deps = ["@com_github_tdakkota_asciicheck//:asciicheck"],
 )

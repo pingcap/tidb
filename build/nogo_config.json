@@ -178,6 +178,13 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "misspell": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "nilfunc": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
