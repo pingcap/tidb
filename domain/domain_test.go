@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
@@ -128,7 +127,7 @@ func TestInfo(t *testing.T) {
 		Col: "utf8_bin",
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil))
+	require.NoError(t, dom.ddl.CreateSchema(ctx, nil))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
