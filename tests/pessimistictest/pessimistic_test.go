@@ -513,9 +513,9 @@ func TestPointGetKeyLock(t *testing.T) {
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		_, err1 := tk2.Exec("insert point values (1, 1, 1)")
-		require.True(t, kv.ErrKeyExists.Equal(err1))
+		require.True(t, kv.ErrKeyExists.Equal(err1), "error: %+q", err1)
 		_, err1 = tk2.Exec("insert point values (2, 2, 2)")
-		require.True(t, kv.ErrKeyExists.Equal(err1))
+		require.True(t, kv.ErrKeyExists.Equal(err1), "error: %+q", err1)
 		tk2.MustExec("rollback")
 		<-syncCh
 	}()

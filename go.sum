@@ -79,8 +79,8 @@ github.com/Jeffail/gabs/v2 v2.5.1 h1:ANfZYjpMlfTTKebycu4X1AgkVWumFVDYQl7JwOr4mDk
 github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ+NcziBI=
 github.com/Joker/hpp v1.0.0/go.mod h1:8x5n+M1Hp5hC0g8okX3sR3vFQwynaX/UgSOM9MeBKzY=
 github.com/Joker/jade v1.0.1-0.20190614124447-d475f43051e7/go.mod h1:6E6s8o2AE4KhCrqr6GRJjdC/gNfTdxkIXvuGZZda2VM=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20220624044058-7241c1c57cde h1:qlDGDCKmVLEAgneuc0AvV/GzhT5wN+ZEqFT0HuDMkZc=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20220624044058-7241c1c57cde/go.mod h1:YL6ipTBIqHyC36QIjBJusWQ8rFjzO/m45y69Fd5qsjA=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20220624081718-1078efa28995 h1:8ycMznUBTnBYN0lNcBdbGGtzo1ijc7JriDyrUcW6FCc=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20220624081718-1078efa28995/go.mod h1:YL6ipTBIqHyC36QIjBJusWQ8rFjzO/m45y69Fd5qsjA=
 github.com/MyonKeminta/kvproto v0.0.0-20220527064520-0475add43ebe h1:iTpTf7MGGw6vNZqiS0+If3LZ6YWazzdsYI7wJFRiZrA=
 github.com/MyonKeminta/kvproto v0.0.0-20220527064520-0475add43ebe/go.mod h1:OYtxs0786qojVTmkVeufx93xe+jUgm56GUYRIKnmaGI=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
