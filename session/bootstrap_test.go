@@ -1079,3 +1079,31 @@ func TestInitializeSQLFile(t *testing.T) {
 	require.Equal(t, []byte("OFF"), row.GetBytes(1))
 	require.NoError(t, r.Close())
 }
+
+func TestTiDBEnablePagingVariable(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	se := createSessionAndSetID(t, store)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	for _, sql := range []string{
+		"select @@global.tidb_enable_paging",
+		"select @@session.tidb_enable_paging",
+	} {
+		r := mustExec(t, se, sql)
+		require.NotNil(t, r)
+
+		req := r.NewChunk(nil)
+		err := r.Next(context.Background(), req)
+		require.NoError(t, err)
+		require.NotEqual(t, 0, req.NumRows())
+
+		rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
+		if variable.DefTiDBEnablePaging {
+			match(t, rows, "1")
+		} else {
+			match(t, rows, "0")
+		}
+		r.Close()
+	}
+}
