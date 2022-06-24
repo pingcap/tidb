@@ -595,6 +595,9 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) && stmt.IfExists {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	if !config.TableLockEnabled() {
