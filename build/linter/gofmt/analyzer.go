@@ -22,6 +22,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+// Analyzer is the analyzer struct of gofmt.
 var Analyzer = &analysis.Analyzer{
 	Name: "gofmt",
 	Doc: "gofmt checks whether code was gofmt-ed" +
