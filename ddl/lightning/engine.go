@@ -98,9 +98,6 @@ func CreateEngine(
 	ei := NewEngineInfo(indexId, engineKey, &cfg, bc, en, job.TableName, uuid, wCnt)
 	GlobalLightningEnv.LitMemRoot.EngineMgr.StoreEngineInfo(engineKey, ei)
 	bc.EngineCache[engineKey] = ei
-	log.L().Info(LINFO_OPEN_ENGINE,
-		zap.String("backend key", ei.backCtx.Key),
-		zap.String("Engine key", ei.key))
 	return nil
 }
 
@@ -124,23 +121,6 @@ func FinishIndexOp(ctx context.Context, engineInfoKey string, tbl table.Table, u
 		errMsg = LERR_CLOSE_ENGINE_ERR + keyMsg
 		log.L().Error(errMsg)
 		return errors.New(errMsg)
-	}
-
-	// Local dupl check
-	if unique {
-		hasDupe, err := ei.backCtx.Backend.CollectLocalDuplicateRows(ctx, tbl, ei.tableName, &kv.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: ei.backCtx.sysVars,
-		})
-		if hasDupe {
-			errMsg = LERR_LOCAL_DUP_EXIST_ERR + keyMsg
-			log.L().Error(errMsg)
-			return errors.New(errMsg)
-		} else if err != nil {
-			errMsg = LERR_LOCAL_DUP_CHECK_ERR + keyMsg
-			log.L().Error(errMsg)
-			return errors.New(errMsg)
-		}
 	}
 
 	// Ingest data to TiKV

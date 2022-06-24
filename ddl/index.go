@@ -608,7 +608,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	// If reorg task started already, now be here for restore previous execution.
 	// Also when index SubState is StateMergeSync or StateMerge, means the lightning
 	// backfill process finished, no need to do reorg task restore checking.
-	if reorgInfo.Meta.IsLightningEnabled && reorgInfo.Meta.needRestoreJob {
+	if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
 		// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consist.
 		if !canRestoreReorgTask(reorgInfo, indexInfo.ID) {
 			reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
@@ -621,21 +621,22 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	// Check and set up lightning Backend. Whether use lightning add index will depends on
 	// TiDBFastDDL sysvars is true or false at this time. Also if IsLightningEnabled mean 
 	// restore lightning reorg task, no need to init the lightning environment another time.
-	if IsAllowFastDDL() && !reorgInfo.Meta.IsLightningEnabled {
+	if !isLightningEnabled(job.ID) {
 		// If it is a empty table, do not need start lightning backfiller.
 		if reorgInfo.StartKey == nil && reorgInfo.EndKey == nil {
 			return false, ver, nil
 		}
 		// Check if the reorg task is re-entry task, If TiDB is restarted, then currently
 		// reorg task should be restart.
-		err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
-		// Once Env is created well, set IsLightningOk to true.
-		if err == nil {
-			reorgInfo.Meta.IsLightningEnabled = true
+		if IsAllowFastDDL() && job.SnapshotVer == 0 {
+			err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
+			if err == nil {
+				setLightningEnabled(job.ID, true)
+			}
 		}
 	}
 
-	if reorgInfo.Meta.IsLightningEnabled {
+	if isLightningEnabled(job.ID) || indexInfo.SubState != model.StateNone {
 		switch indexInfo.SubState {
 		case model.StateNone:
 			logutil.BgLogger().Info("Lightning backfill start state none")
@@ -655,8 +656,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			return false, ver, nil
 		case model.StateBackFill:
 			logutil.BgLogger().Info("Lightning backfill state backfill")
-			reorgInfo.Meta.needRestoreJob = true
-			return true, ver, nil;
+			return true, ver, nil
 		case model.StateMergeSync:
 			logutil.BgLogger().Info("Lightning backfill state merge Sync")
 			indexInfo.SubState = model.StateMerge
@@ -694,7 +694,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
     doReorg, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
-    if reorgInfo.Meta.IsLightningEnabled {
+    if isLightningEnabled(reorgInfo.ID) || indexInfo.SubState != model.StateNone {
 		if err != nil {
 			logutil.BgLogger().Error("Lightning: Add index backfill processing:", zap.String("Error:", err.Error()))
 			return done, ver, err
@@ -734,17 +734,21 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return false, ver, errors.Trace(err)
 	}
 	// Ingest data to TiKV
-	importIndexDataToStore(w.ctx, reorgInfo, indexInfo.ID, indexInfo.Unique, tbl)
+	err = importIndexDataToStore(w.ctx, reorgInfo, indexInfo.ID, indexInfo.Unique, tbl)
+    if err != nil {
+		logutil.BgLogger().Warn("Lightning import error:", zap.Error(err))
+		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
+		return false, ver, errors.Trace(err)
+	}
 
 	// Cleanup lightning environment
 	cleanUpLightningEnv(reorgInfo, false)
-	if reorgInfo.Meta.IsLightningEnabled {
+	if isLightningEnabled(job.ID) {
 		indexInfo.SubState = model.StateMergeSync
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
-		reorgInfo.Meta.needRestoreJob = false
 		return false, ver, nil
 	}
 	return true, ver, errors.Trace(err)

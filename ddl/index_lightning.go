@@ -49,6 +49,22 @@ func IsAllowFastDDL() bool {
 	}
 }
 
+func isLightningEnabled(id int64) bool {
+	return lit.IsEngineLightningBackfill(id)
+}
+
+func setLightningEnabled(id int64, value bool) {
+	lit.SetEnable(id, value)
+}
+
+func needRestoreJob(id int64) bool {
+	return lit.NeedRestore(id)
+}
+
+func setNeedRestoreJob(id int64, value bool) {
+	lit.SetNeedRestore(id, value)
+}
+
 func prepareBackend(ctx context.Context, unique bool, job *model.Job, sqlMode mysql.SQLMode) (err error) {
 	bcKey := lit.GenBackendContextKey(job.ID)
 	// Create and regist backend of lightning
@@ -73,14 +89,13 @@ func prepareLightningEngine(job *model.Job, indexId int64, workerCnt int) (wCnt 
 
 // Import local index sst file into TiKV.
 func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexId int64, unique bool, tbl table.Table) error {
-	if reorg.Meta.IsLightningEnabled {
-		if !reorg.Meta.IsEmptyTable {
-			engineInfoKey := lit.GenEngineInfoKey(reorg.ID, indexId)
-			// just log info.
-			err := lit.FinishIndexOp(ctx, engineInfoKey, tbl, unique)
-			if err != nil {
-				err = errors.Trace(err)
-			}
+	if isLightningEnabled(reorg.ID) && needRestoreJob(reorg.ID) {
+		engineInfoKey := lit.GenEngineInfoKey(reorg.ID, indexId)
+		// just log info.
+		err := lit.FinishIndexOp(ctx, engineInfoKey, tbl, unique)
+		if err != nil {
+			err = errors.Trace(err)
+				return err
 		}
 		// After import local data into TiKV, then the progress set to 100.
 		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
@@ -90,7 +105,7 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexId int64
 
 // Used to clean backend,
 func cleanUpLightningEnv(reorg *reorgInfo, isCanceled bool, indexIds ...int64) {
-	if reorg.Meta.IsLightningEnabled {
+	if isLightningEnabled(reorg.ID) {
 		bcKey := lit.GenBackendContextKey(reorg.ID)
 		// If reorg is cancled, need do clean up engine.
 		if isCanceled {

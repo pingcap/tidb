@@ -219,13 +219,14 @@ func (m *LightningMemoryRoot) ClearEngines(jobId int64, indexIds ...int64) {
 			closedEngine, err := indexEngine.Close(ei.backCtx.Ctx, ei.cfg)
 			if err != nil {
 				log.L().Error(LERR_CLOSE_ENGINE_ERR, zap.String("Engine key", eiKey))
-				return
 			}
 			// Here the local intermediate file will be removed.
-			closedEngine.Cleanup(ei.backCtx.Ctx)
+			err = closedEngine.Cleanup(ei.backCtx.Ctx)
+			if err != nil {
+				log.L().Error(LERR_CLOSE_ENGINE_ERR, zap.String("Engine key", eiKey))
+			}
 		}
 	}
-	return
 }
 
 // Check and allocate one EngineInfo, delete engineInfo are put into delete backend
@@ -245,16 +246,16 @@ func (m *LightningMemoryRoot) RegistEngineInfo(job *model.Job, bcKey string, eng
 	// Caculate lightning concurrecy degree and set memory usage.
 	// and pre-allocate memory usage for worker
 	newWorkerCount := m.workerDegree(workerCount, engineKey)
-	// When return workerCount is 0, means there is no memory available for lightning worker.
-	if workerCount == int(allocFailed) {
-		log.L().Warn(LERR_ALLOC_MEM_FAILED, zap.String("Backend key", bcKey),
-			zap.String("Engine key", engineKey),
-			zap.String("Expected worker count:", strconv.Itoa(workerCount)),
-			zap.String("Currnt alloc wroker count:", strconv.Itoa(newWorkerCount)))
-		return 0, errors.New(LERR_CREATE_ENGINE_FAILED)
-	}
 	en, exist1 := bc.EngineCache[engineKey]
 	if !exist1 {
+		// When return workerCount is 0, means there is no memory available for lightning worker.
+		if workerCount == int(allocFailed) {
+			log.L().Warn(LERR_ALLOC_MEM_FAILED, zap.String("Backend key", bcKey),
+				zap.String("Engine key", engineKey),
+				zap.String("Expected worker count:", strconv.Itoa(workerCount)),
+				zap.String("Currnt alloc wroker count:", strconv.Itoa(newWorkerCount)))
+			return 0, errors.New(LERR_CREATE_ENGINE_FAILED)
+		}
 		// Firstly, update and check the memory usage
 		m.totalMemoryConsume()
 		err = m.checkMemoryUsage(ALLOC_ENGINE_INFO)
@@ -350,6 +351,10 @@ func (m *LightningMemoryRoot) deleteBackendEngines(bcKey string) error {
 		delete(m.EngineMgr.enginePool, eiKey)
 		m.currUsage -= m.structSize[string(ALLOC_WORKER_CONTEXT)] * int64(wCnt)
 		count++
+		log.L().Info(LINFO_CLOSE_ENGINE, zap.String("backend key", bcKey),
+			zap.String("engine id", eiKey),
+			zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
+			zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))
 	}
 
 	bc.EngineCache = make(map[string]*engineInfo, 10)

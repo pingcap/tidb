@@ -38,6 +38,8 @@ type BackendContext struct {
 	cfg         *config.Config
 	EngineCache map[string]*engineInfo
 	sysVars     map[string]string
+	enabled     bool
+	needRestore bool
 }
 
 func newBackendContext(key string, be *backend.Backend, ctx context.Context, cfg *config.Config, vars map[string]string) *BackendContext {
@@ -156,4 +158,40 @@ func (_ glue_lit) OpenCheckpointsDB(context.Context, *config.Config) (checkpoint
 // Record is used to report some information (key, value) to host TiDB, including progress, stage currently
 func (_ glue_lit) Record(string, uint64) {
 
+}
+
+func IsEngineLightningBackfill(id int64) bool {
+	bcKey := GenBackendContextKey(id)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	if !exist {
+		return false 
+	} else {
+		return bc.enabled
+	}
+}
+
+func SetEnable(id int64, value bool) {
+	bcKey := GenBackendContextKey(id)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	if exist {
+		bc.enabled = value
+	}
+}
+
+func NeedRestore(id int64) bool {
+	bcKey := GenBackendContextKey(id)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	if !exist {
+		return false 
+	} else {
+		return bc.needRestore
+	}
+}
+
+func SetNeedRestore(id int64, value bool) {
+	bcKey := GenBackendContextKey(id)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	if exist {
+		bc.needRestore = value
+	}
 }

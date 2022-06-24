@@ -645,14 +645,11 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	// if litWorkerCnt is 0 or err exist, means not good for lightning execution,
 	// then go back use kernel way to reorg index.
 	var litWorkerCnt int
-	if reorgInfo.Meta.IsLightningEnabled {
+	if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
 		litWorkerCnt, err = prepareLightningEngine(job, indexInfo.ID, int(workerCnt))
-		if err != nil || litWorkerCnt == 0 {
-			reorgInfo.Meta.IsLightningEnabled = false
-		} else {
-			if workerCnt > int32(litWorkerCnt) {
-				workerCnt = int32(litWorkerCnt)
-			}
+		if err != nil && workerCnt > int32(litWorkerCnt) {
+			workerCnt = int32(litWorkerCnt)
+			setNeedRestoreJob(job.ID, true)
 		}
     }
 	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
@@ -677,13 +674,14 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			workerCnt = int32(len(kvRanges))
 		}
 
-		if reorgInfo.Meta.IsLightningEnabled && workerCnt > int32(litWorkerCnt) {
+		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) && workerCnt > int32(litWorkerCnt) {
 			count, err := prepareLightningEngine(job, indexInfo.ID, int(workerCnt-int32(litWorkerCnt)))
-			if err != nil || count == 0 {
-				workerCnt = int32(litWorkerCnt)
-			} else {
-				workerCnt = int32(litWorkerCnt+count)
-			}
+			if err != nil {
+				errMsg := "Lightning engine lost, maybe cause data consistent problem, rollback job."
+				logutil.BgLogger().Error(errMsg, zap.String("Job ID:", strconv.FormatInt(job.ID, 10)))
+				return errors.New(errMsg)
+			} 
+			workerCnt = int32(litWorkerCnt+count)
 		}
 
 		// Enlarge the worker size.
@@ -710,7 +708,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			switch bfWorkerType {
 			case typeAddIndexWorker:
 				// Firstly, check and try lightning path
-				if reorgInfo.Meta.IsLightningEnabled {
+				if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
 					idxWorker, err := newAddIndexWorkerLit(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo, job.ID)
 					if err == nil {
 						idxWorker.priority = job.Priority
@@ -773,7 +771,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 		// Disk quota checking and import data into TiKV if needed.
 		// Do lightning flush data to make checkpoint.
-		if reorgInfo.Meta.IsLightningEnabled {
+		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
 			if importPartialDataToTiKV(job.ID, indexInfo.ID) != nil {
 				return errors.Trace(err)
 			}

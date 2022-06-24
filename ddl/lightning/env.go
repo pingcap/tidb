@@ -80,7 +80,7 @@ func init() {
 func InitGolbalLightningBackendEnv() {
 	var (
 		bufferSize uint64
-		err error
+		err        error
 	)
 	log.SetAppLogger(logutil.BgLogger())
 	GlobalLightningEnv.IsInited = false
@@ -108,26 +108,26 @@ func InitGolbalLightningBackendEnv() {
 	}
 	GlobalLightningEnv.LitMemRoot.init(int64(maxMemLimit))
 	// If Generated sortPath failed, lightning will initial failed.
-	// also if the disk quota is not a proper value 
+	// also if the disk quota is not a proper value
 	GlobalLightningEnv.SortPath, err = genLightningDataDir(cfg.LightningSortPath)
 	if err != nil {
 		GlobalLightningEnv.ErrPath = err.Error()
 		log.L().Warn(LWAR_ENV_INIT_FAILD,
-	    	zap.String("Sort Path Error:", GlobalLightningEnv.ErrPath),
-	    	zap.String("Lightning is initialized:", strconv.FormatBool(GlobalLightningEnv.IsInited)))
-		return 
+			zap.String("Sort Path Error:", GlobalLightningEnv.ErrPath),
+			zap.String("Lightning is initialized:", strconv.FormatBool(GlobalLightningEnv.IsInited)))
+		return
 	}
 
 	err = GlobalLightningEnv.parseDiskQuota(int(variable.DiskQuota.Load()))
 	if err != nil {
 		GlobalLightningEnv.ErrQuota = err.Error()
 		log.L().Warn(LWAR_ENV_INIT_FAILD,
-	    	zap.String("Sort Path disk quota:", GlobalLightningEnv.ErrQuota),
-	    	zap.String("Lightning is initialized:", strconv.FormatBool(GlobalLightningEnv.IsInited)))
-	    return 
+			zap.String("Sort Path disk quota:", GlobalLightningEnv.ErrQuota),
+			zap.String("Lightning is initialized:", strconv.FormatBool(GlobalLightningEnv.IsInited)))
+		return
 	}
 
-	GlobalLightningEnv.IsInited = true	
+	GlobalLightningEnv.IsInited = true
 	log.L().Info(LINFO_ENV_INIT_SUCC,
 		zap.String("Current memory usage:", strconv.FormatUint(uint64(GlobalLightningEnv.LitMemRoot.currUsage), 10)),
 		zap.String("Memory limitation set to:", strconv.FormatUint(maxMemLimit, 10)),
@@ -145,17 +145,14 @@ func (l *LightningEnv) parseDiskQuota(val int) error {
 			zap.String("default disk quota", strconv.FormatInt(l.diskQuota, 10)))
 		return err
 	}
-    
-	// If the disk quato is less than 100 GB, then disable lightning 
+
+	// If the disk quato is less than 100 GB, then disable lightning
 	if sz.Available < minStorageQuota {
 		log.L().Error(LERR_DISK_QUOTA_SMALL,
 			zap.String("disk quota", strconv.FormatInt(int64(sz.Available), 10)))
-        return errors.New(LERR_DISK_QUOTA_SMALL)
+		return errors.New(LERR_DISK_QUOTA_SMALL)
 	}
-	// If set quota is less than 100 GB size
-	if val < minStorageQuota {
-		val = minStorageQuota
-	} 
+
 	setDiskValue := int64(val * _gb)
 	// The Dist quota should be 100 GB to 1 PB
 	if setDiskValue > int64(sz.Available) {
@@ -163,7 +160,7 @@ func (l *LightningEnv) parseDiskQuota(val int) error {
 	} else {
 		l.diskQuota = setDiskValue
 	}
-	
+
 	return err
 }
 
@@ -186,7 +183,6 @@ func genLightningDataDir(sortPath string) (string, error) {
 		if err != nil {
 			log.L().Error(LERR_CREATE_DIR_FAILED, zap.String("Sort path:", sortPath),
 				zap.String("Error:", err.Error()))
-			err = os.Mkdir("/tmp/tmp_ddl", 0o700)
 			return "/tmp/tmp_ddl", err
 		}
 	}
@@ -195,18 +191,18 @@ func genLightningDataDir(sortPath string) (string, error) {
 }
 
 func (g *LightningEnv) NeedImportEngineData(availDisk uint64) bool {
-	if availDisk <= uint64(importThreadhold * float32(g.diskQuota)) {
+	if availDisk <= uint64(importThreadhold*float32(g.diskQuota)) {
 		return true
 	}
 	return false
 }
 
-// Check whether sysvar disk quota is set to a smaller value and adjust according. 
+// Check whether sysvar disk quota is set to a smaller value and adjust according.
 func (g *LightningEnv) checkAndResetQuota() {
-   var newQuota int64
-   newQuota = int64(variable.DiskQuota.Load())
-   newQuota *= int64(_gb)
-   if g.diskQuota >= int64(newQuota) {
-	   g.diskQuota = int64(newQuota)
-   }
+	var newQuota int64
+	newQuota = int64(variable.DiskQuota.Load())
+	newQuota *= int64(_gb)
+	if g.diskQuota >= int64(newQuota) {
+		g.diskQuota = int64(newQuota)
+	}
 }
