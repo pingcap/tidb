@@ -158,7 +158,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 	}
 
 	// Check if need to change charset/collation.
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -181,7 +181,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 }
 
 func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -276,7 +276,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
