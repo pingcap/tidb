@@ -1741,7 +1741,6 @@ func buildTableInfo(
 			if err != nil {
 				return nil, err
 			}
-			fk.State = model.StatePublic
 
 			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, fk)
 			continue

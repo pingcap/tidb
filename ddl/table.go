@@ -160,10 +160,27 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, errors.Trace(err)
 }
 
+func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.TableInfo) (ver int64, err error) {
+	switch tbInfo.State {
+	case model.StateNone:
+		for i := range
+		tbInfo, err = createTable(d, t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		tbInfo
+
+	}
+}
+
 type ForeignKeyChecker struct{}
 
-func (c ForeignKeyChecker) updateForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
-	referTableInfo.ForeignKeys
+func (c ForeignKeyChecker) updateForeignKey(tbInfo, referTableInfo *model.TableInfo, fkInfo *model.FKInfo) {
+	referTableInfo.CitedForeignKeys = append(referTableInfo.CitedForeignKeys, &model.CitedFKInfo{
+		ChildTable: tbInfo.Name,
+		FKIndex:    fkInfo.Name,
+		Cols:       fkInfo.RefCols,
+	})
 }
 
 func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
