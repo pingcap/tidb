@@ -1892,10 +1892,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 
-	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
-		return nil, err
-	}
-
 	s.sessionVars.StartTime = time.Now()
 
 	// Some executions are done in compile stage, so we reset them before compile.
@@ -2188,10 +2184,6 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if s.sessionVars.TxnCtx.InfoSchema == nil {
 		// We don't need to create a transaction for prepare statement, just get information schema will do.
 		s.sessionVars.TxnCtx.InfoSchema = domain.GetDomain(s).InfoSchema()
-	}
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return
 	}
 
 	ctx := context.Background()
@@ -3041,6 +3033,9 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 
 	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
+	if err := s.loadCommonGlobalVariablesIfNeeded(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
