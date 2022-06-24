@@ -458,7 +458,6 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			tps[i] = types.NewFieldType(mysql.TypeNull)
 		}
 	}
-
 	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,

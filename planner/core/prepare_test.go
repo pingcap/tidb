@@ -17,13 +17,14 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"math"
 	"math/rand"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1523,13 +1524,6 @@ func (s *testPlanSerialSuite) TestIssue29303(c *C) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
-<<<<<<< HEAD
-func (s *testPlanSerialSuite) TestIssue28942(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-=======
 func TestIssue34725(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1580,7 +1574,6 @@ func TestIssue33628(t *testing.T) {
 func TestIssue28942(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
->>>>>>> 381e870c5... planner: disable plan-cache short path for point-get plans when plan-cache is disabled (#34739)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
