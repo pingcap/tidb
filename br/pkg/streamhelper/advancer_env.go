@@ -75,8 +75,8 @@ func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf *config.Config) (En
 	}
 	return tidbEnv{
 		clis: utils.NewStoreManager(pdCli, keepalive.ClientParameters{
-			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime),
-			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout),
+			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
+			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
 		TaskEventClient: &TaskEventClient{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner: PDRegionScanner{Client: pdCli},

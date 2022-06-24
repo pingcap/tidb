@@ -100,10 +100,6 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	return resp, nil
 }
 
-func (f *fakeStore) GetAllLastFlushTS(ctx context.Context, in *logbackup.GetAllLastFlushTSRequest, opts ...grpc.CallOption) (*logbackup.GetAllLastFlushTSResponse, error) {
-	panic("not implemented") // TODO: Implement
-}
-
 // RegionScan gets a list of regions, starts from the region that contains key.
 // Limit limits the maximum number of regions returned.
 func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte, limit int) ([]streamhelper.RegionWithLeader, error) {

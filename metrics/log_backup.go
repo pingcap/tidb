@@ -20,9 +20,23 @@ import (
 
 var (
 	LastCheckpoint = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "last_checkpoint",
+		Help:      "The last global checkpoint of log backup.",
+	})
+	AdvancerOwner = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   "tidb",
 		Subsystem:   "log_backup",
-		Name:        "last_checkpoint",
-		Help:        "The last global checkpoint of log backup.",
+		Name:        "advancer_owner",
+		Help:        "If the node is the owner of advancers, set this to `1`, otherwise `0`.",
+		ConstLabels: map[string]string{},
 	})
+	AdvancerTickDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "advancer_tick_duration_sec",
+		Help:      "The time cost of each step during advancer ticking.",
+		Buckets:   prometheus.ExponentialBuckets(0.01, 3.0, 8),
+	}, []string{"step"})
 )

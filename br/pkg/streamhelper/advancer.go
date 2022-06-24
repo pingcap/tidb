@@ -7,6 +7,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -148,8 +149,11 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 
 func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field) func() {
 	now := time.Now()
+	label := strings.ReplaceAll(message, " ", "-")
 	return func() {
-		fields = append(fields, zap.Stringer("take", time.Since(now)))
+		cost := time.Since(now)
+		fields = append(fields, zap.Stringer("take", cost))
+		metrics.AdvancerTickDuration.WithLabelValues(label).Observe(cost.Seconds())
 		log.Debug(message, fields...)
 	}
 }
@@ -226,18 +230,19 @@ func (c *CheckpointAdvancer) UpdateGlobalCheckpointLight(ctx context.Context) (u
 	return ts, nil
 }
 
-func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context, getCheckpoint getCheckpointInRangeFunc) (uint64, error) {
+func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uint64, error) {
 	var (
 		cp = uint64(math.MaxInt64)
 		// TODO: Use The task range here.
 		thisRun []kv.KeyRange = []kv.KeyRange{{}}
 		nextRun []kv.KeyRange
 	)
+	defer c.recordTimeCost("record all")
 	cx, cancel := context.WithTimeout(ctx, c.cfg.MaxBackoffTime)
 	defer cancel()
 	for {
 		for _, u := range thisRun {
-			subCP, subUnformed, err := getCheckpoint(cx, u.StartKey, u.EndKey)
+			subCP, subUnformed, err := c.GetCheckpointInRange(cx, u.StartKey, u.EndKey)
 			if err != nil {
 				return 0, err
 			}
@@ -317,7 +322,7 @@ func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskE
 			if !ok {
 				return nil
 			}
-			log.Info("meet task event", zap.Any("event", e))
+			log.Info("meet task event", zap.Stringer("event", &e))
 			if err := c.onTaskEvent(e); err != nil {
 				if errors.Cause(e.Err) != context.Canceled {
 					log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
@@ -371,7 +376,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 				if !ok {
 					return
 				}
-				log.Info("meet task event", zap.Any("event", e))
+				log.Info("meet task event", zap.Stringer("event", &e))
 				if err := c.onTaskEvent(e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
 						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
@@ -421,6 +426,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 }
 
 func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
+	defer c.recordTimeCost("tick")()
 	defer func() {
 		e := recover()
 		if e != nil {
@@ -448,7 +454,7 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 		defer func() {
 			c.fullScanTick = c.cfg.FullScanTick
 		}()
-		err := c.advanceCheckpointBy(ctx, func() (uint64, error) { return c.CalculateGlobalCheckpoint(ctx, c.GetCheckpointInRange) })
+		err := c.advanceCheckpointBy(ctx, func() (uint64, error) { return c.CalculateGlobalCheckpoint(ctx) })
 		if err != nil {
 			return err
 		}

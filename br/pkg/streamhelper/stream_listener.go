@@ -5,6 +5,7 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/golang/protobuf/proto"
@@ -22,11 +23,30 @@ const (
 	EventErr
 )
 
+func (t EventType) String() string {
+	switch t {
+	case EventAdd:
+		return "Add"
+	case EventDel:
+		return "Del"
+	case EventErr:
+		return "Err"
+	}
+	return "Unknown"
+}
+
 type TaskEvent struct {
 	Type EventType
 	Name string
 	Info *backuppb.StreamBackupTaskInfo
 	Err  error
+}
+
+func (t *TaskEvent) String() string {
+	if t.Err != nil {
+		return fmt.Sprintf("%s(%s, err = %s)", t.Type, t.Name, t.Err)
+	}
+	return fmt.Sprintf("%s(%s)", t.Type, t.Name)
 }
 
 type TaskEventClient struct {

@@ -38,6 +38,7 @@ func Default() Config {
 		BackoffTime:    5 * time.Second,
 		MaxBackoffTime: 5 * time.Minute,
 		TickDuration:   5 * time.Second,
+		FullScanTick:   60,
 	}
 }
 
