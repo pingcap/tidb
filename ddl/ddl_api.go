@@ -202,6 +202,12 @@ func (d *ddl) CreateSchemaWithInfo(
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+
+	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+
 	return errors.Trace(err)
 }
 
