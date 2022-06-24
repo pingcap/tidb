@@ -192,7 +192,7 @@ func (v *PlanCacheValue) varTypesUnchanged(binVarTps []byte, txtVarTps []*types.
 	if v.IsBinProto {
 		return bytes.Equal(v.BinVarTypes, binVarTps)
 	}
-	return v.TxtVarTypes.CheckTypesCompatibility4PC(txtVarTps)
+	return v.TxtVarTypes.Equal(txtVarTps)
 }
 
 // NewPlanCacheValue creates a SQLCacheValue.
