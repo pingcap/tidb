@@ -182,16 +182,16 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	p.optimizeForNotFetchingLatestTS = optimizeForNotFetchingLatestTS(plan, false)
+	p.optimizeForNotFetchingLatestTS = notNeedGetLatestTSFromPD(plan, false)
 
 	return nil
 }
 
-// optimizeForNotFetchingLatestTS searches for optimization condition recursively
+// notNeedGetLatestTSFromPD searches for optimization condition recursively
 // Note: For point get and batch point get (name it plan), if one of the ancestor node is update/delete/physicalLock,
 // we should check whether the plan.Lock is true or false. See comments in needNotToBeOptimized.
 // inLockOrWriteStmt = true means one of the ancestor node is update/delete/physicalLock.
-func optimizeForNotFetchingLatestTS(plan plannercore.Plan, inLockOrWriteStmt bool) bool {
+func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
 	case *plannercore.PointGetPlan:
 		// We do not optimize the point get/ batch point get if plan.lock = false and inLockOrWriteStmt = true.
@@ -207,15 +207,15 @@ func optimizeForNotFetchingLatestTS(plan plannercore.Plan, inLockOrWriteStmt boo
 		}
 		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
 		for _, p := range v.Children() {
-			if !optimizeForNotFetchingLatestTS(p, isPhysicalLock || inLockOrWriteStmt) {
+			if !notNeedGetLatestTSFromPD(p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
 			}
 		}
 		return true
 	case *plannercore.Update:
-		return optimizeForNotFetchingLatestTS(v.SelectPlan, true)
+		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
 	case *plannercore.Delete:
-		return optimizeForNotFetchingLatestTS(v.SelectPlan, true)
+		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
 	case *plannercore.Insert:
 		return v.SelectPlan == nil
 	}
