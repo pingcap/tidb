@@ -333,12 +333,11 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	execStmt := sessiontxn.GetTxnManager(sctx).GetCurrentStmt().(*ast.ExecuteStmt)
 	isStaleness := snapshotTS != 0
 	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
 	execStmt.BinaryArgs = args
@@ -366,7 +365,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		Ti:               &TelemetryInfo{},
 		ReplicaReadScope: replicaReadScope,
 	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
+	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 		if !ok {
 			return nil, false, false, errors.Errorf("invalid CachedPrepareStmt type")
