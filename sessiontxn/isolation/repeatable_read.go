@@ -202,7 +202,7 @@ func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) boo
 	case *plannercore.BatchPointGetPlan:
 		return !inLockOrWriteStmt || v.Lock
 	case plannercore.PhysicalPlan:
-		if v.Children() == nil {
+		if len(v.Children()) == 0 {
 			return false
 		}
 		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
