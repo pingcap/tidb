@@ -1,0 +1,10 @@
+fmt.Fprint
+fmt.Fprintf
+fmt.Fprintln
+(*os.File).Close
+(io.Closer).Close
+(net.Conn).Close
+(*strings.Builder).WriteByte
+(*strings.Builder).WriteRune
+(*strings.Builder).WriteString
+(*strings.Builder).Write

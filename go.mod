@@ -83,11 +83,11 @@ require (
 	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8
 	golang.org/x/sync v0.0.0-20220513210516-0976fa681c29
-	golang.org/x/sys v0.0.0-20220408201424-a24fb2fb8a0f
+	golang.org/x/sys v0.0.0-20220622161953-175b2fd9d664
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	golang.org/x/text v0.3.7
 	golang.org/x/time v0.0.0-20220224211638-0e9765cccd65
-	golang.org/x/tools v0.1.11-0.20220513221640-090b14e8501f
+	golang.org/x/tools v0.1.11
 	google.golang.org/api v0.69.0
 	google.golang.org/grpc v1.44.0
 	gopkg.in/yaml.v2 v2.4.0
@@ -101,6 +101,7 @@ require (
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
 	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
+	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
 	honnef.co/go/tools v0.0.1-2020.1.4
 )
