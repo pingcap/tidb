@@ -534,8 +534,21 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.sessionVars.SetInTxn(false)
 		s.ClearDiskFullOpt()
 	}()
+	// check if the transaction is read-only
 	if s.txn.IsReadOnly() {
 		return nil
+	}
+	// check if the cluster is read-only
+	if !s.sessionVars.InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+		// It is not internal SQL, and the cluster has one of RestrictedReadOnly or SuperReadOnly
+		// We need to privilege check again: a privilege check occurred during planning, but we need
+		// to prevent the case that a long running auto-commit statement is now trying to commit.
+		pm := privilege.GetPrivilegeManager(s)
+		roles := s.sessionVars.ActiveRoles
+		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+			s.RollbackTxn(ctx)
+			return plannercore.ErrSQLInReadOnlyMode
+		}
 	}
 	err := s.checkPlacementPolicyBeforeCommit()
 	if err != nil {
@@ -2056,17 +2069,20 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	sessVars := se.sessionVars
 
 	// Record diagnostic information for DML statements
-	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
-		defer func() {
-			sessVars.LastQueryInfo = variable.QueryInfo{
-				TxnScope:    sessVars.CheckAndGetTxnScope(),
-				StartTS:     sessVars.TxnCtx.StartTS,
-				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
-			}
-			if err != nil {
-				sessVars.LastQueryInfo.ErrMsg = err.Error()
-			}
-		}()
+	if stmt, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
+		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
+		if showStmt, ok := stmt.(*ast.ShowStmt); !ok || showStmt.Tp != ast.ShowSessionStates {
+			defer func() {
+				sessVars.LastQueryInfo = sessionstates.QueryInfo{
+					TxnScope:    sessVars.CheckAndGetTxnScope(),
+					StartTS:     sessVars.TxnCtx.StartTS,
+					ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
+				}
+				if err != nil {
+					sessVars.LastQueryInfo.ErrMsg = err.Error()
+				}
+			}()
+		}
 	}
 
 	// Save origTxnCtx here to avoid it reset in the transaction retry.

@@ -3814,6 +3814,26 @@ func TestIssue29282(t *testing.T) {
 	}
 }
 
+// See https://github.com/pingcap/tidb/issues/35644
+func TestCreateTempTableInTxn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("begin")
+	tk.MustExec("create temporary table t1(id int)")
+	tk.MustQuery("select * from t1")
+	tk.MustExec("commit")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table tt(id int)")
+	tk1.MustExec("begin")
+	tk1.MustExec("create temporary table t1(id int)")
+	tk1.MustExec("insert into tt select * from t1")
+	tk1.MustExec("drop table tt")
+}
+
 // See https://github.com/pingcap/tidb/issues/29327
 func TestEnumDefaultValue(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
