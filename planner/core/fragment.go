@@ -100,8 +100,7 @@ func setupEnableFineGrainedShuffleFlag(frags []*Fragment) {
 	failpoint.Inject("testEnableFineGrainedShuffle", func(val failpoint.Value) {
 		expected := val.(bool)
 		if expected != enable {
-			// panic(fmt.Sprintf("fine grained shuffle switch is wrong, expected: %v, got: %v", expected, enable))
-			logutil.BgLogger().Error(fmt.Sprintf("gjt fine grained shuffle switch is wrong, expected: %v, got: %v", expected, enable))
+			panic(fmt.Sprintf("fine grained shuffle switch is wrong, expected: %v, got: %v", expected, enable))
 		}
 	})
 }
