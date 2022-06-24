@@ -132,7 +132,7 @@ type CreateDatabaseStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Name        string
+	Name        model.CIStr
 	Options     []*DatabaseOption
 }
 
@@ -142,7 +142,7 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		err := option.Restore(ctx)
@@ -168,7 +168,7 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type AlterDatabaseStmt struct {
 	ddlNode
 
-	Name                 string
+	Name                 model.CIStr
 	AlterDefaultDatabase bool
 	Options              []*DatabaseOption
 }
@@ -191,7 +191,7 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER DATABASE")
 	if !n.AlterDefaultDatabase {
 		ctx.WritePlain(" ")
-		ctx.WriteName(n.Name)
+		ctx.WriteName(n.Name.O)
 	}
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
@@ -230,7 +230,7 @@ type DropDatabaseStmt struct {
 	ddlNode
 
 	IfExists bool
-	Name     string
+	Name     model.CIStr
 }
 
 // Restore implements Node interface.
@@ -239,7 +239,7 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	return nil
 }
 
