@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -7400,7 +7401,7 @@ func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
-func TestImcompleteDateFunc(t *testing.T) {
+func TestIncompleteDateFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -7427,4 +7428,36 @@ func TestImcompleteDateFunc(t *testing.T) {
 	tk.MustQuery("select WEEKOFYEAR('1998-00-11')").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select YEARWEEK('1998-10-00')").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
+}
+
+func TestInetAton(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// inet_aton
+	tk.MustQuery("SELECT INET_ATON(0.1111111);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SHOW WARNINGS").
+		Check(testkit.Rows("Warning 1411 Incorrect string value: '0.1111111' for function inet_aton"))
+
+	tk.MustExec("DROP TABLE IF EXISTS t2;")
+	tk.MustExec("CREATE TABLE t2(ip VARBINARY(16));")
+	err := dbterror.ClassExpression.NewStd(mysql.ErrWrongValueForType)
+	tk.MustGetDBError("INSERT INTO t2 VALUES (INET_ATON('122.256'));", err)
+	// todo: rewriterExpression will foldConstant but it will not propagate err, how to solve it
+	// tk.MustGetDBError("INSERT INTO t2 SELECT (INET_ATON('122.256'));", err)
+	//tk.MustGetDBError("UPDATE t2 SET ip = '1' WHERE ip = INET_ATON('122.256');", err)
+	//tk.MustGetDBError("DELETE FROM t2 WHERE ip = INET_ATON('122.256');", err)
+
+	// inet6_aton
+	tk.MustQuery("SELECT INET6_ATON(0.1111111);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SHOW WARNINGS").
+		Check(testkit.Rows("Warning 1411 Incorrect string value: '0.1111111' for function inet6_aton"))
+
+	tk.MustExec("DROP TABLE IF EXISTS t2;")
+	tk.MustExec("CREATE TABLE t2(ip VARBINARY(16));")
+	tk.MustGetDBError("INSERT INTO t2 VALUES (INET6_ATON('122.256'));", err)
+	// 	tk.MustGetDBError("INSERT INTO t2 SELECT (INET_ATON('122.256'));", err)
+	//tk.MustGetDBError("UPDATE t2 SET ip = '1' WHERE ip = INET6_ATON('122.256');", err)
+	//tk.MustGetDBError("DELETE FROM t2 WHERE ip = INET6_ATON('122.256');", err)
 }
