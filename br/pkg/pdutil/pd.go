@@ -823,7 +823,7 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 			select {
 			case <-ticker.C:
 				if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
-					if err := errors.Cause(err); IsContextCanceled(err) {
+					if berrors.IsContextCanceled(err) {
 						break loop
 					}
 					log.Warn("pause scheduler by key range failed, ignore it and wait next time pause", zap.Error(err))
