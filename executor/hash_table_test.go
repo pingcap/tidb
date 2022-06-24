@@ -158,7 +158,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	}
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
-	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
+	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(matched))
 	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))

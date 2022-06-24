@@ -93,17 +93,27 @@ func NoIdea() (StmtErrorAction, error) {
 	return StmtActionNoIdea, nil
 }
 
-// AdviceType is the option for advice
-type AdviceType int
+// TxnAdvisable providers a collection of optimizations within transaction
+type TxnAdvisable interface {
+	// AdviseWarmup provides warmup for inner state
+	AdviseWarmup() error
+	// AdviseOptimizeWithPlan providers optimization according to the plan
+	AdviseOptimizeWithPlan(plan interface{}) error
+}
 
-const (
-	// AdviceWarmUp indicates to warm up the provider's inner state.
-	// For example, the provider can prefetch tso when it is advised.
-	AdviceWarmUp AdviceType = iota
-)
+// OptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
+// and then do `AdviseWarmup` to do some tso fetch if necessary
+func OptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
+	txnManager := GetTxnManager(sctx)
+	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
+		return err
+	}
+	return txnManager.AdviseWarmup()
+}
 
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
@@ -119,13 +129,14 @@ type TxnContextProvider interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
-	// Advise is used to give advice to provider
-	Advise(tp AdviceType) error
 }
 
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
+	// If the session is not in any transaction, for example: between two autocommit statements,
+	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 	GetStmtReadTS() (uint64, error)
@@ -136,6 +147,8 @@ type TxnManager interface {
 
 	// EnterNewTxn enters a new transaction.
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
+	// OnTxnEnd is the hook that should be called after transaction commit or rollback
+	OnTxnEnd()
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -145,9 +158,6 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
-	// Advise is used to give advice to provider.
-	// For example, `AdviceWarmUp` can tell the provider to warm up its inner state.
-	Advise(tp AdviceType) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
@@ -169,11 +179,6 @@ func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 		return err
 	}
 	return GetTxnManager(sctx).OnStmtStart(ctx)
-}
-
-// WarmUpTxn gives the `AdviceWarmUp` advise to the provider
-func WarmUpTxn(sctx sessionctx.Context) error {
-	return GetTxnManager(sctx).Advise(AdviceWarmUp)
 }
 
 // GetTxnManager returns the TxnManager object from session context

@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "mysql_lib",
+    srcs = ["mysql.go"],
+    importpath = "github.com/pingcap/tidb/tidb-binlog/driver/example/mysql",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//parser",
+        "//parser/ast",
+        "//tidb-binlog/driver/reader",
+        "//tidb-binlog/proto/go-binlog",
+        "//types/parser_driver",
+        "//util/dbutil",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_log//:log",
+        "@com_github_shopify_sarama//:sarama",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "mysql",
+    embed = [":mysql_lib"],
+    visibility = ["//visibility:public"],
+)

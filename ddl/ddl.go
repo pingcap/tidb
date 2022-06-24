@@ -476,6 +476,14 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
+		d.ownerManager.SetBeOwnerHook(func() {
+			var err error
+			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+			if err != nil {
+				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+			}
+		})
+
 		err := d.ownerManager.CampaignOwner()
 		if err != nil {
 			return errors.Trace(err)
@@ -495,11 +503,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
-		}
-
-		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-		if err != nil {
-			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
@@ -544,7 +547,7 @@ func (d *ddl) close() {
 	d.schemaSyncer.Close()
 
 	for _, worker := range d.workers {
-		worker.close()
+		worker.Close()
 	}
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -812,7 +815,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 }
 
-func (d *ddl) callHookOnChanged(err error) error {
+func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
+	if job.State == model.JobStateNone {
+		// We don't call the hook if the job haven't run yet.
+		return err
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
