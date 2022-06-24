@@ -170,11 +170,11 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition truncate partition p3", true, model.StateNone, true, false, nil},
 	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},
 	// Add columns.
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateNone, true, false, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", false, model.StatePublic, false, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateNone, model.StateNone}, true, false, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateDeleteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteReorganization, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", false, subStates{model.StatePublic, model.StatePublic}, false, true, nil},
 	// Drop columns.
 	// TODO: fix schema state.
 	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, nil},

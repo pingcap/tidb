@@ -401,7 +401,7 @@ func TestIssue5092(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// The following two statements are consistent with MariaDB.
 	tk.MustGetErrCode("alter table t_issue_5092 add column if not exists d int, add column d int", errno.ErrDupFieldName)
-	tk.MustExec("alter table t_issue_5092 add column dd int, add column if not exists dd int")
+	tk.MustGetErrCode("alter table t_issue_5092 add column dd int, add column if not exists dd int", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("alter table t_issue_5092 add column if not exists (d int, e int), add column ff text")
 	tk.MustExec("alter table t_issue_5092 add column b2 int after b1, add column c2 int first")
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
@@ -417,7 +417,6 @@ func TestIssue5092(t *testing.T) {
 		"  `c1` int(11) DEFAULT NULL,\n" +
 		"  `f` int(11) DEFAULT NULL,\n" +
 		"  `g` int(11) DEFAULT NULL,\n" +
-		"  `dd` int(11) DEFAULT NULL,\n" +
 		"  `ff` text DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t_issue_5092")
