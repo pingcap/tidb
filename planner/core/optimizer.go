@@ -535,6 +535,8 @@ func eliminateUnionScanAndLock(sctx sessionctx.Context, p PhysicalPlan) Physical
 
 	iteratePhysicalPlan(p, nil, nil,
 		func(p PhysicalPlan, physicalLock *PhysicalLock, unionScan *PhysicalUnionScan) (*PhysicalLock, *PhysicalUnionScan) {
+			// PhysicalUnionScan and PhysicalLock can only relate to one point get/batch point get.
+			// So, if the plan has multiple children, we should reset physicalLockMap and unionScanSet
 			if len(p.Children()) > 1 {
 				physicalLockMap = make(map[PhysicalPlan]PhysicalPlan)
 				unionScanSet = make(map[PhysicalPlan]interface{})
