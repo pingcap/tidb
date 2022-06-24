@@ -474,9 +474,9 @@ func TestInsertOnDup(t *testing.T) {
 
 	tk.MustExec("drop table if exists dup")
 	tk.MustExec("create table dup (id int primary key, c int)")
+	tk2.MustExec("insert dup values (1, 1)")
 	tk.MustExec("begin pessimistic")
 
-	tk2.MustExec("insert dup values (1, 1)")
 	tk.MustExec("insert dup values (1, 1) on duplicate key update c = c + 1")
 	tk.MustExec("commit")
 	tk.MustQuery("select * from dup").Check(testkit.Rows("1 2"))

@@ -15,6 +15,7 @@
 package txn
 
 import (
+	"bytes"
 	"context"
 	"sync/atomic"
 
@@ -70,7 +71,27 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
-	return txn.extractKeyErr(err)
+	if err != nil {
+		return txn.extractKeyErr(err)
+	}
+	if lockCtx.MaxLockedWithConflictTS != 0 {
+		var buf bytes.Buffer
+		foundKey := false
+		for k, v := range lockCtx.Values {
+			if v.LockedWithConflictTS >= lockCtx.MaxLockedWithConflictTS {
+				foundKey = true
+				prettyWriteKey(&buf, []byte(k))
+				break
+			}
+		}
+		if !foundKey {
+			buf.WriteString("<unknown>")
+		}
+		// TODO: Primary is not exported here.
+		buf.WriteString(" primary=<unknown>")
+		return kv.ErrWriteConflict.FastGenByArgs(txn.StartTS(), 0, lockCtx.MaxLockedWithConflictTS, buf.String())
+	}
+	return nil
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
