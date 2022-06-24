@@ -582,7 +582,7 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 		if stmt.IfExists {
 			return nil
 		}
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
+		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
 	job := &model.Job{
 		SchemaID:    old.ID,
@@ -595,8 +595,11 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (er
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err != nil {
-		if infoschema.ErrDatabaseNotExists.Equal(err) && stmt.IfExists {
-			return nil
+		if infoschema.ErrDatabaseNotExists.Equal(err) {
+			if stmt.IfExists {
+				return nil
+			}
+			return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 		}
 		return errors.Trace(err)
 	}
