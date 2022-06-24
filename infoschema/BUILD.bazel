@@ -95,6 +95,7 @@ go_test(
         "//types",
         "//util",
         "//util/kvcache",
+        "//util/memory",
         "//util/pdapi",
         "//util/resourcegrouptag",
         "//util/set",

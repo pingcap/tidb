@@ -12,6 +12,7 @@ go_library(
         "//parser/mysql",
         "//types",
         "//util/logutil",
+        "//util/memory",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],
