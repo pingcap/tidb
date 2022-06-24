@@ -183,5 +183,6 @@ func TestMarshalSQLWarn(t *testing.T) {
 	var newWarns []stmtctx.SQLWarn
 	err = json.Unmarshal(bytes, &newWarns)
 	require.NoError(t, err)
+	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
 	tk.MustQuery("show warnings").Check(rows)
 }

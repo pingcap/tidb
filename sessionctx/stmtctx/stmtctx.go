@@ -77,7 +77,7 @@ func (warn *SQLWarn) MarshalJSON() ([]byte, error) {
 	e := errors.Cause(warn.Err)
 	switch x := e.(type) {
 	case *terror.Error:
-		// Omit outside errors because only the most inside error matters.
+		// Omit outter errors because only the most inner error matters.
 		w.SQLErr = x
 	default:
 		w.Msg = e.Error()
@@ -451,8 +451,8 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 // SetAffectedRows sets affected rows.
 func (sc *StatementContext) SetAffectedRows(rows uint64) {
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
 	sc.mu.affectedRows = rows
+	sc.mu.Unlock()
 }
 
 // AffectedRows gets affected rows.

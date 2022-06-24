@@ -1912,6 +1912,7 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	if sessionStates.LastAffectedRows > 0 {
 		s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
 	}
+	// The AffectedRowsSetInForce will be assigned to PrevAffectedRows before the next statement executes.
 	s.StmtCtx.AffectedRowsSetInForce = sessionStates.LastAffectedRows
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
