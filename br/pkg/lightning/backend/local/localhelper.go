@@ -334,11 +334,11 @@ func (local *local) SplitAndScatterRegionByRanges(
 	startTime := time.Now()
 	scatterCount, err := local.waitForScatterRegions(ctx, scatterRegions)
 	if scatterCount == len(scatterRegions) {
-		log.FromContext(ctx).Info("waiting for scattering regions done",
+		log.FromContext(ctx).Info("scattering regions done",
 			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
-		log.FromContext(ctx).Info("waiting for scattering regions timeout",
+		log.FromContext(ctx).Info("scattering regions timeout",
 			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),

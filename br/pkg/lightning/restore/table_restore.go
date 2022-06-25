@@ -91,7 +91,7 @@ func (tr *TableRestore) Close() {
 }
 
 func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
-	task := tr.logger.Begin(zap.InfoLevel, "load engines and files")
+	task := tr.logger.Begin(zap.InfoLevel, "virtually reorganize source table data into engines")
 	chunks, err := mydump.MakeTableRegions(ctx, tr.tableMeta, len(tr.tableInfo.Core.Columns), rc.cfg, rc.ioWorkers, rc.store)
 	if err == nil {
 		timestamp := time.Now().Unix()
@@ -268,7 +268,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 			}
 		}
 
-		logTask := tr.logger.Begin(zap.InfoLevel, "import whole table")
+		logTask := tr.logger.Begin(zap.InfoLevel, "restore all source data by engines")
 		var wg sync.WaitGroup
 		var engineErr common.OnceError
 		setError := func(err error) {
@@ -349,9 +349,13 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		}
 
 		if indexEngine != nil {
+			indexEnginelogTask := tr.logger.Begin(zap.InfoLevel, "import source data index engine")
 			closedIndexEngine, restoreErr = indexEngine.Close(ctx, idxEngineCfg)
+			indexEnginelogTask.End(zap.ErrorLevel, restoreErr)
 		} else {
+			indexEnginelogTask := tr.logger.Begin(zap.InfoLevel, "import source data index engine")
 			closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+			indexEnginelogTask.End(zap.ErrorLevel, restoreErr)
 		}
 
 		if err = rc.saveStatusCheckpoint(ctx, tr.tableName, indexEngineID, restoreErr, checkpoints.CheckpointStatusClosed); err != nil {
@@ -360,7 +364,9 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 	} else if indexEngineCp.Status == checkpoints.CheckpointStatusClosed {
 		// If index engine file has been closed but not imported only if context cancel occurred
 		// when `importKV()` execution, so `UnsafeCloseEngine` and continue import it.
+		indexEnginelogTask := tr.logger.Begin(zap.InfoLevel, "import source data index engine")
 		closedIndexEngine, restoreErr = rc.backend.UnsafeCloseEngine(ctx, idxEngineCfg, tr.tableName, indexEngineID)
+		indexEnginelogTask.End(zap.ErrorLevel, restoreErr)
 	}
 	if restoreErr != nil {
 		return errors.Trace(restoreErr)
@@ -419,7 +425,7 @@ func (tr *TableRestore) restoreEngine(
 		IsKVSorted: hasAutoIncrementAutoID,
 	}
 
-	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "encode kv data and write")
+	logTask := tr.logger.With(zap.Int32("engineNumber", engineID)).Begin(zap.InfoLevel, "transform engine source data into temp KVs")
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 		Local:     &backend.LocalEngineConfig{},

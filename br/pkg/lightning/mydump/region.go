@@ -239,7 +239,7 @@ func MakeTableRegions(
 		}
 	}
 
-	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+	log.FromContext(ctx).Info("virtually splitted source table X data files into Y chunks(table regions) based on MaxRegionSize Z, and assign splitted chunks into W engines to concurrently restore table", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),

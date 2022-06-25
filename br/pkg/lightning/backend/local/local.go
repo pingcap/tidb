@@ -1053,7 +1053,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, r
 		return ranges, nil
 	}
 
-	logger := log.FromContext(ctx).With(zap.Stringer("engine", engine.UUID))
+	logger := log.FromContext(ctx).With(zap.Stringer("engineUUID", engine.UUID))
 	sizeProps, err := getSizeProperties(logger, engine.db, local.keyAdapter)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1415,7 +1415,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}()
 	}
 
-	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
+	log.FromContext(ctx).Info("import splitted ranges of engine", zap.Stringer("engineUUID", engineUUID),
 		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
 
 	failpoint.Inject("ReadyForImportEngine", func() {})
@@ -1453,7 +1453,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 	}
 
-	log.FromContext(ctx).Info("import engine success", zap.Stringer("uuid", engineUUID),
+	log.FromContext(ctx).Info("import splitted ranges of engine completed", zap.Stringer("engineUUID", engineUUID),
 		zap.Int64("size", lfTotalSize), zap.Int64("kvs", lfLength),
 		zap.Int64("importedSize", lf.importedKVSize.Load()), zap.Int64("importedCount", lf.importedKVCount.Load()))
 	return nil

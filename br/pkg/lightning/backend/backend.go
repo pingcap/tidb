@@ -456,7 +456,7 @@ func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionS
 	var err error
 
 	for i := 0; i < importMaxRetryTimes; i++ {
-		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
+		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "Import engine temp KVs into tikv")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {
 			task.End(zap.ErrorLevel, err)
