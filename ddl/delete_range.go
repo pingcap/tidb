@@ -117,7 +117,7 @@ func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
 func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionctx.Context, job *model.Job) (bool, error) {
 	var ea elementIDAlloc
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
-		proxyJob := cloneFromSubJob(job, sub)
+		proxyJob := sub.ToProxyJob(job)
 		if jobNeedGC(proxyJob) {
 			err := insertJobIntoDeleteRangeTable(ctx, sctx, proxyJob, &ea)
 			if err != nil {
