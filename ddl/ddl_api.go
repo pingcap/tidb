@@ -2978,11 +2978,22 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 			return dbterror.ErrRunMultiSchemaChanges
 		}
 	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
+		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) && !allSupported(specs) {
 			return dbterror.ErrRunMultiSchemaChanges
 		}
 	}
 	return nil
+}
+
+func allSupported(specs []*ast.AlterTableSpec) bool {
+	for _, s := range specs {
+		switch s.Tp {
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
@@ -3019,7 +3030,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		case ast.AlterTableAddColumns:
 			useMultiSchemaChange = true
 		case ast.AlterTableDropColumn:
-			err = d.DropColumns(sctx, ident, validSpecs)
+			useMultiSchemaChange = true
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
 			err = d.DropIndexes(sctx, ident, validSpecs)
 		default:
@@ -4016,20 +4027,15 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
 		SchemaName:      schema.Name.L,
+		SchemaState:     model.StatePublic,
 		TableName:       t.Meta().Name.L,
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
 		MultiSchemaInfo: multiSchemaInfo,
-		SchemaState:     model.StatePublic,
-		Args:            []interface{}{colName},
+		Args:            []interface{}{colName, spec.IfExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	// column not exists, but if_exists flags is true, so we ignore this error.
-	if dbterror.ErrCantDropFieldOrKey.Equal(err) && spec.IfExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }

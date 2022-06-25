@@ -450,8 +450,8 @@ func TestIssue5092(t *testing.T) {
 	tk.MustExec("create table t_issue_5092 (a int)")
 	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
 	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists a, drop column b, drop column c", errno.ErrCantRemoveAllFields)
-	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrCantDropFieldOrKey)
-	tk.MustExec("alter table t_issue_5092 drop column c, drop column if exists c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_issue_5092 drop column c, drop column if exists c", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("drop table t_issue_5092")
 }
 
@@ -593,9 +593,9 @@ func TestErrnoErrorCode(t *testing.T) {
 	sql = "alter table test_drop_columns drop column c1, drop column c2, drop column c3;"
 	tk.MustGetErrCode(sql, errno.ErrCantRemoveAllFields)
 	sql = "alter table test_drop_columns drop column c1, add column c2 int;"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
 	sql = "alter table test_drop_columns drop column c1, drop column c1;"
-	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	tk.MustGetErrCode(sql, errno.ErrKeyColumnDoesNotExits)
@@ -2735,6 +2735,7 @@ func TestDropColumnWithAutoInc(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema=1;")
 	tk.MustExec("create table t(a int, b int auto_increment, c int, key(b))")
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
