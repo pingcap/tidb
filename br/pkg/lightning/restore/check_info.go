@@ -161,7 +161,7 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	checkCtx := withPreInfoGetterValue(ctx, preInfoGetterKeyDBMetas, rc.dbMetas)
+	checkCtx := WithPreInfoGetterDBMetas(ctx, rc.dbMetas)
 	if err := rc.preInfoGetter.CheckVersionRequirements(checkCtx); err != nil {
 		err = common.NormalizeError(err)
 		passed = false
@@ -391,7 +391,11 @@ func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) {
 }
 
 func (rc *Controller) estimateSourceData(ctx context.Context) (int64, int64, bool, error) {
-	return rc.preInfoGetter.EstimateSourceDataSize(ctx)
+	result, err := rc.preInfoGetter.EstimateSourceDataSize(ctx)
+	if err != nil {
+		return 0, 0, false, errors.Trace(err)
+	}
+	return result.SizeWithIndex, result.SizeWithoutIndex, result.HasUnsortedBigTables, nil
 }
 
 // localResource checks the local node has enough resources for this import when local backend enabled;

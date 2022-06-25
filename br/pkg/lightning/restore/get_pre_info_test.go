@@ -488,10 +488,10 @@ func TestGetPreInfoEstimateSourceSize(t *testing.T) {
 	ig, err := NewPreRestoreInfoGetter(cfg, mockSrc.GetAllDBFileMetas(), mockSrc.GetStorage(), mockTarget, nil)
 	require.NoError(t, err)
 
-	estimateSize, fileSize, hasUnsortBigTable, err := ig.EstimateSourceDataSize(ctx)
+	sizeResult, err := ig.EstimateSourceDataSize(ctx)
 	require.NoError(t, err)
-	t.Logf("estimate size: %v, file size: %v, has unsorted table: %v\n", estimateSize, fileSize, hasUnsortBigTable)
-	require.GreaterOrEqual(t, estimateSize, fileSize)
-	require.Equal(t, int64(len(testData)), fileSize)
-	require.False(t, hasUnsortBigTable)
+	t.Logf("estimate size: %v, file size: %v, has unsorted table: %v\n", sizeResult.SizeWithIndex, sizeResult.SizeWithoutIndex, sizeResult.HasUnsortedBigTables)
+	require.GreaterOrEqual(t, sizeResult.SizeWithIndex, sizeResult.SizeWithoutIndex)
+	require.Equal(t, int64(len(testData)), sizeResult.SizeWithoutIndex)
+	require.False(t, sizeResult.HasUnsortedBigTables)
 }

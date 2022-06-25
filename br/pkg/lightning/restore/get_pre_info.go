@@ -52,6 +52,16 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+// EstimateSourceDataSizeResult is the object for estimated data size result.
+type EstimateSourceDataSizeResult struct {
+	// SizeWithIndex is the size with the index.
+	SizeWithIndex int64
+	// SizeWithoutIndex is the size without the index.
+	SizeWithoutIndex int64
+	// HasUnsortedBigTables indicates whether the source data has unsorted big tables or not.
+	HasUnsortedBigTables bool
+}
+
 // PreRestoreInfoGetter defines the operations to get information from sources and target.
 // These information are used in the preparation of the import ( like precheck ).
 type PreRestoreInfoGetter interface {
@@ -68,7 +78,7 @@ type PreRestoreInfoGetter interface {
 	//   which might include some extra index data to generate besides the source file data
 	// * the total data size of all the source files,
 	// * whether there are some unsorted big tables
-	EstimateSourceDataSize(ctx context.Context) (int64, int64, bool, error)
+	EstimateSourceDataSize(ctx context.Context) (*EstimateSourceDataSizeResult, error)
 }
 
 // TargetInfoGetter defines the operations to get information from target.
@@ -92,11 +102,26 @@ type TargetInfoGetter interface {
 type preInfoGetterKey string
 
 const (
-	preInfoGetterKeyDBMetas preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
+	preInfoGetterKeyDBMetas                  preInfoGetterKey = "PRE_INFO_GETTER/DB_METAS"
+	preInfoGetterKeyTableStructsCache        preInfoGetterKey = "PRE_INFO_GETTER/TABLE_STRUCTS_CACHE"
+	preInfoGetterKeySysVarsCache             preInfoGetterKey = "PRE_INFO_GETTER/SYS_VARS_CACHE"
+	preInfoGetterKeyEstimatedSourceSizeCache preInfoGetterKey = "PRE_INFO_GETTER/ESTIMATED_SOURCE_SIZE_CACHE"
 )
 
-func withPreInfoGetterValue(ctx context.Context, key preInfoGetterKey, val any) context.Context {
-	return context.WithValue(ctx, key, val)
+func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) context.Context {
+	return context.WithValue(ctx, preInfoGetterKeyDBMetas, dbMetas)
+}
+
+func WithPreInfoGetterTableStructuresCache(ctx context.Context, dbInfos map[string]*checkpoints.TidbDBInfo) context.Context {
+	return context.WithValue(ctx, preInfoGetterKeyTableStructsCache, dbInfos)
+}
+
+func WithPreInfoGetterSysVarsCache(ctx context.Context, sysVars map[string]string) context.Context {
+	return context.WithValue(ctx, preInfoGetterKeySysVarsCache, sysVars)
+}
+
+func WithPreInfoGetterEstimatedSrcSizeCache(ctx context.Context, sizeResult *EstimateSourceDataSizeResult) context.Context {
+	return context.WithValue(ctx, preInfoGetterKeyEstimatedSourceSizeCache, sizeResult)
 }
 
 // TargetInfoGetterImpl implements the operations to get information from the target.
@@ -245,10 +270,6 @@ type PreRestoreInfoGetterImpl struct {
 	dbMetas          []*mydump.MDDatabaseMeta
 	mdDBMetaMap      map[string]*mydump.MDDatabaseMeta
 	mdDBTableMetaMap map[string]map[string]*mydump.MDTableMeta
-
-	// cached data
-	dbInfos map[string]*checkpoints.TidbDBInfo
-	sysVars map[string]string
 }
 
 // NewPreRestoreInfoGetter creates a PreRestoreInfoGetterImpl object.
@@ -303,26 +324,32 @@ func (p *PreRestoreInfoGetterImpl) Init() {
 	}
 	p.mdDBMetaMap = mdDBMetaMap
 	p.mdDBTableMetaMap = mdDBTableMetaMap
-
-	// clear the cache
-	p.dbInfos = nil
-	p.sysVars = nil
 }
 
 // GetAllTableStructures gets all the table structures with the information from both the source and the target.
 // It implements the PreRestoreInfoGetter interface.
 // It has a caching mechanism: the table structures will be obtained from the source only once.
 func (p *PreRestoreInfoGetterImpl) GetAllTableStructures(ctx context.Context) (map[string]*checkpoints.TidbDBInfo, error) {
-	if p.dbInfos == nil {
-		dbInfos, err := LoadSchemaInfo(ctx, p.dbMetas, func(ctx context.Context, dbName string) ([]*model.TableInfo, error) {
-			return p.getTableStructuresByFileMeta(ctx, p.mdDBMetaMap[dbName])
-		})
-		if err != nil {
-			return nil, errors.Trace(err)
+	var (
+		dbInfos map[string]*checkpoints.TidbDBInfo
+		err     error
+	)
+	dbInfosVal := ctx.Value(preInfoGetterKeyTableStructsCache)
+	if dbInfosVal != nil {
+		if v, ok := dbInfosVal.(map[string]*checkpoints.TidbDBInfo); ok {
+			dbInfos = v
 		}
-		p.dbInfos = dbInfos
 	}
-	return p.dbInfos, nil
+	if dbInfos != nil {
+		return dbInfos, nil
+	}
+	dbInfos, err = LoadSchemaInfo(ctx, p.dbMetas, func(ctx context.Context, dbName string) ([]*model.TableInfo, error) {
+		return p.getTableStructuresByFileMeta(ctx, p.mdDBMetaMap[dbName])
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return dbInfos, nil
 }
 
 func (p *PreRestoreInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta) ([]*model.TableInfo, error) {
@@ -491,15 +518,25 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 
 // EstimateSourceDataSize estimates the datasize to generate during the import as well as some other sub-informaiton.
 // It implements the PreRestoreInfoGetter interface.
-func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (int64, int64, bool, error) {
-	estimatedDataSizeToGenerate := int64(0)
+func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (*EstimateSourceDataSizeResult, error) {
+	var result *EstimateSourceDataSizeResult
+	resultVal := ctx.Value(preInfoGetterKeyEstimatedSourceSizeCache)
+	if resultVal != nil {
+		if v, ok := resultVal.(*EstimateSourceDataSizeResult); ok {
+			result = v
+		}
+	}
+	if result != nil {
+		return result, nil
+	}
+	sizeWithIndex := int64(0)
 	sourceTotalSize := int64(0)
 	tableCount := 0
 	unSortedBigTableCount := 0
 	errMgr := errormanager.New(nil, p.cfg, log.FromContext(ctx))
 	dbInfos, err := p.GetAllTableStructures(ctx)
 	if err != nil {
-		return 0.0, 0.0, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	sysVars := p.GetTargetSysVariablesForImport(ctx)
 	for _, db := range p.dbMetas {
@@ -514,22 +551,22 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 				// Do not sample small table because there may a large number of small table and it will take a long
 				// time to sample data for all of them.
 				if isTiDBBackend(p.cfg) || tbl.TotalSize < int64(config.SplitRegionSize) {
-					estimatedDataSizeToGenerate += tbl.TotalSize
+					sizeWithIndex += tbl.TotalSize
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
 					sampledIndexRatio, isRowOrderedFromSample, err := p.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core, errMgr, sysVars)
 					if err != nil {
-						return 0.0, 0.0, false, errors.Trace(err)
+						return nil, errors.Trace(err)
 					}
 					tbl.IndexRatio = sampledIndexRatio
 					tbl.IsRowOrdered = isRowOrderedFromSample
 
 					if tbl.IndexRatio > 0 {
-						estimatedDataSizeToGenerate += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+						sizeWithIndex += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
 					} else {
 						// if sample data failed due to max-error, fallback to use source size
-						estimatedDataSizeToGenerate += tbl.TotalSize
+						sizeWithIndex += tbl.TotalSize
 					}
 
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 && !tbl.IsRowOrdered {
@@ -541,7 +578,12 @@ func (p *PreRestoreInfoGetterImpl) EstimateSourceDataSize(ctx context.Context) (
 		}
 	}
 
-	return estimatedDataSizeToGenerate, sourceTotalSize, (unSortedBigTableCount > 0), nil
+	result = &EstimateSourceDataSizeResult{
+		SizeWithIndex:        sizeWithIndex,
+		SizeWithoutIndex:     sourceTotalSize,
+		HasUnsortedBigTables: (unSortedBigTableCount > 0),
+	}
+	return result, nil
 
 }
 
@@ -745,8 +787,15 @@ func (g *PreRestoreInfoGetterImpl) CheckVersionRequirements(ctx context.Context)
 // It implements the PreRestoreInfoGetter interface.
 // It has caching mechanism.
 func (p *PreRestoreInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Context) map[string]string {
-	if p.sysVars == nil {
-		p.sysVars = p.targetInfoGetter.GetTargetSysVariablesForImport(ctx)
+	var sysVars map[string]string
+	sysVarsVal := ctx.Value(preInfoGetterKeySysVarsCache)
+	if sysVarsVal != nil {
+		if v, ok := sysVarsVal.(map[string]string); ok {
+			sysVars = v
+		}
 	}
-	return p.sysVars
+	if sysVars != nil {
+		return sysVars
+	}
+	return p.targetInfoGetter.GetTargetSysVariablesForImport(ctx)
 }

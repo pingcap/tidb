@@ -189,6 +189,7 @@ type Controller struct {
 	taskCtx       context.Context
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
+	dbInfos       map[string]*checkpoints.TidbDBInfo
 	tableWorkers  *worker.Pool
 	indexWorkers  *worker.Pool
 	regionWorkers *worker.Pool
@@ -736,6 +737,11 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		return err
 	}
 
+	dbInfos, err := rc.preInfoGetter.GetAllTableStructures(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.dbInfos = dbInfos
 	rc.sysVars = rc.preInfoGetter.GetTargetSysVariablesForImport(ctx)
 
 	return nil
@@ -743,12 +749,9 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 // initCheckpoint initializes all tables' checkpoint data
 func (rc *Controller) initCheckpoint(ctx context.Context) error {
-	dbInfos, err := rc.preInfoGetter.GetAllTableStructures(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	// Load new checkpoints
-	if err := rc.checkpointsDB.Initialize(ctx, rc.cfg, dbInfos); err != nil {
+	err := rc.checkpointsDB.Initialize(ctx, rc.cfg, rc.dbInfos)
+	if err != nil {
 		return common.ErrInitCheckpoint.Wrap(err).GenWithStackByArgs()
 	}
 	failpoint.Inject("InitializeCheckpointExit", func() {
@@ -1494,12 +1497,8 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 
 	var allTasks []task
 	var totalDataSizeToRestore int64
-	dbInfos, err := rc.preInfoGetter.GetAllTableStructures(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	for _, dbMeta := range rc.dbMetas {
-		dbInfo := dbInfos[dbMeta.Name]
+		dbInfo := rc.dbInfos[dbMeta.Name]
 		for _, tableMeta := range dbMeta.Tables {
 			tableInfo := dbInfo.Tables[tableMeta.Name]
 			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
@@ -1919,6 +1918,8 @@ func isTiDBBackend(cfg *config.Config) bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
+	ctx = WithPreInfoGetterSysVarsCache(ctx, rc.sysVars)
+	ctx = WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos)
 	if err := rc.DataCheck(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1940,19 +1941,20 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 	// We still need to sample source data even if this task has existed, because we need to judge whether the
 	// source is in order as row key to decide how to sort local data.
-	estimatedDataSizeToGenerate, sourceTotalSize, hasUnsortedBigTables, err := rc.preInfoGetter.EstimateSourceDataSize(ctx)
+	estimatedSizeResult, err := rc.preInfoGetter.EstimateSourceDataSize(ctx)
 	if err != nil {
 		return common.ErrCheckDataSource.Wrap(err).GenWithStackByArgs()
 	}
+	estimatedDataSizeToGenerate := estimatedSizeResult.SizeWithIndex
 
 	// Do not import with too large concurrency because these data may be all unsorted.
-	if hasUnsortedBigTables {
+	if estimatedSizeResult.HasUnsortedBigTables {
 		if rc.cfg.App.TableConcurrency > rc.cfg.App.IndexConcurrency {
 			rc.cfg.App.TableConcurrency = rc.cfg.App.IndexConcurrency
 		}
 	}
 	if rc.status != nil {
-		rc.status.TotalFileSize.Store(sourceTotalSize)
+		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
 	if isLocalBackend(rc.cfg) {
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,

@@ -932,12 +932,13 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		ioWorkers:        ioWorkers,
 	}
 	preInfoGetter.Init()
-	preInfoGetter.dbInfos = map[string]*checkpoints.TidbDBInfo{
+	dbInfos := map[string]*checkpoints.TidbDBInfo{
 		s.tableInfo.DB: s.dbInfo,
 	}
 	rc := &Controller{
 		cfg:               cfg,
 		dbMetas:           dbMetas,
+		dbInfos:           dbInfos,
 		tableWorkers:      worker.NewPool(ctx, 6, "table"),
 		ioWorkers:         ioWorkers,
 		indexWorkers:      worker.NewPool(ctx, 2, "index"),
@@ -1267,7 +1268,6 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			cfg:              cfg,
 			targetInfoGetter: targetInfoGetter,
 			dbMetas:          []*mydump.MDDatabaseMeta{},
-			dbInfos:          make(map[string]*checkpoints.TidbDBInfo),
 		}
 		rc := &Controller{
 			cfg:           cfg,
@@ -1275,9 +1275,11 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			taskMgr:       mockTaskMetaMgr{},
 			checkTemplate: template,
 			preInfoGetter: preInfoGetter,
+			dbInfos:       make(map[string]*checkpoints.TidbDBInfo),
 		}
 
-		err := rc.checkClusterRegion(context.Background())
+		ctx := WithPreInfoGetterTableStructuresCache(context.Background(), rc.dbInfos)
+		err := rc.checkClusterRegion(ctx)
 		require.NoError(s.T(), err)
 		require.Equal(s.T(), ca.expectErrorCnt, template.FailedCount(Critical))
 		require.Equal(s.T(), ca.expectResult, template.Success())
@@ -1405,15 +1407,17 @@ func (s *tableRestoreSuite) TestEstimate() {
 		targetInfoGetter: mockTarget,
 	}
 	preInfoGetter.Init()
-	preInfoGetter.dbInfos = dbInfos
 	rc := &Controller{
 		cfg:           s.cfg,
 		checkTemplate: template,
 		store:         s.store,
 		backend:       importer,
+		dbMetas:       dbMetas,
+		dbInfos:       dbInfos,
 		ioWorkers:     ioWorkers,
 		preInfoGetter: preInfoGetter,
 	}
+	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
 	source, _, _, err := rc.estimateSourceData(ctx)
 	// Because this file is small than region split size so we does not sample it.
 	require.NoError(s.T(), err)
@@ -1828,15 +1832,16 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			cfg:        cfg,
 			srcStorage: mockStore,
 			ioWorkers:  ioWorkers,
-			dbInfos:    ca.dbInfos,
 		}
 		rc := &Controller{
 			cfg:           cfg,
 			checkTemplate: template,
 			store:         mockStore,
+			dbInfos:       ca.dbInfos,
 			ioWorkers:     ioWorkers,
 			preInfoGetter: preInfoGetter,
 		}
+		ctx = WithPreInfoGetterTableStructuresCache(ctx, ca.dbInfos)
 		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), msgs, ca.MsgNum)
@@ -1905,15 +1910,16 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 		cfg:        cfg,
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,
-		dbInfos:    dbInfos,
 	}
 	rc := &Controller{
 		cfg:           cfg,
 		checkTemplate: NewSimpleTemplate(),
 		store:         mockStore,
+		dbInfos:       dbInfos,
 		ioWorkers:     ioWorkers,
 		preInfoGetter: preInfoGetter,
 	}
+	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
 	msgs, err := rc.SchemaIsValid(ctx, &mydump.MDTableMeta{
 		DB:   "db1",
 		Name: "gbk_table",

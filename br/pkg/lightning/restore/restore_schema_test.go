@@ -118,6 +118,7 @@ func (s *restoreSchemaSuite) SetupSuite() {
 		targetInfoGetter: targetInfoGetter,
 		dbMetas:          dbMetas,
 	}
+	preInfoGetter.Init()
 	s.rc = &Controller{
 		checkTemplate: NewSimpleTemplate(),
 		cfg:           config,

@@ -357,7 +357,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	for _, ca := range cases {
 		rc.checkTemplate = NewSimpleTemplate()
 		cfg.Mydumper.IgnoreColumns = ca.ignoreColumns
-		preInfoGetter.dbInfos = make(map[string]*checkpoints.TidbDBInfo)
+		rc.dbInfos = make(map[string]*checkpoints.TidbDBInfo)
 
 		dbMetas := make([]*mydump.MDDatabaseMeta, 0)
 		for db, tbls := range ca.Sources {
@@ -366,7 +366,7 @@ func TestCheckCSVHeader(t *testing.T) {
 				Name:   db,
 				Tables: make(map[string]*checkpoints.TidbTableInfo),
 			}
-			preInfoGetter.dbInfos[db] = dbInfo
+			rc.dbInfos[db] = dbInfo
 
 			for _, tbl := range tbls {
 				node, err := p.ParseOneStmt(tbl.SQL, "", "")
@@ -406,7 +406,7 @@ func TestCheckCSVHeader(t *testing.T) {
 			})
 		}
 
-		err := rc.checkCSVHeader(ctx, dbMetas)
+		err := rc.checkCSVHeader(WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos), dbMetas)
 		require.NoError(t, err)
 		if ca.level != passed {
 			require.Equal(t, 1, rc.checkTemplate.FailedCount(ca.level))
@@ -459,6 +459,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 		preInfoGetter: preInfoGetter,
 	}
+
 	ctx := context.Background()
 
 	// test tidb will do nothing
