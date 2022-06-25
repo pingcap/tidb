@@ -511,7 +511,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
 			for _, hiddenCol := range hiddenCols {
-				createColumnInfo(tblInfo, hiddenCol)
+				initAndAddColumnToTable(tblInfo, hiddenCol)
 			}
 		}
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {

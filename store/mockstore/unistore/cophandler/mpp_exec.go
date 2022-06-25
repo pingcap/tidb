@@ -151,8 +151,9 @@ func (e *tableScanExec) Process(key, value []byte) error {
 	e.rowCnt++
 
 	if e.chk.IsFull() {
+		lastProcessed := kv.Key(append([]byte{}, key...)) // make a copy to avoid data race
 		select {
-		case e.result <- scanResult{chk: e.chk, lastProcessedKey: kv.Key(key), err: nil}:
+		case e.result <- scanResult{chk: e.chk, lastProcessedKey: lastProcessed, err: nil}:
 			e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 		case <-e.done:
 			return dbreader.ErrScanBreak

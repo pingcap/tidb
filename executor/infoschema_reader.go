@@ -168,6 +168,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForAttributes(sctx, is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
+		case infoschema.TableTrxSummary:
+			err = e.setDataForTrxSummary(sctx)
+		case infoschema.ClusterTableTrxSummary:
+			err = e.setDataForClusterTrxSummary(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2189,6 +2193,29 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
+func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	if !hasProcessPriv {
+		return nil
+	}
+	rows := txninfo.Recorder.DumpTrxSummary()
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
+	err := e.setDataForTrxSummary(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
 type stmtSummaryTableRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
@@ -2852,7 +2879,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
-	var columnNames []string // nolint: prealloc
+	var columnNames []string //nolint: prealloc
 	for _, c := range e.outputCols {
 		if c.Name.O == "TIFLASH_INSTANCE" {
 			continue

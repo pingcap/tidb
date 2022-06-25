@@ -51,14 +51,13 @@ import (
 	"go.uber.org/zap"
 )
 
-func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
+func initAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
 	cols := tblInfo.Columns
 	colInfo.ID = allocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
 	colInfo.Offset = len(cols)
-
 	// Append the column info to the end of the tblInfo.Columns.
 	// It will reorder to the right offset in "Columns" when it state change to public.
 	tblInfo.Columns = append(cols, colInfo)
@@ -91,7 +90,7 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 		}
 	}
 
-	err = checkPosition(tblInfo, pos)
+	err = checkAfterPositionExists(tblInfo, pos)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, false, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
@@ -116,7 +115,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 	})
 
-	tblInfo, columnInfo, col, pos, ifNotExists, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
 	if err != nil {
 		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
 			job.Warning = toTError(err)
@@ -126,7 +125,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
-		columnInfo = createColumnInfo(tblInfo, col)
+		columnInfo = initAndAddColumnToTable(tblInfo, colFromArgs)
 		logutil.BgLogger().Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
@@ -187,7 +186,9 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func checkPosition(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
+// checkAfterPositionExists makes sure the column specified in AFTER clause is exists.
+// For example, ALTER TABLE t ADD COLUMN c3 INT AFTER c1.
+func checkAfterPositionExists(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
 	if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 		c := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if c == nil {
@@ -561,7 +562,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		createColumnInfo(tblInfo, changingCol)
+		initAndAddColumnToTable(tblInfo, changingCol)
 		indexesToChange := findIndexesByColName(tblInfo, oldCol.Name)
 		var indexesToRemove []int64
 		for _, info := range indexesToChange {

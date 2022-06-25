@@ -291,6 +291,66 @@ type SubJob struct {
 	CtxVars     []interface{}   `json:"-"`
 }
 
+// IsNormal returns true if the sub-job is normally running.
+func (sub *SubJob) IsNormal() bool {
+	switch sub.State {
+	case JobStateCancelling, JobStateCancelled,
+		JobStateRollingback, JobStateRollbackDone:
+		return false
+	default:
+		return true
+	}
+}
+
+// IsFinished returns true if the job is done.
+func (sub *SubJob) IsFinished() bool {
+	return sub.State == JobStateDone ||
+		sub.State == JobStateRollbackDone ||
+		sub.State == JobStateCancelled
+}
+
+// ToProxyJob converts a sub-job to a proxy job.
+func (sub *SubJob) ToProxyJob(parentJob *Job) *Job {
+	return &Job{
+		ID:              parentJob.ID,
+		Type:            sub.Type,
+		SchemaID:        parentJob.SchemaID,
+		TableID:         parentJob.TableID,
+		SchemaName:      parentJob.SchemaName,
+		State:           sub.State,
+		Warning:         sub.Warning,
+		Error:           nil,
+		ErrorCount:      0,
+		RowCount:        sub.RowCount,
+		Mu:              sync.Mutex{},
+		CtxVars:         sub.CtxVars,
+		Args:            sub.Args,
+		RawArgs:         sub.RawArgs,
+		SchemaState:     sub.SchemaState,
+		SnapshotVer:     sub.SnapshotVer,
+		RealStartTS:     parentJob.RealStartTS,
+		StartTS:         parentJob.StartTS,
+		DependencyID:    parentJob.DependencyID,
+		Query:           parentJob.Query,
+		BinlogInfo:      parentJob.BinlogInfo,
+		Version:         parentJob.Version,
+		ReorgMeta:       parentJob.ReorgMeta,
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
+		Priority:        parentJob.Priority,
+		SeqNum:          parentJob.SeqNum,
+	}
+}
+
+func (sub *SubJob) FromProxyJob(proxyJob *Job) {
+	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
+	sub.SchemaState = proxyJob.SchemaState
+	sub.SnapshotVer = proxyJob.SnapshotVer
+	sub.Args = proxyJob.Args
+	sub.State = proxyJob.State
+	sub.Warning = proxyJob.Warning
+	sub.RowCount = proxyJob.RowCount
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID         int64         `json:"id"`
@@ -422,7 +482,7 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		}
 		if job.MultiSchemaInfo != nil {
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				// Only update the args of last executing sub-job.
+				// Only update the args of executing sub-jobs.
 				if sub.Args == nil {
 					continue
 				}

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -574,4 +575,13 @@ func TestLocation(t *testing.T) {
 	require.Equal(t, nLoc.String(), "UTC")
 	location := time.FixedZone("UTC", loc1.Offset)
 	require.Equal(t, nLoc, location)
+}
+
+func TestDDLJobSize(t *testing.T) {
+	msg := `Please make sure that the following methods work as expected:
+- SubJob.FromProxyJob()
+- SubJob.ToProxyJob()
+`
+	job := Job{}
+	require.Equal(t, 288, int(unsafe.Sizeof(job)), msg)
 }

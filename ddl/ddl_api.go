@@ -158,7 +158,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 	}
 
 	// Check if need to change charset/collation.
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -181,7 +181,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 }
 
 func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -276,7 +276,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -1628,59 +1628,11 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	if tblInfo.PKIsHandle {
 		return nil
 	}
-	pk := getPrimaryKey(tblInfo)
+	pk := tblInfo.GetPrimaryKey()
 	if pk != nil && pk.Invisible {
 		return dbterror.ErrPKIndexCantBeInvisible
 	}
 	return nil
-}
-
-// getPrimaryKey extract the primary key in a table and return `IndexInfo`
-// The returned primary key could be explicit or implicit.
-// If there is no explicit primary key in table,
-// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
-// For more information about implicit primary key, see
-// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
-func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
-	var implicitPK *model.IndexInfo
-
-	for _, key := range tblInfo.Indices {
-		if key.Primary {
-			// table has explicit primary key
-			return key
-		}
-		// The case index without any columns should never happen, but still do a check here
-		if len(key.Columns) == 0 {
-			continue
-		}
-		// find the first unique key with NOT NULL columns
-		if implicitPK == nil && key.Unique {
-			// ensure all columns in unique key have NOT NULL flag
-			allColNotNull := true
-			skip := false
-			for _, idxCol := range key.Columns {
-				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
-				// This index has a column in DeleteOnly state,
-				// or it is expression index (it defined on a hidden column),
-				// it can not be implicit PK, go to next index iterator
-				if col == nil || col.Hidden {
-					skip = true
-					break
-				}
-				if !mysql.HasNotNullFlag(col.GetFlag()) {
-					allColNotNull = false
-					break
-				}
-			}
-			if skip {
-				continue
-			}
-			if allColNotNull {
-				implicitPK = key
-			}
-		}
-	}
-	return implicitPK
 }
 
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
@@ -2951,6 +2903,9 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	return false
 }
 
+// resolveAlterTableAddColumns splits "add columns" to multiple spec. For example,
+// `ALTER TABLE ADD COLUMN (c1 INT, c2 INT)` is split into
+// `ALTER TABLE ADD COLUMN c1 INT, ADD COLUMN c2 INT`.
 func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
 	specs := make([]*ast.AlterTableSpec, 0, len(spec.NewColumns)+len(spec.NewConstraints))
 	for _, col := range spec.NewColumns {
@@ -2971,7 +2926,7 @@ func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec
 }
 
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occurred error.
+// returns valid specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlgorithmTypeDefault
@@ -3492,7 +3447,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
-	err = checkPosition(t.Meta(), spec.Position)
+	err = checkAfterPositionExists(t.Meta(), spec.Position)
 	if err != nil {
 		return errors.Trace(err)
 	}

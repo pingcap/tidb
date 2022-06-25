@@ -476,6 +476,14 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
+		d.ownerManager.SetBeOwnerHook(func() {
+			var err error
+			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+			if err != nil {
+				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+			}
+		})
+
 		err := d.ownerManager.CampaignOwner()
 		if err != nil {
 			return errors.Trace(err)
@@ -495,11 +503,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
-		}
-
-		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-		if err != nil {
-			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
@@ -711,9 +714,10 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
-		// Instead, merge all the jobs into one pending job.
+		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, job)
 	}
+
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
@@ -800,7 +804,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					}
 				}
 			}
-
 			appendMultiChangeWarningsToOwnerCtx(ctx, historyJob)
 
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))

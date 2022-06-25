@@ -1971,6 +1971,12 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 }
 
+// inTestSuite checks if we are bootstrapping in the context of tests.
+// There are some historical differences in behavior between tests and non-tests.
+func inTestSuite() bool {
+	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+}
+
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 // TODO: sanitize.
@@ -1991,51 +1997,53 @@ func doDMLWorks(s Session) {
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 	}
 
-	// Init global system variables table.
+	// For GLOBAL scoped system variables, insert the initial value
+	// into the mysql.global_variables table. This is only run on initial
+	// bootstrap, and in some cases we will use a different default value
+	// for new installs versus existing installs.
+
 	values := make([]string, 0, len(variable.GetSysVars()))
 	for k, v := range variable.GetSysVars() {
-		// Only global variables should be inserted.
-		if v.HasGlobalScope() {
-			vVal := v.Value
-			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+		if !v.HasGlobalScope() {
+			continue
+		}
+		vVal := v.Value
+		switch v.Name {
+		case variable.TiDBTxnMode:
+			if config.GetGlobalConfig().Store == "tikv" {
 				vVal = "pessimistic"
 			}
-			if v.Name == variable.TiDBRowFormatVersion {
-				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
-			}
-			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = variable.DefTiDBPartitionPruneMode
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
-					// enable Dynamic Prune by default in test case.
-					vVal = string(variable.Dynamic)
-				}
-			}
-			if v.Name == variable.TiDBMemOOMAction {
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-					// Change the OOM action to log for the test suite.
-					vVal = variable.OOMActionLog
-				}
-			}
-			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
+		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
+			if config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
 			}
-			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
+		case variable.TiDBPartitionPruneMode:
+			if inTestSuite() || config.CheckTableBeforeDrop {
+				vVal = string(variable.Dynamic)
 			}
-			if v.Name == variable.TiDBEnableMutationChecker {
-				vVal = variable.On
+		case variable.TiDBMemOOMAction:
+			if inTestSuite() {
+				vVal = variable.OOMActionLog
 			}
-			if v.Name == variable.TiDBEnableAutoAnalyze {
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-					vVal = variable.Off
-				}
+		case variable.TiDBEnableAutoAnalyze:
+			if inTestSuite() {
+				vVal = variable.Off
 			}
-			if v.Name == variable.TiDBTxnAssertionLevel {
-				vVal = variable.AssertionFastStr
-			}
-			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
-			values = append(values, value)
+		// For the following sysvars, we change the default
+		// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
+		// It is better to change the value in the Sysvar struct, so that
+		// all installs will have the same value.
+		case variable.TiDBRowFormatVersion:
+			vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+		case variable.TiDBTxnAssertionLevel:
+			vVal = variable.AssertionFastStr
+		case variable.TiDBEnableMutationChecker:
+			vVal = variable.On
+		case variable.TiDBEnablePaging:
+			vVal = variable.BoolToOnOff(variable.DefTiDBEnablePaging)
 		}
+		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
+		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))

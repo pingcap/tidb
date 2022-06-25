@@ -667,6 +667,9 @@ const (
 	// TiDBQueryLogMaxLen is used to set the max length of the query in the log.
 	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
 
+	// TiDBEnableNoopVariables is used to indicate if noops appear in SHOW [GLOBAL] VARIABLES
+	TiDBEnableNoopVariables = "tidb_enable_noop_variables"
+
 	// TiDBNonTransactionalIgnoreError is used to ignore error in non-transactional DMLs.
 	// When set to false, a non-transactional DML returns when it meets the first error.
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
@@ -851,6 +854,7 @@ const (
 	DefTiDBWaitSplitRegionFinish                 = true
 	DefWaitSplitRegionTimeout                    = 300 // 300s
 	DefTiDBEnableNoopFuncs                       = Off
+	DefTiDBEnableNoopVariables                   = true
 	DefTiDBAllowRemoveAutoInc                    = false
 	DefTiDBUsePlanBaselines                      = true
 	DefTiDBEvolvePlanBaselines                   = false
@@ -933,6 +937,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 	DefTiDBEnableConcurrentDDL                   = true
 	DefTiDBSimplifiedMetrics                     = false
+	DefTiDBEnablePaging                          = true
 )
 
 // Process global variables.
@@ -980,6 +985,7 @@ var (
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
+	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 )
 
 var (
