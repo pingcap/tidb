@@ -8,30 +8,39 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
+	"context"
+	"fmt"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -39,347 +48,380 @@ var _ Executor = &AnalyzeExec{}
 // AnalyzeExec represents Analyze executor.
 type AnalyzeExec struct {
 	baseExecutor
-	tasks []*analyzeTask
+	tasks      []*analyzeTask
+	wg         util.WaitGroupWrapper
+	opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]core.V2AnalyzeOptions
 }
 
-const (
-	maxSampleSize        = 10000
-	maxRegionSampleSize  = 1000
-	maxSketchSize        = 10000
-	maxBucketSize        = 256
-	defaultCMSketchDepth = 5
-	defaultCMSketchWidth = 2048
+var (
+	// RandSeed is the seed for randing package.
+	// It's public for test.
+	RandSeed = int64(1)
 )
 
-// Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	concurrency, err := getBuildStatsConcurrency(e.ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	taskCh := make(chan *analyzeTask, len(e.tasks))
-	resultCh := make(chan statistics.AnalyzeResult, len(e.tasks))
-	for i := 0; i < concurrency; i++ {
-		go e.analyzeWorker(taskCh, resultCh)
-	}
-	for _, task := range e.tasks {
-		taskCh <- task
-	}
-	close(taskCh)
-	dom := domain.GetDomain(e.ctx)
-	lease := dom.StatsHandle().Lease
-	if lease > 0 {
-		var err1 error
-		for i := 0; i < len(e.tasks); i++ {
-			result := <-resultCh
-			if result.Err != nil {
-				err1 = result.Err
-				log.Error(errors.ErrorStack(err1))
-				continue
-			}
-			dom.StatsHandle().AnalyzeResultCh() <- &result
-		}
-		// We sleep two lease to make sure other tidb node has updated this node.
-		time.Sleep(lease * 2)
-		return errors.Trace(err1)
-	}
-	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
-	var err1 error
-	for i := 0; i < len(e.tasks); i++ {
-		result := <-resultCh
-		if result.Err != nil {
-			err1 = result.Err
-			log.Error(errors.ErrorStack(err1))
-			continue
-		}
-		results = append(results, result)
-	}
-	if err1 != nil {
-		return errors.Trace(err1)
-	}
-	for _, result := range results {
-		for i, hg := range result.Hist {
-			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i])
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	err = dom.StatsHandle().Update(GetInfoSchema(e.ctx))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
-	sessionVars := ctx.GetSessionVars()
-	concurrency, err := variable.GetSessionSystemVar(sessionVars, variable.TiDBBuildStatsConcurrency)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	c, err := strconv.ParseInt(concurrency, 10, 64)
-	return int(c), errors.Trace(err)
-}
+const (
+	maxRegionSampleSize = 1000
+	maxSketchSize       = 10000
+)
 
 type taskType int
 
 const (
 	colTask taskType = iota
 	idxTask
+	fastTask
+	pkIncrementalTask
+	idxIncrementalTask
 )
 
-type analyzeTask struct {
-	taskType taskType
-	idxExec  *AnalyzeIndexExec
-	colExec  *AnalyzeColumnsExec
-}
-
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
-	for task := range taskCh {
-		switch task.taskType {
-		case colTask:
-			resultCh <- analyzeColumnsPushdown(task.colExec)
-		case idxTask:
-			resultCh <- analyzeIndexPushdown(task.idxExec)
-		}
-	}
-}
-
-func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
-	hist, cms, err := idxExec.buildStats()
+// Next implements the Executor Next interface.
+func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
-		return statistics.AnalyzeResult{Err: err}
+		return err
 	}
-	result := statistics.AnalyzeResult{
-		TableID: idxExec.tblInfo.ID,
-		Hist:    []*statistics.Histogram{hist},
-		Cms:     []*statistics.CMSketch{cms},
-		IsIndex: 1,
+	taskCh := make(chan *analyzeTask, len(e.tasks))
+	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
+	if len(e.tasks) < concurrency {
+		concurrency = len(e.tasks)
 	}
-	if hist.Len() > 0 {
-		result.Count = hist.Buckets[hist.Len()-1].Count
+	for i := 0; i < concurrency; i++ {
+		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
-	return result
-}
-
-// AnalyzeIndexExec represents analyze index push down executor.
-type AnalyzeIndexExec struct {
-	ctx         sessionctx.Context
-	tblInfo     *model.TableInfo
-	idxInfo     *model.IndexInfo
-	concurrency int
-	priority    int
-	analyzePB   *tipb.AnalyzeReq
-	result      distsql.SelectResult
-}
-
-func (e *AnalyzeIndexExec) open() error {
-	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullNewRange()).
-		SetAnalyzeRequest(e.analyzePB).
-		SetKeepOrder(true).
-		SetPriority(e.priority).
-		Build()
-	kvReq.Concurrency = e.concurrency
-	kvReq.IsolationLevel = kv.RC
-	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
+	for _, task := range e.tasks {
+		prepareV2AnalyzeJobInfo(task.colExec, false)
+		AddNewAnalyzeJob(e.ctx, task.job)
+	}
+	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
+		dom := domain.GetDomain(e.ctx)
+		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+	})
+	for _, task := range e.tasks {
+		taskCh <- task
+	}
+	close(taskCh)
+	e.wg.Wait()
+	close(resultsCh)
+	pruneMode := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load())
+	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
+	needGlobalStats := pruneMode == variable.Dynamic
+	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
+	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	for _, task := range e.tasks {
+		if task.colExec != nil && task.colExec.memTracker != nil {
+			task.colExec.memTracker.Detach()
+		}
+	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	e.result.Fetch(ctx)
-	return nil
-}
+	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
+		dom := domain.GetDomain(e.ctx)
+		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
+	})
 
-func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
-	if err = e.open(); err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	defer func() {
-		if err1 := e.result.Close(); err1 != nil {
-			hist = nil
-			cms = nil
-			err = errors.Trace(err1)
-		}
-	}()
-	hist = &statistics.Histogram{}
-	cms = statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth)
-	for {
-		data, err := e.result.NextRaw(context.TODO())
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if data == nil {
-			break
-		}
-		resp := &tipb.AnalyzeIndexResp{}
-		err = resp.Unmarshal(data)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if resp.Cms != nil {
-			err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms))
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-		}
-	}
-	hist.ID = e.idxInfo.ID
-	return hist, cms, nil
-}
-
-func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResult {
-	hists, cms, err := colExec.buildStats()
+	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
+	err = e.handleGlobalStats(ctx, needGlobalStats, globalStatsMap)
 	if err != nil {
-		return statistics.AnalyzeResult{Err: err}
+		return err
 	}
-	result := statistics.AnalyzeResult{
-		TableID: colExec.tblInfo.ID,
-		Hist:    hists,
-		Cms:     cms,
-	}
-	hist := hists[0]
-	result.Count = hist.NullCount
-	if hist.Len() > 0 {
-		result.Count += hist.Buckets[hist.Len()-1].Count
-	}
-	return result
-}
-
-// AnalyzeColumnsExec represents Analyze columns push down executor.
-type AnalyzeColumnsExec struct {
-	ctx           sessionctx.Context
-	tblInfo       *model.TableInfo
-	colsInfo      []*model.ColumnInfo
-	pkInfo        *model.ColumnInfo
-	concurrency   int
-	priority      int
-	keepOrder     bool
-	analyzePB     *tipb.AnalyzeReq
-	resultHandler *tableResultHandler
-}
-
-func (e *AnalyzeColumnsExec) open() error {
-	var ranges []*ranger.NewRange
-	if e.pkInfo != nil {
-		ranges = ranger.FullIntNewRange(mysql.HasUnsignedFlag(e.pkInfo.Flag))
-	} else {
-		ranges = ranger.FullIntNewRange(false)
-	}
-	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(ranges, e.keepOrder)
-	firstResult, err := e.buildResp(firstPartRanges)
+	err = e.saveV2AnalyzeOpts()
 	if err != nil {
-		return errors.Trace(err)
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
-	if len(secondPartRanges) == 0 {
-		e.resultHandler.open(nil, firstResult)
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	if e.ctx.GetSessionVars().InRestrictedSQL {
+		return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
+	}
+	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema), handle.WithTableStatsByQuery())
+}
+
+func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
+	if !variable.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
-	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(secondPartRanges)
-	if err != nil {
-		return errors.Trace(err)
+	// only to save table options if dynamic prune mode
+	dynamicPrune := variable.PartitionPruneMode(e.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	for id, opts := range e.OptionsMap {
+		if !opts.IsPartition || !dynamicPrune {
+			toSaveMap[id] = opts
+		}
 	}
-	e.resultHandler.open(firstResult, secondResult)
-
+	sql := new(strings.Builder)
+	sqlexec.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	idx := 0
+	for _, opts := range toSaveMap {
+		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
+		sampleRate := float64(0)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
+			sampleRate = math.Float64frombits(val)
+		}
+		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
+		topn := int64(-1)
+		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
+			topn = int64(val)
+		}
+		colChoice := opts.ColChoice.String()
+		colIDs := make([]string, len(opts.ColumnList))
+		for i, colInfo := range opts.ColumnList {
+			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
+		}
+		colIDStrs := strings.Join(colIDs, ",")
+		sqlexec.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		if idx < len(toSaveMap)-1 {
+			sqlexec.MustFormatSQL(sql, ",")
+		}
+		idx += 1
+	}
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.SelectResult, error) {
-	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
-		SetAnalyzeRequest(e.analyzePB).
-		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
-		Build()
-	kvReq.IsolationLevel = kv.RC
-	kvReq.Concurrency = e.concurrency
+func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
 	}
-	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if !historicalStatsEnabled {
+		return nil
 	}
-	result.Fetch(ctx)
-	return result, nil
+
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, existed := is.TableByID(tableID)
+	if !existed {
+		return errors.Errorf("cannot get table by id %d", tableID)
+	}
+	tblInfo := tbl.Meta()
+	dbInfo, existed := is.SchemaByTable(tblInfo)
+	if !existed {
+		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
+	}
+	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
+	}
+	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []*statistics.CMSketch, err error) {
-	if err = e.open(); err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	defer func() {
-		if err1 := e.resultHandler.Close(); err1 != nil {
-			hists = nil
-			cms = nil
-			err = errors.Trace(err1)
-		}
-	}()
-	pkHist := &statistics.Histogram{}
-	collectors := make([]*statistics.SampleCollector, len(e.colsInfo))
-	for i := range collectors {
-		collectors[i] = &statistics.SampleCollector{
-			IsMerger:      true,
-			FMSketch:      statistics.NewFMSketch(maxSketchSize),
-			MaxSampleSize: maxSampleSize,
-			CMSketch:      statistics.NewCMSketch(defaultCMSketchDepth, defaultCMSketchWidth),
-		}
-	}
-	for {
-		data, err1 := e.resultHandler.nextRaw(context.TODO())
-		if err1 != nil {
-			return nil, nil, errors.Trace(err1)
-		}
-		if data == nil {
+// handleResultsError will handle the error fetch from resultsCh and record it in log
+func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
+	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	panicCnt := 0
+	var err error
+	for panicCnt < concurrency {
+		results, ok := <-resultsCh
+		if !ok {
 			break
 		}
-		resp := &tipb.AnalyzeColumnsResp{}
-		err = resp.Unmarshal(data)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
+		if results.Err != nil {
+			err = results.Err
+			if isAnalyzeWorkerPanic(err) {
+				panicCnt++
+			} else {
+				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
+			}
+			finishJobWithLog(e.ctx, results.Job, err)
+			continue
 		}
-		sc := e.ctx.GetSessionVars().StmtCtx
-		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
+		if results.TableID.IsPartitionTable() && needGlobalStats {
+			for _, result := range results.Ars {
+				if result.IsIndex == 0 {
+					// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
+					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
+					histIDs := make([]int64, 0, len(result.Hist))
+					for _, hg := range result.Hist {
+						// It's normal virtual column, skip.
+						if hg == nil {
+							continue
+						}
+						histIDs = append(histIDs, hg.ID)
+					}
+					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+				} else {
+					for _, hg := range result.Hist {
+						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
+						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
+					}
+				}
 			}
 		}
-		for i, rc := range resp.Collectors {
-			collectors[i].MergeSampleCollector(sc, statistics.SampleCollectorFromProto(rc))
-		}
-	}
-	timeZone := e.ctx.GetSessionVars().GetTimeZone()
-	if e.pkInfo != nil {
-		pkHist.ID = e.pkInfo.ID
-		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		hists = append(hists, pkHist)
-		cms = append(cms, nil)
-	}
-	for i, col := range e.colsInfo {
-		for j, s := range collectors[i].Samples {
-			collectors[i].Samples[j], err = tablecodec.DecodeColumnValue(s.GetBytes(), &col.FieldType, timeZone)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
+			err = err1
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			finishJobWithLog(e.ctx, results.Job, err)
+		} else {
+			finishJobWithLog(e.ctx, results.Job, nil)
+			// Dump stats to historical storage.
+			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		hists = append(hists, hg)
-		cms = append(cms, collectors[i].CMSketch)
 	}
-	return hists, cms, nil
+	return err
+}
+
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
+	var task *analyzeTask
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultsCh <- &statistics.AnalyzeResults{
+				Err: getAnalyzePanicErr(r),
+				Job: task.job,
+			}
+		}
+	}()
+	for {
+		var ok bool
+		task, ok = <-taskCh
+		if !ok {
+			break
+		}
+		StartAnalyzeJob(e.ctx, task.job)
+		switch task.taskType {
+		case colTask:
+			resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
+		case idxTask:
+			resultsCh <- analyzeIndexPushdown(task.idxExec)
+		case fastTask:
+			resultsCh <- analyzeFastExec(task.fastExec)
+		case pkIncrementalTask:
+			resultsCh <- analyzePKIncremental(task.colIncrementalExec)
+		case idxIncrementalTask:
+			resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
+		}
+	}
+}
+
+type analyzeTask struct {
+	taskType           taskType
+	idxExec            *AnalyzeIndexExec
+	colExec            *AnalyzeColumnsExec
+	fastExec           *AnalyzeFastExec
+	idxIncrementalExec *analyzeIndexIncrementalExec
+	colIncrementalExec *analyzePKIncrementalExec
+	job                *statistics.AnalyzeJob
+}
+
+type baseAnalyzeExec struct {
+	ctx         sessionctx.Context
+	tableID     statistics.AnalyzeTableID
+	concurrency int
+	analyzePB   *tipb.AnalyzeReq
+	opts        map[ast.AnalyzeOptionType]uint64
+	job         *statistics.AnalyzeJob
+	snapshot    uint64
+}
+
+// AddNewAnalyzeJob records the new analyze job.
+func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+	if job == nil {
+		return
+	}
+	var instance string
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+		instance = "unknown"
+	} else {
+		instance = fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	}
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
+	if err != nil {
+		logutil.BgLogger().Error("failed to insert analyze job", zap.Error(err))
+	}
+}
+
+// StartAnalyzeJob marks the state of the analyze job as running and sets the start time.
+func StartAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+	if job == nil || job.ID == nil {
+		return
+	}
+	job.StartTime = time.Now()
+	job.Progress.SetLastDumpTime(job.StartTime)
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
+	}
+}
+
+// UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
+func UpdateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
+	if job == nil || job.ID == nil {
+		return
+	}
+	delta := job.Progress.Update(rowCount)
+	if delta == 0 {
+		return
+	}
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
+	}
+}
+
+// FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
+func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+	if job == nil || job.ID == nil {
+		return
+	}
+	job.EndTime = time.Now()
+	var sql string
+	var args []interface{}
+	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
+	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
+	if analyzeErr != nil {
+		failReason := analyzeErr.Error()
+		const textMaxLength = 65535
+		if len(failReason) > textMaxLength {
+			failReason = failReason[:textMaxLength]
+		}
+		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
+		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
+	} else {
+		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
+		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+	}
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
+	if err != nil {
+		var state string
+		if analyzeErr != nil {
+			state = statistics.AnalyzeFailed
+		} else {
+			state = statistics.AnalyzeFinished
+		}
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
+	}
+}
+
+func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+	FinishAnalyzeJob(sctx, job, analyzeErr)
+	if job != nil {
+		var state string
+		if analyzeErr != nil {
+			state = statistics.AnalyzeFailed
+		} else {
+			state = statistics.AnalyzeFinished
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("analyze table `%s`.`%s` has %s", job.DBName, job.TableName, state),
+			zap.String("partition", job.PartitionName),
+			zap.String("job info", job.JobInfo),
+			zap.Time("start time", job.StartTime),
+			zap.Time("end time", job.EndTime),
+			zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
+	}
 }

@@ -1,0 +1,189 @@
+use test;
+drop table if exists t1, t2, t3;
+create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));
+load stats 's/explain_easy_stats_t1.json';
+create table t2 (c1 int unique, c2 int);
+load stats 's/explain_easy_stats_t2.json';
+create table t3 (a bigint, b bigint, c bigint, d bigint);
+load stats 's/explain_easy_stats_t3.json';
+create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint(4) NOT NULL, primary key(a, b), index idx_b_c_a(b, c, a));
+load stats 's/explain_easy_stats_index_prune.json';
+set @@session.tidb_opt_agg_push_down = 1;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
+set @@session.tidb_hashagg_partial_concurrency = 1;
+set @@session.tidb_hashagg_final_concurrency = 1;
+explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
+id	estRows	task	access object	operator info
+HashJoin	1600.00	root		semi join, equal:[eq(Column#13, Column#11)]
+├─StreamAgg(Build)	1.00	root		funcs:sum(Column#16)->Column#11
+│ └─TableReader	1.00	root		data:StreamAgg
+│   └─StreamAgg	1.00	cop[tikv]		funcs:sum(test.t3.a)->Column#16
+│     └─TableFullScan	2000.00	cop[tikv]	table:s	keep order:false
+└─Projection(Probe)	2000.00	root		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
+  └─TableReader	2000.00	root		data:TableFullScan
+    └─TableFullScan	2000.00	cop[tikv]	table:t3	keep order:false
+explain format = 'brief' select * from t1;
+id	estRows	task	access object	operator info
+TableReader	1999.00	root		data:TableFullScan
+└─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from t1 order by c2;
+id	estRows	task	access object	operator info
+IndexLookUp	1999.00	root		
+├─IndexFullScan(Build)	1999.00	cop[tikv]	table:t1, index:c2(c2)	keep order:true
+└─TableRowIDScan(Probe)	1999.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from t2 order by c2;
+id	estRows	task	access object	operator info
+Sort	1985.00	root		test.t2.c2
+└─TableReader	1985.00	root		data:TableFullScan
+  └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t1 where t1.c1 > 0;
+id	estRows	task	access object	operator info
+TableReader	1999.00	root		data:TableRangeScan
+└─TableRangeScan	1999.00	cop[tikv]	table:t1	range:(0,+inf], keep order:false
+explain format = 'brief' select t1.c1, t1.c2 from t1 where t1.c2 = 1;
+id	estRows	task	access object	operator info
+IndexReader	0.00	root		index:IndexRangeScan
+└─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
+explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
+id	estRows	task	access object	operator info
+HashJoin	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
+├─TableReader(Build)	1985.00	root		data:Selection
+│ └─Selection	1985.00	cop[tikv]		not(isnull(test.t2.c1))
+│   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	1998.00	root		data:TableRangeScan
+  └─TableRangeScan	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
+explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─Point_Get	1.00	root	table:t1	handle:1
+explain format = 'brief' delete from t1 where t1.c2 = 1;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─IndexLookUp	0.00	root		
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
+  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
+id	estRows	task	access object	operator info
+Projection	1985.00	root		Column#7
+└─HashJoin	1985.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
+  ├─HashAgg(Build)	1985.00	root		group by:test.t2.c2, funcs:count(test.t2.c2)->Column#8, funcs:firstrow(test.t2.c2)->test.t2.c2
+  │ └─TableReader	1985.00	root		data:Selection
+  │   └─Selection	1985.00	cop[tikv]		not(isnull(test.t2.c2))
+  │     └─TableFullScan	1985.00	cop[tikv]	table:b	keep order:false
+  └─TableReader(Probe)	1999.00	root		data:TableFullScan
+    └─TableFullScan	1999.00	cop[tikv]	table:a	keep order:false
+explain format = 'brief' select * from t2 order by t2.c2 limit 0, 1;
+id	estRows	task	access object	operator info
+TopN	1.00	root		test.t2.c2, offset:0, count:1
+└─TableReader	1.00	root		data:TopN
+  └─TopN	1.00	cop[tikv]		test.t2.c2, offset:0, count:1
+    └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
+id	estRows	task	access object	operator info
+IndexLookUp	0.00	root		
+├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false
+└─Selection(Probe)	0.00	cop[tikv]		lt(test.t1.c3, 1)
+  └─TableRowIDScan	0.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from t1 where c1 = 1 and c2 > 1;
+id	estRows	task	access object	operator info
+Selection	0.50	root		gt(test.t1.c2, 1)
+└─Point_Get	1.00	root	table:t1	handle:1
+explain format = 'brief' select c1 from t1 where c1 in (select c2 from t2);
+id	estRows	task	access object	operator info
+HashJoin	1985.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
+├─HashAgg(Build)	1985.00	root		group by:test.t2.c2, funcs:firstrow(test.t2.c2)->test.t2.c2
+│ └─TableReader	1985.00	root		data:Selection
+│   └─Selection	1985.00	cop[tikv]		not(isnull(test.t2.c2))
+│     └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	1999.00	root		data:TableFullScan
+  └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from information_schema.columns;
+id	estRows	task	access object	operator info
+MemTableScan	10000.00	root	table:COLUMNS	
+explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
+id	estRows	task	access object	operator info
+Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
+└─Apply	1999.00	root		CARTESIAN left outer join
+  ├─TableReader(Build)	1999.00	root		data:TableFullScan
+  │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
+  └─TopN(Probe)	1.00	root		test.t2.c1, offset:0, count:1
+    └─IndexLookUp	1.00	root		
+      ├─TopN(Build)	1.00	cop[tikv]		test.t2.c1, offset:0, count:1
+      │ └─IndexRangeScan	2.48	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:false
+      └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t1 order by c1 desc limit 1;
+id	estRows	task	access object	operator info
+Limit	1.00	root		offset:0, count:1
+└─TableReader	1.00	root		data:Limit
+  └─Limit	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true, desc
+set @@session.tidb_opt_insubq_to_join_and_agg=0;
+explain format = 'brief' select 1 in (select c2 from t2) from t1;
+id	estRows	task	access object	operator info
+HashJoin	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2.c2)
+├─TableReader(Build)	1985.00	root		data:TableFullScan
+│ └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	1999.00	root		data:TableFullScan
+  └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
+explain format="dot" select 1 in (select c2 from t2) from t1;
+dot contents
+
+digraph HashJoin_8 {
+subgraph cluster8{
+node [style=filled, color=lightgrey]
+color=black
+label = "root"
+"HashJoin_8" -> "TableReader_10"
+"HashJoin_8" -> "TableReader_14"
+}
+subgraph cluster9{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"TableFullScan_9"
+}
+subgraph cluster13{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"TableFullScan_13"
+}
+"TableReader_10" -> "TableFullScan_9"
+"TableReader_14" -> "TableFullScan_13"
+}
+
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0;
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
+id	estRows	task	access object	operator info
+Limit	1.00	root		offset:1, count:1
+└─Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
+id	estRows	task	access object	operator info
+Limit	0.00	root		offset:1, count:0
+└─Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 ORDER BY a;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+explain format = 'brief' select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+drop table if exists t1, t2, t3, index_prune;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
+drop table if exists tbl;
+create table tbl(column1 int, column2 int, index idx(column1, column2));
+load stats 's/explain_easy_stats_tbl_dnf.json';
+explain format = 'brief' select * from tbl where (column1=0 and column2=1) or (column1=1 and column2=3) or (column1=2 and column2=5);
+id	estRows	task	access object	operator info
+IndexReader	3.00	root		index:IndexRangeScan
+└─IndexRangeScan	3.00	cop[tikv]	table:tbl, index:idx(column1, column2)	range:[0 1,0 1], [1 3,1 3], [2 5,2 5], keep order:false

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,18 +16,21 @@ package tablecodec
 
 import (
 	"testing"
+
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/benchdaily"
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		EncodeRowKeyWithHandle(100, 100)
+		EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 	}
 }
 
 func BenchmarkEncodeEndKey(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		EncodeRowKeyWithHandle(100, 100)
-		EncodeRowKeyWithHandle(100, 101)
+		EncodeRowKeyWithHandle(100, kv.IntHandle(100))
+		EncodeRowKeyWithHandle(100, kv.IntHandle(101))
 	}
 }
 
@@ -36,7 +40,29 @@ func BenchmarkEncodeEndKey(b *testing.B) {
 // BenchmarkEncodeRowKeyWithPrefixNex-4	10000000	       121 ns/op
 func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		sk := EncodeRowKeyWithHandle(100, 100)
+		sk := EncodeRowKeyWithHandle(100, kv.IntHandle(100))
 		sk.PrefixNext()
 	}
+}
+
+func BenchmarkDecodeRowKey(b *testing.B) {
+	rowKey := EncodeRowKeyWithHandle(100, kv.IntHandle(100))
+	for i := 0; i < b.N; i++ {
+		_, err := DecodeRowKey(rowKey)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkEncodeRowKeyWithHandle,
+		BenchmarkEncodeEndKey,
+		BenchmarkEncodeRowKeyWithPrefixNex,
+		BenchmarkDecodeRowKey,
+		BenchmarkHasTablePrefix,
+		BenchmarkHasTablePrefixBuiltin,
+		BenchmarkEncodeValue,
+	)
 }

@@ -1,0 +1,8 @@
+use test;
+drop table if exists t;
+create table t(a bigint, b bigint);
+explain format = 'brief' insert into t values(1, 1);
+explain format = 'brief' insert into t select * from t;
+explain format = 'brief' delete from t where a > 100;
+explain format = 'brief' update t set b = 100 where a = 200;
+explain format = 'brief' replace into t select a, 100 from t;

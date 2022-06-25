@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,8 +17,9 @@ package codec
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -37,7 +39,10 @@ func BenchmarkDecodeWithSize(b *testing.B) {
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		Decode(bs, valueCnt)
+		_, err := Decode(bs, valueCnt)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -46,7 +51,10 @@ func BenchmarkDecodeWithOutSize(b *testing.B) {
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		Decode(bs, 1)
+		_, err := Decode(bs, 1)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -65,12 +73,18 @@ func BenchmarkEncodeIntWithOutSize(b *testing.B) {
 
 func BenchmarkDecodeDecimal(b *testing.B) {
 	dec := &types.MyDecimal{}
-	dec.FromFloat64(1211.1211113)
+	err := dec.FromFloat64(1211.1211113)
+	if err != nil {
+		b.Fatal(err)
+	}
 	precision, frac := dec.PrecisionAndFrac()
-	raw := EncodeDecimal([]byte{}, dec, precision, frac)
+	raw, _ := EncodeDecimal([]byte{}, dec, precision, frac)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		DecodeDecimal(raw)
+		_, _, _, _, err := DecodeDecimal(raw)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -82,8 +96,22 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 	raw = EncodeBytes(raw, str.GetBytes())
 	intType := types.NewFieldType(mysql.TypeLonglong)
 	b.ResetTimer()
-	decoder := NewDecoder(chunk.NewChunk([]*types.FieldType{intType}), nil)
+	decoder := NewDecoder(chunk.New([]*types.FieldType{intType}, 32, 32), nil)
 	for i := 0; i < b.N; i++ {
-		decoder.DecodeOne(raw, 0, intType)
+		_, err := decoder.DecodeOne(raw, 0, intType)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkDecodeWithSize,
+		BenchmarkDecodeWithOutSize,
+		BenchmarkEncodeIntWithSize,
+		BenchmarkEncodeIntWithOutSize,
+		BenchmarkDecodeDecimal,
+		BenchmarkDecodeOneToChunk,
+	)
 }

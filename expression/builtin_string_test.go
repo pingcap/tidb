@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,21 +18,26 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
-	"github.com/juju/errors"
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testEvaluatorSuite) TestLength(c *C) {
-	defer testleak.AfterTest(c)()
+func TestLengthAndOctetLength(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -43,37 +49,63 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{1, 1, false, false},
 		{3.14, 4, false, false},
 		{types.NewDecFromFloatForTest(123.123), 7, false, false},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
+		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6), 26, false, false},
 		{types.NewBinaryLiteralFromUint(0x01, -1), 1, false, false},
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
-		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},
+		{types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}, 8, false, false},
 		{nil, 0, true, false},
 		{errors.New("must error"), 0, false, true},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Length, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+	lengthMethods := []string{ast.Length, ast.OctetLength}
+	for _, lengthMethod := range lengthMethods {
+		for _, c := range cases {
+			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+			require.NoError(t, err)
+			d, err := f.Eval(chunk.Row{})
+			if c.getErr {
+				require.Error(t, err)
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				require.NoError(t, err)
+				if c.isNil {
+					require.Equal(t, types.KindNull, d.Kind())
+				} else {
+					require.Equal(t, c.expected, d.GetInt64())
+				}
 			}
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Length].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result int64
+	}{
+		{"abc", "gbk", 3},
+		{"一二三", "gbk", 6},
+		{"一二三", "", 9},
+		{"一二三!", "gbk", 7},
+		{"一二三!", "", 10},
+	}
+	for _, lengthMethod := range lengthMethods {
+		for _, c := range tbl {
+			err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+			require.NoError(t, err)
+			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+			require.NoError(t, err)
+			d, err := f.Eval(chunk.Row{})
+			require.NoError(t, err)
+			require.Equal(t, c.result, d.GetInt64())
+		}
+	}
 }
 
-func (s *testEvaluatorSuite) TestASCII(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestASCII(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -89,28 +121,51 @@ func (s *testEvaluatorSuite) TestASCII(c *C) {
 		{"", 0, false, false},
 		{"你好", 228, false, false},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.ASCII, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		require.NoError(t, err)
 
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				require.Equal(t, c.expected, d.GetInt64())
 			}
 		}
 	}
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Length].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result int64
+	}{
+		{"abc", "gbk", 97},
+		{"你好", "gbk", 196},
+		{"你好", "", 228},
+		{"世界", "gbk", 202},
+		{"世界", "", 228},
+	}
+
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, c.result, d.GetInt64())
+	}
 }
 
-func (s *testEvaluatorSuite) TestConcat(c *C) {
-	defer testleak.AfterTest(c)()
+func TestConcat(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args    []interface{}
 		isNil   bool
@@ -121,55 +176,100 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 		{
 			[]interface{}{nil},
 			true, false, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 0, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
 			[]interface{}{"a", "b",
 				1, 2,
 				1.1, 1.2,
 				types.NewDecFromFloatForTest(1.1),
-				types.Time{
-					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
-					Type: mysql.TypeDatetime,
-					Fsp:  types.DefaultFsp},
+				types.NewTime(types.FromDate(2000, 1, 1, 12, 01, 01, 0), mysql.TypeDatetime, types.DefaultFsp),
 				types.Duration{
-					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
+					Duration: 12*time.Hour + 1*time.Minute + 1*time.Second,
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(40).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
 			[]interface{}{"a", "b", nil, "c"},
 			true, false, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 3, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(3).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
 			[]interface{}{errors.New("must error")},
 			false, true, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 	}
 	fcName := ast.Concat
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		v, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, fcName, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		v, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(v.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, v.Kind())
 			} else {
-				c.Assert(v.GetString(), Equals, t.res)
+				require.Equal(t, c.res, v.GetString())
 			}
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestConcatWS(c *C) {
-	defer testleak.AfterTest(c)()
+func TestConcatSig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	concat := &builtinConcatSig{base, 5}
+
+	cases := []struct {
+		args     []interface{}
+		warnings int
+		res      string
+	}{
+		{[]interface{}{"a", "b"}, 0, "ab"},
+		{[]interface{}{"aaa", "bbb"}, 1, ""},
+		{[]interface{}{"中", "a"}, 0, "中a"},
+		{[]interface{}{"中文", "a"}, 2, ""},
+	}
+
+	for _, c := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, c.args[0].(string))
+		input.AppendString(1, c.args[1].(string))
+
+		res, isNull, err := concat.evalString(input.GetRow(0))
+		require.Equal(t, c.res, res)
+		require.NoError(t, err)
+		if c.warnings == 0 {
+			require.False(t, isNull)
+		} else {
+			require.True(t, isNull)
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Len(t, warnings, c.warnings)
+			lastWarn := warnings[len(warnings)-1]
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+		}
+	}
+}
+
+func TestConcatWS(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
 		isNil    bool
@@ -206,12 +306,9 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 		{
 			[]interface{}{",", "a", "b", 1, 2, 1.1, 0.11,
 				types.NewDecFromFloatForTest(1.1),
-				types.Time{
-					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
-					Type: mysql.TypeDatetime,
-					Fsp:  types.DefaultFsp},
+				types.NewTime(types.FromDate(2000, 1, 1, 12, 01, 01, 0), mysql.TypeDatetime, types.DefaultFsp),
 				types.Duration{
-					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
+					Duration: 12*time.Hour + 1*time.Minute + 1*time.Second,
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "a,b,1,2,1.1,0.11,1.1,2000-01-01 12:01:01,12:01:01",
@@ -220,32 +317,82 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 
 	fcName := ast.ConcatWS
 	// ERROR 1582 (42000): Incorrect parameter count in the call to native function 'concat_ws'
-	f, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants([]interface{}{nil})...)
-	c.Assert(err, NotNil)
+	_, err := newFunctionForTest(ctx, fcName, primitiveValsToConstants(ctx, []interface{}{nil})...)
+	require.Error(t, err)
 
-	for _, t := range cases {
-		f, err = newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		val, err1 := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err1, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, fcName, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		val, err1 := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.NotNil(t, err1)
 		} else {
-			c.Assert(err1, IsNil)
-			if t.isNil {
-				c.Assert(val.Kind(), Equals, types.KindNull)
+			require.Nil(t, err1)
+			if c.isNil {
+				require.Equal(t, types.KindNull, val.Kind())
 			} else {
-				c.Assert(val.GetString(), Equals, t.expected)
+				require.Equal(t, c.expected, val.GetString())
 			}
 		}
 	}
 
-	_, err = funcs[ast.ConcatWS].getFunction(s.ctx, s.primitiveValsToConstants([]interface{}{nil, nil}))
-	c.Assert(err, IsNil)
+	_, err = funcs[ast.ConcatWS].getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{nil, nil}))
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestLeft(c *C) {
-	defer testleak.AfterTest(c)()
-	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+func TestConcatWSSig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	concat := &builtinConcatWSSig{base, 6}
+
+	cases := []struct {
+		args     []interface{}
+		warnings int
+		res      string
+	}{
+		{[]interface{}{",", "a", "b"}, 0, "a,b"},
+		{[]interface{}{",", "aaa", "bbb"}, 1, ""},
+		{[]interface{}{",", "中", "a"}, 0, "中,a"},
+		{[]interface{}{",", "中文", "a"}, 2, ""},
+	}
+
+	for _, c := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, c.args[0].(string))
+		input.AppendString(1, c.args[1].(string))
+		input.AppendString(2, c.args[2].(string))
+
+		res, isNull, err := concat.evalString(input.GetRow(0))
+		require.Equal(t, c.res, res)
+		require.NoError(t, err)
+		if c.warnings == 0 {
+			require.False(t, isNull)
+		} else {
+			require.True(t, isNull)
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Len(t, warnings, c.warnings)
+			lastWarn := warnings[len(warnings)-1]
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+		}
+	}
+}
+
+func TestLeft(t *testing.T) {
+	ctx := createContext(t)
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
 	defer func() {
@@ -273,29 +420,29 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 		{[]interface{}{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x01})},
 		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Left, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		v, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Left, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		v, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(v.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, v.Kind())
 			} else {
-				c.Assert(v.GetString(), Equals, t.res)
+				require.Equal(t, c.res, v.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Left].getFunction(s.ctx, []Expression{varcharCon, int8Con})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Left].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestRight(c *C) {
-	defer testleak.AfterTest(c)()
-	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+func TestRight(t *testing.T) {
+	ctx := createContext(t)
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
 	defer func() {
@@ -323,81 +470,129 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 		{[]interface{}{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x02})},
 		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Right, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		v, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Right, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		v, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(v.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, v.Kind())
 			} else {
-				c.Assert(v.GetString(), Equals, t.res)
+				require.Equal(t, c.res, v.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Right].getFunction(s.ctx, []Expression{varcharCon, int8Con})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Right].getFunction(ctx, []Expression{getVarcharCon(), getInt8Con()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestRepeat(c *C) {
-	defer testleak.AfterTest(c)()
+func TestRepeat(t *testing.T) {
+	ctx := createContext(t)
 	args := []interface{}{"a", int64(2)}
 	fc := funcs[ast.Repeat]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
-	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "aa")
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	require.NoError(t, err)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "aa", v.GetString())
 
 	args = []interface{}{"a", uint64(2)}
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
-	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "aa")
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "aa", v.GetString())
 
 	args = []interface{}{"a", uint64(16777217)}
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
-	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.IsNull(), IsTrue)
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, v.IsNull())
 
 	args = []interface{}{"a", uint64(16777216)}
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
-	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.IsNull(), IsFalse)
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, v.IsNull())
 
 	args = []interface{}{"a", int64(-1)}
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
-	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "")
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "", v.GetString())
 
 	args = []interface{}{"a", int64(0)}
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
-	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "")
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "", v.GetString())
 
 	args = []interface{}{"a", uint64(0)}
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
-	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(v.GetString(), Equals, "")
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, "", v.GetString())
 }
 
-func (s *testEvaluatorSuite) TestLower(c *C) {
-	defer testleak.AfterTest(c)()
+func TestRepeatSig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	repeat := &builtinRepeatSig{base, 1000}
+
+	cases := []struct {
+		args    []interface{}
+		warning int
+		res     string
+	}{
+		{[]interface{}{"a", int64(6)}, 0, "aaaaaa"},
+		{[]interface{}{"a", int64(10001)}, 1, ""},
+		{[]interface{}{"毅", int64(6)}, 0, "毅毅毅毅毅毅"},
+		{[]interface{}{"毅", int64(334)}, 2, ""},
+	}
+
+	for _, c := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, c.args[0].(string))
+		input.AppendInt64(1, c.args[1].(int64))
+
+		res, isNull, err := repeat.evalString(input.GetRow(0))
+		require.Equal(t, c.res, res)
+		require.NoError(t, err)
+		if c.warning == 0 {
+			require.False(t, isNull)
+		} else {
+			require.True(t, isNull)
+			require.NoError(t, err)
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Len(t, warnings, c.warning)
+			lastWarn := warnings[len(warnings)-1]
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+		}
+	}
+}
+
+func TestLower(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -407,30 +602,55 @@ func (s *testEvaluatorSuite) TestLower(c *C) {
 		{[]interface{}{nil}, true, false, ""},
 		{[]interface{}{"ab"}, false, false, "ab"},
 		{[]interface{}{1}, false, false, "1"},
+		{[]interface{}{"one week’s time TEST"}, false, false, "one week’s time test"},
+		{[]interface{}{"one week's time TEST"}, false, false, "one week's time test"},
+		{[]interface{}{"ABC测试DEF"}, false, false, "abc测试def"},
+		{[]interface{}{"ABCテストDEF"}, false, false, "abcテストdef"},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Lower, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		v, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		v, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(v.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, v.Kind())
 			} else {
-				c.Assert(v.GetString(), Equals, t.res)
+				require.Equal(t, c.res, v.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Lower].getFunction(s.ctx, []Expression{varcharCon})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Lower].getFunction(ctx, []Expression{getVarcharCon()})
+	require.NoError(t, err)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"ABC", "gbk", "abc"},
+		{"一二三", "gbk", "一二三"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "gbk", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ"},
+	}
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, c.result, d.GetString())
+	}
 }
 
-func (s *testEvaluatorSuite) TestUpper(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUpper(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -440,36 +660,62 @@ func (s *testEvaluatorSuite) TestUpper(c *C) {
 		{[]interface{}{nil}, true, false, ""},
 		{[]interface{}{"ab"}, false, false, "ab"},
 		{[]interface{}{1}, false, false, "1"},
+		{[]interface{}{"one week’s time TEST"}, false, false, "ONE WEEK’S TIME TEST"},
+		{[]interface{}{"one week's time TEST"}, false, false, "ONE WEEK'S TIME TEST"},
+		{[]interface{}{"abc测试def"}, false, false, "ABC测试DEF"},
+		{[]interface{}{"abcテストdef"}, false, false, "ABCテストDEF"},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Upper, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		v, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		v, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(v.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, v.Kind())
 			} else {
-				c.Assert(v.GetString(), Equals, strings.ToUpper(t.res))
+				require.Equal(t, strings.ToUpper(c.res), v.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Upper].getFunction(s.ctx, []Expression{varcharCon})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Upper].getFunction(ctx, []Expression{getVarcharCon()})
+	require.NoError(t, err)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"abc", "gbk", "ABC"},
+		{"一二三", "gbk", "一二三"},
+		{"àbc", "gbk", "àBC"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "gbk", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ"},
+		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ"},
+	}
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, c.result, d.GetString())
+	}
 }
 
-func (s *testEvaluatorSuite) TestReverse(c *C) {
-	defer testleak.AfterTest(c)()
+func TestReverse(t *testing.T) {
+	ctx := createContext(t)
 	fc := funcs[ast.Reverse]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
-	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(d.Kind(), Equals, types.KindNull)
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
+	require.NoError(t, err)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, d.Kind())
 
 	tbl := []struct {
 		Input  interface{}
@@ -483,18 +729,18 @@ func (s *testEvaluatorSuite) TestReverse(c *C) {
 
 	dtbl := tblToDtbl(tbl)
 
-	for _, t := range dtbl {
-		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		d, err = evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, t["Expect"][0])
+	for _, c := range dtbl {
+		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		d, err = evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, c["Expect"][0], d)
 	}
 }
 
-func (s *testEvaluatorSuite) TestStrcmp(c *C) {
-	defer testleak.AfterTest(c)()
+func TestStrcmp(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -517,26 +763,25 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 		{[]interface{}{nil, nil}, true, false, 0},
 		{[]interface{}{"123", errors.New("must err")}, false, true, 0},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Strcmp, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Strcmp, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.res)
+				require.Equal(t, c.res, d.GetInt64())
 			}
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestReplace(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestReplace(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -545,8 +790,8 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		flen   int
 	}{
 		{[]interface{}{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
-		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 13},
-		{[]interface{}{1234, 2, 55}, false, false, "15534", 8},
+		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 260},
+		{[]interface{}{1234, 2, 55}, false, false, "15534", 20},
 		{[]interface{}{"", "a", "b"}, false, false, "", 0},
 		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
 		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},
@@ -555,30 +800,29 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		{[]interface{}{"a", "b", nil}, true, false, "", 1},
 		{[]interface{}{errors.New("must err"), "a", "b"}, false, true, "", -1},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Replace, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		c.Assert(f.GetType().Flen, Equals, t.flen)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for i, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Replace, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		require.Equalf(t, c.flen, f.GetType().GetFlen(), "test %v", i)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equalf(t, types.KindNull, d.Kind(), "test %v", i)
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equalf(t, c.res, d.GetString(), "test %v", i)
 			}
 		}
 	}
 
-	_, err := funcs[ast.Replace].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Replace].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestSubstring(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestSubstring(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -602,72 +846,92 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 		{[]interface{}{"Sakila", 2, nil}, true, false, ""},
 		{[]interface{}{errors.New("must error"), 2, 3}, false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Substring, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Substring, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Substring].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	require.NoError(t, err)
 
-	_, err = funcs[ast.Substring].getFunction(s.ctx, []Expression{Zero, Zero})
-	c.Assert(err, IsNil)
+	_, err = funcs[ast.Substring].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestConvert(c *C) {
-	defer testleak.AfterTest(c)()
+func TestConvert(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
-		str    string
-		cs     string
-		result string
+		str           interface{}
+		cs            string
+		result        string
+		hasBinaryFlag bool
 	}{
-		{"haha", "utf8", "haha"},
-		{"haha", "ascii", "haha"},
-		{"haha", "binary", "haha"},
+		{"haha", "utf8", "haha", false},
+		{"haha", "ascii", "haha", false},
+		{"haha", "binary", "haha", true},
+		{"haha", "bInAry", "haha", true},
+		{types.NewBinaryLiteralFromUint(0x7e, -1), "BiNarY", "~", true},
+		{types.NewBinaryLiteralFromUint(0xe4b8ade696870a, -1), "uTf8", "中文\n", false},
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.Convert]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r.Kind(), Equals, types.KindString)
-		c.Assert(r.GetString(), Equals, v.result)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		retType := f.getRetTp()
+		require.Equal(t, strings.ToLower(v.cs), retType.GetCharset())
+		collate, err := charset.GetDefaultCollation(strings.ToLower(v.cs))
+		require.NoError(t, err)
+		require.Equal(t, collate, retType.GetCollate())
+		require.Equal(t, v.hasBinaryFlag, mysql.HasBinaryFlag(retType.GetFlag()))
+
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, types.KindString, r.Kind())
+		require.Equal(t, v.result, r.GetString())
 	}
 
-	// Test case for error
+	// Test case for getFunction() error
 	errTbl := []struct {
-		str    interface{}
-		cs     string
-		result string
+		str interface{}
+		cs  string
+		err string
 	}{
-		{"haha", "wrongcharset", "haha"},
+		{"haha", "wrongcharset", "[expression:1115]Unknown character set: 'wrongcharset'"},
+		{"haha", "cp866", "[expression:1115]Unknown character set: 'cp866'"},
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		_, err = evalBuiltinFunc(f, nil)
-		c.Assert(err, NotNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.str, v.cs)))
+		require.Equal(t, v.err, err.Error())
+		require.Nil(t, f)
 	}
+
+	// Test wrong charset while evaluating.
+	fc := funcs[ast.Convert]
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("haha", "utf8")))
+	require.NoError(t, err)
+	require.NotNil(t, f)
+	wrongFunction := f.(*builtinConvertSig)
+	wrongFunction.tp.SetCharset("wrongcharset")
+	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
+	require.Error(t, err)
+	require.Equal(t, "[expression:1115]Unknown character set: 'wrongcharset'", err.Error())
 }
 
-func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestSubstringIndex(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -693,29 +957,29 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 		{[]interface{}{"www.pingcap.com", ".", nil}, true, false, ""},
 		{[]interface{}{errors.New("must error"), ".", 1}, false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.SubstringIndex, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.SubstringIndex, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.SubstringIndex].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.SubstringIndex].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestSpace(c *C) {
-	defer testleak.AfterTest(c)()
-	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+func TestSpace(t *testing.T) {
+	ctx := createContext(t)
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
 	defer func() {
@@ -739,29 +1003,59 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 		{nil, true, false, ""},
 		{errors.New("must error"), false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Space, s.primitiveValsToConstants([]interface{}{t.arg})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Space, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Space].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Space].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestLocate(c *C) {
+func TestSpaceSig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	space := &builtinSpaceSig{base, 1000}
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendInt64(0, 6)
+	input.AppendInt64(0, 1001)
+	res, isNull, err := space.evalString(input.GetRow(0))
+	require.Equal(t, "      ", res)
+	require.False(t, isNull)
+	require.NoError(t, err)
+	res, isNull, err = space.evalString(input.GetRow(1))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	lastWarn := warnings[len(warnings)-1]
+	require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+}
+
+func TestLocate(t *testing.T) {
+	ctx := createContext(t)
 	// 1. Test LOCATE without binary input.
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Args []interface{}
 		Want interface{}
@@ -774,7 +1068,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"好世", "你好世界"}, 2},
 		{[]interface{}{"界面", "你好世界"}, 0},
 		{[]interface{}{"b", "中a英b文"}, 4},
-		{[]interface{}{"BaR", "foobArbar"}, 4},
+		{[]interface{}{"bAr", "foobArbar"}, 4},
 		{[]interface{}{nil, "foobar"}, nil},
 		{[]interface{}{"bar", nil}, nil},
 		{[]interface{}{"bar", "foobarbar", 5}, 7},
@@ -786,7 +1080,7 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"A", "大A写的A", 1}, 2},
 		{[]interface{}{"A", "大A写的A", 2}, 2},
 		{[]interface{}{"A", "大A写的A", 3}, 5},
-		{[]interface{}{"bAr", "foobarBaR", 5}, 7},
+		{[]interface{}{"BaR", "foobarBaR", 5}, 7},
 		{[]interface{}{nil, nil}, nil},
 		{[]interface{}{"", nil}, nil},
 		{[]interface{}{nil, ""}, nil},
@@ -798,13 +1092,13 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 	}
 	Dtbl := tblToDtbl(tbl)
 	instr := funcs[ast.Locate]
-	for i, t := range Dtbl {
-		f, err := instr.getFunction(s.ctx, s.datumsToConstants(t["Args"]))
-		c.Assert(err, IsNil)
-		got, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	for i, c := range Dtbl {
+		f, err := instr.getFunction(ctx, datumsToConstants(c["Args"]))
+		require.NoError(t, err)
+		got, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
 	// 2. Test LOCATE with binary input
 	tbl2 := []struct {
@@ -818,21 +1112,21 @@ func (s *testEvaluatorSuite) TestLocate(c *C) {
 		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
 	}
 	Dtbl2 := tblToDtbl(tbl2)
-	for i, t := range Dtbl2 {
-		exprs := s.datumsToConstants(t["Args"])
+	for i, c := range Dtbl2 {
+		exprs := datumsToConstants(c["Args"])
 		types.SetBinChsClnFlag(exprs[0].GetType())
 		types.SetBinChsClnFlag(exprs[1].GetType())
-		f, err := instr.getFunction(s.ctx, exprs)
-		c.Assert(err, IsNil)
-		got, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+		f, err := instr.getFunction(ctx, exprs)
+		require.NoError(t, err)
+		got, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
 }
 
-func (s *testEvaluatorSuite) TestTrim(c *C) {
-	defer testleak.AfterTest(c)()
+func TestTrim(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args   []interface{}
 		isNil  bool
@@ -840,6 +1134,9 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		res    string
 	}{
 		{[]interface{}{"   bar   "}, false, false, "bar"},
+		{[]interface{}{"\t   bar   \n"}, false, false, "\t   bar   \n"},
+		{[]interface{}{"\r   bar   \t"}, false, false, "\r   bar   \t"},
+		{[]interface{}{"   \tbar\n     "}, false, false, "\tbar\n"},
 		{[]interface{}{""}, false, false, ""},
 		{[]interface{}{nil}, true, false, ""},
 		{[]interface{}{"xxxbarxxx", "x"}, false, false, "bar"},
@@ -851,38 +1148,37 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimLeading)}, false, false, "barxxx"},
 		{[]interface{}{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
 		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
-		// FIXME: the result for this test shuold be nil, current is "bar"
-		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, false, false, "bar"},
+		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, true, false, ""},
 		{[]interface{}{errors.New("must error")}, false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Trim, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Trim, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Trim].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 
-	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero})
-	c.Assert(err, IsNil)
+	_, err = funcs[ast.Trim].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	require.NoError(t, err)
 
-	_, err = funcs[ast.Trim].getFunction(s.ctx, []Expression{Zero, Zero, Zero})
-	c.Assert(err, IsNil)
+	_, err = funcs[ast.Trim].getFunction(ctx, []Expression{NewZero(), NewZero(), NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestLTrim(c *C) {
-	defer testleak.AfterTest(c)()
+func TestLTrim(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
 		isNil  bool
@@ -890,33 +1186,41 @@ func (s *testEvaluatorSuite) TestLTrim(c *C) {
 		res    string
 	}{
 		{"   bar   ", false, false, "bar   "},
+		{"\t   bar   ", false, false, "\t   bar   "},
+		{"   \tbar   ", false, false, "\tbar   "},
+		{"\t   bar   ", false, false, "\t   bar   "},
+		{"   \tbar   ", false, false, "\tbar   "},
+		{"\r   bar   ", false, false, "\r   bar   "},
+		{"   \rbar   ", false, false, "\rbar   "},
+		{"\n   bar   ", false, false, "\n   bar   "},
+		{"   \nbar   ", false, false, "\nbar   "},
 		{"bar", false, false, "bar"},
 		{"", false, false, ""},
 		{nil, true, false, ""},
 		{errors.New("must error"), false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.LTrim, s.primitiveValsToConstants([]interface{}{t.arg})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.LTrim, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.LTrim].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.LTrim].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestRTrim(c *C) {
-	defer testleak.AfterTest(c)()
+func TestRTrim(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
 		isNil  bool
@@ -925,32 +1229,38 @@ func (s *testEvaluatorSuite) TestRTrim(c *C) {
 	}{
 		{"   bar   ", false, false, "   bar"},
 		{"bar", false, false, "bar"},
+		{"bar     \n", false, false, "bar     \n"},
+		{"bar\n     ", false, false, "bar\n"},
+		{"bar     \r", false, false, "bar     \r"},
+		{"bar\r     ", false, false, "bar\r"},
+		{"bar     \t", false, false, "bar     \t"},
+		{"bar\t     ", false, false, "bar\t"},
 		{"", false, false, ""},
 		{nil, true, false, ""},
 		{errors.New("must error"), false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.RTrim, s.primitiveValsToConstants([]interface{}{t.arg})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.RTrim, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.RTrim].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.RTrim].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestHexFunc(c *C) {
-	defer testleak.AfterTest(c)()
+func TestHexFunc(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
 		isNil  bool
@@ -965,36 +1275,62 @@ func (s *testEvaluatorSuite) TestHexFunc(c *C) {
 		{-1, false, false, "FFFFFFFFFFFFFFFF"},
 		{-12.3, false, false, "FFFFFFFFFFFFFFF4"},
 		{-12.8, false, false, "FFFFFFFFFFFFFFF3"},
-		{types.NewBinaryLiteralFromUint(0xC, -1), false, false, "C"},
+		{types.NewBinaryLiteralFromUint(0xC, -1), false, false, "0C"},
 		{0x12, false, false, "12"},
 		{nil, true, false, ""},
 		{errors.New("must err"), false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Hex, s.primitiveValsToConstants([]interface{}{t.arg})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Hex].getFunction(s.ctx, []Expression{int8Con})
-	c.Assert(err, IsNil)
+	strCases := []struct {
+		arg     string
+		chs     string
+		res     string
+		errCode int
+	}{
+		{"你好", "", "E4BDA0E5A5BD", 0},
+		{"你好", "gbk", "C4E3BAC3", 0},
+		{"一忒(๑•ㅂ•)و✧", "", "E4B880E5BF9228E0B991E280A2E38582E280A229D988E29CA7", 0},
+		{"一忒(๑•ㅂ•)و✧", "gbk", "", errno.ErrInvalidCharacterString},
+	}
+	for _, c := range strCases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.errCode != 0 {
+			require.Error(t, err)
+			require.True(t, strings.Contains(err.Error(), strconv.Itoa(c.errCode)))
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, c.res, d.GetString())
+		}
+	}
 
-	_, err = funcs[ast.Hex].getFunction(s.ctx, []Expression{varcharCon})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Hex].getFunction(ctx, []Expression{getInt8Con()})
+	require.NoError(t, err)
+
+	_, err = funcs[ast.Hex].getFunction(ctx, []Expression{getVarcharCon()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUnhexFunc(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		arg    interface{}
 		isNil  bool
@@ -1013,104 +1349,112 @@ func (s *testEvaluatorSuite) TestUnhexFunc(c *C) {
 		{nil, true, false, ""},
 		{errors.New("must error"), false, true, ""},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Unhex, s.primitiveValsToConstants([]interface{}{t.arg})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Unhex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				require.Equal(t, c.res, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Unhex].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Unhex].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestBitLength(c *C) {
-	defer testleak.AfterTest(c)()
+func TestBitLength(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
+		chs      string
 		expected int64
 		isNil    bool
 		getErr   bool
 	}{
-		{"hi", 16, false, false},
-		{"你好", 48, false, false},
-		{"", 0, false, false},
+		{"hi", "", 16, false, false},
+		{"你好", "", 48, false, false},
+		{"", "", 0, false, false},
+		{"abc", "gbk", 24, false, false},
+		{"一二三", "gbk", 48, false, false},
+		{"一二三", "", 72, false, false},
+		{"一二三!", "gbk", 56, false, false},
+		{"一二三!", "", 80, false, false},
 	}
 
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.BitLength, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				require.Equal(t, c.expected, d.GetInt64())
 			}
 		}
 	}
 
-	_, err := funcs[ast.BitLength].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.BitLength].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestChar(c *C) {
-	defer testleak.AfterTest(c)()
-	stmtCtx := s.ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate
-	stmtCtx.IgnoreTruncate = true
-	defer func() {
-		stmtCtx.IgnoreTruncate = origin
-	}()
-
+func TestChar(t *testing.T) {
+	ctx := createContext(t)
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	tbl := []struct {
-		str    string
-		iNum   int64
-		fNum   float64
-		result string
+		str      string
+		iNum     int64
+		fNum     float64
+		charset  interface{}
+		result   interface{}
+		warnings int
 	}{
-		{"65", 66, 67.5, "ABD"},                  // float
-		{"65", 16740, 67.5, "AAdD"},              // large num
-		{"65", -1, 67.5, "A\xff\xff\xff\xffD"},   // nagtive int
-		{"a", -1, 67.5, "\x00\xff\xff\xff\xffD"}, // invalid 'a'
+		{"65", 66, 67.5, "utf8", "ABD", 0},                               // float
+		{"65", 16740, 67.5, "utf8", "AAdD", 0},                           // large num
+		{"65", -1, 67.5, nil, "A\xff\xff\xff\xffD", 0},                   // negative int
+		{"a", -1, 67.5, nil, "\x00\xff\xff\xff\xffD", 0},                 // invalid 'a'
+		{"65", -1, 67.5, "utf8", nil, 1},                                 // with utf8, return nil
+		{"a", -1, 67.5, "utf8", nil, 1},                                  // with utf8, return nil
+		{"1234567", 1234567, 1234567, "gbk", "\u0012謬\u0012謬\u0012謬", 0}, // test char for gbk
+		{"123456789", 123456789, 123456789, "gbk", nil, 1},               // invalid 123456789 in gbk
 	}
-	for _, v := range tbl {
-		for _, char := range []interface{}{"utf8", nil} {
-			fc := funcs[ast.CharFunc]
-			f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.iNum, v.fNum, char)))
-			c.Assert(err, IsNil)
-			c.Assert(f, NotNil)
-			r, err := evalBuiltinFunc(f, nil)
-			if err != nil {
-				fmt.Printf("%s\n", err.Error())
-			}
-			c.Assert(err, IsNil)
-			c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+	run := func(i int, result interface{}, warnCnt int, dts ...interface{}) {
+		fc := funcs[ast.CharFunc]
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(dts...)))
+		require.NoError(t, err, i)
+		require.NotNil(t, f, i)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err, i)
+		testutil.DatumEqual(t, types.NewDatum(result), r, i)
+		if warnCnt != 0 {
+			warnings := ctx.GetSessionVars().StmtCtx.TruncateWarnings(0)
+			require.Equal(t, warnCnt, len(warnings), fmt.Sprintf("%d: %v", i, warnings))
 		}
 	}
-
-	fc := funcs[ast.CharFunc]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", 66, nil)))
-	c.Assert(err, IsNil)
-	r, err := evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
+	for i, v := range tbl {
+		run(i, v.result, v.warnings, v.str, v.iNum, v.fNum, v.charset)
+	}
+	// char() returns null only when the sql_mode is strict.
+	ctx.GetSessionVars().StrictSQLMode = true
+	run(-1, nil, 1, 123456, "utf8")
+	ctx.GetSessionVars().StrictSQLMode = false
+	run(-2, string([]byte{1}), 1, 123456, "utf8")
 }
 
-func (s *testEvaluatorSuite) TestCharLength(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCharLength(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		input  interface{}
 		result interface{}
@@ -1123,18 +1467,44 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 	}
 	for _, v := range tbl {
 		fc := funcs[ast.CharLength]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.input)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(v.input)))
+		require.NoError(t, err)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(v.result), r)
+	}
+
+	// Test binary string
+	tbl = []struct {
+		input  interface{}
+		result interface{}
+	}{
+		{"33", 2},   // string
+		{"你好", 6},   // mb string
+		{"CAFÉ", 5}, // mb string
+		{"", 0},     // mb string
+		{nil, nil},  // nil
+	}
+	for _, v := range tbl {
+		fc := funcs[ast.CharLength]
+		arg := datumsToConstants(types.MakeDatums(v.input))
+		tp := arg[0].GetType()
+		tp.SetType(mysql.TypeVarString)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetFlen(types.UnspecifiedLength)
+		tp.SetFlag(mysql.BinaryFlag)
+		f, err := fc.getFunction(ctx, arg)
+		require.NoError(t, err)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(v.result), r)
 	}
 }
 
-func (s *testEvaluatorSuite) TestFindInSet(c *C) {
-	defer testleak.AfterTest(c)()
-
-	for _, t := range []struct {
+func TestFindInSet(t *testing.T) {
+	ctx := createContext(t)
+	for _, c := range []struct {
 		str    interface{}
 		strlst interface{}
 		ret    interface{}
@@ -1152,17 +1522,17 @@ func (s *testEvaluatorSuite) TestFindInSet(c *C) {
 		{nil, "bar", nil},
 	} {
 		fc := funcs[ast.FindInSet]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.str, t.strlst)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret), Commentf("FindInSet(%s, %s)", t.str, t.strlst))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.str, c.strlst)))
+		require.NoError(t, err)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r, fmt.Sprintf("FindInSet(%s, %s)", c.str, c.strlst))
 	}
 }
 
-func (s *testEvaluatorSuite) TestField(c *C) {
-	defer testleak.AfterTest(c)()
-	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+func TestField(t *testing.T) {
+	ctx := createContext(t)
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
 	defer func() {
@@ -1184,18 +1554,19 @@ func (s *testEvaluatorSuite) TestField(c *C) {
 		{[]interface{}{1.10, 0, 11e-1}, int64(2)},
 		{[]interface{}{"abc", 0, 1, 11.1, 1.1}, int64(1)},
 	}
-	for _, t := range tbl {
+	for _, c := range tbl {
 		fc := funcs[ast.Field]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argLst...)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argLst...)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
-func (s *testEvaluatorSuite) TestLpad(c *C) {
+func TestLpad(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		str    string
 		len    int64
@@ -1216,21 +1587,22 @@ func (s *testEvaluatorSuite) TestLpad(c *C) {
 		str := types.NewStringDatum(test.str)
 		length := types.NewIntDatum(test.len)
 		padStr := types.NewStringDatum(test.padStr)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length, padStr}))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		result, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, length, padStr}))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
 		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
+			require.Equal(t, types.KindNull, result.Kind())
 		} else {
 			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
+			require.Equal(t, expect, result.GetString())
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestRpad(c *C) {
+func TestRpad(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		str    string
 		len    int64
@@ -1251,22 +1623,159 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 		str := types.NewStringDatum(test.str)
 		length := types.NewIntDatum(test.len)
 		padStr := types.NewStringDatum(test.padStr)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length, padStr}))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		result, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, length, padStr}))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
 		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
+			require.Equal(t, types.KindNull, result.Kind())
 		} else {
 			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
+			require.Equal(t, expect, result.GetString())
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestInstr(c *C) {
-	defer testleak.AfterTest(c)()
+func TestRpadSig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+	}
+
+	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	rpad := &builtinRpadUTF8Sig{base, 1000}
+
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 6)
+	input.AppendInt64(1, 10000)
+	input.AppendString(2, "123")
+	input.AppendString(2, "123")
+
+	res, isNull, err := rpad.evalString(input.GetRow(0))
+	require.Equal(t, "abc123", res)
+	require.False(t, isNull)
+	require.NoError(t, err)
+
+	res, isNull, err = rpad.evalString(input.GetRow(1))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	lastWarn := warnings[len(warnings)-1]
+	require.Truef(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), "err %v", lastWarn.Err)
+}
+
+func TestInsertBinarySig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(3)
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+		&Column{Index: 3, RetType: colTypes[3]},
+	}
+
+	base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+	insert := &builtinInsertSig{base, 3}
+
+	input := chunk.NewChunkWithCapacity(colTypes, 2)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendNull(0)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 0)
+	input.AppendInt64(1, 3)
+	input.AppendNull(1)
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 3)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendNull(2)
+	input.AppendInt64(2, -1)
+	input.AppendString(3, "d")
+	input.AppendString(3, "de")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendString(3, "d")
+	input.AppendNull(3)
+
+	res, isNull, err := insert.evalString(input.GetRow(0))
+	require.Equal(t, "abd", res)
+	require.False(t, isNull)
+	require.NoError(t, err)
+
+	res, isNull, err = insert.evalString(input.GetRow(1))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+
+	res, isNull, err = insert.evalString(input.GetRow(2))
+	require.Equal(t, "abc", res)
+	require.False(t, isNull)
+	require.NoError(t, err)
+
+	res, isNull, err = insert.evalString(input.GetRow(3))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+
+	res, isNull, err = insert.evalString(input.GetRow(4))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+
+	res, isNull, err = insert.evalString(input.GetRow(5))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+
+	res, isNull, err = insert.evalString(input.GetRow(6))
+	require.Equal(t, "", res)
+	require.True(t, isNull)
+	require.NoError(t, err)
+
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	lastWarn := warnings[len(warnings)-1]
+	require.Truef(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), "err %v", lastWarn.Err)
+}
+
+func TestInstr(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		Args []interface{}
 		Want interface{}
@@ -1286,11 +1795,11 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 		{[]interface{}{"中文美好", "世界"}, 0},
 		{[]interface{}{"中文abc", "a"}, 3},
 
-		{[]interface{}{"live LONG and prosper", "long"}, 6},
+		{[]interface{}{"live long and prosper", "long"}, 6},
 
-		{[]interface{}{"not BINARY string", "binary"}, 5},
-		{[]interface{}{"UPPER case", "upper"}, 1},
-		{[]interface{}{"UPPER case", "CASE"}, 7},
+		{[]interface{}{"not binary string", "binary"}, 5},
+		{[]interface{}{"upper case", "upper"}, 1},
+		{[]interface{}{"UPPER CASE", "CASE"}, 7},
 		{[]interface{}{"中文abc", "abc"}, 3},
 
 		{[]interface{}{"foobar", nil}, nil},
@@ -1300,19 +1809,50 @@ func (s *testEvaluatorSuite) TestInstr(c *C) {
 
 	Dtbl := tblToDtbl(tbl)
 	instr := funcs[ast.Instr]
-	for i, t := range Dtbl {
-		f, err := instr.getFunction(s.ctx, s.datumsToConstants(t["Args"]))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		got, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(got, DeepEquals, t["Want"][0], Commentf("[%d]: args: %v", i, t["Args"]))
+	for i, c := range Dtbl {
+		f, err := instr.getFunction(ctx, datumsToConstants(c["Args"]))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		got, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		require.Equalf(t, c["Want"][0], got, "[%d]: args: %v", i, c["Args"])
 	}
 }
 
-func (s *testEvaluatorSuite) TestMakeSet(c *C) {
-	defer testleak.AfterTest(c)()
+func TestLoadFile(t *testing.T) {
+	ctx := createContext(t)
+	cases := []struct {
+		arg    interface{}
+		isNil  bool
+		getErr bool
+		res    string
+	}{
+		{"", true, false, ""},
+		{"/tmp/tikv/tikv.frm", true, false, ""},
+		{"tidb.sql", true, false, ""},
+		{nil, true, false, ""},
+	}
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.LoadFile, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
+			} else {
+				require.Equal(t, c.res, d.GetString())
+			}
+		}
+	}
+	_, err := funcs[ast.LoadFile].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
+}
 
+func TestMakeSet(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		argList []interface{}
 		ret     interface{}
@@ -1326,19 +1866,19 @@ func (s *testEvaluatorSuite) TestMakeSet(c *C) {
 		{[]interface{}{-1, "hello", "nice", "abc", "world"}, "hello,nice,abc,world"},
 	}
 
-	for _, t := range tbl {
+	for _, c := range tbl {
 		fc := funcs[ast.MakeSet]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argList...)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argList...)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
-func (s *testEvaluatorSuite) TestOct(c *C) {
-	defer testleak.AfterTest(c)()
+func TestOct(t *testing.T) {
+	ctx := createContext(t)
 	octTests := []struct {
 		origin interface{}
 		ret    string
@@ -1360,7 +1900,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		{1025, "2001"},
 		{"8a8", "10"},
 		{"abc", "0"},
-		//overflow uint64
+		// overflow uint64
 		{"9999999999999999999999999", "1777777777777777777777"},
 		{"-9999999999999999999999999", "1777777777777777777777"},
 		{types.NewBinaryLiteralFromUint(255, -1), "377"}, // b'11111111'
@@ -1370,158 +1910,253 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 	fc := funcs[ast.Oct]
 	for _, tt := range octTests {
 		in := types.NewDatum(tt.origin)
-		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
+		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
 		res, err := r.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, tt.ret, Commentf("select oct(%v);", tt.origin))
+		require.NoError(t, err)
+		require.Equalf(t, tt.ret, res, "select oct(%v);", tt.origin)
 	}
 	// tt NULL input for sha
 	var argNull types.Datum
-	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.IsNull(), IsTrue)
+	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
+	r, err := evalBuiltinFunc(f, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, r.IsNull())
 }
 
-func (s *testEvaluatorSuite) TestFormat(c *C) {
-	defer testleak.AfterTest(c)()
+func TestFormat(t *testing.T) {
+	ctx := createContext(t)
 	formatTests := []struct {
 		number    interface{}
 		precision interface{}
 		locale    string
 		ret       interface{}
 	}{
-		{12332.1234561111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
+		{12332.12341111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
 		{nil, 22, "en_US", nil},
 	}
 	formatTests1 := []struct {
 		number    interface{}
 		precision interface{}
 		ret       interface{}
+		warnings  int
 	}{
-		{12332.123456, 4, "12,332.1234"},
-		{12332.123456, 0, "12,332"},
-		{12332.123456, -4, "12,332"},
-		{-12332.123456, 4, "-12,332.1234"},
-		{-12332.123456, 0, "-12,332"},
-		{-12332.123456, -4, "-12,332"},
-		{"12332.123456", "4", "12,332.1234"},
-		{"12332.123456A", "4", "12,332.1234"},
-		{"-12332.123456", "4", "-12,332.1234"},
-		{"-12332.123456A", "4", "-12,332.1234"},
-		{"A123345", "4", "0.0000"},
-		{"-A123345", "4", "0.0000"},
-		{"-12332.123456", "A", "-12,332"},
-		{"12332.123456", "A", "12,332"},
-		{"-12332.123456", "4A", "-12,332.1234"},
-		{"12332.123456", "4A", "12,332.1234"},
-		{"-A12332.123456", "A", "0"},
-		{"A12332.123456", "A", "0"},
-		{"-A12332.123456", "4A", "0.0000"},
-		{"A12332.123456", "4A", "0.0000"},
-		{"-.12332.123456", "4A", "-0.1233"},
-		{".12332.123456", "4A", "0.1233"},
-		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890123456789012"},
-		{nil, 22, nil},
+		// issue #8796
+		{1.12345, 4, "1.1235", 0},
+		{9.99999, 4, "10.0000", 0},
+		{1.99999, 4, "2.0000", 0},
+		{1.09999, 4, "1.1000", 0},
+		{-2.5000, 0, "-3", 0},
+
+		{12332.123444, 4, "12,332.1234", 0},
+		{12332.123444, 0, "12,332", 0},
+		{12332.123444, -4, "12,332", 0},
+		{-12332.123444, 4, "-12,332.1234", 0},
+		{-12332.123444, 0, "-12,332", 0},
+		{-12332.123444, -4, "-12,332", 0},
+		{"12332.123444", "4", "12,332.1234", 0},
+		{"12332.123444A", "4", "12,332.1234", 1},
+		{"-12332.123444", "4", "-12,332.1234", 0},
+		{"-12332.123444A", "4", "-12,332.1234", 1},
+		{"A123345", "4", "0.0000", 1},
+		{"-A123345", "4", "0.0000", 1},
+		{"-12332.123444", "A", "-12,332", 1},
+		{"12332.123444", "A", "12,332", 1},
+		{"-12332.123444", "4A", "-12,332.1234", 1},
+		{"12332.123444", "4A", "12,332.1234", 1},
+		{"-A12332.123444", "A", "0", 2},
+		{"A12332.123444", "A", "0", 2},
+		{"-A12332.123444", "4A", "0.0000", 2},
+		{"A12332.123444", "4A", "0.0000", 2},
+		{"-.12332.123444", "4A", "-0.1233", 2},
+		{".12332.123444", "4A", "0.1233", 2},
+		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890110000000000", 0},
+		{nil, 22, nil, 0},
+		{1, 1024, "1.000000000000000000000000000000", 0},
+		{"", 1, "0.0", 0},
+		{1, "", "1", 1},
 	}
 	formatTests2 := struct {
 		number    interface{}
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{-12332.123456, -4, "zh_CN", nil}
+	}{-12332.123456, -4, "zh_CN", "-12,332"}
 	formatTests3 := struct {
 		number    interface{}
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{"-12332.123456", "4", "de_GE", nil}
+	}{"-12332.123456", "4", "de_GE", "-12,332.1235"}
+	formatTests4 := struct {
+		number    interface{}
+		precision interface{}
+		locale    interface{}
+		ret       interface{}
+	}{1, 4, nil, "1.0000"}
 
+	fc := funcs[ast.Format]
 	for _, tt := range formatTests {
-		fc := funcs[ast.Format]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
 	}
 
+	origConfig := ctx.GetSessionVars().StmtCtx.TruncateAsWarning
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
 	for _, tt := range formatTests1 {
-		fc := funcs[ast.Format]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r, fmt.Sprintf("test %v", tt))
+		if tt.warnings > 0 {
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Lenf(t, warnings, tt.warnings, "test %v", tt)
+			for i := 0; i < tt.warnings; i++ {
+				require.Truef(t, terror.ErrorEqual(types.ErrTruncatedWrongVal, warnings[i].Err), "test %v", tt)
+			}
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+		}
 	}
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = origConfig
 
-	fc2 := funcs[ast.Format]
-	f2, err := fc2.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
-	c.Assert(err, IsNil)
-	c.Assert(f2, NotNil)
-	r2, err := evalBuiltinFunc(f2, nil)
-	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
-	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatTests2.ret))
+	f2, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
+	require.NoError(t, err)
+	require.NotNil(t, f2)
+	r2, err := evalBuiltinFunc(f2, chunk.Row{})
+	testutil.DatumEqual(t, types.NewDatum(errors.New("not implemented")), types.NewDatum(err))
+	testutil.DatumEqual(t, types.NewDatum(formatTests2.ret), r2)
 
-	fc3 := funcs[ast.Format]
-	f3, err := fc3.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
-	c.Assert(err, IsNil)
-	c.Assert(f3, NotNil)
-	r3, err := evalBuiltinFunc(f3, nil)
-	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
-	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
+	f3, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
+	require.NoError(t, err)
+	require.NotNil(t, f3)
+	r3, err := evalBuiltinFunc(f3, chunk.Row{})
+	testutil.DatumEqual(t, types.NewDatum(errors.New("not support for the specific locale")), types.NewDatum(err))
+	testutil.DatumEqual(t, types.NewDatum(formatTests3.ret), r3)
+
+	f4, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests4.number, formatTests4.precision, formatTests4.locale)))
+	require.NoError(t, err)
+	require.NotNil(t, f4)
+	r4, err := evalBuiltinFunc(f4, chunk.Row{})
+	require.NoError(t, err)
+	testutil.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.Equal(t, 3, len(warnings))
+	for i := 0; i < 3; i++ {
+		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
+	}
+	ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 }
 
-func (s *testEvaluatorSuite) TestFromBase64(c *C) {
+func TestFromBase64(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		args   interface{}
 		expect interface{}
 	}{
-		{string(""), string("")},
-		{string("YWJj"), string("abc")},
-		{string("YWIgYw=="), string("ab c")},
-		{string("YWIKYw=="), string("ab\nc")},
-		{string("YWIJYw=="), string("ab\tc")},
-		{string("cXdlcnR5MTIzNDU2"), string("qwerty123456")},
+		{"", ""},
+		{"YWJj", "abc"},
+		{"YWIgYw==", "ab c"},
+		{"YWIKYw==", "ab\nc"},
+		{"YWIJYw==", "ab\tc"},
+		{"cXdlcnR5MTIzNDU2", "qwerty123456"},
 		{
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv"),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 		{
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 		{
-			string("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 		{
-			string("QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
-			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			"QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 		},
 	}
 	fc := funcs[ast.FromBase64]
 	for _, test := range tests {
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.args)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		result, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(test.args)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
 		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
+			require.Equal(t, types.KindNull, result.Kind())
 		} else {
 			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
+			require.Equal(t, expect, result.GetString())
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestInsert(c *C) {
+func TestFromBase64Sig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+
+	tests := []struct {
+		args           string
+		expect         string
+		isNil          bool
+		maxAllowPacket uint64
+	}{
+		{"YWJj", "abc", false, 3},
+		{"YWJj", "", true, 2},
+		{
+			"QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			false,
+			70,
+		},
+		{
+			"QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+			"",
+			true,
+			69,
+		},
+	}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+
+	for _, test := range tests {
+		resultType := &types.FieldType{}
+		resultType.SetType(mysql.TypeVarchar)
+		resultType.SetFlen(mysql.MaxBlobWidth)
+		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+		fromBase64 := &builtinFromBase64Sig{base, test.maxAllowPacket}
+
+		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input.AppendString(0, test.args)
+		res, isNull, err := fromBase64.evalString(input.GetRow(0))
+		require.NoError(t, err)
+		require.Equal(t, test.isNil, isNull)
+		if isNull {
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Equal(t, 1, len(warnings))
+			lastWarn := warnings[len(warnings)-1]
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+		}
+		require.Equal(t, test.expect, res)
+	}
+}
+
+func TestInsert(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		args   []interface{}
 		expect interface{}
@@ -1535,6 +2170,8 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
 		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
 		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+		{[]interface{}{"Quadratic", -1, nil, "What"}, nil},
+		{[]interface{}{"Quadratic", -1, 4, nil}, nil},
 
 		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
 		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
@@ -1545,68 +2182,75 @@ func (s *testEvaluatorSuite) TestInsert(c *C) {
 		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
 		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
 		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
+		{[]interface{}{"我叫小雨呀", -1, nil, "王雨叶"}, nil},
+		{[]interface{}{"我叫小雨呀", -1, 2, nil}, nil},
 	}
 	fc := funcs[ast.InsertFunc]
 	for _, test := range tests {
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.args...)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		result, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(test.args...)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
 		if test.expect == nil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
+			require.Equal(t, types.KindNull, result.Kind())
 		} else {
 			expect, _ := test.expect.(string)
-			c.Assert(result.GetString(), Equals, expect)
+			require.Equal(t, expect, result.GetString())
 		}
 	}
 }
 
-func (s *testEvaluatorSuite) TestOrd(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestOrd(t *testing.T) {
+	ctx := createContext(t)
 	cases := []struct {
 		args     interface{}
 		expected int64
+		chs      string
 		isNil    bool
 		getErr   bool
 	}{
-		{"2", 50, false, false},
-		{2, 50, false, false},
-		{"23", 50, false, false},
-		{23, 50, false, false},
-		{2.3, 50, false, false},
-		{nil, 0, true, false},
-		{"", 0, false, false},
-		{"你好", 14990752, false, false},
-		{"にほん", 14909867, false, false},
-		{"한국", 15570332, false, false},
-		{"👍", 4036989325, false, false},
-		{"א", 55184, false, false},
+		{"2", 50, "", false, false},
+		{2, 50, "", false, false},
+		{"23", 50, "", false, false},
+		{23, 50, "", false, false},
+		{2.3, 50, "", false, false},
+		{nil, 0, "", true, false},
+		{"", 0, "", false, false},
+		{"你好", 14990752, "utf8mb4", false, false},
+		{"にほん", 14909867, "utf8mb4", false, false},
+		{"한국", 15570332, "utf8mb4", false, false},
+		{"👍", 4036989325, "utf8mb4", false, false},
+		{"א", 55184, "utf8mb4", false, false},
+		{"abc", 97, "gbk", false, false},
+		{"一二三", 53947, "gbk", false, false},
+		{"àáèé", 43172, "gbk", false, false},
+		{"数据库", 51965, "gbk", false, false},
 	}
-	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, ast.Ord, s.primitiveValsToConstants([]interface{}{t.args})...)
-		c.Assert(err, IsNil)
+	for _, c := range cases {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		require.NoError(t, err)
 
-		d, err := f.Eval(nil)
-		if t.getErr {
-			c.Assert(err, NotNil)
+		d, err := f.Eval(chunk.Row{})
+		if c.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetInt64(), Equals, t.expected)
+				require.Equal(t, c.expected, d.GetInt64())
 			}
 		}
 	}
-	_, err := funcs[ast.Ord].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Ord].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
 }
 
-func (s *testEvaluatorSuite) TestElt(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestElt(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		argLst []interface{}
 		ret    interface{}
@@ -1618,19 +2262,18 @@ func (s *testEvaluatorSuite) TestElt(c *C) {
 		{[]interface{}{3, 2, 3, 11, 1}, "11"},
 		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, "2.1"},
 	}
-	for _, t := range tbl {
+	for _, c := range tbl {
 		fc := funcs[ast.Elt]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argLst...)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argLst...)))
+		require.NoError(t, err)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
-func (s *testEvaluatorSuite) TestExportSet(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestExportSet(t *testing.T) {
+	ctx := createContext(t)
 	estd := []struct {
 		argLst []interface{}
 		res    string
@@ -1647,20 +2290,19 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 		{[]interface{}{7, "Y", "N", 6, 133}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
 	}
 	fc := funcs[ast.ExportSet]
-	for _, t := range estd {
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.argLst...)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		exportSetRes, err := evalBuiltinFunc(f, nil)
+	for _, c := range estd {
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.argLst...)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		exportSetRes, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
 		res, err := exportSetRes.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, t.res)
+		require.NoError(t, err)
+		require.Equal(t, c.res, res)
 	}
 }
 
-func (s *testEvaluatorSuite) TestBin(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestBin(t *testing.T) {
 	tbl := []struct {
 		Input    interface{}
 		Expected interface{}
@@ -1681,19 +2323,18 @@ func (s *testEvaluatorSuite) TestBin(c *C) {
 	dtbl := tblToDtbl(tbl)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
-	for _, t := range dtbl {
-		f, err := fc.getFunction(ctx, s.datumsToConstants(t["Input"]))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t["Expected"][0]))
+	for _, c := range dtbl {
+		f, err := fc.getFunction(ctx, datumsToConstants(c["Input"]))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(c["Expected"][0]), r)
 	}
 }
 
-func (s *testEvaluatorSuite) TestQuote(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestQuote(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		arg interface{}
 		ret interface{}
@@ -1707,23 +2348,22 @@ func (s *testEvaluatorSuite) TestQuote(c *C) {
 		{`萌萌哒(๑•ᴗ•๑)😊`, `'萌萌哒(๑•ᴗ•๑)😊'`},
 		{`㍿㌍㍑㌫`, `'㍿㌍㍑㌫'`},
 		{string([]byte{0, 26}), `'\0\Z'`},
-		{nil, nil},
+		{nil, "NULL"},
 	}
 
-	for _, t := range tbl {
+	for _, c := range tbl {
 		fc := funcs[ast.Quote]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
-		c.Assert(err, IsNil)
-		c.Assert(f, NotNil)
-		r, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.arg)))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
-func (s *testEvaluatorSuite) TestToBase64(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestToBase64(t *testing.T) {
+	ctx := createContext(t)
 	tests := []struct {
 		args   interface{}
 		expect string
@@ -1773,27 +2413,120 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(s.ctx, ast.ToBase64, s.primitiveValsToConstants([]interface{}{test.args})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []interface{}{test.args})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
 		if test.getErr {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			if test.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetString(), Equals, test.expect)
+				require.Equal(t, test.expect, d.GetString())
 			}
 		}
 	}
 
-	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{Zero})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.ToBase64].getFunction(ctx, []Expression{NewZero()})
+	require.NoError(t, err)
+
+	// Test GBK String
+	tbl := []struct {
+		input  string
+		chs    string
+		result string
+	}{
+		{"abc", "gbk", "YWJj"},
+		{"一二三", "gbk", "0ru2/sj9"},
+		{"一二三", "", "5LiA5LqM5LiJ"},
+		{"一二三!", "gbk", "0ru2/sj9IQ=="},
+		{"一二三!", "", "5LiA5LqM5LiJIQ=="},
+	}
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
+		require.NoError(t, err)
+		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, c.result, d.GetString())
+	}
 }
 
-func (s *testEvaluatorSuite) TestStringRight(c *C) {
-	defer testleak.AfterTest(c)()
+func TestToBase64Sig(t *testing.T) {
+	ctx := createContext(t)
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+
+	tests := []struct {
+		args           string
+		expect         string
+		isNil          bool
+		maxAllowPacket uint64
+	}{
+		{"abc", "YWJj", false, 4},
+		{"abc", "", true, 3},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw==",
+			false,
+			89,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			88,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
+			false,
+			259,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			258,
+		},
+	}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+
+	for _, test := range tests {
+		resultType := &types.FieldType{}
+		resultType.SetType(mysql.TypeVarchar)
+		resultType.SetFlen(base64NeededEncodedLength(len(test.args)))
+		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
+		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
+
+		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input.AppendString(0, test.args)
+		res, isNull, err := toBase64.evalString(input.GetRow(0))
+		require.NoError(t, err)
+		if test.isNil {
+			require.True(t, isNull)
+
+			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Equal(t, 1, len(warnings))
+			lastWarn := warnings[len(warnings)-1]
+			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+
+		} else {
+			require.False(t, isNull)
+		}
+		require.Equal(t, test.expect, res)
+	}
+}
+
+func TestStringRight(t *testing.T) {
+	ctx := createContext(t)
 	fc := funcs[ast.Right]
 	tests := []struct {
 		str    interface{}
@@ -1811,15 +2544,209 @@ func (s *testEvaluatorSuite) TestStringRight(c *C) {
 	for _, test := range tests {
 		str := types.NewDatum(test.str)
 		length := types.NewDatum(test.length)
-		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, length}))
-		result, err := evalBuiltinFunc(f, nil)
-		c.Assert(err, IsNil)
+		f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, length}))
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
 		if result.IsNull() {
-			c.Assert(test.expect, IsNil)
+			require.Nil(t, test.expect)
 			continue
 		}
 		res, err := result.ToString()
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.expect)
+		require.NoError(t, err)
+		require.Equal(t, test.expect, res)
 	}
+}
+
+func TestWeightString(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.WeightString]
+	tests := []struct {
+		expr    interface{}
+		padding string
+		length  int
+		expect  interface{}
+	}{
+		{nil, "NONE", 0, nil},
+		{7, "NONE", 0, nil},
+		{7.0, "NONE", 0, nil},
+		{"a", "NONE", 0, "a"},
+		{"a ", "NONE", 0, "a"},
+		{"中", "NONE", 0, "中"},
+		{"中 ", "NONE", 0, "中"},
+		{nil, "CHAR", 5, nil},
+		{7, "CHAR", 5, nil},
+		{7.0, "NONE", 0, nil},
+		{"a", "CHAR", 5, "a"},
+		{"a ", "CHAR", 5, "a"},
+		{"中", "CHAR", 5, "中"},
+		{"中 ", "CHAR", 5, "中"},
+		{nil, "BINARY", 5, nil},
+		{7, "BINARY", 2, "7\x00"},
+		{7.0, "NONE", 0, nil},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	for _, test := range tests {
+		str := types.NewDatum(test.expr)
+		var f builtinFunc
+		var err error
+		if test.padding == "NONE" {
+			f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str}))
+		} else {
+			padding := types.NewDatum(test.padding)
+			length := types.NewDatum(test.length)
+			f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
+		}
+		require.NoError(t, err)
+		// Reset warnings.
+		ctx.GetSessionVars().StmtCtx.ResetForRetry()
+		result, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		if result.IsNull() {
+			require.Nil(t, test.expect)
+			continue
+		}
+		res, err := result.ToString()
+		require.NoError(t, err)
+		require.Equal(t, test.expect, res)
+		if test.expr == nil {
+			continue
+		}
+		strExpr := fmt.Sprintf("%v", test.expr)
+		if test.padding == "BINARY" && test.length < len(strExpr) {
+			expectWarn := fmt.Sprintf("[expression:1292]Truncated incorrect BINARY(%d) value: '%s'", test.length, strExpr)
+			obtainedWarns := ctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Equal(t, 1, len(obtainedWarns))
+			require.Equal(t, "Warning", obtainedWarns[0].Level)
+			require.Equal(t, expectWarn, obtainedWarns[0].Err.Error())
+		}
+	}
+}
+
+func TestTranslate(t *testing.T) {
+	ctx := createContext(t)
+	cases := []struct {
+		args  []interface{}
+		isNil bool
+		isErr bool
+		res   string
+	}{
+		{[]interface{}{"ABC", "A", "B"}, false, false, "BBC"},
+		{[]interface{}{"ABC", "Z", "ABC"}, false, false, "ABC"},
+		{[]interface{}{"A.B.C", ".A", "|"}, false, false, "|B|C"},
+		{[]interface{}{"中文", "文", "国"}, false, false, "中国"},
+		{[]interface{}{"UPPERCASE", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"}, false, false, "uppercase"},
+		{[]interface{}{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
+		{[]interface{}{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
+		{[]interface{}{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
+		{[]interface{}{"abc", "ab", ""}, false, false, "c"},
+		{[]interface{}{"aaa", "a", ""}, false, false, ""},
+		{[]interface{}{"", "null", "null"}, false, false, ""},
+		{[]interface{}{"null", "", "null"}, false, false, "null"},
+		{[]interface{}{"null", "null", ""}, false, false, ""},
+		{[]interface{}{nil, "error", "error"}, true, false, ""},
+		{[]interface{}{"error", nil, "error"}, true, false, ""},
+		{[]interface{}{"error", "error", nil}, true, false, ""},
+		{[]interface{}{nil, nil, nil}, true, false, ""},
+		{[]interface{}{[]byte{255}, []byte{255}, []byte{255}}, false, false, string([]byte{255})},
+		{[]interface{}{[]byte{255, 255}, []byte{255}, []byte{254}}, false, false, string([]byte{254, 254})},
+		{[]interface{}{[]byte{255, 255}, []byte{255, 255}, []byte{254, 253}}, false, false, string([]byte{254, 254})},
+		{[]interface{}{[]byte{255, 254, 253, 252, 251}, []byte{253, 252, 251}, []byte{254, 253}}, false, false, string([]byte{255, 254, 254, 253})},
+	}
+	for _, c := range cases {
+		f, err := newFunctionForTest(ctx, ast.Translate, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+		d, err := f.Eval(chunk.Row{})
+		if c.isErr {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			if c.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
+			} else {
+				require.Equal(t, c.res, d.GetString())
+			}
+		}
+	}
+}
+
+func TestCIWeightString(t *testing.T) {
+	ctx := createContext(t)
+
+	type weightStringTest struct {
+		str     string
+		padding string
+		length  int
+		expect  interface{}
+	}
+
+	checkResult := func(collation string, tests []weightStringTest) {
+		fc := funcs[ast.WeightString]
+		for _, test := range tests {
+			str := types.NewCollationStringDatum(test.str, collation)
+			var f builtinFunc
+			var err error
+			if test.padding == "NONE" {
+				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str}))
+			} else {
+				padding := types.NewDatum(test.padding)
+				length := types.NewDatum(test.length)
+				f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
+			}
+			require.NoError(t, err)
+			result, err := evalBuiltinFunc(f, chunk.Row{})
+			require.NoError(t, err)
+			if result.IsNull() {
+				require.Nil(t, test.expect)
+				continue
+			}
+			res, err := result.ToString()
+			require.NoError(t, err)
+			require.Equal(t, test.expect, res)
+		}
+	}
+
+	generalTests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "\x00A\x00A\x00A\x00A\x00A\x00A\x00A"},
+		{"中", "NONE", 0, "\x4E\x2D"},
+		{"a", "CHAR", 5, "\x00A"},
+		{"a ", "CHAR", 5, "\x00A"},
+		{"中", "CHAR", 5, "\x4E\x2D"},
+		{"中 ", "CHAR", 5, "\x4E\x2D"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	unicodeTests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3\x0e3"},
+		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
+		{"a", "CHAR", 5, "\x0e3"},
+		{"a ", "CHAR", 5, "\x0e3"},
+		{"中", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"中 ", "CHAR", 5, "\xfb\x40\xce\x2d"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
+	checkResult("utf8mb4_general_ci", generalTests)
+	checkResult("utf8mb4_unicode_ci", unicodeTests)
 }

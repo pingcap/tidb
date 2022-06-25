@@ -8,184 +8,94 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
-	"time"
+	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"golang.org/x/net/context"
+	"github.com/stretchr/testify/require"
 )
 
-type testCtxKeyType int
+func TestReorgOwner(t *testing.T) {
+	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
 
-func (k testCtxKeyType) String() string {
-	return "test_ctx_key"
-}
+	d1 := domain.DDL()
 
-const testCtxKey testCtxKeyType = 0
+	ctx := testkit.NewTestKit(t, store).Session()
 
-func (s *testDDLSuite) TestReorg(c *C) {
-	store := testCreateStore(c, "test_reorg")
-	defer store.Close()
+	require.True(t, d1.OwnerManager().IsOwner())
 
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
-	defer d.Stop()
+	domain.InfoCache()
+	d2 := ddl.NewDDL(
+		context.Background(),
+		ddl.WithEtcdClient(domain.EtcdClient()),
+		ddl.WithInfoCache(domain.InfoCache()),
+		ddl.WithStore(store),
+		ddl.WithLease(testLease),
+	)
 
-	time.Sleep(testLease)
+	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
+		return testkit.NewTestKit(t, store).Session(), nil
+	}, 20, 20, 5))
+	require.NoError(t, err)
 
-	ctx := testNewContext(d)
+	defer func() {
+		err := d2.Stop()
+		require.NoError(t, err)
+	}()
 
-	ctx.SetValue(testCtxKey, 1)
-	c.Assert(ctx.Value(testCtxKey), Equals, 1)
-	ctx.ClearValue(testCtxKey)
+	dbInfo, err := testSchemaInfo(store, "test_reorg")
+	require.NoError(t, err)
+	testCreateSchema(t, ctx, d1, dbInfo)
 
-	err := ctx.NewTxn()
-	c.Assert(err, IsNil)
-	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Rollback()
-	c.Assert(err, IsNil)
-
-	err = ctx.NewTxn()
-	c.Assert(err, IsNil)
-	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	rowCount := int64(10)
-	handle := int64(100)
-	f := func() error {
-		d.reorgCtx.setRowCountAndHandle(rowCount, handle)
-		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
-		return nil
-	}
-	job := &model.Job{
-		ID:          1,
-		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's frist is false.
-	}
-	err = ctx.NewTxn()
-	c.Assert(err, IsNil)
-	m := meta.NewMeta(ctx.Txn())
-	err = d.runReorgJob(m, job, f)
-	c.Assert(err, NotNil)
-
-	// The longest to wait for 5 seconds to make sure the function of f is returned.
-	for i := 0; i < 1000; i++ {
-		time.Sleep(5 * time.Millisecond)
-		err = d.runReorgJob(m, job, f)
-		if err == nil {
-			c.Assert(job.RowCount, Equals, rowCount)
-			c.Assert(d.reorgCtx.rowCount, Equals, int64(0))
-
-			// Test whether reorgInfo's Handle is update.
-			err = ctx.Txn().Commit(context.Background())
-			c.Assert(err, IsNil)
-			err = ctx.NewTxn()
-			c.Assert(err, IsNil)
-			m = meta.NewMeta(ctx.Txn())
-			info, err1 := d.getReorgInfo(m, job)
-			c.Assert(err1, IsNil)
-			c.Assert(info.Handle, Equals, handle)
-			c.Assert(d.reorgCtx.doneHandle, Equals, int64(0))
-			break
-		}
-	}
-	c.Assert(err, IsNil)
-
-	d.Stop()
-	err = d.runReorgJob(m, job, func() error {
-		time.Sleep(4 * testLease)
-		return nil
-	})
-	c.Assert(err, NotNil)
-	err = ctx.Txn().Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	d.start(context.Background())
-	job = &model.Job{
-		ID:       2,
-		SchemaID: 1,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{model.NewCIStr("test")},
-	}
-
-	var info *reorgInfo
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
-		c.Assert(err1, IsNil)
-		err1 = info.UpdateHandle(txn, 1)
-		c.Assert(err1, IsNil)
-		return nil
-	})
-	c.Assert(err, IsNil)
-
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
-		c.Assert(err1, IsNil)
-		c.Assert(info.Handle, Greater, int64(0))
-		return nil
-	})
-	c.Assert(err, IsNil)
-}
-
-func (s *testDDLSuite) TestReorgOwner(c *C) {
-	store := testCreateStore(c, "test_reorg_owner")
-	defer store.Close()
-
-	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
-	defer d1.Stop()
-
-	ctx := testNewContext(d1)
-
-	testCheckOwner(c, d1, true)
-
-	d2 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
-	defer d2.Stop()
-
-	dbInfo := testSchemaInfo(c, d1, "test")
-	testCreateSchema(c, ctx, d1, dbInfo)
-
-	tblInfo := testTableInfo(c, d1, "t", 3)
-	testCreateTable(c, ctx, d1, dbInfo, tblInfo)
-	t := testGetTable(c, d1, dbInfo.ID, tblInfo.ID)
+	tblInfo, err := testTableInfo(store, "t", 3)
+	require.NoError(t, err)
+	testCreateTable(t, ctx, d1, dbInfo, tblInfo)
+	tbl, err := testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
 
 	num := 10
+	ctx = testkit.NewTestKit(t, store).Session()
+	err = sessiontxn.NewTxn(context.Background(), ctx)
+	require.NoError(t, err)
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i), false)
-		c.Assert(err, IsNil)
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		require.NoError(t, err)
 	}
+	require.NoError(t, ctx.CommitTxn(context.Background()))
 
-	err := ctx.Txn().Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	tc := &TestDDLCallback{}
-	tc.onJobRunBefore = func(job *model.Job) {
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteReorganization {
-			d1.Stop()
+			err = d1.Stop()
+			require.NoError(t, err)
 		}
 	}
 
 	d1.SetHook(tc)
 
-	testDropSchema(c, ctx, d1, dbInfo)
+	testDropSchema(t, ctx, d1, dbInfo)
 
-	err = kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		db, err1 := t.GetDatabase(dbInfo.ID)
-		c.Assert(err1, IsNil)
-		c.Assert(db, IsNil)
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		db, err1 := m.GetDatabase(dbInfo.ID)
+		require.NoError(t, err1)
+		require.Nil(t, db)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }

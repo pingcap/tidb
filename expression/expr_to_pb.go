@@ -8,60 +8,45 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"time"
+	"strconv"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/gogo/protobuf/proto"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
-// ExpressionsToPB converts expression to tipb.Expr.
-func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr *tipb.Expr, pushed []Expression, remained []Expression) {
+// ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
+func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			remained = append(remained, expr)
-			continue
+			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
 		}
-		pushed = append(pushed, expr)
-		if pbExpr == nil {
-			pbExpr = v
-		} else {
-			// Merge multiple converted pb expression into a CNF.
-			pbExpr = &tipb.Expr{
-				Tp:       tipb.ExprType_And,
-				Children: []*tipb.Expr{pbExpr, v},
-			}
-		}
-	}
-	return
-}
-
-// ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
-	pc := PbConverter{client: client, sc: sc}
-	for _, expr := range exprs {
-		v := pc.ExprToPB(expr)
 		pbExpr = append(pbExpr, v)
 	}
 	return
 }
 
-// PbConverter supplys methods to convert TiDB expressions to TiPB.
+// PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
 	sc     *stmtctx.StatementContext
@@ -76,7 +61,13 @@ func NewPBConverter(client kv.Client, sc *stmtctx.StatementContext) PbConverter 
 func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	switch x := expr.(type) {
 	case *Constant:
-		return pc.constantToPBExpr(x)
+		pbExpr := pc.conOrCorColToPBExpr(expr)
+		if pbExpr == nil {
+			return nil
+		}
+		return pbExpr
+	case *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr)
 	case *Column:
 		return pc.columnToPBExpr(x)
 	case *ScalarFunction:
@@ -85,18 +76,29 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 	return nil
 }
 
-func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
-	var (
-		tp  tipb.ExprType
-		val []byte
-		ft  = con.GetType()
-	)
-	d, err := con.Eval(nil)
+func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
+	ft := expr.GetType()
+	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		log.Errorf("Fail to eval constant, err: %s", err.Error())
+		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+		return nil
+	}
+	tp, val, ok := pc.encodeDatum(ft, d)
+	if !ok {
 		return nil
 	}
 
+	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
+		return nil
+	}
+	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
+}
+
+func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.ExprType, []byte, bool) {
+	var (
+		tp  tipb.ExprType
+		val []byte
+	)
 	switch d.Kind() {
 	case types.KindNull:
 		tp = tipb.ExprType_Null
@@ -108,6 +110,9 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 		val = codec.EncodeUint(nil, d.GetUint64())
 	case types.KindString, types.KindBinaryLiteral:
 		tp = tipb.ExprType_String
+		val = d.GetBytes()
+	case types.KindMysqlBit:
+		tp = tipb.ExprType_MysqlBit
 		val = d.GetBytes()
 	case types.KindBytes:
 		tp = tipb.ExprType_Bytes
@@ -123,67 +128,82 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 		val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
-		val = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		var err error
+		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		if err != nil {
+			logutil.BgLogger().Error("encode decimal", zap.Error(err))
+			return tp, nil, false
+		}
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			loc := pc.sc.TimeZone
-			t := d.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-				err := t.ConvertTimeZone(loc, time.UTC)
-				terror.Log(errors.Trace(err))
-			}
-			v, err := t.ToPackedUint()
+			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.GetType(), nil)
 			if err != nil {
-				log.Errorf("Fail to encode value, err: %s", err.Error())
-				return nil
+				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
+				return tp, nil, false
 			}
-			val = codec.EncodeUint(nil, v)
-			return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+			return tp, val, true
 		}
-		return nil
+		return tp, nil, false
+	case types.KindMysqlEnum:
+		tp = tipb.ExprType_MysqlEnum
+		val = codec.EncodeUint(nil, d.GetUint64())
 	default:
-		return nil
+		return tp, nil, false
 	}
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+	return tp, val, true
 }
 
-func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+// ToPBFieldType converts *types.FieldType to *tipb.FieldType.
+func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
-		Tp:      int32(ft.Tp),
-		Flag:    uint32(ft.Flag),
-		Flen:    int32(ft.Flen),
-		Decimal: int32(ft.Decimal),
-		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
+		Tp:      int32(ft.GetType()),
+		Flag:    uint32(ft.GetFlag()),
+		Flen:    int32(ft.GetFlen()),
+		Decimal: int32(ft.GetDecimal()),
+		Charset: ft.GetCharset(),
+		Collate: collate.CollationToProto(ft.GetCollate()),
+		Elems:   ft.GetElems(),
 	}
 }
 
-func collationToProto(c string) int32 {
-	v, ok := mysql.CollationNames[c]
-	if ok {
-		return int32(v)
+// ToPBFieldTypeWithCheck converts *types.FieldType to *tipb.FieldType with checking the valid decimal for TiFlash
+func ToPBFieldTypeWithCheck(ft *types.FieldType, storeType kv.StoreType) (*tipb.FieldType, error) {
+	if storeType == kv.TiFlash && !ft.IsDecimalValid() {
+		return nil, errors.New(ft.String() + " can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(ft.GetFlen()) + "','" + strconv.Itoa(ft.GetDecimal()) + "').")
 	}
-	return int32(mysql.DefaultCollationID)
+	return ToPBFieldType(ft), nil
+}
+
+// FieldTypeFromPB converts *tipb.FieldType to *types.FieldType.
+func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
+	ft1 := types.NewFieldTypeBuilder().SetType(byte(ft.Tp)).SetFlag(uint(ft.Flag)).SetFlen(int(ft.Flen)).SetDecimal(int(ft.Decimal)).SetCharset(ft.Charset).SetCollate(collate.ProtoToCollation(ft.Collate)).BuildP()
+	ft1.SetElems(ft.Elems)
+	return ft1
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_ColumnRef)) {
 		return nil
 	}
-	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeEnum, mysql.TypeGeometry, mysql.TypeUnspecified:
+	switch column.GetType().GetType() {
+	case mysql.TypeBit:
+		if !IsPushDownEnabled(ast.TypeStr(column.GetType().GetType()), kv.TiKV) {
+			return nil
+		}
+	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
+	case mysql.TypeEnum:
+		if !IsPushDownEnabled("enum", kv.UnSpecified) {
+			return nil
+		}
 	}
 
 	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeBasic) {
 		return &tipb.Expr{
 			Tp:        tipb.ExprType_ColumnRef,
 			Val:       codec.EncodeInt(nil, int64(column.Index)),
-			FieldType: toPBFieldType(column.RetType),
+			FieldType: ToPBFieldType(column.RetType),
 		}
 	}
 	id := column.ID
@@ -198,124 +218,55 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 }
 
 func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	switch expr.FuncName.L {
-	case ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT,
-		ast.NullEQ:
-		return pc.compareOpsToPBExpr(expr)
-	case ast.Like:
-		return pc.likeToPBExpr(expr)
-	case ast.Plus, ast.Minus, ast.Mul, ast.Div:
-		return pc.arithmeticalOpsToPBExpr(expr)
-	case ast.LogicAnd, ast.LogicOr, ast.UnaryNot, ast.LogicXor:
-		return pc.logicalOpsToPBExpr(expr)
-	case ast.And, ast.Or, ast.BitNeg, ast.Xor:
-		return pc.bitwiseFuncToPBExpr(expr)
-	case ast.Case, ast.Coalesce, ast.If, ast.Ifnull, ast.IsNull, ast.IsTruth, ast.IsFalsity, ast.In:
-		return pc.builtinFuncToPBExpr(expr)
-	case ast.JSONType, ast.JSONExtract, ast.JSONUnquote, ast.JSONValid,
-		ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert, ast.JSONReplace, ast.JSONRemove, ast.JSONContains:
-		return pc.jsonFuncToPBExpr(expr)
-	case ast.DateFormat:
-		return pc.dateFuncToPBExpr(expr)
-	default:
+	// Check whether this function has ProtoBuf signature.
+	pbCode := expr.Function.PbCode()
+	if pbCode <= tipb.ScalarFuncSig_Unspecified {
+		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+			panic(errors.Errorf("unspecified PbCode: %T", expr.Function))
+		})
 		return nil
 	}
-}
 
-func (pc PbConverter) compareOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.LT:
-		tp = tipb.ExprType_LT
-	case ast.LE:
-		tp = tipb.ExprType_LE
-	case ast.EQ:
-		tp = tipb.ExprType_EQ
-	case ast.NE:
-		tp = tipb.ExprType_NE
-	case ast.GE:
-		tp = tipb.ExprType_GE
-	case ast.GT:
-		tp = tipb.ExprType_GT
-	case ast.NullEQ:
-		tp = tipb.ExprType_NullEQ
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) likeToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tipb.ExprType_Like)) {
+	// Check whether this function can be pushed.
+	if !canFuncBePushed(expr, kv.UnSpecified) {
 		return nil
 	}
-	return pc.convertToPBExpr(expr, tipb.ExprType_Like)
-}
 
-func (pc PbConverter) arithmeticalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.Plus:
-		tp = tipb.ExprType_Plus
-	case ast.Minus:
-		tp = tipb.ExprType_Minus
-	case ast.Mul:
-		tp = tipb.ExprType_Mul
-	case ast.Div:
-		tp = tipb.ExprType_Div
-	case ast.Mod:
-		tp = tipb.ExprType_Mod
-	case ast.IntDiv:
-		tp = tipb.ExprType_IntDiv
+	// Check whether all of its parameters can be pushed.
+	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
+	for _, arg := range expr.GetArgs() {
+		pbArg := pc.ExprToPB(arg)
+		if pbArg == nil {
+			return nil
+		}
+		children = append(children, pbArg)
 	}
-	return pc.convertToPBExpr(expr, tp)
-}
 
-func (pc PbConverter) logicalOpsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.LogicAnd:
-		tp = tipb.ExprType_And
-	case ast.LogicOr:
-		tp = tipb.ExprType_Or
-	case ast.LogicXor:
-		tp = tipb.ExprType_Xor
-	case ast.UnaryNot:
-		tp = tipb.ExprType_Not
+	var encoded []byte
+	if metadata := expr.Function.metadata(); metadata != nil {
+		var err error
+		encoded, err = proto.Marshal(metadata)
+		if err != nil {
+			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
+			return nil
+		}
 	}
-	return pc.convertToPBExpr(expr, tp)
-}
 
-func (pc PbConverter) bitwiseFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.And:
-		tp = tipb.ExprType_BitAnd
-	case ast.Or:
-		tp = tipb.ExprType_BitOr
-	case ast.Xor:
-		tp = tipb.ExprType_BitXor
-	case ast.LeftShift:
-		tp = tipb.ExprType_LeftShift
-	case ast.RightShift:
-		tp = tipb.ExprType_RighShift
-	case ast.BitNeg:
-		tp = tipb.ExprType_BitNeg
+	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
+	tp := *expr.RetType
+	if collate.NewCollationEnabled() {
+		_, str1 := expr.CharsetAndCollation()
+		tp.SetCollate(str1)
 	}
-	return pc.convertToPBExpr(expr, tp)
-}
 
-func (pc PbConverter) jsonFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp = jsonFunctionNameToPB[expr.FuncName.L]
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) dateFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.DateFormat:
-		tp = tipb.ExprType_DateFormat
+	// Construct expression ProtoBuf.
+	return &tipb.Expr{
+		Tp:        tipb.ExprType_ScalarFunc,
+		Val:       encoded,
+		Sig:       pbCode,
+		Children:  children,
+		FieldType: ToPBFieldType(&tp),
 	}
-	return pc.convertToPBExpr(expr, tp)
 }
 
 // GroupByItemToPB converts group by items to pb.
@@ -336,65 +287,4 @@ func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Express
 		return nil
 	}
 	return &tipb.ByItem{Expr: e, Desc: desc}
-}
-
-func (pc PbConverter) builtinFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	switch expr.FuncName.L {
-	case ast.Case, ast.If, ast.Ifnull, ast.Nullif:
-		return pc.controlFuncsToPBExpr(expr)
-	case ast.Coalesce, ast.IsNull, ast.In:
-		return pc.otherFuncsToPBExpr(expr)
-	default:
-		return nil
-	}
-}
-
-func (pc PbConverter) otherFuncsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.Coalesce:
-		tp = tipb.ExprType_Coalesce
-	case ast.IsNull:
-		tp = tipb.ExprType_IsNull
-	case ast.In:
-		tp = tipb.ExprType_In
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) controlFuncsToPBExpr(expr *ScalarFunction) *tipb.Expr {
-	var tp tipb.ExprType
-	switch expr.FuncName.L {
-	case ast.If:
-		tp = tipb.ExprType_If
-	case ast.Ifnull:
-		tp = tipb.ExprType_IfNull
-	case ast.Case:
-		tp = tipb.ExprType_Case
-	case ast.Nullif:
-		tp = tipb.ExprType_NullIf
-	}
-	return pc.convertToPBExpr(expr, tp)
-}
-
-func (pc PbConverter) convertToPBExpr(expr *ScalarFunction, tp tipb.ExprType) *tipb.Expr {
-	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
-		return nil
-	}
-	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
-	for _, arg := range expr.GetArgs() {
-		pbArg := pc.ExprToPB(arg)
-		if pbArg == nil {
-			return nil
-		}
-		children = append(children, pbArg)
-	}
-	if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, kv.ReqSubTypeSignature) {
-		code := expr.Function.PbCode()
-		if code > 0 {
-			return &tipb.Expr{Tp: tipb.ExprType_ScalarFunc, Sig: code, Children: children, FieldType: toPBFieldType(expr.RetType)}
-		}
-		return nil
-	}
-	return &tipb.Expr{Tp: tp, Children: children}
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,22 +17,10 @@ package stringutil
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testStringUtilSuite{})
-
-type testStringUtilSuite struct {
-}
-
-func (s *testStringUtilSuite) TestUnquote(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUnquote(t *testing.T) {
 	table := []struct {
 		str    string
 		expect string
@@ -62,23 +51,21 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 		{`' '`, ` `, true},
 		{"'\\a汉字'", "a汉字", true},
 		{"'\\a\x90'", "a\x90", true},
-		{`"\aèàø»"`, `aèàø»`, true},
+		{"\"\\a\x18èàø»\x05\"", "a\x18èàø»\x05", true},
 	}
 
-	for _, t := range table {
-		x, err := Unquote(t.str)
-		c.Assert(x, Equals, t.expect)
-		comment := Commentf("source %v", t.str)
-		if t.ok {
-			c.Assert(err, IsNil, comment)
+	for _, v := range table {
+		x, err := Unquote(v.str)
+		require.Equal(t, v.expect, x)
+		if v.ok {
+			require.Nilf(t, err, "source %v", v)
 		} else {
-			c.Assert(err, NotNil, comment)
+			require.NotNilf(t, err, "source %v", v)
 		}
 	}
 }
 
-func (s *testStringUtilSuite) TestPatternMatch(c *C) {
-	defer testleak.AfterTest(c)()
+func TestPatternMatch(t *testing.T) {
 	tbl := []struct {
 		pattern string
 		input   string
@@ -102,25 +89,177 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 		{`\_a`, `_a`, '\\', true},
 		{`\_a`, `aa`, '\\', false},
 		{`\\_a`, `\xa`, '\\', true},
-		{`\a\b`, `\a\b`, '\\', true},
+		{`\a\b`, `\a\b`, '\\', false},
+		{`\a\b`, `ab`, '\\', true},
 		{`%%_`, `abc`, '\\', true},
 		{`%_%_aA`, "aaaA", '\\', true},
 		{`+_a`, `_a`, '+', true},
 		{`+%a`, `%a`, '+', true},
 		{`\%a`, `%a`, '+', false},
 		{`++a`, `+a`, '+', true},
+		{`+a`, `a`, '+', true},
 		{`++_a`, `+xa`, '+', true},
-		// We may reopen these test when like function go back to case insensitive.
-		/*
-			{"_ab", "AAB", '\\', true},
-			{"%a%", "BAB", '\\', true},
-			{"%a", "AAA", '\\', true},
-			{"b%", "BBB", '\\', true},
-		*/
+		{`___Հ`, `䇇Հ`, '\\', false},
 	}
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
 		match := DoMatch(v.input, patChars, patTypes)
-		c.Assert(match, Equals, v.match, Commentf("%v", v))
+		require.Equalf(t, v.match, match, "source %v", v)
+	}
+}
+
+func TestCompileLike2Regexp(t *testing.T) {
+	tbl := []struct {
+		pattern string
+		regexp  string
+	}{
+		{``, ``},
+		{`a`, `a`},
+		{`aA`, `aA`},
+		{`_`, `.`},
+		{`__`, `..`},
+		{`%`, `.*`},
+		{`%b`, `.*b`},
+		{`%a%`, `.*a.*`},
+		{`a%`, `a.*`},
+		{`\%a`, `%a`},
+		{`\_a`, `_a`},
+		{`\\_a`, `\.a`},
+		{`\a\b`, `ab`},
+		{`%%_`, `..*`},
+		{`%_%_aA`, "...*aA"},
+	}
+	for _, v := range tbl {
+		result := CompileLike2Regexp(v.pattern)
+		require.Equalf(t, v.regexp, result, "source %v", v)
+	}
+}
+
+func TestIsExactMatch(t *testing.T) {
+	tbl := []struct {
+		pattern    string
+		escape     byte
+		exactMatch bool
+	}{
+		{``, '\\', true},
+		{`_`, '\\', false},
+		{`%`, '\\', false},
+		{`a`, '\\', true},
+		{`a_`, '\\', false},
+		{`a%`, '\\', false},
+		{`a\_`, '\\', true},
+		{`a\%`, '\\', true},
+		{`a\\`, '\\', true},
+		{`a\\_`, '\\', false},
+		{`a+%`, '+', true},
+		{`a\%`, '+', false},
+		{`a++`, '+', true},
+		{`a++_`, '+', false},
+	}
+	for _, v := range tbl {
+		_, patTypes := CompilePattern(v.pattern, v.escape)
+		require.Equalf(t, v.exactMatch, IsExactMatch(patTypes), "source %v", v)
+	}
+}
+
+func TestBuildStringFromLabels(t *testing.T) {
+	tbl := []struct {
+		name     string
+		labels   map[string]string
+		expected string
+	}{
+		{
+			name:     "nil map",
+			labels:   nil,
+			expected: "",
+		},
+		{
+			name: "one label",
+			labels: map[string]string{
+				"aaa": "bbb",
+			},
+			expected: "aaa=bbb",
+		},
+		{
+			name: "two labels",
+			labels: map[string]string{
+				"aaa": "bbb",
+				"ccc": "ddd",
+			},
+			expected: "aaa=bbb,ccc=ddd",
+		},
+	}
+	for _, v := range tbl {
+		require.Equalf(t, v.expected, BuildStringFromLabels(v.labels), "source %v", v)
+	}
+}
+
+func BenchmarkDoMatch(b *testing.B) {
+	escape := byte('\\')
+	tbl := []struct {
+		pattern string
+		target  string
+	}{
+		{`a%_%_%_%_b`, `aababab`},
+		{`%_%_a%_%_b`, `bbbaaabb`},
+		{`a%_%_a%_%_b`, `aaaabbbbbbaaaaaaaaabbbbb`},
+	}
+
+	for _, v := range tbl {
+		b.Run(v.pattern, func(b *testing.B) {
+			patChars, patTypes := CompilePattern(v.pattern, escape)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				match := DoMatch(v.target, patChars, patTypes)
+				if !match {
+					b.Fatal("Match expected.")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkDoMatchNegative(b *testing.B) {
+	escape := byte('\\')
+	tbl := []struct {
+		pattern string
+		target  string
+	}{
+		{`a%a%a%a%a%a%a%a%b`, `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`},
+	}
+
+	for _, v := range tbl {
+		b.Run(v.pattern, func(b *testing.B) {
+			patChars, patTypes := CompilePattern(v.pattern, escape)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				match := DoMatch(v.target, patChars, patTypes)
+				if match {
+					b.Fatal("Unmatch expected.")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkBuildStringFromLabels(b *testing.B) {
+	cases := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name: "normal case",
+			labels: map[string]string{
+				"aaa": "bbb",
+				"foo": "bar",
+			},
+		},
+	}
+
+	for _, testcase := range cases {
+		b.Run(testcase.name, func(b *testing.B) {
+			b.ResetTimer()
+			BuildStringFromLabels(testcase.labels)
+		})
 	}
 }

@@ -8,12 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package kv
-
-import "github.com/juju/errors"
 
 // NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
 // It will stop when fn returns true, or iterator is invalid or an error occurs.
@@ -22,7 +21,7 @@ func NextUntil(it Iterator, fn FnKeyCmp) error {
 	for it.Valid() && !fn(it.Key()) {
 		err = it.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil

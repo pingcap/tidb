@@ -8,32 +8,38 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
+	"context"
 	"math"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"go.uber.org/zap"
 )
 
 var (
@@ -59,28 +65,32 @@ type CheckIndexRangeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
 		err := e.result.Next(ctx, e.srcChunk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if e.srcChunk.NumRows() == 0 {
 			return nil
 		}
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		appendRows := make([]chunk.Row, 0, e.srcChunk.NumRows())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
-					chk.AppendRow(row)
+					appendRows = append(appendRows, row)
 					break
 				}
 			}
 		}
-		if chk.NumRows() > 0 {
+		if len(appendRows) > 0 {
+			req.AppendRows(appendRows)
+		}
+		if req.NumRows() > 0 {
 			return nil
 		}
 	}
@@ -93,47 +103,59 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		col := tCols[ic.Offset]
 		e.cols = append(e.cols, col)
 	}
+
+	colTypeForHandle := e.schema.Columns[len(e.cols)].RetType
 	e.cols = append(e.cols, &model.ColumnInfo{
-		ID:   model.ExtraHandleID,
-		Name: model.ExtraHandleName,
+		ID:        model.ExtraHandleID,
+		Name:      model.ExtraHandleName,
+		FieldType: *colTypeForHandle,
 	})
-	e.srcChunk = e.newChunk()
+
+	e.srcChunk = newFirstChunk(e)
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil
+	}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(sc, e.table.ID, e.index.ID, ranger.FullNewRange()).
+	kvReq, err := builder.SetIndexRanges(sc, e.table.ID, e.index.ID, ranger.FullRange()).
 		SetDAGRequest(dagPB).
+		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
+	if err != nil {
+		return err
+	}
 
 	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retFieldTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	e.result.Fetch(ctx)
 	return nil
 }
 
 func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = e.ctx.Txn().StartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = sc.PushDownFlags()
 	for i := range e.schema.Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
+	distsql.SetEncodeType(e.ctx, dagReq)
 	return dagReq, nil
 }
 
@@ -141,7 +163,7 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
 		TableId: e.table.ID,
 		IndexId: e.index.ID,
-		Columns: plan.ColumnsToProto(e.cols, e.table.PKIsHandle),
+		Columns: util.ColumnsToProto(e.cols, e.table.PKIsHandle),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
@@ -159,13 +181,15 @@ type RecoverIndexExec struct {
 
 	done bool
 
-	index     table.Index
-	table     table.Table
-	batchSize int
+	index      table.Index
+	table      table.Table
+	physicalID int64
+	batchSize  int
 
 	columns       []*model.ColumnInfo
 	colFieldTypes []*types.FieldType
 	srcChunk      *chunk.Chunk
+	handleCols    plannercore.HandleCols
 
 	// below buf is used to reduce allocations.
 	recoverRows []recoverRows
@@ -189,10 +213,10 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
-	e.srcChunk = chunk.NewChunk(e.columnsTypes())
+	e.srcChunk = chunk.New(e.columnsTypes(), e.initCap, e.maxChunkSize)
 	e.batchSize = 2048
 	e.recoverRows = make([]recoverRows, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
@@ -200,13 +224,11 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *RecoverIndexExec) constructTableScanPB(pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
-	tblScan := &tipb.TableScan{
-		TableId: e.table.Meta().ID,
-		Columns: pbColumnInfos,
-	}
-
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+func (e *RecoverIndexExec) constructTableScanPB(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
+	tblScan.TableId = e.physicalID
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, tblScan.Columns, colInfos)
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
 }
 
 func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
@@ -218,109 +240,129 @@ func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
 
 func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = txn.StartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = sc.PushDownFlags()
 	for i := range e.columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
-	tblInfo := e.table.Meta()
-	pbColumnInfos := plan.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
-	err := plan.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
+	tblScanExec, err := e.constructTableScanPB(e.table.Meta(), e.columns)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	tblScanExec := e.constructTableScanPB(pbColumnInfos)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-
+	distsql.SetEncodeType(e.ctx, dagReq)
 	return dagReq, nil
 }
 
-func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, startHandle int64, limitCnt uint64) (distsql.SelectResult, error) {
+func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transaction, startHandle kv.Handle, limitCnt uint64) (distsql.SelectResult, error) {
 	dagPB, err := e.buildDAGPB(txn, limitCnt)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	tblInfo := e.table.Meta()
-	ranges := []*ranger.NewRange{{LowVal: []types.Datum{types.NewIntDatum(startHandle)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(tblInfo.ID, ranges, nil).
+	builder.KeyRanges, err = buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, startHandle)
+	if err != nil {
+		return nil, err
+	}
+	kvReq, err := builder.
 		SetDAGRequest(dagPB).
+		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
+	if err != nil {
+		return nil, err
+	}
 
 	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
 	// avoid unnecessary region scan.
 	kvReq.Concurrency = 1
 	result, err := distsql.Select(ctx, e.ctx, kvReq, e.columnsTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 
+// buildRecoverIndexKeyRanges build a KeyRange: (startHandle, unlimited).
+func buildRecoverIndexKeyRanges(sctx *stmtctx.StatementContext, tid int64, startHandle kv.Handle) ([]kv.KeyRange, error) {
+	var startKey []byte
+	if startHandle == nil {
+		startKey = tablecodec.GenTableRecordPrefix(tid).Next()
+	} else {
+		startKey = tablecodec.EncodeRowKey(tid, startHandle.Encoded()).PrefixNext()
+	}
+	endKey := tablecodec.GenTableRecordPrefix(tid).PrefixNext()
+	return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
+}
+
 type backfillResult struct {
-	nextHandle   int64
-	addedCount   int64
-	scanRowCount int64
+	currentHandle kv.Handle
+	addedCount    int64
+	scanRowCount  int64
 }
 
 func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, error) {
 	var (
-		nextHandle    = int64(math.MinInt64)
-		totalAddedCnt = int64(0)
-		totalScanCnt  = int64(0)
-		lastLogCnt    = int64(0)
+		currentHandle kv.Handle = nil
+		totalAddedCnt           = int64(0)
+		totalScanCnt            = int64(0)
+		lastLogCnt              = int64(0)
 		result        backfillResult
 	)
 	for {
-		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+			setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 			var err error
-			result, err = e.backfillIndexInTxn(ctx, txn, nextHandle)
-			return errors.Trace(err)
+			result, err = e.backfillIndexInTxn(ctx, txn, currentHandle)
+			return err
 		})
 		if errInTxn != nil {
-			return totalAddedCnt, totalScanCnt, errors.Trace(errInTxn)
+			return totalAddedCnt, totalScanCnt, errInTxn
 		}
 		totalAddedCnt += result.addedCount
 		totalScanCnt += result.scanRowCount
 		if totalScanCnt-lastLogCnt >= 50000 {
 			lastLogCnt = totalScanCnt
-			log.Infof("[recover-index] recover table:%v, index:%v, totalAddedCnt:%v, totalScanCnt:%v, nextHandle: %v",
-				e.table.Meta().Name.O, e.index.Meta().Name.O, totalAddedCnt, totalScanCnt, result.nextHandle)
+			logutil.Logger(ctx).Info("recover index", zap.String("table", e.table.Meta().Name.O),
+				zap.String("index", e.index.Meta().Name.O), zap.Int64("totalAddedCnt", totalAddedCnt),
+				zap.Int64("totalScanCnt", totalScanCnt), zap.Stringer("currentHandle", result.currentHandle))
 		}
 
 		// no more rows
 		if result.scanRowCount == 0 {
 			break
 		}
-		nextHandle = result.nextHandle
+		currentHandle = result.currentHandle
+		if currentHandle.Next().Compare(result.currentHandle) <= 0 {
+			break // There is no more handles in the table.
+		}
 	}
 	return totalAddedCnt, totalScanCnt, nil
 }
 
 type recoverRows struct {
-	handle  int64
+	handle  kv.Handle
 	idxVals []types.Datum
+	rsData  []types.Datum
 	skip    bool
 }
 
 func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult distsql.SelectResult, result *backfillResult) ([]recoverRows, error) {
 	e.recoverRows = e.recoverRows[:0]
-	handleIdx := len(e.columns) - 1
+	idxValLen := len(e.index.Meta().Columns)
 	result.scanRowCount = 0
 
 	for {
 		err := srcResult.Next(ctx, e.srcChunk)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 
 		if e.srcChunk.NumRows() == 0 {
@@ -331,12 +373,16 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}
-			handle := row.GetInt64(handleIdx)
-			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes)
+			handle, err := e.handleCols.BuildHandle(row)
+			if err != nil {
+				return nil, err
+			}
+			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
+			rsData := tables.TryGetHandleRestoredDataWrapper(e.table, plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
+			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
 			result.scanRowCount++
-			result.nextHandle = handle + 1
+			result.currentHandle = handle
 		}
 	}
 
@@ -353,7 +399,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	for i, row := range rows {
 		idxKey, distinct, err := e.index.GenIndexKey(sc, row.idxVals, row.handle, e.idxKeyBufs[i])
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		e.idxKeyBufs[i] = idxKey
 
@@ -361,25 +407,27 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 		distinctFlags[i] = distinct
 	}
 
-	values, err := kv.BatchGetValues(txn, e.batchKeys)
+	values, err := txn.BatchGet(context.Background(), e.batchKeys)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// 1. unique-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key is duplicate and the handle is not equal, data is not consistent, log it and skip it.
 	// 3. non-unique-key is duplicate, skip it.
+	isCommonHandle := e.table.Meta().IsCommonHandle
 	for i, key := range e.batchKeys {
 		if val, found := values[string(key)]; found {
 			if distinctFlags[i] {
-				handle, err1 := tables.DecodeHandle(val)
+				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommonHandle)
 				if err1 != nil {
-					return errors.Trace(err1)
+					return err1
 				}
 
-				if handle != rows[i].handle {
-					log.Warnf("[recover-index] The constraint of unique index:%v is broken, handle:%v is not equal handle:%v with idxKey:%v.",
-						e.index.Meta().Name.O, handle, rows[i].handle, key)
+				if handle.Compare(rows[i].handle) != 0 {
+					logutil.BgLogger().Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
+						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
+						zap.Stringer("handleInTable", rows[i].handle), zap.Stringer("handleInIndex", handle))
 				}
 			}
 			rows[i].skip = true
@@ -388,22 +436,21 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	return nil
 }
 
-func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, startHandle int64) (result backfillResult, err error) {
-	result.nextHandle = startHandle
-	srcResult, err := e.buildTableScan(ctx, txn, e.table, startHandle, uint64(e.batchSize))
+func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transaction, currentHandle kv.Handle) (result backfillResult, err error) {
+	srcResult, err := e.buildTableScan(ctx, txn, currentHandle, uint64(e.batchSize))
 	if err != nil {
-		return result, errors.Trace(err)
+		return result, err
 	}
 	defer terror.Call(srcResult.Close)
 
 	rows, err := e.fetchRecoverRows(ctx, srcResult, &result)
 	if err != nil {
-		return result, errors.Trace(err)
+		return result, err
 	}
 
 	err = e.batchMarkDup(txn, rows)
 	if err != nil {
-		return result, errors.Trace(err)
+		return result, err
 	}
 
 	// Constrains is already checked.
@@ -413,15 +460,15 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			continue
 		}
 
-		recordKey := e.table.RecordKey(row.handle)
-		err := txn.LockKeys(recordKey)
+		recordKey := tablecodec.EncodeRecordKey(e.table.RecordPrefix(), row.handle)
+		err := txn.LockKeys(ctx, new(kv.LockCtx), recordKey)
 		if err != nil {
-			return result, errors.Trace(err)
+			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
+		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle, row.rsData, table.WithIgnoreAssertion)
 		if err != nil {
-			return result, errors.Trace(err)
+			return result, err
 		}
 		result.addedCount++
 	}
@@ -429,19 +476,43 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 }
 
 // Next implements the Executor Next interface.
-func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
 
-	totalAddedCnt, totalScanCnt, err := e.backfillIndex(ctx)
-	if err != nil {
-		return errors.Trace(err)
+	recoveringClusteredIndex := e.index.Meta().Primary && e.table.Meta().IsCommonHandle
+	if recoveringClusteredIndex {
+		req.AppendInt64(0, 0)
+		req.AppendInt64(1, 0)
+		e.done = true
+		return nil
+	}
+	var totalAddedCnt, totalScanCnt int64
+	var err error
+	if tbl, ok := e.table.(table.PartitionedTable); ok {
+		pi := e.table.Meta().GetPartitionInfo()
+		for _, p := range pi.Definitions {
+			e.table = tbl.GetPartition(p.ID)
+			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
+			e.physicalID = p.ID
+			addedCnt, scanCnt, err := e.backfillIndex(ctx)
+			totalAddedCnt += addedCnt
+			totalScanCnt += scanCnt
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		totalAddedCnt, totalScanCnt, err = e.backfillIndex(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
-	chk.AppendInt64(0, totalAddedCnt)
-	chk.AppendInt64(1, totalScanCnt)
+	req.AppendInt64(0, totalAddedCnt)
+	req.AppendInt64(1, totalScanCnt)
 	e.done = true
 	return nil
 }
@@ -455,14 +526,16 @@ type CleanupIndexExec struct {
 	done      bool
 	removeCnt uint64
 
-	index table.Index
-	table table.Table
+	index      table.Index
+	table      table.Table
+	physicalID int64
 
-	idxCols          []*model.ColumnInfo
+	columns          []*model.ColumnInfo
 	idxColFieldTypes []*types.FieldType
 	idxChunk         *chunk.Chunk
+	handleCols       plannercore.HandleCols
 
-	idxValues   map[int64][]types.Datum
+	idxValues   *kv.HandleMap // kv.Handle -> [][]types.Datum
 	batchSize   uint64
 	batchKeys   []kv.Key
 	idxValsBufs [][]types.Datum
@@ -474,20 +547,21 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 	if e.idxColFieldTypes != nil {
 		return e.idxColFieldTypes
 	}
-	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.idxCols))
-	for _, col := range e.idxCols {
+	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.columns))
+	for _, col := range e.columns {
 		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldType)
 	}
 	return e.idxColFieldTypes
 }
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
-	for handle := range e.idxValues {
-		e.batchKeys = append(e.batchKeys, e.table.RecordKey(handle))
-	}
-	values, err := kv.BatchGetValues(txn, e.batchKeys)
+	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
+		e.batchKeys = append(e.batchKeys, tablecodec.EncodeRecordKey(e.table.RecordPrefix(), h))
+		return true
+	})
+	values, err := txn.BatchGet(context.Background(), e.batchKeys)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return values, nil
 }
@@ -497,16 +571,21 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 		if _, found := values[string(k)]; !found {
 			_, handle, err := tablecodec.DecodeRecordKey(k)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
-			if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, e.idxValues[handle],
-				handle); err != nil {
-				return errors.Trace(err)
+			handleIdxValsGroup, ok := e.idxValues.Get(handle)
+			if !ok {
+				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
-			e.removeCnt++
-			if e.removeCnt%e.batchSize == 0 {
-				log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
-					e.table.Meta().Name.String(), e.index.Meta().Name.String(), e.removeCnt)
+			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
+					return err
+				}
+				e.removeCnt++
+				if e.removeCnt%e.batchSize == 0 {
+					logutil.BgLogger().Info("clean up dangling index", zap.String("table", e.table.Meta().Name.String()),
+						zap.String("index", e.index.Meta().Name.String()), zap.Uint64("count", e.removeCnt))
+				}
 			}
 		}
 	}
@@ -514,16 +593,16 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 }
 
 func extractIdxVals(row chunk.Row, idxVals []types.Datum,
-	fieldTypes []*types.FieldType) []types.Datum {
-	if idxVals == nil {
-		idxVals = make([]types.Datum, 0, row.Len()-1)
+	fieldTypes []*types.FieldType, idxValLen int) []types.Datum {
+	if cap(idxVals) < idxValLen {
+		idxVals = make([]types.Datum, idxValLen)
 	} else {
-		idxVals = idxVals[:0]
+		idxVals = idxVals[:idxValLen]
 	}
 
-	for i := 0; i < row.Len()-1; i++ {
+	for i := 0; i < idxValLen; i++ {
 		colVal := row.GetDatum(i, fieldTypes[i])
-		idxVals = append(idxVals, *colVal.Copy())
+		colVal.Copy(&idxVals[i])
 	}
 	return idxVals
 }
@@ -531,28 +610,38 @@ func extractIdxVals(row chunk.Row, idxVals []types.Datum,
 func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) error {
 	result, err := e.buildIndexScan(ctx, txn)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	defer terror.Call(result.Close)
 
 	sc := e.ctx.GetSessionVars().StmtCtx
+	idxColLen := len(e.index.Meta().Columns)
 	for {
 		err := result.Next(ctx, e.idxChunk)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if e.idxChunk.NumRows() == 0 {
 			return nil
 		}
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle := row.GetInt64(len(e.idxCols) - 1)
-			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes)
+			handle, err := e.handleCols.BuildHandle(row)
+			if err != nil {
+				return err
+			}
+			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes, idxColLen)
 			e.idxValsBufs[e.scanRowCnt] = idxVals
-			e.idxValues[handle] = idxVals
+			existingIdxVals, ok := e.idxValues.Get(handle)
+			if ok {
+				updatedIdxVals := append(existingIdxVals.([][]types.Datum), idxVals)
+				e.idxValues.Set(handle, updatedIdxVals)
+			} else {
+				e.idxValues.Set(handle, [][]types.Datum{idxVals})
+			}
 			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			e.scanRowCnt++
 			e.lastIdxKey = idxKey
@@ -564,80 +653,125 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 }
 
 // Next implements the Executor Next interface.
-func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
+	cleaningClusteredPrimaryKey := e.table.Meta().IsCommonHandle && e.index.Meta().Primary
+	if cleaningClusteredPrimaryKey {
+		e.done = true
+		req.AppendUint64(0, 0)
+		return nil
+	}
+
+	var err error
+	if tbl, ok := e.table.(table.PartitionedTable); ok {
+		pi := e.table.Meta().GetPartitionInfo()
+		for _, p := range pi.Definitions {
+			e.table = tbl.GetPartition(p.ID)
+			e.index = tables.GetWritableIndexByName(e.index.Meta().Name.L, e.table)
+			e.physicalID = p.ID
+			err = e.init()
+			if err != nil {
+				return err
+			}
+			err = e.cleanTableIndex(ctx)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		err = e.cleanTableIndex(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	e.done = true
+	req.AppendUint64(0, e.removeCnt)
+	return nil
+}
+
+func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 	for {
-		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+			txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 			err := e.fetchIndex(ctx, txn)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			values, err := e.batchGetRecord(txn)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			err = e.deleteDanglingIdx(txn, values)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			return nil
 		})
 		if errInTxn != nil {
-			return errors.Trace(errInTxn)
+			return errInTxn
 		}
 		if e.scanRowCnt == 0 {
 			break
 		}
 		e.scanRowCnt = 0
 		e.batchKeys = e.batchKeys[:0]
-		for k := range e.idxValues {
-			delete(e.idxValues, k)
-		}
+		e.idxValues.Range(func(h kv.Handle, val interface{}) bool {
+			e.idxValues.Delete(h)
+			return true
+		})
 	}
-	e.done = true
-	chk.AppendUint64(0, e.removeCnt)
 	return nil
 }
 
 func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transaction) (distsql.SelectResult, error) {
 	dagPB, err := e.buildIdxDAGPB(txn)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
 	var builder distsql.RequestBuilder
-	ranges := ranger.FullNewRange()
-	kvReq, err := builder.SetIndexRanges(sc, e.table.Meta().ID, e.index.Meta().ID, ranges).
+	ranges := ranger.FullRange()
+	kvReq, err := builder.SetIndexRanges(sc, e.physicalID, e.index.Meta().ID, ranges).
 		SetDAGRequest(dagPB).
+		SetStartTS(txn.StartTS()).
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		Build()
+	if err != nil {
+		return nil, err
+	}
+
 	kvReq.KeyRanges[0].StartKey = kv.Key(e.lastIdxKey).PrefixNext()
 	kvReq.Concurrency = 1
 	result, err := distsql.Select(ctx, e.ctx, kvReq, e.getIdxColTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	result.Fetch(ctx)
 	return result, nil
 }
 
 // Open implements the Executor Open interface.
 func (e *CleanupIndexExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	e.idxChunk = chunk.NewChunk(e.getIdxColTypes())
-	e.idxValues = make(map[int64][]types.Datum, e.batchSize)
+	return e.init()
+}
+
+func (e *CleanupIndexExec) init() error {
+	e.idxChunk = chunk.New(e.getIdxColTypes(), e.initCap, e.maxChunkSize)
+	e.idxValues = kv.NewHandleMap()
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
 	sc := e.ctx.GetSessionVars().StmtCtx
-	idxKey, _, err := e.index.GenIndexKey(sc, []types.Datum{{}}, math.MinInt64, nil)
+	idxKey, _, err := e.index.GenIndexKey(sc, []types.Datum{{}}, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	e.lastIdxKey = idxKey
 	return nil
@@ -645,32 +779,32 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 
 func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = txn.StartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
-	for i := range e.idxCols {
+	dagReq.Flags = sc.PushDownFlags()
+	for i := range e.columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.idxCols)
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.columns)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
-
+	distsql.SetEncodeType(e.ctx, dagReq)
 	return dagReq, nil
 }
 
 func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
-		TableId: e.table.Meta().ID,
-		IndexId: e.index.Meta().ID,
-		Columns: plan.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
+		TableId:          e.physicalID,
+		IndexId:          e.index.Meta().ID,
+		Columns:          util.ColumnsToProto(e.columns, e.table.Meta().PKIsHandle),
+		PrimaryColumnIds: tables.TryGetCommonPkColumnIds(e.table.Meta()),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }

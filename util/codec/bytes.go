@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +19,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 const (
@@ -28,8 +29,7 @@ const (
 )
 
 var (
-	pads    = make([]byte, encGroupSize)
-	encPads = []byte{encPad}
+	pads = make([]byte, encGroupSize)
 )
 
 // EncodeBytes guarantees the encoded value is in ascending order for comparison,
@@ -66,6 +66,13 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	}
 
 	return result
+}
+
+// EncodedBytesLength returns the length of data after encoded
+func EncodedBytesLength(dataLen int) int {
+	mod := dataLen % encGroupSize
+	padCount := encGroupSize - mod
+	return dataLen + padCount + 1 + dataLen/encGroupSize
 }
 
 func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
@@ -154,7 +161,7 @@ func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if int64(len(b)) < n {
+	if n < 0 || int64(len(b)) < n {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
 	return b[n:], b[:n], nil

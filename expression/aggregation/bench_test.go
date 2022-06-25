@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,9 @@ package aggregation
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -29,7 +30,11 @@ func BenchmarkCreateContext(b *testing.B) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	fun := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false).GetAggFunc()
+	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	fun := desc.GetAggFunc(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		fun.CreateContext(ctx.GetSessionVars().StmtCtx)
@@ -43,7 +48,11 @@ func BenchmarkResetContext(b *testing.B) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	fun := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false).GetAggFunc()
+	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
+	if err != nil {
+		b.Fatal(err)
+	}
+	fun := desc.GetAggFunc(ctx)
 	evalCtx := fun.CreateContext(ctx.GetSessionVars().StmtCtx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
@@ -58,7 +67,11 @@ func BenchmarkCreateDistinctContext(b *testing.B) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	fun := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true).GetAggFunc()
+	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	fun := desc.GetAggFunc(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		fun.CreateContext(ctx.GetSessionVars().StmtCtx)
@@ -72,7 +85,11 @@ func BenchmarkResetDistinctContext(b *testing.B) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	ctx := mock.NewContext()
-	fun := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true).GetAggFunc()
+	desc, err := NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	fun := desc.GetAggFunc(ctx)
 	evalCtx := fun.CreateContext(ctx.GetSessionVars().StmtCtx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {

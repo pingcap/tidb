@@ -1,0 +1,1004 @@
+-- http://www.tpc.org/tpc_documents_current_versions/pdf/tpc-h_v2.17.1.pdf
+CREATE DATABASE IF NOT EXISTS TPCH;
+USE TPCH;
+CREATE TABLE IF NOT EXISTS nation  ( N_NATIONKEY  INTEGER NOT NULL,
+                            N_NAME       CHAR(25) NOT NULL,
+                            N_REGIONKEY  INTEGER NOT NULL,
+                            N_COMMENT    VARCHAR(152),
+			    PRIMARY KEY (N_NATIONKEY));
+
+CREATE TABLE IF NOT EXISTS region  ( R_REGIONKEY  INTEGER NOT NULL,
+       	               R_NAME       CHAR(25) NOT NULL,
+                       R_COMMENT    VARCHAR(152),
+	               PRIMARY KEY (R_REGIONKEY));
+
+CREATE TABLE IF NOT EXISTS part  ( P_PARTKEY     INTEGER NOT NULL,
+                          P_NAME        VARCHAR(55) NOT NULL,
+                          P_MFGR        CHAR(25) NOT NULL,
+                          P_BRAND       CHAR(10) NOT NULL,
+                          P_TYPE        VARCHAR(25) NOT NULL,
+                          P_SIZE        INTEGER NOT NULL,
+                          P_CONTAINER   CHAR(10) NOT NULL,
+                          P_RETAILPRICE DECIMAL(15,2) NOT NULL,
+                          P_COMMENT     VARCHAR(23) NOT NULL,
+			  PRIMARY KEY (P_PARTKEY));
+
+CREATE TABLE IF NOT EXISTS supplier  ( S_SUPPKEY     INTEGER NOT NULL,
+                             S_NAME        CHAR(25) NOT NULL,
+                             S_ADDRESS     VARCHAR(40) NOT NULL,
+                             S_NATIONKEY   INTEGER NOT NULL,
+                             S_PHONE       CHAR(15) NOT NULL,
+                             S_ACCTBAL     DECIMAL(15,2) NOT NULL,
+                             S_COMMENT     VARCHAR(101) NOT NULL,
+			     PRIMARY KEY (S_SUPPKEY),
+			     CONSTRAINT FOREIGN KEY SUPPLIER_FK1 (S_NATIONKEY) references nation(N_NATIONKEY));
+
+CREATE TABLE IF NOT EXISTS partsupp ( PS_PARTKEY     INTEGER NOT NULL,
+                             PS_SUPPKEY     INTEGER NOT NULL,
+                             PS_AVAILQTY    INTEGER NOT NULL,
+                             PS_SUPPLYCOST  DECIMAL(15,2)  NOT NULL,
+                             PS_COMMENT     VARCHAR(199) NOT NULL,
+			     PRIMARY KEY (PS_PARTKEY,PS_SUPPKEY),
+			     CONSTRAINT FOREIGN KEY PARTSUPP_FK1 (PS_SUPPKEY) references supplier(S_SUPPKEY),
+			     CONSTRAINT FOREIGN KEY PARTSUPP_FK2 (PS_PARTKEY) references part(P_PARTKEY));
+
+CREATE TABLE IF NOT EXISTS customer  ( C_CUSTKEY     INTEGER NOT NULL,
+                             C_NAME        VARCHAR(25) NOT NULL,
+                             C_ADDRESS     VARCHAR(40) NOT NULL,
+                             C_NATIONKEY   INTEGER NOT NULL,
+                             C_PHONE       CHAR(15) NOT NULL,
+                             C_ACCTBAL     DECIMAL(15,2)   NOT NULL,
+                             C_MKTSEGMENT  CHAR(10) NOT NULL,
+                             C_COMMENT     VARCHAR(117) NOT NULL,
+			     PRIMARY KEY (C_CUSTKEY),
+			     CONSTRAINT FOREIGN KEY CUSTOMER_FK1 (C_NATIONKEY) references nation(N_NATIONKEY));
+
+CREATE TABLE IF NOT EXISTS orders  ( O_ORDERKEY       INTEGER NOT NULL,
+                           O_CUSTKEY        INTEGER NOT NULL,
+                           O_ORDERSTATUS    CHAR(1) NOT NULL,
+                           O_TOTALPRICE     DECIMAL(15,2) NOT NULL,
+                           O_ORDERDATE      DATE NOT NULL,
+                           O_ORDERPRIORITY  CHAR(15) NOT NULL,  
+                           O_CLERK          CHAR(15) NOT NULL, 
+                           O_SHIPPRIORITY   INTEGER NOT NULL,
+                           O_COMMENT        VARCHAR(79) NOT NULL,
+			   PRIMARY KEY (O_ORDERKEY),
+			   CONSTRAINT FOREIGN KEY ORDERS_FK1 (O_CUSTKEY) references customer(C_CUSTKEY));
+
+CREATE TABLE IF NOT EXISTS lineitem ( L_ORDERKEY    INTEGER NOT NULL,
+                             L_PARTKEY     INTEGER NOT NULL,
+                             L_SUPPKEY     INTEGER NOT NULL,
+                             L_LINENUMBER  INTEGER NOT NULL,
+                             L_QUANTITY    DECIMAL(15,2) NOT NULL,
+                             L_EXTENDEDPRICE  DECIMAL(15,2) NOT NULL,
+                             L_DISCOUNT    DECIMAL(15,2) NOT NULL,
+                             L_TAX         DECIMAL(15,2) NOT NULL,
+                             L_RETURNFLAG  CHAR(1) NOT NULL,
+                             L_LINESTATUS  CHAR(1) NOT NULL,
+                             L_SHIPDATE    DATE NOT NULL,
+                             L_COMMITDATE  DATE NOT NULL,
+                             L_RECEIPTDATE DATE NOT NULL,
+                             L_SHIPINSTRUCT CHAR(25) NOT NULL,
+                             L_SHIPMODE     CHAR(10) NOT NULL,
+                             L_COMMENT      VARCHAR(44) NOT NULL,
+			     PRIMARY KEY (L_ORDERKEY,L_LINENUMBER),
+			     CONSTRAINT FOREIGN KEY LINEITEM_FK1 (L_ORDERKEY)  references orders(O_ORDERKEY),
+			     CONSTRAINT FOREIGN KEY LINEITEM_FK2 (L_PARTKEY,L_SUPPKEY) references partsupp(PS_PARTKEY, PS_SUPPKEY));
+-- load stats.
+load stats 's/tpch_stats/nation.json';
+load stats 's/tpch_stats/region.json';
+load stats 's/tpch_stats/part.json';
+load stats 's/tpch_stats/supplier.json';
+load stats 's/tpch_stats/partsupp.json';
+load stats 's/tpch_stats/customer.json';
+load stats 's/tpch_stats/orders.json';
+load stats 's/tpch_stats/lineitem.json';
+
+set @@session.tidb_opt_agg_push_down = 0;
+
+/*
+    Q1 Pricing Summary Report
+    This query reports the amount of business that was billed, shipped, and returned.
+
+    The Pricing Summary Report Query provides a summary pricing report for all lineitems shipped as of a given date.
+    The date is within 60 - 120 days of the greatest ship date contained in the database. The query lists totals for
+    extended price, discounted extended price, discounted extended price plus tax, average quantity, average extended
+    price, and average discount. These aggregates are grouped by RETURNFLAG and LINESTATUS, and listed in
+    ascending order of RETURNFLAG and LINESTATUS. A count of the number of lineitems in each group is
+    included.
+
+    Planner enhancement: none.
+*/
+explain format = 'brief'
+select
+	l_returnflag,
+	l_linestatus,
+	sum(l_quantity) as sum_qty,
+	sum(l_extendedprice) as sum_base_price,
+	sum(l_extendedprice * (1 - l_discount)) as sum_disc_price,
+	sum(l_extendedprice * (1 - l_discount) * (1 + l_tax)) as sum_charge,
+	avg(l_quantity) as avg_qty,
+	avg(l_extendedprice) as avg_price,
+	avg(l_discount) as avg_disc,
+	count(*) as count_order
+from
+	lineitem
+where
+	l_shipdate <= date_sub('1998-12-01', interval 108 day)
+group by
+	l_returnflag,
+	l_linestatus
+order by
+	l_returnflag,
+	l_linestatus;
+
+/*
+    Q2 Minimum Cost Supplier Query
+    This query finds which supplier should be selected to place an order for a given part in a given region.
+
+    The Minimum Cost Supplier Query finds, in a given region, for each part of a certain type and size, the supplier who
+    can supply it at minimum cost. If several suppliers in that region offer the desired part type and size at the same
+    (minimum) cost, the query lists the parts from suppliers with the 100 highest account balances. For each supplier,
+    the query lists the supplier's account balance, name and nation; the part's number and manufacturer; the supplier's
+    address, phone number and comment information.
+
+    Planner enhancement: join reorder.
+*/
+explain format = 'brief'
+select
+	s_acctbal,
+	s_name,
+	n_name,
+	p_partkey,
+	p_mfgr,
+	s_address,
+	s_phone,
+	s_comment
+from
+	part,
+	supplier,
+	partsupp,
+	nation,
+	region
+where
+	p_partkey = ps_partkey
+	and s_suppkey = ps_suppkey
+	and p_size = 30
+	and p_type like '%STEEL'
+	and s_nationkey = n_nationkey
+	and n_regionkey = r_regionkey
+	and r_name = 'ASIA'
+	and ps_supplycost = (
+		select
+			min(ps_supplycost)
+		from
+			partsupp,
+			supplier,
+			nation,
+			region
+		where
+			p_partkey = ps_partkey
+			and s_suppkey = ps_suppkey
+			and s_nationkey = n_nationkey
+			and n_regionkey = r_regionkey
+			and r_name = 'ASIA'
+	)
+order by
+	s_acctbal desc,
+	n_name,
+	s_name,
+	p_partkey
+limit 100;
+
+/*
+    Q3 Shipping Priority Query
+    This query retrieves the 10 unshipped orders with the highest value.
+
+    The Shipping Priority Query retrieves the shipping priority and potential revenue, defined as the sum of
+    l_extendedprice * (1-l_discount), of the orders having the largest revenue among those that had not been shipped as
+    of a given date. Orders are listed in decreasing order of revenue. If more than 10 unshipped orders exist, only the 10
+    orders with the largest revenue are listed.
+
+    planner enhancement: if group-by item have primary key, non-priamry key is useless.
+*/
+explain format = 'brief'
+select
+	l_orderkey,
+	sum(l_extendedprice * (1 - l_discount)) as revenue,
+	o_orderdate,
+	o_shippriority
+from
+	customer,
+	orders,
+	lineitem
+where
+	c_mktsegment = 'AUTOMOBILE'
+	and c_custkey = o_custkey
+	and l_orderkey = o_orderkey
+	and o_orderdate < '1995-03-13'
+	and l_shipdate > '1995-03-13'
+group by
+	l_orderkey,
+	o_orderdate,
+	o_shippriority
+order by
+	revenue desc,
+	o_orderdate
+limit 10;
+
+/*
+    Q4 Order Priority Checking Query
+    This query determines how well the order priority system is working and gives an assessment of customer satisfaction.
+
+    The Order Priority Checking Query counts the number of orders ordered in a given quarter of a given year in which
+    at least one lineitem was received by the customer later than its committed date. The query lists the count of such
+    orders for each order priority sorted in ascending priority order.
+*/
+explain format = 'brief'
+select
+	o_orderpriority,
+	count(*) as order_count
+from
+	orders
+where
+	o_orderdate >= '1995-01-01'
+	and o_orderdate < date_add('1995-01-01', interval '3' month)
+	and exists (
+		select
+			*
+		from
+			lineitem
+		where
+			l_orderkey = o_orderkey
+			and l_commitdate < l_receiptdate
+	)
+group by
+	o_orderpriority
+order by
+	o_orderpriority;
+
+/*
+    Q5 Local Supplier Volume Query
+    This query lists the revenue volume done through local suppliers.
+
+    The Local Supplier Volume Query lists for each nation in a region the revenue volume that resulted from lineitem
+    transactions in which the customer ordering parts and the supplier filling them were both within that nation. The
+    query is run in order to determine whether to institute local distribution centers in a given region. The query considers
+    only parts ordered in a given year. The query displays the nations and revenue volume in descending order by
+    revenue. Revenue volume for all qualifying lineitems in a particular nation is defined as sum(l_extendedprice * (1 -
+    l_discount)).
+
+    Planner enhancement: join reorder.
+*/
+explain format = 'brief'
+select
+	n_name,
+	sum(l_extendedprice * (1 - l_discount)) as revenue
+from
+	customer,
+	orders,
+	lineitem,
+	supplier,
+	nation,
+	region
+where
+	c_custkey = o_custkey
+	and l_orderkey = o_orderkey
+	and l_suppkey = s_suppkey
+	and c_nationkey = s_nationkey
+	and s_nationkey = n_nationkey
+	and n_regionkey = r_regionkey
+	and r_name = 'MIDDLE EAST'
+	and o_orderdate >= '1994-01-01'
+	and o_orderdate < date_add('1994-01-01', interval '1' year)
+group by
+	n_name
+order by
+	revenue desc;
+
+/*
+    Q6 Forecasting Revenue Change Query
+    This query quantifies the amount of revenue increase that would have resulted from eliminating certain companywide
+    discounts in a given percentage range in a given year. Asking this type of "what if" query can be used to look
+    for ways to increase revenues.
+
+    The Forecasting Revenue Change Query considers all the lineitems shipped in a given year with discounts between
+    DISCOUNT-0.01 and DISCOUNT+0.01. The query lists the amount by which the total revenue would have
+    increased if these discounts had been eliminated for lineitems with l_quantity less than quantity. Note that the
+    potential revenue increase is equal to the sum of [l_extendedprice * l_discount] for all lineitems with discounts and
+    quantities in the qualifying range.
+*/
+explain format = 'brief'
+select
+	sum(l_extendedprice * l_discount) as revenue
+from
+	lineitem
+where
+	l_shipdate >= '1994-01-01'
+	and l_shipdate < date_add('1994-01-01', interval '1' year)
+	and l_discount between 0.06 - 0.01 and 0.06 + 0.01
+	and l_quantity < 24;
+
+/*
+    Q7 Volume Shipping Query
+    This query determines the value of goods shipped between certain nations to help in the re-negotiation of shipping
+    contracts.
+
+    The Volume Shipping Query finds, for two given nations, the gross discounted revenues derived from lineitems in
+    which parts were shipped from a supplier in either nation to a customer in the other nation during 1995 and 1996.
+    The query lists the supplier nation, the customer nation, the year, and the revenue from shipments that took place in
+    that year. The query orders the answer by Supplier nation, Customer nation, and year (all ascending).
+
+    Planner enahancement: join reorder.
+*/
+explain format = 'brief'
+select
+	supp_nation,
+	cust_nation,
+	l_year,
+	sum(volume) as revenue
+from
+	(
+		select
+			n1.n_name as supp_nation,
+			n2.n_name as cust_nation,
+			extract(year from l_shipdate) as l_year,
+			l_extendedprice * (1 - l_discount) as volume
+		from
+			supplier,
+			lineitem,
+			orders,
+			customer,
+			nation n1,
+			nation n2
+		where
+			s_suppkey = l_suppkey
+			and o_orderkey = l_orderkey
+			and c_custkey = o_custkey
+			and s_nationkey = n1.n_nationkey
+			and c_nationkey = n2.n_nationkey
+			and (
+				(n1.n_name = 'JAPAN' and n2.n_name = 'INDIA')
+				or (n1.n_name = 'INDIA' and n2.n_name = 'JAPAN')
+			)
+			and l_shipdate between '1995-01-01' and '1996-12-31'
+	) as shipping
+group by
+	supp_nation,
+	cust_nation,
+	l_year
+order by
+	supp_nation,
+	cust_nation,
+	l_year;
+
+/*
+    Q8 National Market Share Query
+    This query determines how the market share of a given nation within a given region has changed over two years for
+    a given part type.
+
+    The market share for a given nation within a given region is defined as the fraction of the revenue, the sum of
+    [l_extendedprice * (1-l_discount)], from the products of a specified type in that region that was supplied by suppliers
+    from the given nation. The query determines this for the years 1995 and 1996 presented in this order.
+
+    Planner enhancement: join reorder.
+*/
+explain format = 'brief'
+select
+	o_year,
+	sum(case
+		when nation = 'INDIA' then volume
+		else 0
+	end) / sum(volume) as mkt_share
+from
+	(
+		select
+			extract(year from o_orderdate) as o_year,
+			l_extendedprice * (1 - l_discount) as volume,
+			n2.n_name as nation
+		from
+			part,
+			supplier,
+			lineitem,
+			orders,
+			customer,
+			nation n1,
+			nation n2,
+			region
+		where
+			p_partkey = l_partkey
+			and s_suppkey = l_suppkey
+			and l_orderkey = o_orderkey
+			and o_custkey = c_custkey
+			and c_nationkey = n1.n_nationkey
+			and n1.n_regionkey = r_regionkey
+			and r_name = 'ASIA'
+			and s_nationkey = n2.n_nationkey
+			and o_orderdate between '1995-01-01' and '1996-12-31'
+			and p_type = 'SMALL PLATED COPPER'
+	) as all_nations
+group by
+	o_year
+order by
+	o_year;
+
+/*
+    Q9 Product Type Profit Measure Query
+    This query determines how much profit is made on a given line of parts, broken out by supplier nation and year.
+
+    The Product Type Profit Measure Query finds, for each nation and each year, the profit for all parts ordered in that
+    year that contain a specified substring in their names and that were filled by a supplier in that nation. The profit is
+    defined as the sum of [(l_extendedprice*(1-l_discount)) - (ps_supplycost * l_quantity)] for all lineitems describing
+    parts in the specified line. The query lists the nations in ascending alphabetical order and, for each nation, the year
+    and profit in descending order by year (most recent first).
+
+    Planner enhancement: join reorder.
+*/
+explain format = 'brief'
+select
+	nation,
+	o_year,
+	sum(amount) as sum_profit
+from
+	(
+		select
+			n_name as nation,
+			extract(year from o_orderdate) as o_year,
+			l_extendedprice * (1 - l_discount) - ps_supplycost * l_quantity as amount
+		from
+			part,
+			supplier,
+			lineitem,
+			partsupp,
+			orders,
+			nation
+		where
+			s_suppkey = l_suppkey
+			and ps_suppkey = l_suppkey
+			and ps_partkey = l_partkey
+			and p_partkey = l_partkey
+			and o_orderkey = l_orderkey
+			and s_nationkey = n_nationkey
+			and p_name like '%dim%'
+	) as profit
+group by
+	nation,
+	o_year
+order by
+	nation,
+	o_year desc;
+
+/*
+    Q10 Returned Item Reporting Query
+    The query identifies customers who might be having problems with the parts that are shipped to them.
+
+    The Returned Item Reporting Query finds the top 20 customers, in terms of their effect on lost revenue for a given
+    quarter, who have returned parts. The query considers only parts that were ordered in the specified quarter. The
+    query lists the customer's name, address, nation, phone number, account balance, comment information and revenue
+    lost. The customers are listed in descending order of lost revenue. Revenue lost is defined as
+    sum(l_extendedprice*(1-l_discount)) for all qualifying lineitems.
+
+    Planner enhancement: join reorder, if group-by item have primary key, non-priamry key is useless.
+*/
+explain format = 'brief'
+select
+	c_custkey,
+	c_name,
+	sum(l_extendedprice * (1 - l_discount)) as revenue,
+	c_acctbal,
+	n_name,
+	c_address,
+	c_phone,
+	c_comment
+from
+	customer,
+	orders,
+	lineitem,
+	nation
+where
+	c_custkey = o_custkey
+	and l_orderkey = o_orderkey
+	and o_orderdate >= '1993-08-01'
+	and o_orderdate < date_add('1993-08-01', interval '3' month)
+	and l_returnflag = 'R'
+	and c_nationkey = n_nationkey
+group by
+	c_custkey,
+	c_name,
+	c_acctbal,
+	c_phone,
+	n_name,
+	c_address,
+	c_comment
+order by
+	revenue desc
+limit 20;
+
+/*
+    Q11 Important Stock Identification Query
+    This query finds the most important subset of suppliers' stock in a given nation.
+
+    The Important Stock Identification Query finds, from scanning the available stock of suppliers in a given nation, all
+    the parts that represent a significant percentage of the total value of all available parts. The query displays the part
+    number and the value of those parts in descending order of value.
+*/
+explain format = 'brief'
+select
+	ps_partkey,
+	sum(ps_supplycost * ps_availqty) as value
+from
+	partsupp,
+	supplier,
+	nation
+where
+	ps_suppkey = s_suppkey
+	and s_nationkey = n_nationkey
+	and n_name = 'MOZAMBIQUE'
+group by
+	ps_partkey having
+		sum(ps_supplycost * ps_availqty) > (
+			select
+				sum(ps_supplycost * ps_availqty) * 0.0001000000
+			from
+				partsupp,
+				supplier,
+				nation
+			where
+				ps_suppkey = s_suppkey
+				and s_nationkey = n_nationkey
+				and n_name = 'MOZAMBIQUE'
+		)
+order by
+	value desc;
+
+/*
+    Q12 Shipping Modes and Order Priority Query
+    This query determines whether selecting less expensive modes of shipping is negatively affecting the critical-priority
+    orders by causing more parts to be received by customers after the committed date.
+
+    The Shipping Modes and Order Priority Query counts, by ship mode, for lineitems actually received by customers in
+    a given year, the number of lineitems belonging to orders for which the l_receiptdate exceeds the l_commitdate for
+    two different specified ship modes. Only lineitems that were actually shipped before the l_commitdate are considered.
+    The late lineitems are partitioned into two groups, those with priority URGENT or HIGH, and those with a
+    priority other than URGENT or HIGH.
+*/
+explain format = 'brief'
+select
+	l_shipmode,
+	sum(case
+		when o_orderpriority = '1-URGENT'
+			or o_orderpriority = '2-HIGH'
+			then 1
+		else 0
+	end) as high_line_count,
+	sum(case
+		when o_orderpriority <> '1-URGENT'
+			and o_orderpriority <> '2-HIGH'
+			then 1
+		else 0
+	end) as low_line_count
+from
+	orders,
+	lineitem
+where
+	o_orderkey = l_orderkey
+	and l_shipmode in ('RAIL', 'FOB')
+	and l_commitdate < l_receiptdate
+	and l_shipdate < l_commitdate
+	and l_receiptdate >= '1997-01-01'
+	and l_receiptdate < date_add('1997-01-01', interval '1' year)
+group by
+	l_shipmode
+order by
+	l_shipmode;
+
+/*
+    Q13 Customer Distribution Query
+    This query seeks relationships between customers and the size of their orders.
+
+    This query determines the distribution of customers by the number of orders they have made, including customers
+    who have no record of orders, past or present. It counts and reports how many customers have no orders, how many
+    have 1, 2, 3, etc. A check is made to ensure that the orders counted do not fall into one of several special categories
+    of orders. Special categories are identified in the order comment column by looking for a particular pattern.
+*/
+explain format = 'brief'
+select
+	c_count,
+	count(*) as custdist
+from
+	(
+		select
+			c_custkey,
+			count(o_orderkey) as c_count
+		from
+			customer left outer join orders on
+				c_custkey = o_custkey
+				and o_comment not like '%pending%deposits%'
+		group by
+			c_custkey
+	) c_orders
+group by
+	c_count
+order by
+	custdist desc,
+	c_count desc;
+
+/*
+    Q14 Promotion Effect Query
+    This query monitors the market response to a promotion such as TV advertisements or a special campaign.
+
+    The Promotion Effect Query determines what percentage of the revenue in a given year and month was derived from
+    promotional parts. The query considers only parts actually shipped in that month and gives the percentage. Revenue
+    is defined as (l_extendedprice * (1-l_discount)).
+*/
+explain format = 'brief'
+select
+	100.00 * sum(case
+		when p_type like 'PROMO%'
+			then l_extendedprice * (1 - l_discount)
+		else 0
+	end) / sum(l_extendedprice * (1 - l_discount)) as promo_revenue
+from
+	lineitem,
+	part
+where
+	l_partkey = p_partkey
+	and l_shipdate >= '1996-12-01'
+	and l_shipdate < date_add('1996-12-01', interval '1' month);
+
+/*
+    Q15 Top Supplier Query
+    This query determines the top supplier so it can be rewarded, given more business, or identified for special recognition.
+
+    The Top Supplier Query finds the supplier who contributed the most to the overall revenue for parts shipped during
+    a given quarter of a given year. In case of a tie, the query lists all suppliers whose contribution was equal to the
+    maximum, presented in supplier number order.
+
+    Planner enhancement: support view.
+
+create view revenue0 (supplier_no, total_revenue) as
+	select
+		l_suppkey,
+		sum(l_extendedprice * (1 - l_discount))
+	from
+		lineitem
+	where
+		l_shipdate >= '1997-07-01'
+		and l_shipdate < date_add('1997-07-01', interval '3' month)
+	group by
+		l_suppkey
+
+
+select
+	s_suppkey,
+	s_name,
+	s_address,
+	s_phone,
+	total_revenue
+from
+	supplier,
+	revenue0
+where
+	s_suppkey = supplier_no
+	and total_revenue = (
+		select
+			max(total_revenue)
+		from
+			revenue0
+	)
+order by
+	s_suppkey
+
+drop view revenue0
+*/
+
+/*
+    Q16 Parts/Supplier Relationship Query
+    This query finds out how many suppliers can supply parts with given attributes. It might be used, for example, to
+    determine whether there is a sufficient number of suppliers for heavily ordered parts.
+
+    The Parts/Supplier Relationship Query counts the number of suppliers who can supply parts that satisfy a particular
+    customer's requirements. The customer is interested in parts of eight different sizes as long as they are not of a given
+    type, not of a given brand, and not from a supplier who has had complaints registered at the Better Business Bureau.
+    Results must be presented in descending count and ascending brand, type, and size.
+*/
+explain format = 'brief'
+select
+	p_brand,
+	p_type,
+	p_size,
+	count(distinct ps_suppkey) as supplier_cnt
+from
+	partsupp,
+	part
+where
+	p_partkey = ps_partkey
+	and p_brand <> 'Brand#34'
+	and p_type not like 'LARGE BRUSHED%'
+	and p_size in (48, 19, 12, 4, 41, 7, 21, 39)
+	and ps_suppkey not in (
+		select
+			s_suppkey
+		from
+			supplier
+		where
+			s_comment like '%Customer%Complaints%'
+	)
+group by
+	p_brand,
+	p_type,
+	p_size
+order by
+	supplier_cnt desc,
+	p_brand,
+	p_type,
+	p_size;
+
+/*
+    Q17 Small-Quantity-Order Revenue Query
+    This query determines how much average yearly revenue would be lost if orders were no longer filled for small
+    quantities of certain parts. This may reduce overhead expenses by concentrating sales on larger shipments.
+
+    The Small-Quantity-Order Revenue Query considers parts of a given brand and with a given container type and
+    determines the average lineitem quantity of such parts ordered for all orders (past and pending) in the 7-year database.
+    What would be the average yearly gross (undiscounted) loss in revenue if orders for these parts with a quantity
+    of less than 20% of this average were no longer taken?
+
+    Planner enahancement: aggregation pull up through join.
+*/
+explain format = 'brief'
+select
+	sum(l_extendedprice) / 7.0 as avg_yearly
+from
+	lineitem,
+	part
+where
+	p_partkey = l_partkey
+	and p_brand = 'Brand#44'
+	and p_container = 'WRAP PKG'
+	and l_quantity < (
+		select
+			0.2 * avg(l_quantity)
+		from
+			lineitem
+		where
+			l_partkey = p_partkey
+	);
+
+/*
+    Q18 Large Volume Customer Query
+    The Large Volume Customer Query ranks customers based on their having placed a large quantity order. Large
+    quantity orders are defined as those orders whose total quantity is above a certain level.
+
+    The Large Volume Customer Query finds a list of the top 100 customers who have ever placed large quantity orders.
+    The query lists the customer name, customer key, the order key, date and total price and the quantity for the order.
+
+    Planner enhancement: cost estimation is not so good, join reorder. The inner subquery's result is only 300+ rows.
+*/
+explain format = 'brief'
+select
+	c_name,
+	c_custkey,
+	o_orderkey,
+	o_orderdate,
+	o_totalprice,
+	sum(l_quantity)
+from
+	customer,
+	orders,
+	lineitem
+where
+	o_orderkey in (
+		select
+			l_orderkey
+		from
+			lineitem
+		group by
+			l_orderkey having
+				sum(l_quantity) > 314
+	)
+	and c_custkey = o_custkey
+	and o_orderkey = l_orderkey
+group by
+	c_name,
+	c_custkey,
+	o_orderkey,
+	o_orderdate,
+	o_totalprice
+order by
+	o_totalprice desc,
+	o_orderdate
+limit 100;
+
+/*
+    Q19 Discounted Revenue Query
+    The Discounted Revenue Query reports the gross discounted revenue attributed to the sale of selected parts handled
+    in a particular manner. This query is an example of code such as might be produced programmatically by a data
+    mining tool.
+
+    The Discounted Revenue query finds the gross discounted revenue for all orders for three different types of parts
+    that were shipped by air and delivered in person. Parts are selected based on the combination of specific brands, a
+    list of containers, and a range of sizes.
+*/
+explain format = 'brief'
+select
+	sum(l_extendedprice* (1 - l_discount)) as revenue
+from
+	lineitem,
+	part
+where
+	(
+		p_partkey = l_partkey
+		and p_brand = 'Brand#52'
+		and p_container in ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+		and l_quantity >= 4 and l_quantity <= 4 + 10
+		and p_size between 1 and 5
+		and l_shipmode in ('AIR', 'AIR REG')
+		and l_shipinstruct = 'DELIVER IN PERSON'
+	)
+	or
+	(
+		p_partkey = l_partkey
+		and p_brand = 'Brand#11'
+		and p_container in ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+		and l_quantity >= 18 and l_quantity <= 18 + 10
+		and p_size between 1 and 10
+		and l_shipmode in ('AIR', 'AIR REG')
+		and l_shipinstruct = 'DELIVER IN PERSON'
+	)
+	or
+	(
+		p_partkey = l_partkey
+		and p_brand = 'Brand#51'
+		and p_container in ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+		and l_quantity >= 29 and l_quantity <= 29 + 10
+		and p_size between 1 and 15
+		and l_shipmode in ('AIR', 'AIR REG')
+		and l_shipinstruct = 'DELIVER IN PERSON'
+	);
+
+/*
+    Q20 Potential Part Promotion Query
+    The Potential Part Promotion Query identifies suppliers in a particular nation having selected parts that may be candidates
+    for a promotional offer.
+
+    The Potential Part Promotion query identifies suppliers who have an excess of a given part available; an excess is
+    defined to be more than 50% of the parts like the given part that the supplier shipped in a given year for a given
+    nation. Only parts whose names share a certain naming convention are considered.
+*/
+explain format = 'brief'
+select
+	s_name,
+	s_address
+from
+	supplier,
+	nation
+where
+	s_suppkey in (
+		select
+			ps_suppkey
+		from
+			partsupp
+		where
+			ps_partkey in (
+				select
+					p_partkey
+				from
+					part
+				where
+					p_name like 'green%'
+			)
+			and ps_availqty > (
+				select
+					0.5 * sum(l_quantity)
+				from
+					lineitem
+				where
+					l_partkey = ps_partkey
+					and l_suppkey = ps_suppkey
+					and l_shipdate >= '1993-01-01'
+					and l_shipdate < date_add('1993-01-01', interval '1' year)
+			)
+	)
+	and s_nationkey = n_nationkey
+	and n_name = 'ALGERIA'
+order by
+	s_name;
+
+/*
+    Q21 Suppliers Who Kept Orders Waiting Query
+    This query identifies certain suppliers who were not able to ship required parts in a timely manner.
+
+    The Suppliers Who Kept Orders Waiting query identifies suppliers, for a given nation, whose product was part of a
+    multi-supplier order (with current status of 'F') where they were the only supplier who failed to meet the committed
+    delivery date.
+*/
+explain format = 'brief'
+select
+	s_name,
+	count(*) as numwait
+from
+	supplier,
+	lineitem l1,
+	orders,
+	nation
+where
+	s_suppkey = l1.l_suppkey
+	and o_orderkey = l1.l_orderkey
+	and o_orderstatus = 'F'
+	and l1.l_receiptdate > l1.l_commitdate
+	and exists (
+		select
+			*
+		from
+			lineitem l2
+		where
+			l2.l_orderkey = l1.l_orderkey
+			and l2.l_suppkey <> l1.l_suppkey
+	)
+	and not exists (
+		select
+			*
+		from
+			lineitem l3
+		where
+			l3.l_orderkey = l1.l_orderkey
+			and l3.l_suppkey <> l1.l_suppkey
+			and l3.l_receiptdate > l3.l_commitdate
+	)
+	and s_nationkey = n_nationkey
+	and n_name = 'EGYPT'
+group by
+	s_name
+order by
+	numwait desc,
+	s_name
+limit 100;
+
+/*
+    Q22 Global Sales Opportunity Query
+    The Global Sales Opportunity Query identifies geographies where there are customers who may be likely to make a
+    purchase.
+
+    This query counts how many customers within a specific range of country codes have not placed orders for 7 years
+    but who have a greater than average “positive” account balance. It also reflects the magnitude of that balance.
+    Country code is defined as the first two characters of c_phone.
+*/
+explain format = 'brief'
+select
+	cntrycode,
+	count(*) as numcust,
+	sum(c_acctbal) as totacctbal
+from
+	(
+		select
+			substring(c_phone from 1 for 2) as cntrycode,
+			c_acctbal
+		from
+			customer
+		where
+			substring(c_phone from 1 for 2) in
+				('20', '40', '22', '30', '39', '42', '21')
+			and c_acctbal > (
+				select
+					avg(c_acctbal)
+				from
+					customer
+				where
+					c_acctbal > 0.00
+					and substring(c_phone from 1 for 2) in
+						('20', '40', '22', '30', '39', '42', '21')
+			)
+			and not exists (
+				select
+					*
+				from
+					orders
+				where
+					o_custkey = c_custkey
+			)
+	) as custsale
+group by
+	cntrycode
+order by
+	cntrycode;

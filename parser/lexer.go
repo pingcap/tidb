@@ -16,11 +16,13 @@ package parser
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
+	tidbfeature "github.com/pingcap/tidb/parser/tidb"
 )
 
 var _ = yyLexer(&Scanner{})
@@ -37,64 +39,65 @@ type Scanner struct {
 	r   reader
 	buf bytes.Buffer
 
+	client     charset.Encoding
+	connection charset.Encoding
+
 	errs         []error
+	warns        []error
 	stmtStartPos int
 
-	// For scanning such kind of comment: /*! MySQL-specific code */ or /*+ optimizer hint */
-	specialComment specialCommentScanner
+	// inBangComment is true if we are inside a `/*! ... */` block.
+	// It is used to ignore a stray `*/` when scanning.
+	inBangComment bool
 
 	sqlMode mysql.SQLMode
+
+	// If the lexer should recognize keywords for window function.
+	// It may break the compatibility when support those keywords,
+	// because some application may already use them as identifiers.
+	supportWindowFunc bool
+
+	// Whether record the original text keyword position to the AST node.
+	skipPositionRecording bool
+
+	// lastScanOffset indicates last offset returned by scan().
+	// It's used to substring sql in syntax error message.
+	lastScanOffset int
+
+	// lastKeyword records the previous keyword returned by scan().
+	// determine whether an optimizer hint should be parsed or ignored.
+	lastKeyword int
+	// lastKeyword2 records the keyword before lastKeyword, it is used
+	// to disambiguate hint after for update, which should be ignored.
+	lastKeyword2 int
+	// lastKeyword3 records the keyword before lastKeyword2, it is used
+	// to disambiguate hint after create binding for update, which should
+	// be pertained.
+	lastKeyword3 int
+
+	// hintPos records the start position of the previous optimizer hint.
+	lastHintPos Pos
+
+	// true if a dot follows an identifier
+	identifierDot bool
 }
 
-type specialCommentScanner interface {
-	scan() (tok int, pos Pos, lit string)
-}
-
-type mysqlSpecificCodeScanner struct {
-	*Scanner
-	Pos
-}
-
-func (s *mysqlSpecificCodeScanner) scan() (tok int, pos Pos, lit string) {
-	tok, pos, lit = s.Scanner.scan()
-	pos.Line += s.Pos.Line
-	pos.Col += s.Pos.Col
-	pos.Offset += s.Pos.Offset
-	return
-}
-
-type optimizerHintScanner struct {
-	*Scanner
-	Pos
-	end bool
-}
-
-func (s *optimizerHintScanner) scan() (tok int, pos Pos, lit string) {
-	tok, pos, lit = s.Scanner.scan()
-	pos.Line += s.Pos.Line
-	pos.Col += s.Pos.Col
-	pos.Offset += s.Pos.Offset
-	if tok == 0 {
-		if !s.end {
-			tok = hintEnd
-			s.end = true
-		}
-	}
-	return
-}
-
-// Errors returns the errors during a scan.
-func (s *Scanner) Errors() []error {
-	return s.errs
+// Errors returns the errors and warns during a scan.
+func (s *Scanner) Errors() (warns []error, errs []error) {
+	return s.warns, s.errs
 }
 
 // reset resets the sql string to be scanned.
 func (s *Scanner) reset(sql string) {
-	s.r = reader{s: sql, p: Pos{Line: 1}}
+	s.client = charset.FindEncoding(mysql.DefaultCharset)
+	s.connection = charset.FindEncoding(mysql.DefaultCharset)
+	s.r = reader{s: sql, p: Pos{Line: 1}, l: len(sql)}
 	s.buf.Reset()
 	s.errs = s.errs[:0]
+	s.warns = s.warns[:0]
 	s.stmtStartPos = 0
-	s.specialComment = nil
+	s.inBangComment = false
+	s.lastKeyword = 0
 }
 
 func (s *Scanner) stmtText() string {
@@ -114,14 +117,80 @@ func (s *Scanner) stmtText() string {
 
 // Errorf tells scanner something is wrong.
 // Scanner satisfies yyLexer interface which need this function.
-func (s *Scanner) Errorf(format string, a ...interface{}) {
+func (s *Scanner) Errorf(format string, a ...interface{}) (err error) {
 	str := fmt.Sprintf(format, a...)
-	val := s.r.s[s.r.pos().Offset:]
+	val := s.r.s[s.lastScanOffset:]
+	var lenStr = ""
 	if len(val) > 2048 {
+		lenStr = "(total length " + strconv.Itoa(len(val)) + ")"
 		val = val[:2048]
 	}
-	err := fmt.Errorf("line %d column %d near \"%s\"%s (total length %d)", s.r.p.Line, s.r.p.Col, val, str, len(s.r.s))
+	err = fmt.Errorf("line %d column %d near \"%s\"%s %s",
+		s.r.p.Line, s.r.p.Col, val, str, lenStr)
+	return
+}
+
+// AppendError sets error into scanner.
+// Scanner satisfies yyLexer interface which need this function.
+func (s *Scanner) AppendError(err error) {
+	if err == nil {
+		return
+	}
 	s.errs = append(s.errs, err)
+}
+
+// AppendWarn sets warning into scanner.
+func (s *Scanner) AppendWarn(err error) {
+	if err == nil {
+		return
+	}
+	s.warns = append(s.warns, err)
+}
+
+// convert2System convert lit from client encoding to system encoding which is utf8mb4.
+func (s *Scanner) convert2System(tok int, lit string) (int, string) {
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
+	if err != nil {
+		s.AppendWarn(err)
+	}
+
+	return tok, charset.HackString(utf8Lit)
+}
+
+// convert2Connection convert lit from client encoding to connection encoding.
+func (s *Scanner) convert2Connection(tok int, lit string) (int, string) {
+	if mysql.IsUTF8Charset(s.client.Name()) {
+		return tok, lit
+	}
+	utf8Lit, err := s.client.Transform(nil, charset.HackSlice(lit), charset.OpDecodeReplace)
+	if err != nil {
+		s.AppendError(err)
+		if s.sqlMode.HasStrictMode() && s.client.Tp() == s.connection.Tp() {
+			return invalid, lit
+		}
+		s.lastErrorAsWarn()
+	}
+
+	// It is definitely valid if `client` is the same with `connection`, so just transform if they are not the same.
+	if s.client.Tp() != s.connection.Tp() {
+		utf8Lit, _ = s.connection.Transform(nil, utf8Lit, charset.OpReplaceNoErr)
+	}
+	return tok, charset.HackString(utf8Lit)
+}
+
+func (s *Scanner) getNextToken() int {
+	r := s.r
+	tok, pos, lit := s.scan()
+	if tok == identifier {
+		tok = s.handleIdent(&yySymType{})
+	}
+	if tok == identifier {
+		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
+			tok = tok1
+		}
+	}
+	s.r = r
+	return tok
 }
 
 // Lex returns a token and store the token value in v.
@@ -131,14 +200,19 @@ func (s *Scanner) Errorf(format string, a ...interface{}) {
 // return invalid tells parser that scanner meets illegal character.
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
+	s.lastScanOffset = pos.Offset
+	s.lastKeyword3 = s.lastKeyword2
+	s.lastKeyword2 = s.lastKeyword
+	s.lastKeyword = 0
 	v.offset = pos.Offset
 	v.ident = lit
 	if tok == identifier {
-		tok = handleIdent(v)
+		tok = s.handleIdent(v)
 	}
 	if tok == identifier {
 		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
 			tok = tok1
+			s.lastKeyword = tok1
 		}
 	}
 	if s.sqlMode.HasANSIQuotesMode() &&
@@ -153,6 +227,14 @@ func (s *Scanner) Lex(v *yySymType) int {
 
 	if tok == not && s.sqlMode.HasHighNotPrecedenceMode() {
 		return not2
+	}
+	if tok == as && s.getNextToken() == of {
+		_, pos, lit = s.scan()
+		v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+		s.lastKeyword = asof
+		s.lastScanOffset = pos.Offset
+		v.offset = pos.Offset
+		return asof
 	}
 
 	switch tok {
@@ -171,13 +253,25 @@ func (s *Scanner) Lex(v *yySymType) int {
 		return tok
 	case null:
 		v.item = nil
-	case quotedIdentifier:
+	case quotedIdentifier, identifier:
 		tok = identifier
+		s.identifierDot = s.r.peek() == '.'
+		tok, v.ident = s.convert2System(tok, lit)
+	case stringLit:
+		tok, v.ident = s.convert2Connection(tok, lit)
 	}
-	if tok == unicode.ReplacementChar && s.r.eof() {
-		return 0
-	}
+
 	return tok
+}
+
+// LexLiteral returns the value of the converted literal
+func (s *Scanner) LexLiteral() interface{} {
+	symType := &yySymType{}
+	s.Lex(symType)
+	if symType.item == nil {
+		return symType.ident
+	}
+	return symType.item
 }
 
 // SetSQLMode sets the SQL mode for scanner.
@@ -190,31 +284,53 @@ func (s *Scanner) GetSQLMode() mysql.SQLMode {
 	return s.sqlMode
 }
 
-// NewScanner returns a new scanner object.
-func NewScanner(s string) *Scanner {
-	return &Scanner{r: reader{s: s}}
+// EnableWindowFunc controls whether the scanner recognize the keywords of window function.
+func (s *Scanner) EnableWindowFunc(val bool) {
+	s.supportWindowFunc = val
 }
 
-func (s *Scanner) skipWhitespace() rune {
-	return s.r.incAsLongAs(unicode.IsSpace)
+// InheritScanner returns a new scanner object which inherits configurations from the parent scanner.
+func (s *Scanner) InheritScanner(sql string) *Scanner {
+	return &Scanner{
+		r:                 reader{s: sql},
+		client:            s.client,
+		sqlMode:           s.sqlMode,
+		supportWindowFunc: s.supportWindowFunc,
+	}
+}
+
+// NewScanner returns a new scanner object.
+func NewScanner(s string) *Scanner {
+	lexer := &Scanner{r: reader{s: s}}
+	lexer.reset(s)
+	return lexer
+}
+
+func (s *Scanner) handleIdent(lval *yySymType) int {
+	str := lval.ident
+	// A character string literal may have an optional character set introducer and COLLATE clause:
+	// [_charset_name]'string' [COLLATE collation_name]
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	if !strings.HasPrefix(str, "_") {
+		return identifier
+	}
+	cs, _ := charset.GetCharsetInfo(str[1:])
+	if cs == nil {
+		return identifier
+	}
+	lval.ident = cs.Name
+	return underscoreCS
+}
+
+func (s *Scanner) skipWhitespace() byte {
+	return s.r.incAsLongAs(func(b byte) bool {
+		return unicode.IsSpace(rune(b))
+	})
 }
 
 func (s *Scanner) scan() (tok int, pos Pos, lit string) {
-	if s.specialComment != nil {
-		// Enter specialComment scan mode.
-		// for scanning such kind of comment: /*! MySQL-specific code */
-		specialComment := s.specialComment
-		tok, pos, lit = specialComment.scan()
-		if tok != 0 {
-			// return the specialComment scan result as the result
-			return
-		}
-		// leave specialComment scan mode after all stream consumed.
-		s.specialComment = nil
-	}
-
 	ch0 := s.r.peek()
-	if unicode.IsSpace(ch0) {
+	if unicode.IsSpace(rune(ch0)) {
 		ch0 = s.skipWhitespace()
 	}
 	pos = s.r.pos()
@@ -224,16 +340,13 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		return 0, pos, ""
 	}
 
-	if !s.r.eof() && isIdentExtend(ch0) {
+	if isIdentExtend(ch0) {
 		return scanIdentifier(s)
 	}
 
 	// search a trie to get a token.
 	node := &ruleTable
-	for ch0 >= 0 && ch0 <= 255 {
-		if node.childs[ch0] == nil || s.r.eof() {
-			break
-		}
+	for !(node.childs[ch0] == nil || s.r.eof()) {
 		node = node.childs[ch0]
 		if node.fn != nil {
 			return node.fn(s)
@@ -256,13 +369,12 @@ func startWithXx(s *Scanner) (tok int, pos Pos, lit string) {
 			s.r.inc()
 			tok, lit = hexLit, s.r.data(&pos)
 		} else {
-			tok = unicode.ReplacementChar
+			tok = invalid
 		}
 		return
 	}
-	s.r.incAsLongAs(isIdentChar)
-	tok, lit = identifier, s.r.data(&pos)
-	return
+	s.r.updatePos(pos)
+	return scanIdentifier(s)
 }
 
 func startWithNn(s *Scanner) (tok int, pos Pos, lit string) {
@@ -289,17 +401,16 @@ func startWithBb(s *Scanner) (tok int, pos Pos, lit string) {
 			s.r.inc()
 			tok, lit = bitLit, s.r.data(&pos)
 		} else {
-			tok = unicode.ReplacementChar
+			tok = invalid
 		}
 		return
 	}
-	s.r.incAsLongAs(isIdentChar)
-	tok, lit = identifier, s.r.data(&pos)
-	return
+	s.r.updatePos(pos)
+	return scanIdentifier(s)
 }
 
 func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
-	s.r.incAsLongAs(func(ch rune) bool {
+	s.r.incAsLongAs(func(ch byte) bool {
 		return ch != '\n'
 	})
 	return s.scan()
@@ -307,12 +418,14 @@ func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
 
 func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
-	if strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
-		s.r.incN(3)
-		s.r.incAsLongAs(func(ch rune) bool {
-			return ch != '\n'
-		})
-		return s.scan()
+	if strings.HasPrefix(s.r.s[pos.Offset:], "--") {
+		remainLen := len(s.r.s[pos.Offset:])
+		if remainLen == 2 || (remainLen > 2 && unicode.IsSpace(rune(s.r.s[pos.Offset+2]))) {
+			s.r.incAsLongAs(func(ch byte) bool {
+				return ch != '\n'
+			})
+			return s.scan()
+		}
 	}
 	if strings.HasPrefix(s.r.s[pos.Offset:], "->>") {
 		tok = juss
@@ -325,6 +438,7 @@ func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 		return
 	}
 	tok = int('-')
+	lit = "-"
 	s.r.inc()
 	return
 }
@@ -332,111 +446,165 @@ func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
-	ch0 := s.r.peek()
-	if ch0 == '*' {
-		s.r.inc()
-		for {
-			ch0 = s.r.readByte()
-			if ch0 == unicode.ReplacementChar && s.r.eof() {
-				// unclosed comment
-				s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
-				return
-			}
-			if ch0 == '*' && s.r.readByte() == '/' {
-				break
-			}
-		}
-
-		comment := s.r.data(&pos)
-
-		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
-		if strings.HasPrefix(comment, "/*+") {
-			begin := sqlOffsetInComment(comment)
-			end := len(comment) - 2
-			sql := comment[begin:end]
-			s.specialComment = &optimizerHintScanner{
-				Scanner: NewScanner(sql),
-				Pos: Pos{
-					pos.Line,
-					pos.Col,
-					pos.Offset + begin,
-				},
-			}
-
-			tok = hintBegin
-			return
-		}
-
-		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
-		// Convert "/*!VersionNumber MySQL-specific-code */" to "MySQL-specific-code".
-		if strings.HasPrefix(comment, "/*!") {
-			sql := specCodePattern.ReplaceAllStringFunc(comment, TrimComment)
-			s.specialComment = &mysqlSpecificCodeScanner{
-				Scanner: NewScanner(sql),
-				Pos: Pos{
-					pos.Line,
-					pos.Col,
-					pos.Offset + sqlOffsetInComment(comment),
-				},
-			}
-		}
-
-		return s.scan()
+	if s.r.peek() != '*' {
+		tok = int('/')
+		lit = "/"
+		return
 	}
-	tok = int('/')
-	return
+
+	isOptimizerHint := false
+	currentCharIsStar := false
+
+	s.r.inc() // we see '/*' so far.
+	switch s.r.readByte() {
+	case '!': // '/*!' MySQL-specific comments
+		// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
+		// in '/*!', which we always recognize regardless of version.
+		s.scanVersionDigits(5, 5)
+		s.inBangComment = true
+		return s.scan()
+
+	case 'T': // '/*T' maybe TiDB-specific comments
+		if s.r.peek() != '!' {
+			// '/*TX' is just normal comment.
+			break
+		}
+		s.r.inc()
+		// in '/*T!', try to match the pattern '/*T![feature1,feature2,...]'.
+		features := s.scanFeatureIDs()
+		if tidbfeature.CanParseFeature(features...) {
+			s.inBangComment = true
+			return s.scan()
+		}
+	case 'M': // '/*M' maybe MariaDB-specific comments
+		// no special treatment for now.
+		break
+
+	case '+': // '/*+' optimizer hints
+		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
+		if _, ok := hintedTokens[s.lastKeyword]; ok {
+			// only recognize optimizers hints directly followed by certain
+			// keywords like SELECT, INSERT, etc., only a special case "FOR UPDATE" needs to be handled
+			// we will report a warning in order to match MySQL's behavior, but the hint content will be ignored
+			if s.lastKeyword2 == forKwd {
+				if s.lastKeyword3 == binding {
+					// special case of `create binding for update`
+					isOptimizerHint = true
+				} else {
+					s.warns = append(s.warns, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
+				}
+			} else {
+				isOptimizerHint = true
+			}
+		}
+
+	case '*': // '/**' if the next char is '/' it would close the comment.
+		currentCharIsStar = true
+
+	default:
+		break
+	}
+
+	// standard C-like comment. read until we see '*/' then drop it.
+	for {
+		if currentCharIsStar || s.r.incAsLongAs(func(ch byte) bool { return ch != '*' }) == '*' {
+			switch s.r.readByte() {
+			case '/':
+				// Meets */, means comment end.
+				if isOptimizerHint {
+					s.lastHintPos = pos
+					return hintComment, pos, s.r.data(&pos)
+				} else {
+					return s.scan()
+				}
+			case '*':
+				currentCharIsStar = true
+				continue
+			default:
+				currentCharIsStar = false
+				continue
+			}
+		}
+		// unclosed comment or other errors.
+		s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
+		return
+	}
 }
 
-func sqlOffsetInComment(comment string) int {
-	// find the first SQL token offset in pattern like "/*!40101 mysql specific code */"
-	offset := 0
-	for i := 0; i < len(comment); i++ {
-		if unicode.IsSpace(rune(comment[i])) {
-			offset = i
-			break
-		}
+func startWithStar(s *Scanner) (tok int, pos Pos, lit string) {
+	pos = s.r.pos()
+	s.r.inc()
+
+	// skip and exit '/*!' if we see '*/'
+	if s.inBangComment && s.r.peek() == '/' {
+		s.inBangComment = false
+		s.r.inc()
+		return s.scan()
 	}
-	for offset < len(comment) {
-		offset++
-		if !unicode.IsSpace(rune(comment[offset])) {
-			break
-		}
-	}
-	return offset
+	// otherwise it is just a normal star.
+	s.identifierDot = false
+	return '*', pos, "*"
 }
 
 func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
-	ch1 := s.r.peek()
-	if isIdentFirstChar(ch1) {
-		s.r.incAsLongAs(isIdentChar)
-		tok, lit = singleAtIdentifier, s.r.data(&pos)
-	} else if ch1 == '@' {
+
+	tok, lit = scanIdentifierOrString(s)
+	switch tok {
+	case '@':
 		s.r.inc()
 		stream := s.r.s[pos.Offset+2:]
+		var prefix string
 		for _, v := range []string{"global.", "session.", "local."} {
 			if len(v) > len(stream) {
 				continue
 			}
 			if strings.EqualFold(stream[:len(v)], v) {
+				prefix = v
 				s.r.incN(len(v))
 				break
 			}
 		}
-		s.r.incAsLongAs(isIdentChar)
-		tok, lit = doubleAtIdentifier, s.r.data(&pos)
-	} else {
-		tok = int('@')
+		tok, lit = scanIdentifierOrString(s)
+		switch tok {
+		case stringLit, quotedIdentifier:
+			tok, lit = doubleAtIdentifier, "@@"+prefix+lit
+		case identifier:
+			tok, lit = doubleAtIdentifier, s.r.data(&pos)
+		}
+	case invalid:
+		break
+	default:
+		tok = singleAtIdentifier
 	}
+
 	return
 }
 
 func scanIdentifier(s *Scanner) (int, Pos, string) {
 	pos := s.r.pos()
-	s.r.inc()
 	s.r.incAsLongAs(isIdentChar)
 	return identifier, pos, s.r.data(&pos)
+}
+
+func scanIdentifierOrString(s *Scanner) (tok int, lit string) {
+	ch1 := s.r.peek()
+	switch ch1 {
+	case '\'', '"':
+		tok, _, lit = startString(s)
+	case '`':
+		tok, _, lit = scanQuotedIdent(s)
+	default:
+		if isUserVarChar(ch1) {
+			pos := s.r.pos()
+			s.r.incAsLongAs(isUserVarChar)
+			tok, lit = identifier, s.r.data(&pos)
+		} else {
+			tok = int(ch1)
+		}
+	}
+	return
 }
 
 var (
@@ -447,12 +615,13 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	s.buf.Reset()
-	for {
-		ch := s.r.readByte()
-		if ch == unicode.ReplacementChar && s.r.eof() {
-			tok = unicode.ReplacementChar
-			return
+	for !s.r.eof() {
+		tPos := s.r.pos()
+		if s.r.skipRune(s.client) {
+			s.buf.WriteString(s.r.data(&tPos))
+			continue
 		}
+		ch := s.r.readByte()
 		if ch == '`' {
 			if s.r.peek() != '`' {
 				// don't return identifier in case that it's interpreted as keyword token later.
@@ -461,8 +630,10 @@ func scanQuotedIdent(s *Scanner) (tok int, pos Pos, lit string) {
 			}
 			s.r.inc()
 		}
-		s.buf.WriteRune(ch)
+		s.buf.WriteByte(ch)
 	}
+	tok = invalid
+	return
 }
 
 func startString(s *Scanner) (tok int, pos Pos, lit string) {
@@ -511,43 +682,46 @@ func (mb *lazyBuf) data() string {
 
 func (s *Scanner) scanString() (tok int, pos Pos, lit string) {
 	tok, pos = stringLit, s.r.pos()
-	mb := lazyBuf{false, &s.r, &s.buf, &pos}
 	ending := s.r.readByte()
-	ch0 := s.r.peek()
+	s.buf.Reset()
 	for !s.r.eof() {
+		tPos := s.r.pos()
+		if s.r.skipRune(s.client) {
+			s.buf.WriteString(s.r.data(&tPos))
+			continue
+		}
+		ch0 := s.r.readByte()
 		if ch0 == ending {
-			s.r.inc()
 			if s.r.peek() != ending {
-				lit = mb.data()
+				lit = s.buf.String()
 				return
 			}
-			str := mb.r.data(&pos)
-			mb.setUseBuf(str[1 : len(str)-1])
-		} else if ch0 == '\\' && !s.sqlMode.HasNoBackslashEscapesMode() {
-			mb.setUseBuf(mb.r.data(&pos)[1:])
-			ch0 = handleEscape(s)
-		}
-		mb.writeRune(ch0, s.r.w)
-		if !s.r.eof() {
 			s.r.inc()
-			ch0 = s.r.peek()
+			s.buf.WriteByte(ch0)
+		} else if ch0 == '\\' && !s.sqlMode.HasNoBackslashEscapesMode() {
+			if s.r.eof() {
+				break
+			}
+			s.handleEscape(s.r.peek(), &s.buf)
+			s.r.inc()
+		} else {
+			s.buf.WriteByte(ch0)
 		}
 	}
 
-	tok = unicode.ReplacementChar
+	tok = invalid
 	return
 }
 
 // handleEscape handles the case in scanString when previous char is '\'.
-func handleEscape(s *Scanner) rune {
-	s.r.inc()
-	ch0 := s.r.peek()
+func (s *Scanner) handleEscape(b byte, buf *bytes.Buffer) {
+	var ch0 byte
 	/*
 		\" \' \\ \n \0 \b \Z \r \t ==> escape to one char
 		\% \_ ==> preserve both char
 		other ==> remove \
 	*/
-	switch ch0 {
+	switch b {
 	case 'n':
 		ch0 = '\n'
 	case '0':
@@ -561,12 +735,18 @@ func handleEscape(s *Scanner) rune {
 	case 't':
 		ch0 = '\t'
 	case '%', '_':
-		s.buf.WriteByte('\\')
+		buf.WriteByte('\\')
+		ch0 = b
+	default:
+		ch0 = b
 	}
-	return ch0
+	buf.WriteByte(ch0)
 }
 
 func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
+	if s.identifierDot {
+		return scanIdentifier(s)
+	}
 	pos = s.r.pos()
 	tok = intLit
 	ch0 := s.r.readByte()
@@ -579,17 +759,31 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 			s.scanOct()
 		case ch1 == 'x' || ch1 == 'X':
 			s.r.inc()
+			p1 := s.r.pos()
 			s.scanHex()
+			p2 := s.r.pos()
+			// 0x, 0x7fz3 are identifier
+			if p1 == p2 || isDigit(s.r.peek()) {
+				s.r.incAsLongAs(isIdentChar)
+				return identifier, pos, s.r.data(&pos)
+			}
 			tok = hexLit
 		case ch1 == 'b':
 			s.r.inc()
+			p1 := s.r.pos()
 			s.scanBit()
+			p2 := s.r.pos()
+			// 0b, 0b123, 0b1ab are identifier
+			if p1 == p2 || isDigit(s.r.peek()) {
+				s.r.incAsLongAs(isIdentChar)
+				return identifier, pos, s.r.data(&pos)
+			}
 			tok = bitLit
 		case ch1 == '.':
 			return s.scanFloat(&pos)
 		case ch1 == 'B':
-			tok = unicode.ReplacementChar
-			return
+			s.r.incAsLongAs(isIdentChar)
+			return identifier, pos, s.r.data(&pos)
 		}
 	}
 
@@ -611,27 +805,28 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 func startWithDot(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
-	save := s.r.pos()
+	if s.identifierDot {
+		return int('.'), pos, "."
+	}
 	if isDigit(s.r.peek()) {
-		tok, _, lit = s.scanFloat(&pos)
-		if s.r.eof() || !isIdentChar(s.r.peek()) {
-			return
+		tok, p, l := s.scanFloat(&pos)
+		if tok == identifier {
+			return invalid, p, l
 		}
-		// Fail to parse a float, reset to dot.
-		s.r.p = save
+		return tok, p, l
 	}
 	tok, lit = int('.'), "."
 	return
 }
 
 func (s *Scanner) scanOct() {
-	s.r.incAsLongAs(func(ch rune) bool {
+	s.r.incAsLongAs(func(ch byte) bool {
 		return ch >= '0' && ch <= '7'
 	})
 }
 
 func (s *Scanner) scanHex() {
-	s.r.incAsLongAs(func(ch rune) bool {
+	s.r.incAsLongAs(func(ch byte) bool {
 		return ch >= '0' && ch <= '9' ||
 			ch >= 'a' && ch <= 'f' ||
 			ch >= 'A' && ch <= 'F'
@@ -639,13 +834,13 @@ func (s *Scanner) scanHex() {
 }
 
 func (s *Scanner) scanBit() {
-	s.r.incAsLongAs(func(ch rune) bool {
+	s.r.incAsLongAs(func(ch byte) bool {
 		return ch == '0' || ch == '1'
 	})
 }
 
 func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
-	s.r.p = *beg
+	s.r.updatePos(*beg)
 	// float = D1 . D2 e D3
 	s.scanDigits()
 	ch0 := s.r.peek()
@@ -660,8 +855,17 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 		if ch0 == '-' || ch0 == '+' {
 			s.r.inc()
 		}
-		s.scanDigits()
-		tok = floatLit
+		if isDigit(s.r.peek()) {
+			s.scanDigits()
+			tok = floatLit
+		} else {
+			// D1 . D2 e XX when XX is not D3, parse the result to an identifier.
+			// 9e9e = 9e9(float) + e(identifier)
+			// 9est = 9est(identifier)
+			s.r.updatePos(*beg)
+			s.r.incAsLongAs(isIdentChar)
+			tok = identifier
+		}
 	} else {
 		tok = decLit
 	}
@@ -675,38 +879,97 @@ func (s *Scanner) scanDigits() string {
 	return s.r.data(&pos)
 }
 
+// scanVersionDigits scans for `min` to `max` digits (range inclusive) used in
+// `/*!12345 ... */` comments.
+func (s *Scanner) scanVersionDigits(min, max int) {
+	pos := s.r.pos()
+	for i := 0; i < max; i++ {
+		ch := s.r.peek()
+		if isDigit(ch) {
+			s.r.inc()
+		} else if i < min {
+			s.r.updatePos(pos)
+			return
+		} else {
+			break
+		}
+	}
+}
+
+func (s *Scanner) scanFeatureIDs() (featureIDs []string) {
+	pos := s.r.pos()
+	const init, expectChar, obtainChar = 0, 1, 2
+	state := init
+	var b strings.Builder
+	for !s.r.eof() {
+		ch := s.r.peek()
+		s.r.inc()
+		switch state {
+		case init:
+			if ch == '[' {
+				state = expectChar
+				break
+			}
+			s.r.updatePos(pos)
+			return nil
+		case expectChar:
+			if isIdentChar(ch) {
+				b.WriteByte(ch)
+				state = obtainChar
+				break
+			}
+			s.r.updatePos(pos)
+			return nil
+		case obtainChar:
+			if isIdentChar(ch) {
+				b.WriteByte(ch)
+				state = obtainChar
+				break
+			} else if ch == ',' {
+				featureIDs = append(featureIDs, b.String())
+				b.Reset()
+				state = expectChar
+				break
+			} else if ch == ']' {
+				featureIDs = append(featureIDs, b.String())
+				return featureIDs
+			}
+			s.r.updatePos(pos)
+			return nil
+		}
+	}
+	s.r.updatePos(pos)
+	return nil
+}
+
+func (s *Scanner) lastErrorAsWarn() {
+	if len(s.errs) == 0 {
+		return
+	}
+	s.warns = append(s.warns, s.errs[len(s.errs)-1])
+	s.errs = s.errs[:len(s.errs)-1]
+}
+
 type reader struct {
 	s string
 	p Pos
-	w int
+	l int
 }
 
 var eof = Pos{-1, -1, -1}
 
 func (r *reader) eof() bool {
-	return r.p.Offset >= len(r.s)
+	return r.p.Offset >= r.l
 }
 
 // peek() peeks a rune from underlying reader.
-// if reader meets EOF, it will return unicode.ReplacementChar. to distinguish from
-// the real unicode.ReplacementChar, the caller should call r.eof() again to check.
-func (r *reader) peek() rune {
+// if reader meets EOF, it will return 0. to distinguish from
+// the real 0, the caller should call r.eof() again to check.
+func (r *reader) peek() byte {
 	if r.eof() {
-		return unicode.ReplacementChar
+		return 0
 	}
-	v, w := rune(r.s[r.p.Offset]), 1
-	switch {
-	case v == 0:
-		r.w = w
-		return v // illegal UTF-8 encoding
-	case v >= 0x80:
-		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
-		if v == utf8.RuneError && w == 1 {
-			v = rune(r.s[r.p.Offset]) // illegal UTF-8 encoding
-		}
-	}
-	r.w = w
-	return v
+	return r.s[r.p.Offset]
 }
 
 // inc increase the position offset of the reader.
@@ -716,7 +979,7 @@ func (r *reader) inc() {
 		r.p.Line++
 		r.p.Col = 0
 	}
-	r.p.Offset += r.w
+	r.p.Offset += 1
 	r.p.Col++
 }
 
@@ -726,9 +989,9 @@ func (r *reader) incN(n int) {
 	}
 }
 
-func (r *reader) readByte() (ch rune) {
+func (r *reader) readByte() (ch byte) {
 	ch = r.peek()
-	if ch == unicode.ReplacementChar && r.eof() {
+	if r.eof() {
 		return
 	}
 	r.inc()
@@ -739,19 +1002,33 @@ func (r *reader) pos() Pos {
 	return r.p
 }
 
+func (r *reader) updatePos(pos Pos) {
+	r.p = pos
+}
+
 func (r *reader) data(from *Pos) string {
 	return r.s[from.Offset:r.p.Offset]
 }
 
-func (r *reader) incAsLongAs(fn func(rune) bool) rune {
+func (r *reader) incAsLongAs(fn func(b byte) bool) byte {
 	for {
 		ch := r.peek()
 		if !fn(ch) {
 			return ch
 		}
-		if ch == unicode.ReplacementChar && r.eof() {
+		if r.eof() {
 			return 0
 		}
 		r.inc()
 	}
+}
+
+// skipRune skip mb character, return true indicate something has been skipped.
+func (r *reader) skipRune(enc charset.Encoding) bool {
+	if r.s[r.p.Offset] <= unicode.MaxASCII {
+		return false
+	}
+	c := enc.MbLen(r.s[r.p.Offset:])
+	r.incN(c)
+	return c > 0
 }

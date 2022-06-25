@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,22 +16,19 @@ package types
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"unicode"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
-// RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
+// RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
 // RoundFloat uses default rounding mode, see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-// so rounding use "round half away from zero".
+// so rounding use "round to nearest even".
 // e.g, 1.5 -> 2, -1.5 -> -2.
 func RoundFloat(f float64) float64 {
-	if math.Abs(f) < 0.5 {
-		return 0
-	}
-
-	return math.Trunc(f + math.Copysign(0.5, f))
+	return math.RoundToEven(f)
 }
 
 // Round rounds the argument f to dec decimal places.
@@ -43,7 +41,11 @@ func Round(f float64, dec int) float64 {
 	if math.IsInf(tmp, 0) {
 		return f
 	}
-	return RoundFloat(tmp) / shift
+	result := RoundFloat(tmp) / shift
+	if math.IsNaN(result) {
+		return 0
+	}
+	return result
 }
 
 // Truncate truncates the argument f to dec decimal places.
@@ -59,7 +61,8 @@ func Truncate(f float64, dec int) float64 {
 	return math.Trunc(tmp) / shift
 }
 
-func getMaxFloat(flen int, decimal int) float64 {
+// GetMaxFloat gets the max float for given flen and decimal.
+func GetMaxFloat(flen int, decimal int) float64 {
 	intPartLen := flen - decimal
 	f := math.Pow10(intPartLen)
 	f -= math.Pow10(-decimal)
@@ -71,10 +74,10 @@ func getMaxFloat(flen int, decimal int) float64 {
 func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	if math.IsNaN(f) {
 		// nan returns 0
-		return 0, ErrOverflow.GenByArgs("DOUBLE", "")
+		return 0, ErrOverflow.GenWithStackByArgs("DOUBLE", "")
 	}
 
-	maxF := getMaxFloat(flen, decimal)
+	maxF := GetMaxFloat(flen, decimal)
 
 	if !math.IsInf(f, 0) {
 		f = Round(f, decimal)
@@ -83,13 +86,19 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	var err error
 	if f > maxF {
 		f = maxF
-		err = ErrOverflow.GenByArgs("DOUBLE", "")
+		err = ErrOverflow.GenWithStackByArgs("DOUBLE", "")
 	} else if f < -maxF {
 		f = -maxF
-		err = ErrOverflow.GenByArgs("DOUBLE", "")
+		err = ErrOverflow.GenWithStackByArgs("DOUBLE", "")
 	}
 
 	return f, errors.Trace(err)
+}
+
+// TruncateFloatToString is used to truncate float to string where dec is the number of digits after the decimal point.
+func TruncateFloatToString(f float64, dec int) string {
+	f = Truncate(f, dec)
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 func isSpace(c byte) bool {
@@ -98,6 +107,11 @@ func isSpace(c byte) bool {
 
 func isDigit(c byte) bool {
 	return c >= '0' && c <= '9'
+}
+
+// Returns true if the given byte is an ASCII punctuation character (printable and non-alphanumeric).
+func isPunctuation(c byte) bool {
+	return (c >= 0x21 && c <= 0x2F) || (c >= 0x3A && c <= 0x40) || (c >= 0x5B && c <= 0x60) || (c >= 0x7B && c <= 0x7E)
 }
 
 func myMax(a, b int) int {
@@ -128,12 +142,17 @@ func myMinInt8(a, b int8) int8 {
 	return b
 }
 
+const (
+	maxUint    = uint64(math.MaxUint64)
+	uintCutOff = maxUint/uint64(10) + 1
+	intCutOff  = uint64(math.MaxInt64) + 1
+)
+
 // strToInt converts a string to an integer in best effort.
-// TODO: handle overflow and add unittest.
 func strToInt(str string) (int64, error) {
 	str = strings.TrimSpace(str)
 	if len(str) == 0 {
-		return 0, nil
+		return 0, ErrTruncated
 	}
 	negative := false
 	i := 0
@@ -143,16 +162,69 @@ func strToInt(str string) (int64, error) {
 	} else if str[i] == '+' {
 		i++
 	}
-	r := int64(0)
+
+	var (
+		err    error
+		hasNum = false
+	)
+	r := uint64(0)
 	for ; i < len(str); i++ {
 		if !unicode.IsDigit(rune(str[i])) {
+			err = ErrTruncated
 			break
 		}
-		r = r*10 + int64(str[i]-'0')
+		hasNum = true
+		if r >= uintCutOff {
+			r = 0
+			err = errors.Trace(ErrBadNumber)
+			break
+		}
+		r = r * uint64(10)
+
+		r1 := r + uint64(str[i]-'0')
+		if r1 < r || r1 > maxUint {
+			r = 0
+			err = errors.Trace(ErrBadNumber)
+			break
+		}
+		r = r1
 	}
+	if !hasNum {
+		err = ErrTruncated
+	}
+
+	if !negative && r >= intCutOff {
+		return math.MaxInt64, errors.Trace(ErrBadNumber)
+	}
+
+	if negative && r > intCutOff {
+		return math.MinInt64, errors.Trace(ErrBadNumber)
+	}
+
 	if negative {
 		r = -r
 	}
-	// TODO: if i < len(str), we should return an error.
-	return r, nil
+	return int64(r), err
+}
+
+// DecimalLength2Precision gets the precision.
+func DecimalLength2Precision(length int, scale int, hasUnsignedFlag bool) int {
+	if scale > 0 {
+		length--
+	}
+	if hasUnsignedFlag || length > 0 {
+		length--
+	}
+	return length
+}
+
+// Precision2LengthNoTruncation gets the length.
+func Precision2LengthNoTruncation(length int, scale int, hasUnsignedFlag bool) int {
+	if scale > 0 {
+		length++
+	}
+	if hasUnsignedFlag || length > 0 {
+		length++
+	}
+	return length
 }

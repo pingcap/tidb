@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,89 +16,58 @@ package logutil
 
 import (
 	"bufio"
-	"bytes"
-	"fmt"
+	"context"
 	"io"
 	"os"
 	"runtime"
-	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/log"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-const (
-	logPattern = `\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d\.\d\d\d ([\w_%!$@.,+~-]+|\\.)+:\d+: \[(fatal|error|warning|info|debug)\] .*?\n`
-)
+func TestZapLoggerWithKeys(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Skip this test on windows for two reason:
+		// 1. The pattern match fails somehow. It seems windows treat \n as slash and character n.
+		// 2. Remove file doesn't work as long as the log instance hold the file.
+		t.Skip("skip on windows")
+	}
 
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testLogSuite{})
-
-type testLogSuite struct {
-	buf *bytes.Buffer
-}
-
-func (s *testLogSuite) SetUpSuite(c *C) {
-	s.buf = &bytes.Buffer{}
-}
-
-func (s *testLogSuite) SetUpTest(c *C) {
-	s.buf = &bytes.Buffer{}
-}
-
-func (s *testLogSuite) TestStringToLogLevel(c *C) {
-	c.Assert(stringToLogLevel("fatal"), Equals, log.FatalLevel)
-	c.Assert(stringToLogLevel("ERROR"), Equals, log.ErrorLevel)
-	c.Assert(stringToLogLevel("warn"), Equals, log.WarnLevel)
-	c.Assert(stringToLogLevel("warning"), Equals, log.WarnLevel)
-	c.Assert(stringToLogLevel("debug"), Equals, log.DebugLevel)
-	c.Assert(stringToLogLevel("info"), Equals, log.InfoLevel)
-	c.Assert(stringToLogLevel("whatever"), Equals, log.InfoLevel)
-}
-
-// TestLogging assure log format and log redirection works.
-func (s *testLogSuite) TestLogging(c *C) {
-	conf := &LogConfig{Level: "warn", File: FileLogConfig{}}
-	c.Assert(InitLogger(conf), IsNil)
-
-	log.SetOutput(s.buf)
-
-	log.Infof("[this message should not be sent to buf]")
-	c.Assert(s.buf.Len(), Equals, 0)
-
-	log.Warningf("[this message should be sent to buf]")
-	entry, err := s.buf.ReadString('\n')
-	c.Assert(err, IsNil)
-	c.Assert(entry, Matches, logPattern)
-
-	log.Warnf("this message comes from logrus")
-	entry, err = s.buf.ReadString('\n')
-	c.Assert(err, IsNil)
-	c.Assert(entry, Matches, logPattern)
-	fmt.Println(entry, logPattern)
-	c.Assert(strings.Contains(entry, "log_test.go"), IsTrue)
-}
-
-func (s *testLogSuite) TestSlowQueryLogger(c *C) {
-	fileName := "slow_query"
-	conf := &LogConfig{Level: "info", File: FileLogConfig{}, SlowQueryFile: fileName}
+	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
+	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
 	err := InitLogger(conf)
-	c.Assert(err, IsNil)
-	defer os.Remove(fileName)
+	require.NoError(t, err)
+	connID := uint64(123)
+	ctx := WithConnID(context.Background(), connID)
+	testZapLogger(ctx, t, fileCfg.Filename, zapLogWithConnIDPattern)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
 
-	SlowQueryLogger.Debug("debug message")
-	SlowQueryLogger.Info("info message")
-	SlowQueryLogger.Warn("warn message")
-	SlowQueryLogger.Error("error message")
-	c.Assert(s.buf.Len(), Equals, 0)
+	err = InitLogger(conf)
+	require.NoError(t, err)
+	key := "ctxKey"
+	val := "ctxValue"
+	ctx1 := WithKeyValue(context.Background(), key, val)
+	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithKeyValPattern)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
+}
+
+func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) {
+	Logger(ctx).Debug("debug msg", zap.String("test with key", "true"))
+	Logger(ctx).Info("info msg", zap.String("test with key", "true"))
+	Logger(ctx).Warn("warn msg", zap.String("test with key", "true"))
+	Logger(ctx).Error("error msg", zap.String("test with key", "true"))
 
 	f, err := os.Open(fileName)
-	c.Assert(err, IsNil)
-	defer f.Close()
+	require.NoError(t, err)
+	defer func() {
+		err = f.Close()
+		require.NoError(t, err)
+	}()
 
 	r := bufio.NewReader(f)
 	for {
@@ -106,46 +76,83 @@ func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 		if err != nil {
 			break
 		}
-		c.Assert(str, Matches, logPattern)
+		require.Regexp(t, pattern, str)
+		require.NotContains(t, str, "stack")
+		require.NotContains(t, str, "errorVerbose")
 	}
-	c.Assert(err, Equals, io.EOF)
+	require.Equal(t, io.EOF, err)
 }
 
-func (s *testLogSuite) TestSlowQueryLoggerKeepOrder(c *C) {
-	fileName := "slow_query"
-	conf := &LogConfig{Level: "warn", File: FileLogConfig{}, Format: "text", DisableTimestamp: true, SlowQueryFile: fileName}
-	c.Assert(InitLogger(conf), IsNil)
-	defer os.Remove(fileName)
-	ft, ok := SlowQueryLogger.Formatter.(*textFormatter)
-	c.Assert(ok, IsTrue)
-	c.Assert(ft.EnableEntryOrder, IsTrue)
-	SlowQueryLogger.Out = s.buf
-	logEntry := log.NewEntry(SlowQueryLogger)
-	logEntry.Data = log.Fields{
-		"connectionId": 1,
-		"costTime":     "1",
-		"database":     "test",
-		"sql":          "select 1",
-		"txnStartTS":   1,
+func TestSetLevel(t *testing.T) {
+	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	err := InitLogger(conf)
+	require.NoError(t, err)
+	require.Equal(t, zap.InfoLevel, log.GetLevel())
+
+	err = SetLevel("warn")
+	require.NoError(t, err)
+	require.Equal(t, zap.WarnLevel, log.GetLevel())
+	err = SetLevel("Error")
+	require.NoError(t, err)
+	require.Equal(t, zap.ErrorLevel, log.GetLevel())
+	err = SetLevel("DEBUG")
+	require.NoError(t, err)
+	require.Equal(t, zap.DebugLevel, log.GetLevel())
+}
+
+func TestGrpcLoggerCreation(t *testing.T) {
+	level := "info"
+	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
+	_, p, err := initGRPCLogger(conf)
+	// assert after init grpc logger, the original conf is not changed
+	require.Equal(t, conf.Level, level)
+	require.NoError(t, err)
+	require.Equal(t, p.Level.Level(), zap.ErrorLevel)
+	os.Setenv("GRPC_DEBUG", "1")
+	defer os.Unsetenv("GRPC_DEBUG")
+	_, newP, err := initGRPCLogger(conf)
+	require.NoError(t, err)
+	require.Equal(t, newP.Level.Level(), zap.DebugLevel)
+}
+
+func TestSlowQueryLoggerCreation(t *testing.T) {
+	level := "Error"
+	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
+	_, prop, err := newSlowQueryLogger(conf)
+	// assert after init slow query logger, the original conf is not changed
+	require.Equal(t, conf.Level, level)
+	require.NoError(t, err)
+	// slow query logger doesn't use the level of the global log config, and the
+	// level should be less than WarnLevel which is used by it to log slow query.
+	require.NotEqual(t, conf.Level, prop.Level.String())
+	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
+
+	level = "warn"
+	slowQueryFn := "slow-query.log"
+	fileConf := FileLogConfig{
+		log.FileLogConfig{
+			Filename:   slowQueryFn,
+			MaxSize:    10,
+			MaxDays:    10,
+			MaxBackups: 10,
+		},
 	}
+	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
+	slowQueryConf := newSlowQueryLogConfig(conf)
+	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
+	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
+}
 
-	_, _, line, _ := runtime.Caller(0)
-	logEntry.WithField("type", "slow-query").WithField("succ", true).Warnf("slow-query")
-	expectMsg := fmt.Sprintf("log_test.go:%v: [warning] slow-query connectionId=1 costTime=1 database=test sql=select 1 succ=true txnStartTS=1 type=slow-query\n", line+1)
-	c.Assert(s.buf.String(), Equals, expectMsg)
+func TestGlobalLoggerReplace(t *testing.T) {
+	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxDays: 0, MaxSize: 4096}}
+	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	err := InitLogger(conf)
+	require.NoError(t, err)
 
-	s.buf.Reset()
-	logEntry.Data = log.Fields{
-		"a": "a",
-		"d": "d",
-		"e": "e",
-		"b": "b",
-		"f": "f",
-		"c": "c",
-	}
+	conf.Config.File.MaxDays = 14
 
-	_, _, line, _ = runtime.Caller(0)
-	logEntry.Warnf("slow-query")
-	expectMsg = fmt.Sprintf("log_test.go:%v: [warning] slow-query a=a b=b c=c d=d e=e f=f\n", line+1)
-	c.Assert(s.buf.String(), Equals, expectMsg)
+	err = ReplaceLogger(conf)
+	require.NoError(t, err)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
 }

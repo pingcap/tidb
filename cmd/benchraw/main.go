@@ -8,12 +8,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package main
 
+// #nosec G108
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -22,11 +25,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/terror"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/rawkv"
+
+	"go.uber.org/zap"
 )
 
 var (
@@ -41,13 +46,14 @@ var (
 
 // batchRawPut blinds put bench.
 func batchRawPut(value []byte) {
-	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","), config.Security{
+	ctx := context.Background()
+	cli, err := rawkv.NewClient(ctx, strings.Split(*pdAddr, ","), config.Security{
 		ClusterSSLCA:   *sslCA,
 		ClusterSSLCert: *sslCert,
 		ClusterSSLKey:  *sslKey,
 	})
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err.Error())
 	}
 
 	wg := sync.WaitGroup{}
@@ -60,9 +66,9 @@ func batchRawPut(value []byte) {
 			for j := 0; j < base; j++ {
 				k := base*i + j
 				key := fmt.Sprintf("key_%d", k)
-				err = cli.Put([]byte(key), value)
+				err = cli.Put(ctx, []byte(key), value)
 				if err != nil {
-					log.Fatal(errors.ErrorStack(err))
+					log.Fatal("put failed", zap.Error(err))
 				}
 			}
 		}(i)
@@ -72,7 +78,7 @@ func batchRawPut(value []byte) {
 
 func main() {
 	flag.Parse()
-	log.SetLevel(log.WarnLevel)
+	log.SetLevel(zap.WarnLevel)
 	go func() {
 		err := http.ListenAndServe(":9191", nil)
 		terror.Log(errors.Trace(err))

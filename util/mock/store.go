@@ -8,14 +8,19 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package mock
 
 import (
+	"context"
+
+	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // Store implements kv.Storage interface.
@@ -26,17 +31,17 @@ type Store struct {
 // GetClient implements kv.Storage interface.
 func (s *Store) GetClient() kv.Client { return s.Client }
 
+// GetMPPClient implements kv.Storage interface.
+func (s *Store) GetMPPClient() kv.MPPClient { return nil }
+
 // GetOracle implements kv.Storage interface.
 func (s *Store) GetOracle() oracle.Oracle { return nil }
 
 // Begin implements kv.Storage interface.
-func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
-
-// BeginWithStartTS implements kv.Storage interface.
-func (s *Store) BeginWithStartTS(startTS uint64) (kv.Transaction, error) { return s.Begin() }
+func (s *Store) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) { return nil, nil }
 
 // GetSnapshot implements kv.Storage interface.
-func (s *Store) GetSnapshot(ver kv.Version) (kv.Snapshot, error) { return nil, nil }
+func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
 
 // Close implements kv.Storage interface.
 func (s *Store) Close() error { return nil }
@@ -45,7 +50,33 @@ func (s *Store) Close() error { return nil }
 func (s *Store) UUID() string { return "mock" }
 
 // CurrentVersion implements kv.Storage interface.
-func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
+func (s *Store) CurrentVersion(txnScope string) (kv.Version, error) { return kv.Version{}, nil }
 
 // SupportDeleteRange implements kv.Storage interface.
 func (s *Store) SupportDeleteRange() bool { return false }
+
+// Name implements kv.Storage interface.
+func (s *Store) Name() string { return "UtilMockStorage" }
+
+// Describe implements kv.Storage interface.
+func (s *Store) Describe() string {
+	return "UtilMockStorage is a mock Store implementation, only for unittests in util package"
+}
+
+// GetMemCache implements kv.Storage interface
+func (s *Store) GetMemCache() kv.MemManager {
+	return nil
+}
+
+// ShowStatus implements kv.Storage interface.
+func (s *Store) ShowStatus(ctx context.Context, key string) (interface{}, error) { return nil, nil }
+
+// GetMinSafeTS implements kv.Storage interface.
+func (s *Store) GetMinSafeTS(txnScope string) uint64 {
+	return 0
+}
+
+// GetLockWaits implements kv.Storage interface.
+func (s *Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
+	return nil, nil
+}

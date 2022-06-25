@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
@@ -108,7 +109,7 @@ func (b BinaryLiteral) ToInt(sc *stmtctx.StatementContext) (uint64, error) {
 		return 0, nil
 	}
 	if length > 8 {
-		var err error = ErrTruncatedWrongVal.GenByArgs("BINARY", b)
+		var err = ErrTruncatedWrongVal.GenWithStackByArgs("BINARY", b)
 		if sc != nil {
 			err = sc.HandleTruncate(err)
 		}
@@ -183,6 +184,11 @@ func NewBitLiteral(s string) (BitLiteral, error) {
 	return BitLiteral(b), nil
 }
 
+// ToString implement ast.BinaryLiteral interface
+func (b BitLiteral) ToString() string {
+	return BinaryLiteral(b).ToString()
+}
+
 // ParseHexStr parses hexadecimal string literal.
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func ParseHexStr(s string) (BinaryLiteral, error) {
@@ -224,4 +230,9 @@ func NewHexLiteral(s string) (HexLiteral, error) {
 		return HexLiteral{}, err
 	}
 	return HexLiteral(h), nil
+}
+
+// ToString implement ast.BinaryLiteral interface
+func (b HexLiteral) ToString() string {
+	return BinaryLiteral(b).ToString()
 }

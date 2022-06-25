@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -45,5 +46,20 @@ func TestByte(t *testing.T) {
 
 	if !bytes.Equal(b, []byte("hello world")) {
 		t.Fatal(string(b))
+	}
+}
+
+func TestMutable(t *testing.T) {
+	a := []byte{'a', 'b', 'c'}
+	b := String(a) // b is a mutable string.
+	c := string(b) // Warn, c is a mutable string
+	if c != "abc" {
+		t.Fatalf("assert fail")
+	}
+
+	// c changed after a is modified
+	a[0] = 's'
+	if c != "sbc" {
+		t.Fatal("test mutable string fail")
 	}
 }

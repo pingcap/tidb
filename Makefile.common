@@ -1,0 +1,115 @@
+# Copyright 2020 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+PROJECT=tidb
+GOPATH ?= $(shell go env GOPATH)
+P=8
+
+# Ensure GOPATH is set before running build process.
+ifeq "$(GOPATH)" ""
+  $(error Please set the environment variable GOPATH before running `make`)
+endif
+FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
+
+CURDIR := $(shell pwd)
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
+export PATH := $(path_to_add):$(PATH)
+
+GO              := GO111MODULE=on go
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
+GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
+GOTEST          := $(GO) test -p $(P)
+OVERALLS        := GO111MODULE=on overalls
+STATICCHECK     := GO111MODULE=on staticcheck
+TIDB_EDITION    ?= Community
+
+# Ensure TIDB_EDITION is set to Community or Enterprise before running build process.
+ifneq "$(TIDB_EDITION)" "Community"
+ifneq "$(TIDB_EDITION)" "Enterprise"
+  $(error Please set the correct environment variable TIDB_EDITION before running `make`)
+endif
+endif
+
+ARCH      := "`uname -s`"
+LINUX     := "Linux"
+MAC       := "Darwin"
+
+PACKAGE_LIST  := go list ./...
+PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/br|github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
+PACKAGES  ?= $$($(PACKAGE_LIST))
+PACKAGES_TIDB_TESTS ?= $$($(PACKAGE_LIST_TIDB_TESTS))
+PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
+PACKAGE_DIRECTORIES_TIDB_TESTS := $(PACKAGE_LIST_TIDB_TESTS) | sed 's|github.com/pingcap/$(PROJECT)/||'
+FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
+FILES_TIDB_TESTS := $$(find $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) -name "*.go")
+
+UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common|tidb-binlog\/proto\/go-binlog"
+UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
+
+FAILPOINT_ENABLE  := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable
+FAILPOINT_DISABLE := find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable
+
+LDFLAGS += -X "github.com/pingcap/tidb/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
+
+TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
+COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
+
+CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
+
+TARGET = ""
+
+# VB = Vector Benchmark
+VB_FILE =
+VB_FUNC =
+
+RACE_FLAG =
+ifeq ("$(WITH_RACE)", "1")
+	RACE_FLAG = -race
+	GOBUILD   = GOPATH=$(GOPATH) $(GO) build
+endif
+
+CHECK_FLAG =
+ifeq ("$(WITH_CHECK)", "1")
+	CHECK_FLAG = $(TEST_LDFLAGS)
+endif
+
+BR_PKG := github.com/pingcap/tidb/br
+BR_PACKAGES       := go list ./...| grep "github.com\/pingcap\/tidb\/br"
+BR_PACKAGE_DIRECTORIES := $(BR_PACKAGES) | sed 's|github.com/pingcap/$(PROJECT)/||'
+LIGHTNING_BIN     := bin/tidb-lightning
+LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
+BR_BIN            := bin/br
+TEST_DIR          := /tmp/backup_restore_test
+
+
+DUMPLING_PKG := github.com/pingcap/tidb/dumpling
+DUMPLING_PACKAGES   := go list ./... | grep 'github.com\/pingcap\/tidb\/dumpling'
+DUMPLING_PACKAGE_DIRECTORIES := $(DUMPLING_PACKAGES) | sed 's|github.com/pingcap/$(PROJECT)/||'
+DUMPLING_BIN        := bin/dumpling
+DUMPLING_CHECKER := awk '{ print } END { if (NR > 0) { exit 1 } }'
+
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev')"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git rev-parse HEAD)"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
+
+DUMPLING_GOBUILD := CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
+
+TEST_COVERAGE_DIR := "test_coverage"

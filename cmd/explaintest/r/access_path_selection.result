@@ -1,0 +1,44 @@
+CREATE TABLE `access_path_selection` (
+`a` int,
+`b` int,
+KEY `IDX_a` (`a`),
+KEY `IDX_b` (`b`),
+KEY `IDX_ab` (`a`, `b`)
+);
+explain format = 'brief' select a from access_path_selection where a < 3;
+id	estRows	task	access object	operator info
+IndexReader	3323.33	root		index:IndexRangeScan
+└─IndexRangeScan	3323.33	cop[tikv]	table:access_path_selection, index:IDX_a(a)	range:[-inf,3), keep order:false, stats:pseudo
+explain format = 'brief' select a, b from access_path_selection where a < 3;
+id	estRows	task	access object	operator info
+IndexReader	3323.33	root		index:IndexRangeScan
+└─IndexRangeScan	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+explain format = 'brief' select a, b from access_path_selection where b < 3;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root		data:Selection
+└─Selection	3323.33	cop[tikv]		lt(test.access_path_selection.b, 3)
+  └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo
+explain format = 'brief' select a, b from access_path_selection where a < 3 and b < 3;
+id	estRows	task	access object	operator info
+IndexReader	1104.45	root		index:Selection
+└─Selection	1104.45	cop[tikv]		lt(test.access_path_selection.b, 3)
+  └─IndexRangeScan	3323.33	cop[tikv]	table:access_path_selection, index:IDX_ab(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+explain format = 'brief' select a, b from access_path_selection where a > 10 order by _tidb_rowid;
+id	estRows	task	access object	operator info
+Projection	3333.33	root		test.access_path_selection.a, test.access_path_selection.b
+└─TableReader	3333.33	root		data:Selection
+  └─Selection	3333.33	cop[tikv]		gt(test.access_path_selection.a, 10)
+    └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:true, stats:pseudo
+explain format = 'brief' select max(_tidb_rowid) from access_path_selection;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:max(test.access_path_selection._tidb_rowid)->Column#4
+└─Limit	1.00	root		offset:0, count:1
+  └─TableReader	1.00	root		data:Limit
+    └─Limit	1.00	cop[tikv]		offset:0, count:1
+      └─TableFullScan	1.00	cop[tikv]	table:access_path_selection	keep order:true, desc, stats:pseudo
+explain format = 'brief' select count(1) from access_path_selection;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(Column#18)->Column#4
+└─TableReader	1.00	root		data:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#18
+    └─TableFullScan	10000.00	cop[tikv]	table:access_path_selection	keep order:false, stats:pseudo

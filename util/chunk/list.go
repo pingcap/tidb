@@ -8,24 +8,26 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package chunk
 
 import (
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
 )
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.
 type List struct {
-	fieldTypes   []*types.FieldType
-	maxChunkSize int
-	length       int
-	chunks       []*Chunk
-	freelist     []*Chunk
+	fieldTypes    []*types.FieldType
+	initChunkSize int
+	maxChunkSize  int
+	length        int
+	chunks        []*Chunk
+	freelist      []*Chunk
 
 	memTracker  *memory.Tracker // track memory usage.
 	consumedIdx int             // chunk index in "chunks", has been consumed.
@@ -38,13 +40,14 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
-// NewList creates a new List with field types and max chunk size.
-func NewList(fieldTypes []*types.FieldType, maxChunkSize int) *List {
+// NewList creates a new List with field types, init chunk size and max chunk size.
+func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
 	l := &List{
-		fieldTypes:   fieldTypes,
-		maxChunkSize: maxChunkSize,
-		memTracker:   memory.NewTracker("chunk.List", -1),
-		consumedIdx:  -1,
+		fieldTypes:    fieldTypes,
+		initChunkSize: initChunkSize,
+		maxChunkSize:  maxChunkSize,
+		memTracker:    memory.NewTracker(memory.LabelForChunkList, -1),
+		consumedIdx:   -1,
 	}
 	return l
 }
@@ -64,6 +67,16 @@ func (l *List) NumChunks() int {
 	return len(l.chunks)
 }
 
+// FieldTypes returns the fieldTypes of the list
+func (l *List) FieldTypes() []*types.FieldType {
+	return l.fieldTypes
+}
+
+// NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
+func (l *List) NumRowsOfChunk(chkID int) int {
+	return l.chunks[chkID].NumRows()
+}
+
 // GetChunk gets the Chunk by ChkIdx.
 func (l *List) GetChunk(chkIdx int) *Chunk {
 	return l.chunks[chkIdx]
@@ -72,7 +85,7 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize || chkIdx == l.consumedIdx {
+	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {
@@ -93,6 +106,7 @@ func (l *List) AppendRow(row Row) RowPtr {
 func (l *List) Add(chk *Chunk) {
 	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
 	if chk.NumRows() == 0 {
+		// TODO: return error here.
 		panic("chunk appended to List should have at least 1 row")
 	}
 	if chkIdx := len(l.chunks) - 1; l.consumedIdx != chkIdx {
@@ -103,7 +117,6 @@ func (l *List) Add(chk *Chunk) {
 	l.consumedIdx++
 	l.chunks = append(l.chunks, chk)
 	l.length += chk.NumRows()
-	return
 }
 
 func (l *List) allocChunk() (chk *Chunk) {
@@ -115,7 +128,10 @@ func (l *List) allocChunk() (chk *Chunk) {
 		chk.Reset()
 		return
 	}
-	return NewChunk(l.fieldTypes)
+	if len(l.chunks) > 0 {
+		return Renew(l.chunks[len(l.chunks)-1], l.maxChunkSize)
+	}
+	return New(l.fieldTypes, l.initChunkSize, l.maxChunkSize)
 }
 
 // GetRow gets a Row from the list by RowPtr.
@@ -131,6 +147,15 @@ func (l *List) Reset() {
 	}
 	l.freelist = append(l.freelist, l.chunks...)
 	l.chunks = l.chunks[:0]
+	l.length = 0
+	l.consumedIdx = -1
+}
+
+// Clear triggers GC for all the allocated chunks and reset the list
+func (l *List) Clear() {
+	l.memTracker.Consume(-l.memTracker.BytesConsumed())
+	l.freelist = nil
+	l.chunks = nil
 	l.length = 0
 	l.consumedIdx = -1
 }

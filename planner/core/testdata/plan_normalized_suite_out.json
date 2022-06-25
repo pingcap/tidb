@@ -1,0 +1,295 @@
+[
+  {
+    "Name": "TestNormalizedPlan",
+    "Cases": [
+      {
+        "SQL": "select * from t1;",
+        "Plan": [
+          " TableReader     root ",
+          " └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a<1;",
+        "Plan": [
+          " TableReader      root ",
+          " └─TableRangeScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a>1",
+        "Plan": [
+          " TableReader      root ",
+          " └─TableRangeScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a=1",
+        "Plan": [
+          " Point_Get root table:t1, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2,3)",
+        "Plan": [
+          " Batch_Point_Get root table:t1, handle:?, keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where b=1",
+        "Plan": [
+          " IndexLookUp      root ",
+          " ├─IndexRangeScan cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          " └─TableRowIDScan cop  table:t1, keep order:false"
+        ]
+      },
+      {
+        "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
+        "Plan": [
+          " Projection         root plus(test.t1.a, ?), plus(test.t1.b, ?)",
+          " └─IndexReader      root index:IndexRangeScan",
+          "   └─IndexRangeScan cop  table:t1, index:b(b), range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
+        "Plan": [
+          " Projection                 root test.t1.a, test.t1.b, test.t1.c",
+          " └─Apply                    root semi join, equal:eq(?, ?)",
+          "   ├─Projection             root cast(test.t1.a, decimal(20,0) BINARY), test.t1.a, test.t1.b, test.t1.c",
+          "   │ └─TableReader          root ",
+          "   │   └─Selection          cop  gt(test.t1.b, ?)",
+          "   │     └─TableFullScan    cop  table:t1, range:[?,?], keep order:false",
+          "   └─StreamAgg              root funcs:sum(?)->?",
+          "     └─TableReader          root ",
+          "       └─StreamAgg          cop  funcs:sum(test.t2.b)->?",
+          "         └─Selection        cop  not(isnull(test.t2.b))",
+          "           └─TableRangeScan cop  table:t2, range: decided by eq(test.t2.a, test.t1.a), keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT * from t1 where a!=1 order by c limit 1",
+        "Plan": [
+          " TopN                 root test.t1.c",
+          " └─TableReader        root ",
+          "   └─TopN             cop  test.t1.c",
+          "     └─TableRangeScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " MergeJoin           root inner join, left key:test.t1.a, right key:test.t2.a",
+          " ├─TableReader       root ",
+          " │ └─Selection       cop  gt(test.t1.c, ?)",
+          " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:true",
+          " └─TableReader       root ",
+          "   └─TableFullScan   cop  table:t2, range:[?,?], keep order:true"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " IndexJoin           root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader       root ",
+          " │ └─Selection       cop  gt(test.t1.c, ?)",
+          " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader       root ",
+          "   └─TableRangeScan  cop  table:t2, range: decided by [test.t1.a], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " HashJoin            root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader       root ",
+          " │ └─Selection       cop  gt(test.t1.c, ?)",
+          " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader       root ",
+          "   └─TableFullScan   cop  table:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " HashJoin            root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader       root ",
+          " │ └─Selection       cop  gt(test.t1.c, ?)",
+          " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader       root ",
+          "   └─TableFullScan   cop  table:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " IndexJoin           root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader       root ",
+          " │ └─Selection       cop  gt(test.t1.c, ?)",
+          " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader       root ",
+          "   └─TableRangeScan  cop  table:t2, range: decided by [test.t1.a], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+        "Plan": [
+          " HashAgg         root group by:?, ?, funcs:firstrow(?)->?, funcs:firstrow(?)->?",
+          " └─Union         root ",
+          "   ├─Projection  root ?, test.t1.a",
+          "   │ └─Point_Get root table:t1, handle:?",
+          "   └─Projection  root ?, test.t1.a",
+          "     └─Point_Get root table:t1, handle:?"
+        ]
+      },
+      {
+        "SQL": "insert into t1 values (1,1,1)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
+        "Plan": [
+          " TableReader        root ",
+          " └─Selection        cop  ne(test.t2.b, ?)",
+          "   └─TableRangeScan cop  table:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t1 set a=a+1",
+        "Plan": [
+          " TableReader     root ",
+          " └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t1 set a=a+1 where a>0",
+        "Plan": [
+          " TableReader      root ",
+          " └─TableRangeScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "delete from t1",
+        "Plan": [
+          " TableReader     root ",
+          " └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "delete from t1 where a>0 and b=1 and c!=2",
+        "Plan": [
+          " IndexLookUp        root ",
+          " ├─IndexRangeScan   cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          " └─Selection        cop  ne(test.t1.c, ?)",
+          "   └─TableRowIDScan cop  table:t1, keep order:false"
+        ]
+      },
+      {
+        "SQL": "create table t1_tmp (a int)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "alter table t1_tmp add column c int",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "insert into t3 values (4,20),(30,30)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=4",
+        "Plan": [
+          " Point_Get root table:t3, partition:?, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=30",
+        "Plan": [
+          " Point_Get root table:t3, partition:?, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=10",
+        "Plan": [
+          " IndexLookUp      root ",
+          " ├─IndexRangeScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableRowIDScan cop  table:t4, partition:?, keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=20",
+        "Plan": [
+          " IndexLookUp      root ",
+          " ├─IndexRangeScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableRowIDScan cop  table:t4, partition:?, keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPreferRangeScan",
+    "Cases": [
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          " TableReader       root ",
+          " └─Selection       cop  eq(test.test.age, ?)",
+          "   └─TableFullScan cop  table:test, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          " IndexLookUp      root ",
+          " ├─IndexRangeScan cop  table:test, index:idx_age(age), range:[?,?], keep order:false",
+          " └─TableRowIDScan cop  table:test, keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestNormalizedPlanForDiffStore",
+    "Cases": [
+      {
+        "Digest": "f970a867275a8e8878e3b0a7960a3d15e7fecda7cf31957ba2624b0afd91ddee",
+        "Plan": [
+          " TableReader     root         ",
+          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "Digest": "70e316e5e20fbf2e292b74bfffe36219c403212e6ccd33f9c9c578f415e06743",
+        "Plan": [
+          " TableReader     root ",
+          " └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "Digest": "35da54afee3417b46607d9d836b9e3aea3a450537980d65abedda63498298784",
+        "Plan": [
+          " Projection          root         plus(test.t1.a, test.t1.b)",
+          " └─TableReader       root         ",
+          "   └─Selection       cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "Digest": "1065484bc4851767a2f412aa2133603defd7569bd09d83b70627c62cfb7dd0fa",
+        "Plan": [
+          " Projection          root plus(test.t1.a, test.t1.b)",
+          " └─TableReader       root ",
+          "   └─Selection       cop  lt(plus(test.t1.a, test.t1.b), ?)",
+          "     └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      }
+    ]
+  }
+]

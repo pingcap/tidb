@@ -1,0 +1,263 @@
+DROP TABLE IF EXISTS person;
+CREATE TABLE person (
+id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+name VARCHAR(255) NOT NULL,
+address_info JSON,
+city VARCHAR(64) AS (JSON_UNQUOTE(JSON_EXTRACT(address_info, '$.city'))) STORED,
+KEY (city)
+);
+EXPLAIN format = 'brief' SELECT name, id FROM person WHERE city = 'Beijing';
+id	estRows	task	access object	operator info
+Projection	10.00	root		test.person.name, test.person.id
+└─IndexLookUp	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:person, index:city(city)	range:["Beijing","Beijing"], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+DROP TABLE IF EXISTS `sgc`;
+CREATE TABLE `sgc` (
+`j1` JSON DEFAULT NULL,
+`j2` JSON DEFAULT NULL,
+`a` int(11) GENERATED ALWAYS AS (JSON_EXTRACT(`j1`, "$.a")) STORED,
+`b` int(2) GENERATED ALWAYS AS (JSON_CONTAINS(j2, '1')) STORED,
+KEY `idx_a` (`a`),
+KEY `idx_b` (`b`),
+KEY `idx_a_b` (`a`,`b`)
+);
+EXPLAIN format = 'brief' SELECT a FROM sgc where a < 3;
+id	estRows	task	access object	operator info
+IndexReader	3323.33	root		index:IndexRangeScan
+└─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a(a)	range:[-inf,3), keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT a, b FROM sgc where a < 3;
+id	estRows	task	access object	operator info
+IndexReader	3323.33	root		index:IndexRangeScan
+└─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT a, b from sgc where b < 3;
+id	estRows	task	access object	operator info
+IndexReader	3323.33	root		index:Selection
+└─Selection	3323.33	cop[tikv]		lt(test.sgc.b, 3)
+  └─IndexFullScan	10000.00	cop[tikv]	table:sgc, index:idx_a_b(a, b)	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT a, b from sgc where a < 3 and b < 3;
+id	estRows	task	access object	operator info
+IndexReader	1104.45	root		index:Selection
+└─Selection	1104.45	cop[tikv]		lt(test.sgc.b, 3)
+  └─IndexRangeScan	3323.33	cop[tikv]	table:sgc, index:idx_a_b(a, b)	range:[-inf,3), keep order:false, stats:pseudo
+DROP TABLE IF EXISTS sgc1,
+sgc2;
+CREATE TABLE `sgc1` (
+`j1` JSON,
+`j2` JSON,
+`a` INT AS (JSON_EXTRACT(j1, "$.a")) STORED,
+`b` VARCHAR(20) AS (JSON_KEYS(j2)) STORED,
+KEY `idx_a` (`a`),
+KEY `idx_b` (`b`),
+KEY `idx_a_b` (`a`, `b`)
+);
+CREATE TABLE `sgc2` (
+`j1` JSON,
+`j2` JSON,
+`a` INT AS (JSON_EXTRACT(j1, "$.a")) STORED,
+`b` VARCHAR(20) AS (JSON_KEYS(j2)) STORED,
+KEY `idx_a` (`a`),
+KEY `idx_b` (`b`),
+KEY `idx_a_b` (`a`, `b`)
+);
+INSERT INTO sgc1(j1, j2)
+VALUES ('{"a": 1}', '{"1": "1"}'),
+('{"a": 1}', '{"1": "1"}'),
+('{"a": 1}', '{"1": "1"}'),
+('{"a": 1}', '{"1": "1"}'),
+('{"a": 1}', '{"1": "1"}');
+INSERT INTO sgc2(j1, j2)
+VALUES ('{"a": 1}', '{"1": "1"}');
+ANALYZE TABLE sgc1, sgc2;
+EXPLAIN format = 'brief' SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
+id	estRows	task	access object	operator info
+IndexJoin	5.00	root		inner join, inner:IndexLookUp, outer key:test.sgc2.a, inner key:test.sgc1.a, equal cond:eq(test.sgc2.a, test.sgc1.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		not(isnull(test.sgc2.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:sgc2	keep order:false
+└─IndexLookUp(Probe)	5.00	root		
+  ├─Selection(Build)	5.00	cop[tikv]		not(isnull(test.sgc1.a))
+  │ └─IndexRangeScan	5.00	cop[tikv]	table:sgc1, index:idx_a(a)	range: decided by [eq(test.sgc1.a, test.sgc2.a)], keep order:false
+  └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:sgc1	keep order:false
+EXPLAIN format = 'brief' SELECT * from sgc1 join sgc2 on sgc1.a=sgc2.a;
+id	estRows	task	access object	operator info
+Projection	5.00	root		test.sgc1.j1, test.sgc1.j2, test.sgc1.a, test.sgc1.b, test.sgc2.j1, test.sgc2.j2, test.sgc2.a, test.sgc2.b
+└─HashJoin	5.00	root		inner join, equal:[eq(test.sgc2.a, test.sgc1.a)]
+  ├─TableReader(Build)	1.00	root		data:Selection
+  │ └─Selection	1.00	cop[tikv]		not(isnull(test.sgc2.a))
+  │   └─TableFullScan	1.00	cop[tikv]	table:sgc2	keep order:false
+  └─TableReader(Probe)	5.00	root		data:Selection
+    └─Selection	5.00	cop[tikv]		not(isnull(test.sgc1.a))
+      └─TableFullScan	5.00	cop[tikv]	table:sgc1	keep order:false
+set @old_prune_mode = @@tidb_partition_prune_mode;
+set @@tidb_partition_prune_mode='static';
+DROP TABLE IF EXISTS sgc3;
+CREATE TABLE sgc3 (
+j JSON,
+a INT AS (JSON_EXTRACT(j, "$.a")) STORED
+)
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (2),
+PARTITION p2 VALUES LESS THAN (3),
+PARTITION p3 VALUES LESS THAN (4),
+PARTITION p4 VALUES LESS THAN (5),
+PARTITION p5 VALUES LESS THAN (6),
+PARTITION max VALUES LESS THAN MAXVALUE);
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
+id	estRows	task	access object	operator info
+PartitionUnion	6646.67	root		
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
+└─TableReader	3323.33	root		data:Selection
+  └─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
+id	estRows	task	access object	operator info
+PartitionUnion	23263.33	root		
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p2	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p3	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p4	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p5	keep order:false, stats:pseudo
+└─TableReader	3323.33	root		data:Selection
+  └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+    └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:max	keep order:false, stats:pseudo
+set @@tidb_partition_prune_mode='dynamic';
+DROP TABLE sgc3;
+CREATE TABLE sgc3 (
+j JSON,
+a INT AS (JSON_EXTRACT(j, "$.a")) STORED
+)
+PARTITION BY RANGE (a) (
+PARTITION p0 VALUES LESS THAN (1),
+PARTITION p1 VALUES LESS THAN (2),
+PARTITION p2 VALUES LESS THAN (3),
+PARTITION p3 VALUES LESS THAN (4),
+PARTITION p4 VALUES LESS THAN (5),
+PARTITION p5 VALUES LESS THAN (6),
+PARTITION max VALUES LESS THAN MAXVALUE);
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root	partition:p0,p1	data:Selection
+└─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
+  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
+id	estRows	task	access object	operator info
+TableReader	3323.33	root	partition:all	data:Selection
+└─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+set @@tidb_partition_prune_mode = @old_prune_mode;
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
+INSERT INTO t1 (a) VALUES (0);
+EXPLAIN format = 'brief' SELECT b FROM t1 WHERE b=1;
+id	estRows	task	access object	operator info
+IndexReader	10.00	root		index:IndexRangeScan
+└─IndexRangeScan	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT b, c, d FROM t1 WHERE b=1;
+id	estRows	task	access object	operator info
+Projection	10.00	root		test.t1.b, test.t1.c, test.t1.d
+└─IndexLookUp	10.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT * FROM t1 WHERE b=1;
+id	estRows	task	access object	operator info
+IndexLookUp	10.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT c FROM t1 WHERE c=2 AND d=3;
+id	estRows	task	access object	operator info
+Projection	0.10	root		test.t1.c
+└─IndexReader	0.10	root		index:IndexRangeScan
+  └─IndexRangeScan	0.10	cop[tikv]	table:t1, index:IDX(c, d)	range:[2 3,2 3], keep order:false, stats:pseudo
+DROP TABLE IF EXISTS person;
+CREATE TABLE person (
+id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+name VARCHAR(255) NOT NULL,
+address_info JSON,
+city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,
+KEY(city_no));
+INSERT INTO person (name, address_info) VALUES ("John", CAST('{"city_no": 1}' AS JSON));
+EXPLAIN format = 'brief' SELECT name FROM person where city_no=1;
+id	estRows	task	access object	operator info
+Projection	10.00	root		test.person.name
+└─Projection	10.00	root		test.person.name, test.person.city_no
+  └─IndexLookUp	10.00	root		
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:person, index:city_no(city_no)	range:[1,1], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (a INT,
+b INT GENERATED ALWAYS AS (-a) VIRTUAL,
+c INT GENERATED ALWAYS AS (-a) STORED,
+index (c));
+INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
+EXPLAIN format = 'brief' SELECT sum(a) FROM t1 GROUP BY b;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection	10000.00	root		cast(test.t1.a, decimal(10,0) BINARY)->Column#6, test.t1.b
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT sum(a) FROM t1 GROUP BY c;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:test.t1.c, funcs:sum(Column#6)->Column#5
+└─TableReader	8000.00	root		data:HashAgg
+  └─HashAgg	8000.00	cop[tikv]		group by:test.t1.c, funcs:sum(test.t1.a)->Column#6
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT sum(b) FROM t1 GROUP BY a;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection	10000.00	root		cast(test.t1.b, decimal(10,0) BINARY)->Column#6, test.t1.a
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT sum(b) FROM t1 GROUP BY c;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:Column#9, funcs:sum(Column#8)->Column#5
+└─Projection	10000.00	root		cast(test.t1.b, decimal(10,0) BINARY)->Column#8, test.t1.c
+  └─Projection	10000.00	root		test.t1.b, test.t1.c
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT sum(c) FROM t1 GROUP BY a;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:test.t1.a, funcs:sum(Column#6)->Column#5
+└─TableReader	8000.00	root		data:HashAgg
+  └─HashAgg	8000.00	cop[tikv]		group by:test.t1.a, funcs:sum(test.t1.c)->Column#6
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format = 'brief' SELECT sum(c) FROM t1 GROUP BY b;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:Column#7, funcs:sum(Column#6)->Column#5
+└─Projection	10000.00	root		cast(test.t1.c, decimal(10,0) BINARY)->Column#6, test.t1.b
+  └─Projection	10000.00	root		test.t1.b, test.t1.c
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+DROP TABLE IF EXISTS tu;
+CREATE TABLE tu (a INT, b INT, c INT GENERATED ALWAYS AS (a + b) VIRTUAL, primary key (a), unique key uk(c));
+INSERT INTO tu(a, b) VALUES(1, 2);
+EXPLAIN format = 'brief' SELECT * FROM tu WHERE c = 1;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:tu, index:uk(c)	
+EXPLAIN format = 'brief' SELECT a, c FROM tu WHERE c = 1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		test.tu.a, test.tu.c
+└─Point_Get	1.00	root	table:tu, index:uk(c)	
+EXPLAIN format = 'brief' SELECT * FROM tu WHERE c in(1, 2, 3);
+id	estRows	task	access object	operator info
+Batch_Point_Get	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false
+EXPLAIN format = 'brief' SELECT c, a FROM tu WHERE c in(1, 2, 3);
+id	estRows	task	access object	operator info
+Projection	3.00	root		test.tu.c, test.tu.a
+└─Batch_Point_Get	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false

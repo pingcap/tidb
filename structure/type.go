@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,7 @@ package structure
 import (
 	"bytes"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -39,6 +40,9 @@ const (
 	ListData TypeFlag = 'l'
 )
 
+// Make linter happy, since encodeHashMetaKey is unused in this repo.
+var _ = (&TxStructure{}).encodeHashMetaKey
+
 func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
 	// for codec Encode, we may add extra bytes data, so here and following encode
 	// we will use extra length like 4 for a little optimization.
@@ -48,19 +52,25 @@ func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
 	return codec.EncodeUint(ek, uint64(StringData))
 }
 
+// nolint:unused
 func (t *TxStructure) encodeHashMetaKey(key []byte) kv.Key {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+24)
+	ek := make([]byte, 0, len(t.prefix)+codec.EncodedBytesLength(len(key))+8)
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	return codec.EncodeUint(ek, uint64(HashMeta))
 }
 
 func (t *TxStructure) encodeHashDataKey(key []byte, field []byte) kv.Key {
-	ek := make([]byte, 0, len(t.prefix)+len(key)+len(field)+30)
+	ek := make([]byte, 0, len(t.prefix)+codec.EncodedBytesLength(len(key))+8+codec.EncodedBytesLength(len(field)))
 	ek = append(ek, t.prefix...)
 	ek = codec.EncodeBytes(ek, key)
 	ek = codec.EncodeUint(ek, uint64(HashData))
 	return codec.EncodeBytes(ek, field)
+}
+
+// EncodeHashDataKey exports for tests.
+func (t *TxStructure) EncodeHashDataKey(key []byte, field []byte) kv.Key {
+	return t.encodeHashDataKey(key, field)
 }
 
 func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
@@ -86,7 +96,7 @@ func (t *TxStructure) decodeHashDataKey(ek kv.Key) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	} else if TypeFlag(tp) != HashData {
-		return nil, nil, errInvalidHashKeyFlag.Gen("invalid encoded hash data key flag %c", byte(tp))
+		return nil, nil, ErrInvalidHashKeyFlag.GenWithStack("invalid encoded hash data key flag %c", byte(tp))
 	}
 
 	_, field, err = codec.DecodeBytes(ek, nil)

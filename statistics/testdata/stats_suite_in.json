@@ -1,0 +1,263 @@
+[
+  {
+    "name": "TestUniqCompEqualEst",
+    "cases": [
+      "explain select * from t where a = 1 and b = 5 and 1 = 1"
+    ]
+  },
+  {
+    "name": "TestStatsVer2",
+    "cases": [
+      "show stats_topn",
+      "show stats_buckets",
+      "explain select * from tint where a=1",
+      "explain select * from tint where a=4",
+      "explain select * from tint where a=8",
+      "explain select * from tdouble where a=1",
+      "explain select * from tdouble where a=4",
+      "explain select * from tdouble where a=8",
+      "explain select * from tdecimal where a=1",
+      "explain select * from tdecimal where a=4",
+      "explain select * from tdecimal where a=8",
+      "explain select * from tstring where a='1'",
+      "explain select * from tstring where a='4'",
+      "explain select * from tstring where a='8'",
+      "explain select * from tdatetime where a='2001-01-01'",
+      "explain select * from tdatetime where a='2001-01-02'",
+      "explain select * from tdatetime where a='2001-01-04'",
+      "explain select * from tprefix where a='111'",
+      "explain select * from tprefix where a='444'",
+      "explain select * from tprefix where a='888'",
+      "explain select * from tint where b=1 and c=1",
+      "explain select * from tint where b=4 and c=4",
+      "explain select * from tint where b=8 and c=8",
+      "explain select * from tdouble where b=1 and c=1",
+      "explain select * from tdouble where b=4 and c=4",
+      "explain select * from tdouble where b=8 and c=8",
+      "explain select * from tdecimal where b=1 and c=1",
+      "explain select * from tdecimal where b=4 and c=4",
+      "explain select * from tdecimal where b=8 and c=8",
+      "explain select * from tstring where b='1' and c='1'",
+      "explain select * from tstring where b='4' and c='4'",
+      "explain select * from tstring where b='8' and c='8'",
+      "explain select * from tdatetime where b='2001-01-01' and c='2001-01-01'",
+      "explain select * from tdatetime where b='2001-01-02' and c='2001-01-02'",
+      "explain select * from tdatetime where b='2001-01-04' and c='2001-01-04'",
+      "explain select * from tint where b=1",
+      "explain select * from tint where b=4",
+      "explain select * from tint where b=8",
+      "explain select * from tdouble where b=1",
+      "explain select * from tdouble where b=4",
+      "explain select * from tdouble where b=8",
+      "explain select * from tdecimal where b=1",
+      "explain select * from tdecimal where b=4",
+      "explain select * from tdecimal where b=8",
+      "explain select * from tstring where b='1'",
+      "explain select * from tstring where b='4'",
+      "explain select * from tstring where b='8'",
+      "explain select * from tdatetime where b='2001-01-01'",
+      "explain select * from tdatetime where b='2001-01-02'",
+      "explain select * from tdatetime where b='2001-01-04'",
+      "explain select * from ct1 where pk>='1' and pk <='4'",
+      "explain select * from ct1 where pk>='4' and pk <='6'",
+      "explain select * from ct1 where pk>='6' and pk <='8'",
+      "explain select * from ct2 where a=1 and b>=1 and b<=8",
+      "explain select * from ct2 where a=4 and b>=1 and b<=8",
+      "explain select * from ct2 where a=8 and b>=1 and b<=8"
+    ]
+  },
+  {
+    "name": "TestTopNOutOfHist",
+    "cases": [
+      "show stats_topn",
+      "show stats_buckets",
+      "explain select * from topn_before_hist where a = 1",
+      "explain select * from topn_before_hist where a = 2",
+      "explain select * from topn_after_hist where a = 7",
+      "explain select * from topn_after_hist where a = 6",
+      "explain select * from topn_after_hist_no_index where a = 7",
+      "explain select * from topn_after_hist_no_index where a = 6",
+      "explain select * from topn_before_hist_no_index where a = 1",
+      "explain select * from topn_before_hist_no_index where a = 2"
+    ]
+  },
+  {
+    "name": "TestColumnIndexNullEstimation",
+    "cases": [
+      "explain select b from t where b is null",
+      "explain select b from t where b is not null",
+      "explain select b from t where b is null or b > 3",
+      "explain select b from t use index(idx_b)",
+      "explain select b from t where b < 4",
+      "explain select * from t where a is null",
+      "explain select * from t where a is not null",
+      "explain select * from t where a is null or a > 3",
+      "explain select * from t",
+      "explain select * from t where a < 4"
+    ]
+  },
+  {
+    "name": "TestDiscreteDistribution",
+    "cases": [
+      "explain select * from t where a = 'tw' and b < 0"
+    ]
+  },
+  {
+    "name": "TestPrimaryKeySelectivity",
+    "cases": [
+      [
+        "explain select * from t where a > \"t\""
+      ],
+      [
+        "drop table t",
+        "create table t(a int primary key, b int)",
+        "explain select * from t where a > 1"
+      ]
+    ]
+  },
+  {
+    "name": "TestSelectCombinedLowBound",
+    "cases": [
+      "explain select * from t where kid = 1"
+    ]
+  },
+  {
+    "name": "TestCollationColumnEstimate",
+    "cases": [
+      "show stats_topn",
+      "explain select * from t where a='aÄa'",
+      "explain select * from t where a > 'aÄa'"
+    ]
+  },
+  {
+    "name": "TestDNFCondSelectivity",
+    "cases": [
+      "select * from t where b > 7 or c < 4",
+      "select * from t where d < 5 or b > 6",
+      "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
+      "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2"
+    ]
+  },
+  {
+    "Name": "TestSmallRangeEstimation",
+    "Cases": [
+      {
+        "Start": 5,
+        "End": 5
+      },
+      {
+        "Start": 5,
+        "End": 6
+      },
+      {
+        "Start": 5,
+        "End": 10
+      },
+      {
+        "Start": 5,
+        "End": 15
+      },
+      {
+        "Start": 10,
+        "End": 15
+      },
+      {
+        "Start": 5,
+        "End": 25
+      },
+      {
+        "Start": 25,
+        "End": 25
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimation",
+    "Cases": [
+      {
+        "Start": 800,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 950
+      },
+      {
+        "Start": 950,
+        "End": 1000
+      },
+      {
+        "Start": 1000,
+        "End": 1050
+      },
+      {
+        "Start": 1050,
+        "End": 1100
+      },
+      {
+        "Start": 1150,
+        "End": 1200
+      },
+      {
+        "Start": 1200,
+        "End": 1300
+      },
+      {
+        "Start": 1300,
+        "End": 1400
+      },
+      {
+        "Start": 1400,
+        "End": 1500
+      },
+      {
+        "Start": 1500,
+        "End": 1600
+      },
+      {
+        "Start": 300,
+        "End": 899
+      },
+      {
+        "Start": 800,
+        "End": 1000
+      },
+      {
+        "Start": 900,
+        "End": 1500
+      },
+      {
+        "Start": 300,
+        "End": 1500
+      },
+      {
+        "Start": 200,
+        "End": 300
+      },
+      {
+        "Start": 100,
+        "End": 200
+      },
+      {
+        "Start": 200,
+        "End": 400
+      },
+      {
+        "Start": 200,
+        "End": 1000
+      },
+      {
+        "Start": 0,
+        "End": 100
+      },
+      {
+        "Start": -100,
+        "End": 100
+      },
+      {
+        "Start": -100,
+        "End": 0
+      }
+    ]
+  }
+]

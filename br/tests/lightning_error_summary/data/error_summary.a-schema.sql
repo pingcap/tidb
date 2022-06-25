@@ -1,0 +1,4 @@
+CREATE TABLE a(
+    id INT NOT NULL PRIMARY KEY,
+    k INT NOT NULL
+);

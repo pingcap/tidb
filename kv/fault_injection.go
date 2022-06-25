@@ -8,15 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package kv
 
 import (
+	"context"
 	"sync"
 
-	"golang.org/x/net/context"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // InjectionConfig is used for fault injections for KV components.
@@ -56,17 +58,8 @@ func NewInjectedStore(store Storage, cfg *InjectionConfig) Storage {
 }
 
 // Begin creates an injected Transaction.
-func (s *InjectedStore) Begin() (Transaction, error) {
-	txn, err := s.Storage.Begin()
-	return &InjectedTransaction{
-		Transaction: txn,
-		cfg:         s.cfg,
-	}, err
-}
-
-// BeginWithStartTS creates an injected Transaction with startTS.
-func (s *InjectedStore) BeginWithStartTS(startTS uint64) (Transaction, error) {
-	txn, err := s.Storage.BeginWithStartTS(startTS)
+func (s *InjectedStore) Begin(opts ...tikv.TxnOption) (Transaction, error) {
+	txn, err := s.Storage.Begin(opts...)
 	return &InjectedTransaction{
 		Transaction: txn,
 		cfg:         s.cfg,
@@ -74,12 +67,12 @@ func (s *InjectedStore) BeginWithStartTS(startTS uint64) (Transaction, error) {
 }
 
 // GetSnapshot creates an injected Snapshot.
-func (s *InjectedStore) GetSnapshot(ver Version) (Snapshot, error) {
-	snapshot, err := s.Storage.GetSnapshot(ver)
+func (s *InjectedStore) GetSnapshot(ver Version) Snapshot {
+	snapshot := s.Storage.GetSnapshot(ver)
 	return &InjectedSnapshot{
 		Snapshot: snapshot,
 		cfg:      s.cfg,
-	}, err
+	}
 }
 
 // InjectedTransaction wraps a Transaction with injections.
@@ -89,13 +82,23 @@ type InjectedTransaction struct {
 }
 
 // Get returns an error if cfg.getError is set.
-func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
+func (t *InjectedTransaction) Get(ctx context.Context, k Key) ([]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Transaction.Get(k)
+	return t.Transaction.Get(ctx, k)
+}
+
+// BatchGet returns an error if cfg.getError is set.
+func (t *InjectedTransaction) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
+	t.cfg.RLock()
+	defer t.cfg.RUnlock()
+	if t.cfg.getError != nil {
+		return nil, t.cfg.getError
+	}
+	return t.Transaction.BatchGet(ctx, keys)
 }
 
 // Commit returns an error if cfg.commitError is set.
@@ -108,14 +111,6 @@ func (t *InjectedTransaction) Commit(ctx context.Context) error {
 	return t.Transaction.Commit(ctx)
 }
 
-// GetSnapshot implements Transaction GetSnapshot method.
-func (t *InjectedTransaction) GetSnapshot() Snapshot {
-	return &InjectedSnapshot{
-		Snapshot: t.Transaction.GetSnapshot(),
-		cfg:      t.cfg,
-	}
-}
-
 // InjectedSnapshot wraps a Snapshot with injections.
 type InjectedSnapshot struct {
 	Snapshot
@@ -123,21 +118,21 @@ type InjectedSnapshot struct {
 }
 
 // Get returns an error if cfg.getError is set.
-func (t *InjectedSnapshot) Get(k Key) ([]byte, error) {
+func (t *InjectedSnapshot) Get(ctx context.Context, k Key) ([]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Snapshot.Get(k)
+	return t.Snapshot.Get(ctx, k)
 }
 
 // BatchGet returns an error if cfg.getError is set.
-func (t *InjectedSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+func (t *InjectedSnapshot) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.getError != nil {
 		return nil, t.cfg.getError
 	}
-	return t.Snapshot.BatchGet(keys)
+	return t.Snapshot.BatchGet(ctx, keys)
 }

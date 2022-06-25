@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Metrics for the domain package.
 var (
 	// LoadSchemaCounter records the counter of load schema.
 	LoadSchemaCounter = prometheus.NewCounterVec(
@@ -34,8 +36,21 @@ var (
 			Subsystem: "domain",
 			Name:      "load_schema_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in load schema.",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 15),
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		})
+
+	// InfoCacheCounters are the counters of get/hit.
+	InfoCacheCounters = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "infocache_counters",
+			Help:      "Counters of infoCache: get/hit.",
+		}, []string{LblAction, LblType})
+	// InfoCacheCounterGet is the total number of getting entry.
+	InfoCacheCounterGet = "get"
+	// InfoCacheCounterHit is the cache hit numbers for get.
+	InfoCacheCounterHit = "hit"
 
 	// LoadPrivilegeCounter records the counter of load privilege.
 	LoadPrivilegeCounter = prometheus.NewCounterVec(
@@ -45,10 +60,27 @@ var (
 			Name:      "load_privilege_total",
 			Help:      "Counter of load privilege",
 		}, []string{LblType})
-)
 
-func init() {
-	prometheus.MustRegister(LoadSchemaDuration)
-	prometheus.MustRegister(LoadSchemaCounter)
-	prometheus.MustRegister(LoadPrivilegeCounter)
-}
+	// LoadSysVarCacheCounter records the counter of loading sysvars
+	LoadSysVarCacheCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "load_sysvarcache_total",
+			Help:      "Counter of load sysvar cache",
+		}, []string{LblType})
+
+	SchemaValidatorStop       = "stop"
+	SchemaValidatorRestart    = "restart"
+	SchemaValidatorReset      = "reset"
+	SchemaValidatorCacheEmpty = "cache_empty"
+	SchemaValidatorCacheMiss  = "cache_miss"
+	// HandleSchemaValidate records the counter of handling schema validate.
+	HandleSchemaValidate = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "handle_schema_validate",
+			Help:      "Counter of handle schema validate",
+		}, []string{LblType})
+)

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,144 +16,203 @@ package ranger_test
 
 import (
 	"math"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRangeSuite{})
-
-type testRangeSuite struct {
-}
-
-func (s *testRangeSuite) TestRange(c *C) {
+func TestRange(t *testing.T) {
 	simpleTests := []struct {
-		ran ranger.NewRange
+		ran ranger.Range
 		str string
 	}{
 		{
-			ran: ranger.NewRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(1)},
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewIntDatum(1)},
+				HighVal:   []types.Datum{types.NewIntDatum(1)},
+				Collators: collate.GetBinaryCollatorSlice(1),
 			},
 			str: "[1,1]",
 		},
 		{
-			ran: ranger.NewRange{
+			ran: ranger.Range{
 				LowVal:      []types.Datum{types.NewIntDatum(1)},
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
+				Collators:   collate.GetBinaryCollatorSlice(1),
 			},
 			str: "[1,1)",
 		},
 		{
-			ran: ranger.NewRange{
+			ran: ranger.Range{
 				LowVal:      []types.Datum{types.NewIntDatum(1)},
 				HighVal:     []types.Datum{types.NewIntDatum(2)},
 				LowExclude:  true,
 				HighExclude: true,
+				Collators:   collate.GetBinaryCollatorSlice(1),
 			},
 			str: "(1,2)",
 		},
 		{
-			ran: ranger.NewRange{
+			ran: ranger.Range{
 				LowVal:      []types.Datum{types.NewFloat64Datum(1.1)},
 				HighVal:     []types.Datum{types.NewFloat64Datum(1.9)},
 				HighExclude: true,
+				Collators:   collate.GetBinaryCollatorSlice(1),
 			},
 			str: "[1.1,1.9)",
 		},
 		{
-			ran: ranger.NewRange{
+			ran: ranger.Range{
 				LowVal:      []types.Datum{types.MinNotNullDatum()},
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
+				Collators:   collate.GetBinaryCollatorSlice(1),
 			},
 			str: "[-inf,1)",
 		},
 	}
-	for _, t := range simpleTests {
-		c.Assert(t.ran.String(), Equals, t.str)
+	for _, v := range simpleTests {
+		require.Equal(t, v.str, v.ran.String())
 	}
 
 	isPointTests := []struct {
-		ran     ranger.NewRange
+		ran     ranger.Range
 		isPoint bool
 	}{
 		{
-			ran: ranger.NewRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(1)},
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewIntDatum(1)},
+				HighVal:   []types.Datum{types.NewIntDatum(1)},
+				Collators: collate.GetBinaryCollatorSlice(1),
 			},
 			isPoint: true,
 		},
 		{
-			ran: ranger.NewRange{
-				LowVal:  []types.Datum{types.NewStringDatum("abc")},
-				HighVal: []types.Datum{types.NewStringDatum("abc")},
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewStringDatum("abc")},
+				HighVal:   []types.Datum{types.NewStringDatum("abc")},
+				Collators: collate.GetBinaryCollatorSlice(1),
 			},
 			isPoint: true,
 		},
 		{
-			ran: ranger.NewRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1)},
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewIntDatum(1)},
+				HighVal:   []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1)},
+				Collators: collate.GetBinaryCollatorSlice(1),
 			},
 			isPoint: false,
 		},
 		{
-			ran: ranger.NewRange{
+			ran: ranger.Range{
 				LowVal:     []types.Datum{types.NewIntDatum(1)},
 				HighVal:    []types.Datum{types.NewIntDatum(1)},
 				LowExclude: true,
+				Collators:  collate.GetBinaryCollatorSlice(1),
 			},
 			isPoint: false,
 		},
 		{
-			ran: ranger.NewRange{
+			ran: ranger.Range{
 				LowVal:      []types.Datum{types.NewIntDatum(1)},
 				HighVal:     []types.Datum{types.NewIntDatum(1)},
 				HighExclude: true,
+				Collators:   collate.GetBinaryCollatorSlice(1),
 			},
 			isPoint: false,
 		},
 		{
-			ran: ranger.NewRange{
-				LowVal:  []types.Datum{types.NewIntDatum(1)},
-				HighVal: []types.Datum{types.NewIntDatum(2)},
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewIntDatum(1)},
+				HighVal:   []types.Datum{types.NewIntDatum(2)},
+				Collators: collate.GetBinaryCollatorSlice(1),
 			},
 			isPoint: false,
 		},
 	}
-	sc := new(stmtctx.StatementContext)
-	for _, t := range isPointTests {
-		c.Assert(t.ran.IsPoint(sc), Equals, t.isPoint)
+	for _, v := range isPointTests {
+		require.Equal(t, v.isPoint, v.ran.IsPoint(core.MockContext()))
 	}
 }
 
-func (s *testRangeSuite) TestIntColumnRangeString(c *C) {
-	tests := []struct {
-		ran ranger.IntColumnRange
-		ans string
+func TestIsFullRange(t *testing.T) {
+	nullDatum := types.MinNotNullDatum()
+	nullDatum.SetNull()
+	isFullRangeTests := []struct {
+		ran               ranger.Range
+		unsignedIntHandle bool
+		isFullRange       bool
 	}{
 		{
-			ran: ranger.IntColumnRange{
-				LowVal:  math.MinInt64,
-				HighVal: 2,
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewIntDatum(math.MinInt64)},
+				HighVal:   []types.Datum{types.NewIntDatum(math.MaxInt64)},
+				Collators: collate.GetBinaryCollatorSlice(1),
 			},
-			ans: "(-inf,2]",
+			unsignedIntHandle: false,
+			isFullRange:       true,
 		},
 		{
-			ran: ranger.IntColumnRange{
-				LowVal:  3,
-				HighVal: math.MaxInt64,
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewIntDatum(math.MaxInt64)},
+				HighVal:   []types.Datum{types.NewIntDatum(math.MinInt64)},
+				Collators: collate.GetBinaryCollatorSlice(1),
 			},
-			ans: "[3,+inf)",
+			unsignedIntHandle: false,
+			isFullRange:       false,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewIntDatum(1)},
+				HighVal:   []types.Datum{types.NewUintDatum(math.MaxUint64)},
+				Collators: collate.GetBinaryCollatorSlice(1),
+			},
+			unsignedIntHandle: false,
+			isFullRange:       false,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:    []types.Datum{*nullDatum.Clone()},
+				HighVal:   []types.Datum{types.NewUintDatum(math.MaxUint64)},
+				Collators: collate.GetBinaryCollatorSlice(1),
+			},
+			unsignedIntHandle: false,
+			isFullRange:       true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:    []types.Datum{*nullDatum.Clone()},
+				HighVal:   []types.Datum{*nullDatum.Clone()},
+				Collators: collate.GetBinaryCollatorSlice(1),
+			},
+			unsignedIntHandle: false,
+			isFullRange:       false,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.MinNotNullDatum()},
+				HighVal:   []types.Datum{types.MaxValueDatum()},
+				Collators: collate.GetBinaryCollatorSlice(1),
+			},
+			unsignedIntHandle: false,
+			isFullRange:       true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:    []types.Datum{types.NewUintDatum(0)},
+				HighVal:   []types.Datum{types.NewUintDatum(math.MaxUint64)},
+				Collators: collate.GetBinaryCollatorSlice(1),
+			},
+			unsignedIntHandle: true,
+			isFullRange:       true,
 		},
 	}
-	for _, t := range tests {
-		c.Assert(t.ran.String(), Equals, t.ans)
+	for _, v := range isFullRangeTests {
+		require.Equal(t, v.isFullRange, v.ran.IsFullRange(v.unsignedIntHandle))
 	}
 }

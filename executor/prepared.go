@@ -8,30 +8,40 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
+	"context"
 	"math"
 	"sort"
+	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"go.uber.org/zap"
 )
 
 var (
@@ -41,7 +51,7 @@ var (
 )
 
 type paramMarkerSorter struct {
-	markers []*ast.ParamMarkerExpr
+	markers []ast.ParamMarkerExpr
 }
 
 func (p *paramMarkerSorter) Len() int {
@@ -49,7 +59,7 @@ func (p *paramMarkerSorter) Len() int {
 }
 
 func (p *paramMarkerSorter) Less(i, j int) bool {
-	return p.markers[i].Offset < p.markers[j].Offset
+	return p.markers[i].(*driver.ParamMarkerExpr).Offset < p.markers[j].(*driver.ParamMarkerExpr).Offset
 }
 
 func (p *paramMarkerSorter) Swap(i, j int) {
@@ -57,7 +67,7 @@ func (p *paramMarkerSorter) Swap(i, j int) {
 }
 
 type paramMarkerExtractor struct {
-	markers []*ast.ParamMarkerExpr
+	markers []ast.ParamMarkerExpr
 }
 
 func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -65,7 +75,7 @@ func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
-	if x, ok := in.(*ast.ParamMarkerExpr); ok {
+	if x, ok := in.(*driver.ParamMarkerExpr); ok {
 		e.markers = append(e.markers, x)
 	}
 	return in, true
@@ -75,26 +85,32 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 type PrepareExec struct {
 	baseExecutor
 
-	is      infoschema.InfoSchema
 	name    string
 	sqlText string
 
 	ID         uint32
 	ParamCount int
 	Fields     []*ast.ResultField
+
+	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
+	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
+	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
+	needReset bool
 }
 
 // NewPrepareExec creates a new PrepareExec.
-func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
+func NewPrepareExec(ctx sessionctx.Context, sqlTxt string) *PrepareExec {
+	base := newBaseExecutor(ctx, nil, 0)
+	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
-		baseExecutor: newBaseExecutor(ctx, nil, "PrepareStmt"),
-		is:           is,
+		baseExecutor: base,
 		sqlText:      sqlTxt,
+		needReset:    true,
 	}
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -110,25 +126,59 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		err   error
 	)
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
-		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
+		// FIXME: ok... yet another parse API, may need some api interface clean.
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 	} else {
-		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
+		p := parser.New()
+		p.SetParserConfig(vars.BuildParserConfig())
+		var warns []error
+		stmts, warns, err = p.ParseSQL(e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
+		for _, warn := range warns {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+		}
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
 		return ErrPrepareMulti
 	}
 	stmt := stmts[0]
-	if _, ok := stmt.(ast.DDLNode); ok {
-		return ErrPrepareDDL
+
+	if e.needReset {
+		err = ResetContextOfStmt(e.ctx, stmt)
+		if err != nil {
+			return err
+		}
 	}
+
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
-	err = plan.Preprocess(e.ctx, stmt, e.is, true)
+
+	// DDL Statements can not accept parameters
+	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
+		return ErrPrepareDDL
+	}
+
+	switch stmt.(type) {
+	case *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDeleteStmt:
+		return ErrUnsupportedPs
+	}
+
+	// Prepare parameters should NOT over 2 bytes(MaxUint16)
+	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
+	if len(extractor.markers) > math.MaxUint16 {
+		return ErrPsManyParam
+	}
+
+	ret := &plannercore.PreprocessorReturn{}
+	err = plannercore.Preprocess(e.ctx, stmt, plannercore.InPrepare, plannercore.WithPreprocessorReturn(ret))
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -138,26 +188,55 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	sort.Sort(sorter)
 	e.ParamCount = len(sorter.markers)
 	for i := 0; i < e.ParamCount; i++ {
-		sorter.markers[i].Order = i
+		sorter.markers[i].SetOrder(i)
 	}
-	prepared := &plan.Prepared{
+	prepared := &ast.Prepared{
 		Stmt:          stmt,
+		StmtType:      GetStmtLabel(stmt),
 		Params:        sorter.markers,
-		SchemaVersion: e.is.SchemaMetaVersion(),
+		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plan.PreparedPlanCacheEnabled && (vars.ImportingData || plan.Cacheable(stmt))
+	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	if topsqlstate.TopSQLEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
+		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, vars.InRestrictedSQL)
+	}
+
+	var (
+		normalizedSQL4PC, digest4PC string
+		selectStmtNode              ast.StmtNode
+	)
+	if !plannercore.PreparedPlanCacheEnabled() {
+		prepared.UseCache = false
+	} else {
+		prepared.UseCache = plannercore.CacheableWithCtx(e.ctx, stmt, ret.InfoSchema)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = planner.ExtractSelectAndNormalizeDigest(stmt, e.ctx.GetSessionVars().CurrentDB)
+		if err != nil || selectStmtNode == nil {
+			normalizedSQL4PC = ""
+			digest4PC = ""
+		}
+	}
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].SetDatum(types.NewIntDatum(0))
+		param := prepared.Params[i].(*driver.ParamMarkerExpr)
+		param.Datum.SetNull()
+		param.InExecute = false
 	}
-	var p plan.Plan
-	p, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
+	var p plannercore.Plan
+	e.ctx.GetSessionVars().PlanID = 0
+	e.ctx.GetSessionVars().PlanColumnID = 0
+	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
+	destBuilder, _ := plannercore.NewPlanBuilder().Init(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
+	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	if _, ok := stmt.(*ast.SelectStmt); ok {
-		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
+	// In MySQL prepare protocol, the server need to tell the client how many column the prepared statement would return when executing it.
+	// For a query with on result, e.g. an insert statement, there will be no result, so 'e.Fields' is not set.
+	// Usually, p.Schema().Len() == 0 means no result. A special case is the 'do' statement, it looks like 'select' but discard the result.
+	if !isNoResultPlan(p) {
+		e.Fields = colNames2ResultFields(p.Schema(), p.OutputNames(), vars.CurrentDB)
 	}
 	if e.ID == 0 {
 		e.ID = vars.GetNextPreparedStmtID()
@@ -165,8 +244,20 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.name != "" {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
-	vars.PreparedStmts[e.ID] = prepared
-	return nil
+
+	preparedObj := &plannercore.CachedPrepareStmt{
+		PreparedAst:         prepared,
+		StmtDB:              e.ctx.GetSessionVars().CurrentDB,
+		StmtText:            stmt.Text(),
+		VisitInfos:          destBuilder.GetVisitInfo(),
+		NormalizedSQL:       normalizedSQL,
+		SQLDigest:           digest,
+		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
+		NormalizedSQL4PC:    normalizedSQL4PC,
+		SQLDigest4PC:        digest4PC,
+	}
+	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
 
 // ExecuteExec represents an EXECUTE executor.
@@ -175,41 +266,34 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 type ExecuteExec struct {
 	baseExecutor
 
-	is        infoschema.InfoSchema
-	name      string
-	usingVars []expression.Expression
-	id        uint32
-	stmtExec  Executor
-	stmt      ast.StmtNode
-	plan      plan.Plan
+	is            infoschema.InfoSchema
+	name          string
+	usingVars     []expression.Expression
+	stmtExec      Executor
+	stmt          ast.StmtNode
+	plan          plannercore.Plan
+	id            uint32
+	lowerPriority bool
+	outputNames   []*types.FieldName
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
-func (e *ExecuteExec) Build() error {
-	var err error
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
-		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
-	} else {
-		err = e.ctx.ActivePendingTxn()
-	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-	b := newExecutorBuilder(e.ctx, e.is, kv.PriorityNormal)
+func (e *ExecuteExec) Build(b *executorBuilder) error {
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
+		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
-	ResetStmtCtx(e.ctx, e.stmt)
-	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
-	logExpensiveQuery(e.stmt, e.plan)
+	if e.ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
+		e.lowerPriority = needLowerPriority(e.plan)
+	}
 	return nil
 }
 
@@ -221,122 +305,80 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return errors.Trace(plan.ErrStmtNotFound)
+		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
+	preparedPointer := vars.PreparedStmts[id]
+	preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+	if !ok {
+		return errors.Errorf("invalid CachedPrepareStmt type")
+	}
+	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
-	delete(vars.PreparedStmts, id)
+	if plannercore.PreparedPlanCacheEnabled() {
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion, 0)
+		if err != nil {
+			return err
+		}
+		if !vars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
+			e.ctx.PreparedPlanCache().Delete(cacheKey)
+		}
+	}
+	vars.RemovePreparedStmt(id)
 	return nil
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
+func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	startTime := time.Now()
+	defer func() {
+		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
+	}()
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	execStmt.UsingVars = make([]ast.ExprNode, len(args))
-	for i, val := range args {
-		execStmt.UsingVars[i] = ast.NewValueExpr(val)
+	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
+		return nil, false, false, err
 	}
-	is := GetInfoSchema(ctx)
-	execPlan, err := plan.Optimize(ctx, execStmt, is)
+	isStaleness := snapshotTS != 0
+	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
+	execStmt.BinaryArgs = args
+	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, false, err
 	}
+
+	failpoint.Inject("assertTxnManagerInCompile", func() {
+		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
+		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
+		staleread.AssertStmtStaleness(sctx, snapshotTS != 0)
+		if snapshotTS != 0 {
+			sessiontxn.AssertTxnManagerReadTS(sctx, snapshotTS)
+		}
+	})
 
 	stmt := &ExecStmt{
-		InfoSchema: GetInfoSchema(ctx),
-		Plan:       execPlan,
-		StmtNode:   execStmt,
-		Ctx:        ctx,
+		GoCtx:            ctx,
+		InfoSchema:       is,
+		Plan:             execPlan,
+		StmtNode:         execStmt,
+		Ctx:              sctx,
+		OutputNames:      names,
+		Ti:               &TelemetryInfo{},
+		ReplicaReadScope: replicaReadScope,
 	}
-	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
-		stmt.Text = prepared.Stmt.Text()
-	}
-	return stmt, nil
-}
-
-// ResetStmtCtx resets the StmtContext.
-// Before every execution, we must clear statement context.
-func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
-	sessVars := ctx.GetSessionVars()
-	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = sessVars.GetTimeZone()
-	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
-	switch config.GetGlobalConfig().OOMAction {
-	case config.OOMActionCancel:
-		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
-	case config.OOMActionLog:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
-	default:
-		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
-	}
-
-	switch stmt := s.(type) {
-	case *ast.UpdateStmt:
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.InUpdateOrDeleteStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
-		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
-	case *ast.DeleteStmt:
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.InUpdateOrDeleteStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
-		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
-	case *ast.InsertStmt:
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.InInsertStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
-		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
-	case *ast.CreateTableStmt, *ast.AlterTableStmt:
-		// Make sure the sql_mode is strict when checking column default value.
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = false
-	case *ast.LoadDataStmt:
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
-	case *ast.SelectStmt:
-		sc.InSelectStmt = true
-
-		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-		// said "For statements such as SELECT that do not change data, invalid values
-		// generate a warning in strict mode, not an error."
-		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		sc.OverflowAsWarning = true
-
-		// Return warning for truncate error in selection.
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = true
-		sc.IgnoreZeroInDate = true
-		if opts := stmt.SelectStmtOpts; opts != nil {
-			sc.Priority = opts.Priority
-			sc.NotFillCache = !opts.SQLCache
+	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+		if !ok {
+			return nil, false, false, errors.Errorf("invalid CachedPrepareStmt type")
 		}
-		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
-	default:
-		sc.IgnoreTruncate = true
-		sc.OverflowAsWarning = false
-		if show, ok := s.(*ast.ShowStmt); ok {
-			if show.Tp == ast.ShowWarnings {
-				sc.InShowWarning = true
-				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
-			}
-		}
-		sc.IgnoreZeroInDate = true
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
+		stmtCtx.OriginalSQL = stmt.Text
+		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
-	if sessVars.LastInsertID > 0 {
-		sessVars.PrevLastInsertID = sessVars.LastInsertID
-		sessVars.LastInsertID = 0
-	}
-	sessVars.ResetPrevAffectedRows()
-	sessVars.InsertID = 0
-	sessVars.StmtCtx = sc
+	tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
+	return stmt, tiFlashPushDown, tiFlashExchangePushDown, nil
 }

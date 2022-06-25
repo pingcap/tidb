@@ -1,0 +1,656 @@
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (
+c1 int,
+c2 int,
+c3 int,
+PRIMARY KEY (c1)
+);
+INSERT INTO t VALUES (1,2,3);
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
+SELECT * from t;
+c1	c2	c3
+1	2	3
+SELECT c1, c2, c3 from t;
+c1	c2	c3
+1	2	3
+SELECT c1, c1 from t;
+c1	c1
+1	1
+SELECT c1 as a, c2 as a from t;
+a	a
+1	2
+SELECT 1;
+1
+1
+SELECT 1, 1;
+1	1
+1	1
+SET @@autocommit = 1;
+SELECT @@autocommit;
+@@autocommit
+1
+SELECT @@autocommit, @@autocommit;
+@@autocommit	@@autocommit
+1	1
+SET @a = 10;
+SET @b = 11;
+SELECT @a, @@autocommit;
+@a	@@autocommit
+10	1
+SELECT @a, @b;
+@a	@b
+10	11
+SELECT 1, @a;
+1	@a
+1	10
+SELECT 1, @a as a;
+1	a
+1	10
+SELECT 1, @a, @@autocommit as a, c1 from t;
+1	@a	a	c1
+1	10	1	1
+SET @b = "123";
+SELECT @b + "123";
+@b + "123"
+246
+SELECT 1 + 1;
+1 + 1
+2
+SELECT 1 a, 1 as a, 1 + 1 a;
+a	a	a
+1	1	2
+SELECT c1 a, c1 as a from t;
+a	a
+1	1
+SELECT * from t LIMIT 0,1;
+c1	c2	c3
+1	2	3
+SELECT * from t LIMIT 1;
+c1	c2	c3
+1	2	3
+SELECT * from t LIMIT 1,1;
+c1	c2	c3
+SELECT * from t LIMIT 1 OFFSET 0;
+c1	c2	c3
+1	2	3
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2 (
+c1 int,
+c2 int,
+PRIMARY KEY (c1)
+);
+INSERT INTO t2 VALUES (1,2);
+SELECT * from t a;
+c1	c2	c3
+1	2	3
+SELECT * from t a, t2 b;
+c1	c2	c3	c1	c2
+1	2	3	1	2
+SELECT * from t as a, t2 as b;
+c1	c2	c3	c1	c2
+1	2	3	1	2
+SELECT * from t a left join t2 b on a.c1 = b.c1;
+c1	c2	c3	c1	c2
+1	2	3	1	2
+SELECT * from (SELECT 1, 1) as a;
+Error 1060: Duplicate column name '1'
+SELECT * from (SELECT * FROM t, t2) as a;
+Error 1060: Duplicate column name 'c1'
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (c1 INT, c2 INT);
+INSERT INTO t VALUES (1, 2), (1, 1), (1, 3);
+SELECT c1=c2 FROM t;
+c1=c2
+0
+1
+0
+SELECT 1=1;
+1=1
+1
+SELECT t.c1 + t.c2 from t limit 1;
+t.c1 + t.c2
+3
+SELECT t.c1 from t limit 1;
+c1
+1
+SELECT t.c1 + c2 from t limit 1;
+t.c1 + c2
+3
+SELECT c1 + 10 from t limit 1;
+c1 + 10
+11
+SELECT t.c1 + 10 from t limit 1;
+t.c1 + 10
+11
+SELECT all c1, c2 from t limit 1;
+c1	c2
+1	2
+SELECT distinct c1, c2 from t order by c1, c2 limit 1;
+c1	c2
+1	1
+SELECT c2 from t where not (c2 > 2);
+c2
+2
+1
+select c2 from t where not null is null;
+c2
+select !(1 + 2);
+!(1 + 2)
+0
+select + - 1, --1, +-+-+1, + "123";
++ - 1	--1	+-+-+1	123
+-1	1	1	123
+select --------------------1, ++++++++++++++++++++1;
+--------------------1	1
+1	1
+select +(+(1)), (-+1), ((+1)), +1.23, +1e23, +1E23, +null, +true, +false, + ( ( 1 ) );
+1	(-+1)	1	1.23	1e23	1E23	NULL	TRUE	FALSE	1
+1	-1	1	1.23	1e23	1e23	NULL	1	0	1
+select +
+(
++
+(
+1
+)
+)
+;
+1
+1
+select +	(	+	1	);
+1
+1
+select --+(1 + 1), +-+-(1 * 1);
+--+(1 + 1)	+-+-(1 * 1)
+2	1
+select * from t where null;
+c1	c2
+select * from t where 1;
+c1	c2
+1	2
+1	1
+1	3
+select * from t where 0;
+c1	c2
+select * from t where 0 * 10;
+c1	c2
+select * from t where null is not null;
+c1	c2
+select * from t where !1;
+c1	c2
+select * from t where 1 && 0 || 3 && null;
+c1	c2
+select * from t as a, t2 as b;
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from t as a cross join t2 as b;
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from t as a join t2 as b;
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from t as a join t2 as b on a.c2 = b.c2;
+c1	c2	c1	c2
+1	2	1	2
+select * from (t);
+c1	c2
+1	2
+1	1
+1	3
+select * from (t as a, t2 as b);
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from (t as a cross join t2 as b);
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select 1 as a from t;
+a
+1
+1
+1
+select count(*), 1 from t;
+count(*)	1
+3	1
+select *, 1 from t;
+c1	c2	1
+1	2	1
+1	1	1
+1	3	1
+select 1, count(1), sum(1);
+1	count(1)	sum(1)
+1	1	1
+drop table if exists t1;
+create table t1(a int primary key, b int, c int, index idx(b, c));
+insert into t1 values(1, 2, 3);
+insert into t1 values(2, 3, 4);
+insert into t1 values(3 ,4, 5);
+insert into t1 values(4, 5, 6);
+insert into t1 values(5, 6, 7);
+insert into t1 values(6, 7, 8);
+insert into t1 values(7, 8, 9);
+insert into t1 values(9, 10, 11);
+explain format = 'brief' select a, c from t1 use index(idx) order by a limit 5;
+id	estRows	task	access object	operator info
+TopN	5.00	root		test.t1.a, offset:0, count:5
+└─IndexReader	5.00	root		index:TopN
+  └─TopN	5.00	cop[tikv]		test.t1.a, offset:0, count:5
+    └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:idx(b, c)	keep order:false, stats:pseudo
+select c, a from t1 use index(idx) order by a limit 5;
+c	a
+3	1
+4	2
+5	3
+6	4
+7	5
+drop table if exists t;
+create table t (a int, b int, c int, key idx(a, b, c));
+explain format = 'brief' select count(a) from t;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(Column#13)->Column#5
+└─TableReader	1.00	root		data:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(test.t.a)->Column#13
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select count(a) from t;
+count(a)
+0
+insert t values(0,0,0);
+explain format = 'brief' select distinct b from t group by a;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:test.t.b, funcs:firstrow(test.t.b)->test.t.b
+└─StreamAgg	8000.00	root		group by:test.t.a, funcs:firstrow(Column#9)->test.t.b
+  └─IndexReader	8000.00	root		index:StreamAgg
+    └─StreamAgg	8000.00	cop[tikv]		group by:test.t.a, funcs:firstrow(test.t.b)->Column#9
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+select distinct b from t group by a;
+b
+0
+explain format = 'brief' select count(b) from t group by a;
+id	estRows	task	access object	operator info
+StreamAgg	8000.00	root		group by:test.t.a, funcs:count(Column#10)->Column#5
+└─IndexReader	8000.00	root		index:StreamAgg
+  └─StreamAgg	8000.00	cop[tikv]		group by:test.t.a, funcs:count(test.t.b)->Column#10
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+select count(b) from t group by a;
+count(b)
+1
+insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
+explain format = 'brief' select count(a) from t where b>0 group by a, b;
+id	estRows	task	access object	operator info
+StreamAgg	2666.67	root		group by:test.t.a, test.t.b, funcs:count(Column#10)->Column#5
+└─IndexReader	2666.67	root		index:StreamAgg
+  └─StreamAgg	2666.67	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#10
+    └─Selection	3333.33	cop[tikv]		gt(test.t.b, 0)
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+select count(a) from t where b>0 group by a, b;
+count(a)
+3
+1
+1
+1
+explain format = 'brief' select count(a) from t where b>0 group by a, b order by a;
+id	estRows	task	access object	operator info
+Projection	2666.67	root		Column#5
+└─StreamAgg	2666.67	root		group by:test.t.a, test.t.b, funcs:count(Column#15)->Column#5, funcs:firstrow(test.t.a)->test.t.a
+  └─IndexReader	2666.67	root		index:StreamAgg
+    └─StreamAgg	2666.67	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#15
+      └─Selection	3333.33	cop[tikv]		gt(test.t.b, 0)
+        └─IndexFullScan	10000.00	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+select count(a) from t where b>0 group by a, b order by a;
+count(a)
+3
+1
+1
+1
+explain format = 'brief' select count(a) from t where b>0 group by a, b order by a limit 1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		Column#5
+└─Limit	1.00	root		offset:0, count:1
+  └─StreamAgg	1.00	root		group by:test.t.a, test.t.b, funcs:count(Column#16)->Column#5, funcs:firstrow(test.t.a)->test.t.a
+    └─IndexReader	1.00	root		index:StreamAgg
+      └─StreamAgg	1.00	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#16
+        └─Selection	1.25	cop[tikv]		gt(test.t.b, 0)
+          └─IndexFullScan	3.75	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+select count(a) from t where b>0 group by a, b order by a limit 1;
+count(a)
+3
+drop table if exists t;
+create table t (id int primary key, a int, b int);
+explain format = 'brief' select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
+id	estRows	task	access object	operator info
+HashJoin	155937656.25	root		CARTESIAN left outer join, left cond:[eq(test.t.b, 1)]
+├─HashJoin(Build)	12487.50	root		left outer join, equal:[eq(test.t.a, test.t.a)]
+│ ├─TableReader(Build)	9990.00	root		data:Selection
+│ │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
+│ │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+│ └─TableReader(Probe)	10000.00	root		data:TableFullScan
+│   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(test.t.a, test.t.a)]
+  ├─TableReader(Build)	9990.00	root		data:Selection
+  │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.a))
+  │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a bigint primary key, b bigint);
+desc select * from t where a = 1;
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:t	handle:1
+desc select * from t where a = '1';
+id	estRows	task	access object	operator info
+Point_Get_1	1.00	root	table:t	handle:1
+desc select sysdate(), sleep(1), sysdate();
+id	estRows	task	access object	operator info
+Projection_3	1.00	root		sysdate()->Column#1, sleep(1)->Column#2, sysdate()->Column#3
+└─TableDual_4	1.00	root		rows:1
+drop table if exists th;
+set @@session.tidb_enable_table_partition = '1';
+set @@session.tidb_partition_prune_mode = 'static';
+create table th (a int, b int) partition by hash(a) partitions 3;
+insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
+insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
+desc select * from th where a=-2;
+id	estRows	task	access object	operator info
+TableReader_9	10.00	root		data:Selection_8
+└─Selection_8	10.00	cop[tikv]		eq(test.th.a, -2)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+desc select * from th;
+id	estRows	task	access object	operator info
+PartitionUnion_9	30000.00	root		
+├─TableReader_11	10000.00	root		data:TableFullScan_10
+│ └─TableFullScan_10	10000.00	cop[tikv]	table:th, partition:p0	keep order:false, stats:pseudo
+├─TableReader_13	10000.00	root		data:TableFullScan_12
+│ └─TableFullScan_12	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
+└─TableReader_15	10000.00	root		data:TableFullScan_14
+  └─TableFullScan_14	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+desc select * from th partition (p2,p1);
+id	estRows	task	access object	operator info
+PartitionUnion_8	20000.00	root		
+├─TableReader_10	10000.00	root		data:TableFullScan_9
+│ └─TableFullScan_9	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
+└─TableReader_12	10000.00	root		data:TableFullScan_11
+  └─TableFullScan_11	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+set @@session.tidb_partition_prune_mode = 'dynamic';
+desc select * from th where a=-2;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root	partition:p2	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(test.th.a, -2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+desc select * from th;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root	partition:all	data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+desc select * from th partition (p2,p1);
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root	partition:p1,p2	data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+set @@session.tidb_partition_prune_mode = DEFAULT;
+drop table if exists t;
+create table t(a int, b int);
+explain format = 'brief' select a != any (select a from t t2) from t t1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 0)), and(ne(Column#13, 0), if(isnull(test.t.a), <nil>, 1)))->Column#14
+└─HashJoin	10000.00	root		CARTESIAN inner join
+  ├─StreamAgg(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
+  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#18
+  │   └─TableReader	10000.00	root		data:TableFullScan
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select a = all (select a from t t2) from t t1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		or(and(and(le(Column#11, 1), eq(test.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(test.t.a), <nil>, 0)))->Column#14
+└─HashJoin	10000.00	root		CARTESIAN inner join
+  ├─StreamAgg(Build)	1.00	root		funcs:firstrow(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
+  │ └─Projection	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(20,0) BINARY)->Column#18
+  │   └─TableReader	10000.00	root		data:TableFullScan
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int);
+drop table if exists s;
+create table s(a varchar(20), b varchar(20));
+explain format = 'brief' select a in (select a from s where s.b = t.b) from t;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer semi join, equal:[eq(Column#11, Column#12)], other cond:eq(cast(test.t.a, double BINARY), cast(test.s.a, double BINARY))
+├─Projection(Build)	10000.00	root		test.s.a, cast(test.s.b, double BINARY)->Column#12
+│ └─TableReader	10000.00	root		data:TableFullScan
+│   └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─Projection(Probe)	10000.00	root		test.t.a, cast(test.t.b, double BINARY)->Column#11
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer semi join, equal:[eq(test.t.b, test.t.b)], other cond:eq(test.t.a, plus(test.t.a, test.t.b))
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table t;
+create table t(a int not null, b int);
+explain format = 'brief' select a in (select a from t t2 where t2.b = t1.b) from t t1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer semi join, equal:[eq(test.t.b, test.t.b) eq(test.t.a, test.t.a)]
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format = 'brief' select 1 from (select sleep(1)) t;
+id	estRows	task	access object	operator info
+Projection	1.00	root		1->Column#2
+└─Projection	1.00	root		sleep(1)->Column#1
+  └─TableDual	1.00	root		rows:1
+drop table if exists t;
+create table t(a int, b int);
+explain format = 'brief' select a from t order by rand();
+id	estRows	task	access object	operator info
+Projection	10000.00	root		test.t.a
+└─Sort	10000.00	root		Column#4
+  └─Projection	10000.00	root		test.t.a, rand()->Column#4
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select a, b from t order by abs(2);
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select a from t order by abs(rand())+1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		test.t.a
+└─Sort	10000.00	root		Column#4
+  └─Projection	10000.00	root		test.t.a, plus(abs(rand()), 1)->Column#4
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1;
+create table t1(a int, b int);
+drop table if exists t2;
+create table t2(a int, b int);
+explain format = 'brief' select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b);
+id	estRows	task	access object	operator info
+HashJoin	7984.01	root		semi join, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9980.01	root		data:Selection
+  └─Selection	9980.01	cop[tikv]		not(isnull(test.t1.a)), not(isnull(test.t1.b))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table t;
+CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
+i int(10) unsigned DEFAULT NULL,
+x int(10) unsigned DEFAULT '0',
+PRIMARY KEY (`id`)
+);
+explain format = 'brief' select row_number() over( partition by i ) - x as rnk from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		minus(Column#5, test.t.x)->Column#7
+└─Window	10000.00	root		row_number()->Column#5 over(partition by test.t.i rows between current row and current row)
+  └─Sort	10000.00	root		test.t.i
+    └─TableReader	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table precise_types (
+a BIGINT UNSIGNED NOT NULL,
+b BIGINT NOT NULL,
+c DECIMAL(21,1) NOT NULL,
+d DOUBLE(21,1) NOT NULL
+);
+insert into precise_types values (
+18446744073709551614,
+-9223372036854775806,
+99999999999999999999,
+18446744073709551614
+);
+SELECT a, b, c, d FROM precise_types;
+a	b	c	d
+18446744073709551614	-9223372036854775806	99999999999999999999.0	1.8446744073709552e19
+drop table if exists t1;
+create table t1(a int, b int);
+insert into t1 values (1,1),(2,2),(1,3),(2,3);
+drop table if exists t2;
+create table t2(a int, b int);
+insert into t2 values (1,1),(2,2),(3,4);
+drop table if exists t3;
+create table t3(a int, b int);
+insert into t3 values (1,1),(2,3);
+drop table if exists t4;
+create table t4(a int, b int);
+analyze table t1,t2,t3;
+explain format = 'brief' select * from t2 left join t1 on t2.a=t1.a left join t3 on t2.a=t3.a;
+id	estRows	task	access object	operator info
+Projection	4.00	root		test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b
+└─HashJoin	4.00	root		left outer join, equal:[eq(test.t2.a, test.t1.a)]
+  ├─TableReader(Build)	4.00	root		data:Selection
+  │ └─Selection	4.00	cop[tikv]		not(isnull(test.t1.a))
+  │   └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+  └─HashJoin(Probe)	3.00	root		left outer join, equal:[eq(test.t2.a, test.t3.a)]
+    ├─TableReader(Build)	2.00	root		data:Selection
+    │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.a))
+    │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+    └─TableReader(Probe)	3.00	root		data:TableFullScan
+      └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.a=1;
+id	estRows	task	access object	operator info
+HashJoin	12.00	root		CARTESIAN left outer join, left cond:[eq(test.t2.a, 1)]
+├─HashJoin(Build)	4.00	root		left outer join, equal:[eq(test.t1.a, test.t3.a)]
+│ ├─TableReader(Build)	2.00	root		data:Selection
+│ │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.a))
+│ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│ └─TableReader(Probe)	4.00	root		data:TableFullScan
+│   └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	3.00	root		data:TableFullScan
+  └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.a=t3.a;
+id	estRows	task	access object	operator info
+HashJoin	4.00	root		left outer join, equal:[eq(test.t2.a, test.t3.a)]
+├─Projection(Build)	4.00	root		test.t1.a, test.t1.b, test.t3.a, test.t3.b
+│ └─HashJoin	4.00	root		inner join, equal:[eq(test.t3.a, test.t1.a)]
+│   ├─TableReader(Build)	2.00	root		data:Selection
+│   │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.a))
+│   │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│   └─TableReader(Probe)	4.00	root		data:Selection
+│     └─Selection	4.00	cop[tikv]		not(isnull(test.t1.a))
+│       └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	3.00	root		data:TableFullScan
+  └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a join t3 on t2.b=t3.b;
+id	estRows	task	access object	operator info
+Projection	4.00	root		test.t2.a, test.t2.b, test.t1.a, test.t1.b, test.t3.a, test.t3.b
+└─HashJoin	4.00	root		left outer join, equal:[eq(test.t2.a, test.t1.a)]
+  ├─HashJoin(Build)	2.00	root		inner join, equal:[eq(test.t3.b, test.t2.b)]
+  │ ├─TableReader(Build)	2.00	root		data:Selection
+  │ │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.b))
+  │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+  │ └─TableReader(Probe)	3.00	root		data:Selection
+  │   └─Selection	3.00	cop[tikv]		not(isnull(test.t2.b))
+  │     └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:Selection
+    └─Selection	4.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+id	estRows	task	access object	operator info
+Projection	4.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b
+└─HashJoin	4.00	root		right outer join, equal:[eq(test.t1.a, test.t2.a)]
+  ├─HashJoin(Build)	2.00	root		inner join, equal:[eq(test.t3.b, test.t2.b)]
+  │ ├─TableReader(Build)	2.00	root		data:Selection
+  │ │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.b))
+  │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+  │ └─TableReader(Probe)	3.00	root		data:Selection
+  │   └─Selection	3.00	cop[tikv]		not(isnull(test.t2.b))
+  │     └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:Selection
+    └─Selection	4.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from t2 right join t3 on t3.a=t2.a right join t1 on t2.a=t1.a;
+id	estRows	task	access object	operator info
+HashJoin	4.00	root		right outer join, equal:[eq(test.t2.a, test.t1.a)]
+├─Projection(Build)	2.00	root		test.t2.a, test.t2.b, test.t3.a, test.t3.b
+│ └─HashJoin	2.00	root		inner join, equal:[eq(test.t3.a, test.t2.a)]
+│   ├─TableReader(Build)	2.00	root		data:Selection
+│   │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.a))
+│   │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│   └─TableReader(Probe)	3.00	root		data:Selection
+│     └─Selection	3.00	cop[tikv]		not(isnull(test.t2.a))
+│       └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	4.00	root		data:TableFullScan
+  └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t4.a;
+id	estRows	task	access object	operator info
+HashJoin	4.00	root		left outer join, equal:[eq(test.t2.a, test.t4.a)]
+├─HashJoin(Build)	2.50	root		inner join, equal:[eq(test.t3.a, test.t4.a)]
+│ ├─TableReader(Build)	2.00	root		data:Selection
+│ │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.a))
+│ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│ └─TableReader(Probe)	9990.00	root		data:Selection
+│   └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.a))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	4.00	root		left outer join, equal:[eq(test.t1.a, test.t2.a)]
+  ├─TableReader(Build)	3.00	root		data:Selection
+  │ └─Selection	3.00	cop[tikv]		not(isnull(test.t2.a))
+  │   └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t3.a;
+id	estRows	task	access object	operator info
+HashJoin	4.00	root		left outer join, equal:[eq(test.t2.a, test.t3.a)]
+├─HashJoin(Build)	2.50	root		left outer join, equal:[eq(test.t3.a, test.t4.a)]
+│ ├─TableReader(Build)	2.00	root		data:Selection
+│ │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.a))
+│ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│ └─TableReader(Probe)	9990.00	root		data:Selection
+│   └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.a))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	4.00	root		left outer join, equal:[eq(test.t1.a, test.t2.a)]
+  ├─TableReader(Build)	3.00	root		data:Selection
+  │ └─Selection	3.00	cop[tikv]		not(isnull(test.t2.a))
+  │   └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t1.a=t4.a;
+id	estRows	task	access object	operator info
+HashJoin	4.00	root		left outer join, equal:[eq(test.t1.a, test.t4.a)]
+├─HashJoin(Build)	2.50	root		inner join, equal:[eq(test.t3.a, test.t4.a)]
+│ ├─TableReader(Build)	2.00	root		data:Selection
+│ │ └─Selection	2.00	cop[tikv]		not(isnull(test.t3.a))
+│ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
+│ └─TableReader(Probe)	9990.00	root		data:Selection
+│   └─Selection	9990.00	cop[tikv]		not(isnull(test.t4.a))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	4.00	root		left outer join, equal:[eq(test.t1.a, test.t2.a)]
+  ├─TableReader(Build)	3.00	root		data:Selection
+  │ └─Selection	3.00	cop[tikv]		not(isnull(test.t2.a))
+  │   └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+drop table if exists t3;
+create table t3(a char(10), primary key (a));
+insert into t3 values ('a');
+select * from t3 where a > 0x80;
+Error 1105: Cannot convert string '\x80' from binary to utf8mb4

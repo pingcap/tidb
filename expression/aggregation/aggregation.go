@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,19 +16,24 @@ package aggregation
 
 import (
 	"bytes"
+	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Aggregation stands for aggregate functions.
 type Aggregation interface {
 	// Update during executing.
-	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error
+	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error
 
 	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
 	// sum and count values at the same time.
@@ -36,10 +42,10 @@ type Aggregation interface {
 	// GetResult will be called when all data have been processed.
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
-	// Create a new AggEvaluateContext for the aggregation function.
+	// CreateContext creates a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 
-	// Reset the content of the evaluate context.
+	// ResetContext resets the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
 }
 
@@ -49,7 +55,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 	for _, child := range expr.Children {
 		arg, err := expression.PBToExpr(child, fieldTps, sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		args = append(args, arg)
 	}
@@ -63,9 +69,9 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 	case tipb.ExprType_GroupConcat:
 		return &concatFunction{aggFunction: newAggFunc(ast.AggFuncGroupConcat, args, false)}, nil
 	case tipb.ExprType_Max:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, false), isMax: true}, nil
+		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMax, args, false), isMax: true, ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
 	case tipb.ExprType_Min:
-		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false)}, nil
+		return &maxMinFunction{aggFunction: newAggFunc(ast.AggFuncMin, args, false), ctor: collate.GetCollator(args[0].GetType().GetCollate())}, nil
 	case tipb.ExprType_First:
 		return &firstRowFunction{aggFunction: newAggFunc(ast.AggFuncFirstRow, args, false)}, nil
 	case tipb.ExprType_Agg_BitOr:
@@ -90,11 +96,21 @@ type AggEvaluateContext struct {
 // AggFunctionMode stands for the aggregation function's mode.
 type AggFunctionMode int
 
+// |-----------------|--------------|--------------|
+// | AggFunctionMode | input        | output       |
+// |-----------------|--------------|--------------|
+// | CompleteMode    | origin data  | final result |
+// | FinalMode       | partial data | final result |
+// | Partial1Mode    | origin data  | partial data |
+// | Partial2Mode    | partial data | partial data |
+// | DedupMode       | origin data  | origin data  |
+// |-----------------|--------------|--------------|
 const (
-	// CompleteMode function accepts origin data.
 	CompleteMode AggFunctionMode = iota
-	// FinalMode function accepts partial data.
 	FinalMode
+	Partial1Mode
+	Partial2Mode
+	DedupMode
 )
 
 type aggFunction struct {
@@ -102,11 +118,10 @@ type aggFunction struct {
 }
 
 func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool) aggFunction {
-	return aggFunction{AggFuncDesc: &AggFuncDesc{
-		Name:        funcName,
-		Args:        args,
-		HasDistinct: hasDistinct,
-	}}
+	agg := &AggFuncDesc{HasDistinct: hasDistinct}
+	agg.Name = funcName
+	agg.Args = args
+	return aggFunction{AggFuncDesc: agg}
 }
 
 // CreateContext implements Aggregation interface.
@@ -125,11 +140,11 @@ func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 	evalCtx.Value.SetNull()
 }
 
-func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row types.Row) error {
+func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if value.IsNull() {
 		return nil
@@ -137,7 +152,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	if af.HasDistinct {
 		d, err1 := evalCtx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
-			return errors.Trace(err1)
+			return err1
 		}
 		if !d {
 			return nil
@@ -145,8 +160,70 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	}
 	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	evalCtx.Count++
 	return nil
+}
+
+// NeedCount indicates whether the aggregate function should record count.
+func NeedCount(name string) bool {
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+}
+
+// NeedValue indicates whether the aggregate function should record value.
+func NeedValue(name string) bool {
+	switch name {
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
+		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor, ast.AggFuncApproxPercentile:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsAllFirstRow checks whether functions in `aggFuncs` are all FirstRow.
+func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
+	for _, fun := range aggFuncs {
+		if fun.Name != ast.AggFuncFirstRow {
+			return false
+		}
+	}
+	return true
+}
+
+// CheckAggPushDown checks whether an agg function can be pushed to storage.
+func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
+		return false
+	}
+	if aggFunc.Name == ast.AggFuncApproxPercentile {
+		return false
+	}
+	ret := true
+	switch storeType {
+	case kv.TiFlash:
+		ret = CheckAggPushFlash(aggFunc)
+	case kv.TiKV:
+		// TiKV does not support group_concat now
+		ret = aggFunc.Name != ast.AggFuncGroupConcat
+	}
+	if ret {
+		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
+	}
+	return ret
+}
+
+// CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
+func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
+	for _, arg := range aggFunc.Args {
+		if arg.GetType().GetType() == mysql.TypeDuration {
+			return false
+		}
+	}
+	switch aggFunc.Name {
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct, ast.AggFuncGroupConcat:
+		return true
+	}
+	return false
 }

@@ -8,76 +8,97 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package types
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testSetSuite{})
-
-type testSetSuite struct {
-}
-
-func (s *testSetSuite) TestSet(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSet(t *testing.T) {
 	elems := []string{"a", "b", "c", "d"}
-	tbl := []struct {
-		Name          string
-		ExpectedValue uint64
-		ExpectedName  string
-	}{
-		{"a", 1, "a"},
-		{"a,b,a", 3, "a,b"},
-		{"b,a", 3, "a,b"},
-		{"a,b,c,d", 15, "a,b,c,d"},
-		{"d", 8, "d"},
-		{"", 0, ""},
-		{"0", 0, ""},
-	}
 
-	for _, t := range tbl {
-		e, err := ParseSetName(elems, t.Name)
-		c.Assert(err, IsNil)
-		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
-		c.Assert(e.String(), Equals, t.ExpectedName)
-	}
+	t.Run("ParseSet", func(t *testing.T) {
+		tests := []struct {
+			Name          string
+			ExpectedValue uint64
+			ExpectedName  string
+		}{
+			{"a", 1, "a"},
+			{"a,b,a", 3, "a,b"},
+			{"b,a", 3, "a,b"},
+			{"a,b,c,d", 15, "a,b,c,d"},
+			{"d", 8, "d"},
+			{"", 0, ""},
+			{"0", 0, ""},
+		}
 
-	tblNumber := []struct {
-		Number       uint64
-		ExpectedName string
-	}{
-		{0, ""},
-		{1, "a"},
-		{3, "a,b"},
-		{9, "a,d"},
-	}
+		for _, collation := range []string{mysql.DefaultCollationName, "utf8_unicode_ci"} {
+			for _, test := range tests {
+				e, err := ParseSet(elems, test.Name, collation)
+				require.NoError(t, err)
+				require.Equal(t, float64(test.ExpectedValue), e.ToNumber())
+				require.Equal(t, test.ExpectedName, e.String())
+			}
+		}
+	})
 
-	for _, t := range tblNumber {
-		e, err := ParseSetValue(elems, t.Number)
-		c.Assert(err, IsNil)
-		c.Assert(e.String(), Equals, t.ExpectedName)
-		c.Assert(e.ToNumber(), Equals, float64(t.Number))
-	}
+	t.Run("ParseSet_ci", func(t *testing.T) {
+		tests := []struct {
+			Name          string
+			ExpectedValue uint64
+			ExpectedName  string
+		}{
+			{"A ", 1, "a"},
+			{"a,B,a", 3, "a,b"},
+		}
 
-	tblErr := []string{
-		"a.e",
-		"e.f",
-	}
-	for _, t := range tblErr {
-		_, err := ParseSetName(elems, t)
-		c.Assert(err, NotNil)
-	}
+		for _, test := range tests {
+			e, err := ParseSet(elems, test.Name, "utf8_general_ci")
+			require.NoError(t, err)
+			require.Equal(t, float64(test.ExpectedValue), e.ToNumber())
+			require.Equal(t, test.ExpectedName, e.String())
+		}
+	})
 
-	tblNumberErr := []uint64{
-		100, 16, 64,
-	}
-	for _, t := range tblNumberErr {
-		_, err := ParseSetValue(elems, t)
-		c.Assert(err, NotNil)
-	}
+	t.Run("ParseSetValue", func(t *testing.T) {
+		tests := []struct {
+			Number       uint64
+			ExpectedName string
+		}{
+			{0, ""},
+			{1, "a"},
+			{3, "a,b"},
+			{9, "a,d"},
+		}
+
+		for _, test := range tests {
+			e, err := ParseSetValue(elems, test.Number)
+			require.NoError(t, err)
+			require.Equal(t, float64(test.Number), e.ToNumber())
+			require.Equal(t, test.ExpectedName, e.String())
+		}
+	})
+
+	t.Run("ParseSet_err", func(t *testing.T) {
+		tests := []string{"a.e", "e.f"}
+		for _, test := range tests {
+			_, err := ParseSet(elems, test, mysql.DefaultCollationName)
+			require.Error(t, err)
+		}
+	})
+
+	t.Run("ParseSetValue_err", func(t *testing.T) {
+		tests := []uint64{100, 16, 64}
+		for _, test := range tests {
+			_, err := ParseSetValue(elems, test)
+			require.Error(t, err)
+		}
+	})
 }

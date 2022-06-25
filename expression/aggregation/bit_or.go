@@ -8,15 +8,16 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type bitOrFunction struct {
@@ -34,14 +35,22 @@ func (bf *bitOrFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *Agg
 }
 
 // Update implements Aggregation interface.
-func (bf *bitOrFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (bf *bitOrFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if !value.IsNull() {
-		evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() | value.GetUint64())
+		if value.Kind() == types.KindUint64 {
+			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() | value.GetUint64())
+		} else {
+			int64Value, err := value.ToInt64(sc)
+			if err != nil {
+				return err
+			}
+			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() | uint64(int64Value))
+		}
 	}
 	return nil
 }

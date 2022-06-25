@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Copyright 2013 The Go-MySQL-Driver Authors. All rights reserved.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -19,19 +33,6 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-// Copyright 2015 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package server
 
 import (
@@ -39,14 +40,27 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
+	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
+
+func parseNullTermString(b []byte) (str []byte, remain []byte) {
+	off := bytes.IndexByte(b, 0)
+	if off == -1 {
+		return nil, b
+	}
+	return b[:off], b[off+1:]
+}
 
 func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 	switch b[0] {
@@ -77,6 +91,9 @@ func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 		return
 	}
 
+	// https://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer: If the first byte of a packet is a length-encoded integer and its byte value is 0xfe, you must check the length of the packet to verify that it has enough space for a 8-byte integer.
+	// TODO: 0xff is undefined
+
 	// 0-250: value of first byte
 	num = uint64(b[0])
 	n = 1
@@ -86,7 +103,7 @@ func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 func dumpLengthEncodedInt(buffer []byte, n uint64) []byte {
 	switch {
 	case n <= 250:
-		return append(buffer, tinyIntCache[n]...)
+		return append(buffer, byte(n))
 
 	case n <= 0xffff:
 		return append(buffer, 0xfc, byte(n), byte(n>>8))
@@ -151,18 +168,9 @@ func dumpUint64(buffer []byte, n uint64) []byte {
 	return buffer
 }
 
-var tinyIntCache [251][]byte
-
-func init() {
-	for i := 0; i < len(tinyIntCache); i++ {
-		tinyIntCache[i] = []byte{byte(i)}
-	}
-}
-
 func dumpBinaryTime(dur time.Duration) (data []byte) {
 	if dur == 0 {
-		data = tinyIntCache[0]
-		return
+		return []byte{0}
 	}
 	data = make([]byte, 13)
 	data[0] = 12
@@ -171,16 +179,16 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 		dur = -dur
 	}
 	days := dur / (24 * time.Hour)
-	dur -= days * 24 * time.Hour
+	dur -= days * 24 * time.Hour //nolint:durationcheck
 	data[2] = byte(days)
 	hours := dur / time.Hour
-	dur -= hours * time.Hour
+	dur -= hours * time.Hour //nolint:durationcheck
 	data[6] = byte(hours)
 	minutes := dur / time.Minute
-	dur -= minutes * time.Minute
+	dur -= minutes * time.Minute //nolint:durationcheck
 	data[7] = byte(minutes)
 	seconds := dur / time.Second
-	dur -= seconds * time.Second
+	dur -= seconds * time.Second //nolint:durationcheck
 	data[8] = byte(seconds)
 	if dur == 0 {
 		data[0] = 8
@@ -190,35 +198,46 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
-func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, error) {
-	if t.Type == mysql.TypeTimestamp && loc != nil {
-		// TODO: Consider time_zone variable.
-		t1, err := t.Time.GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.Time)
-		}
-		t.Time = types.FromGoTime(t1.In(loc))
-	}
-
-	year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
-	if t.IsZero() {
-		year, mon, day = 1, int(time.January), 1
-	}
-	switch t.Type {
+func dumpBinaryDateTime(data []byte, t types.Time) []byte {
+	year, mon, day := t.Year(), t.Month(), t.Day()
+	switch t.Type() {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
-		data = append(data, 11)
-		data = dumpUint16(data, uint16(year))
-		data = append(data, byte(mon), byte(day), byte(t.Time.Hour()), byte(t.Time.Minute()), byte(t.Time.Second()))
-		data = dumpUint32(data, uint32(t.Time.Microsecond()))
+		if t.IsZero() {
+			// All zero.
+			data = append(data, 0)
+		} else if t.Microsecond() != 0 {
+			// Has micro seconds.
+			data = append(data, 11)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+			data = dumpUint32(data, uint32(t.Microsecond()))
+		} else if t.Hour() != 0 || t.Minute() != 0 || t.Second() != 0 {
+			// Has HH:MM:SS
+			data = append(data, 7)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+		} else {
+			// Only YY:MM:DD
+			data = append(data, 4)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day))
+		}
 	case mysql.TypeDate:
-		data = append(data, 4)
-		data = dumpUint16(data, uint16(year)) //year
-		data = append(data, byte(mon), byte(day))
+		if t.IsZero() {
+			data = append(data, 0)
+		} else {
+			data = append(data, 4)
+			data = dumpUint16(data, uint16(year)) // year
+			data = append(data, byte(mon), byte(day))
+		}
 	}
-	return data, nil
+	return data
 }
 
-func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, error) {
+func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {
+	if d == nil {
+		d = newResultEncoder(charset.CharsetUTF8MB4)
+	}
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
 	numBytes4Null := (len(columns) + 7 + 2) / 8
@@ -249,29 +268,134 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte,
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
+			d.updateDataEncoding(columns[i].Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			var err error
-			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), nil)
-			if err != nil {
-				return buffer, errors.Trace(err)
-			}
+			buffer = dumpBinaryDateTime(buffer, row.GetTime(i))
 		case mysql.TypeDuration:
-			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i).Duration)...)
+			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
+			d.updateDataEncoding(columns[i].Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetSet(i).String()))
+			d.updateDataEncoding(columns[i].Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetJSON(i).String()))
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
-			return nil, errInvalidType.Gen("invalid type %v", columns[i].Type)
+			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
 	}
 	return buffer, nil
 }
 
-func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, error) {
+type inputDecoder struct {
+	encoding charset.Encoding
+}
+
+func newInputDecoder(chs string) *inputDecoder {
+	return &inputDecoder{
+		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
+	}
+}
+
+func (i *inputDecoder) decodeInput(src []byte) []byte {
+	result, err := i.encoding.Transform(nil, src, charset.OpDecode)
+	if err != nil {
+		return src
+	}
+	return result
+}
+
+type resultEncoder struct {
+	// chsName and encoding are unchanged after the initialization from
+	// session variable @@character_set_results.
+	chsName  string
+	encoding charset.Encoding
+
+	// dataEncoding can be updated to match the column data charset.
+	dataEncoding charset.Encoding
+
+	buffer *bytes.Buffer
+
+	isBinary     bool
+	isNull       bool
+	dataIsBinary bool
+}
+
+// newResultEncoder creates a new resultEncoder.
+func newResultEncoder(chs string) *resultEncoder {
+	return &resultEncoder{
+		chsName:  chs,
+		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
+		buffer:   &bytes.Buffer{},
+		isBinary: chs == charset.CharsetBin,
+		isNull:   len(chs) == 0,
+	}
+}
+
+// clean prevent the resultEncoder from holding too much memory.
+func (d *resultEncoder) clean() {
+	d.buffer = nil
+}
+
+func (d *resultEncoder) updateDataEncoding(chsID uint16) {
+	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
+	if err != nil {
+		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
+	}
+	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
+	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
+}
+
+func (d *resultEncoder) columnTypeInfoCharsetID(info *ColumnInfo) uint16 {
+	// Only replace the charset when @@character_set_results is valid and
+	// the target column is a non-binary string.
+	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {
+		return info.Charset
+	}
+	if info.Charset == mysql.BinaryDefaultCollationID {
+		return mysql.BinaryDefaultCollationID
+	}
+	return uint16(mysql.CharsetNameToID(d.chsName))
+}
+
+// encodeMeta encodes bytes for meta info like column names.
+// Note that the result should be consumed immediately.
+func (d *resultEncoder) encodeMeta(src []byte) []byte {
+	return d.encodeWith(src, d.encoding)
+}
+
+// encodeData encodes bytes for row data.
+// Note that the result should be consumed immediately.
+func (d *resultEncoder) encodeData(src []byte) []byte {
+	// For the following cases, TiDB encodes the results with column charset
+	// instead of @@character_set_results:
+	//   - @@character_set_result = null.
+	//   - @@character_set_result = binary.
+	//   - The column is binary type like blob, binary char/varchar.
+	if d.isNull || d.isBinary || d.dataIsBinary {
+		// Use the column charset to encode.
+		return d.encodeWith(src, d.dataEncoding)
+	}
+	return d.encodeWith(src, d.encoding)
+}
+
+func (d *resultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
+	data, err := enc.Transform(d.buffer, src, charset.OpEncode)
+	if err != nil {
+		logutil.BgLogger().Debug("encode error", zap.Error(err))
+	}
+	return data
+}
+
+func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row, d *resultEncoder) ([]byte, error) {
+	if d == nil {
+		d = newResultEncoder(charset.CharsetUTF8MB4)
+	}
 	tmp := make([]byte, 0, 20)
 	for i, col := range columns {
 		if row.IsNull(i) {
@@ -279,8 +403,17 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 			continue
 		}
 		switch col.Type {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong:
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
 			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
+			buffer = dumpLengthEncodedString(buffer, tmp)
+		case mysql.TypeYear:
+			year := row.GetInt64(i)
+			tmp = tmp[:0]
+			if year == 0 {
+				tmp = append(tmp, '0', '0', '0', '0')
+			} else {
+				tmp = strconv.AppendInt(tmp, year, 10)
+			}
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeLonglong:
 			if mysql.HasUnsignedFlag(uint(columns[i].Flag)) {
@@ -291,14 +424,14 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeFloat:
 			prec := -1
-			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
+			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = appendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
 			prec := types.UnspecifiedLength
-			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec {
+			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
@@ -307,33 +440,68 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
+			d.updateDataEncoding(col.Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetDuration(i).String()))
+			dur := row.GetDuration(i, int(col.Decimal))
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(dur.String()))
 		case mysql.TypeEnum:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
+			d.updateDataEncoding(col.Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetSet(i).String()))
+			d.updateDataEncoding(col.Charset)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetJSON(i).String()))
+			// The collation of JSON type is always binary.
+			// To compatible with MySQL, here we treat it as utf-8.
+			d.updateDataEncoding(mysql.DefaultCollationID)
+			buffer = dumpLengthEncodedString(buffer, d.encodeData(hack.Slice(row.GetJSON(i).String())))
 		default:
-			return nil, errInvalidType.Gen("invalid type %v", columns[i].Type)
+			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
 	}
 	return buffer, nil
 }
 
+func lengthEncodedIntSize(n uint64) int {
+	switch {
+	case n <= 250:
+		return 1
+
+	case n <= 0xffff:
+		return 3
+
+	case n <= 0xffffff:
+		return 4
+	}
+
+	return 9
+}
+
 const (
-	expFormatBig   = 1e15
-	expFormatSmall = 1e-15
+	expFormatBig     = 1e15
+	expFormatSmall   = 1e-15
+	defaultMySQLPrec = 5
 )
 
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
+	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
+		return []byte{'0'}
+	}
+	isEFormat := false
+	if bitSize == 32 {
+		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
+	} else {
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+	}
 	var out []byte
-	if prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)) {
+	if isEFormat {
+		if bitSize == 32 {
+			prec = defaultMySQLPrec
+		}
 		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
 		valStr := out[len(in):]
 		// remove the '+' from the string for compatibility.
@@ -342,8 +510,36 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 			plusPosInOut := len(in) + plusPos
 			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
 		}
+		// remove extra '0'
+		ePos := bytes.IndexByte(valStr, 'e')
+		pointPos := bytes.IndexByte(valStr, '.')
+		ePosInOut := len(in) + ePos
+		pointPosInOut := len(in) + pointPos
+		validPos := ePosInOut
+		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
+			if out[i] == '0' || out[i] == '.' {
+				validPos = i
+			} else {
+				break
+			}
+		}
+		out = append(out[:validPos], out[ePosInOut:]...)
 	} else {
 		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
 	}
 	return out
+}
+
+// CorsHandler adds Cors Header if `cors` config is set.
+type CorsHandler struct {
+	handler http.Handler
+	cfg     *config.Config
+}
+
+func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if h.cfg.Cors != "" {
+		w.Header().Set("Access-Control-Allow-Origin", h.cfg.Cors)
+		w.Header().Set("Access-Control-Allow-Methods", "GET")
+	}
+	h.handler.ServeHTTP(w, req)
 }

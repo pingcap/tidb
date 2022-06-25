@@ -8,47 +8,30 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
+	"context"
 	"strings"
 	"sync"
+	"testing"
 
-	"github.com/juju/errors"
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testForeighKeySuite{})
-
-type testForeighKeySuite struct {
-	store  kv.Storage
-	dbInfo *model.DBInfo
-	d      *ddl
-	ctx    sessionctx.Context
-}
-
-func (s *testForeighKeySuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	s.store = testCreateStore(c, "test_foreign")
-}
-
-func (s *testForeighKeySuite) TearDownSuite(c *C) {
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
-}
-
-func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -72,18 +55,21 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 	}
 
 	job := &model.Job{
-		SchemaID:   s.dbInfo.ID,
+		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := s.d.doDDLJob(s.ctx, job)
-	c.Assert(err, IsNil)
+	err := sessiontxn.NewTxn(context.Background(), ctx)
+	require.NoError(t, err)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
 	return job
 }
 
-func testDropForeignKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
+func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -91,10 +77,11 @@ func testDropForeignKey(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBIn
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -111,37 +98,32 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 	return nil
 }
 
-func (s *testForeighKeySuite) TestForeignKey(c *C) {
-	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
-	defer d.Stop()
-	s.d = d
-	s.dbInfo = testSchemaInfo(c, d, "test_foreign")
-	ctx := testNewContext(d)
-	s.ctx = ctx
-	testCreateSchema(c, ctx, d, s.dbInfo)
-	tblInfo := testTableInfo(c, d, "t", 3)
+func TestForeignKey(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
 
-	err := ctx.NewTxn()
-	c.Assert(err, IsNil)
+	d := dom.DDL()
+	dbInfo, err := testSchemaInfo(store, "test_foreign")
+	require.NoError(t, err)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
+	tblInfo, err := testTableInfo(store, "t", 3)
+	require.NoError(t, err)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-
-	err = ctx.Txn().Commit(context.Background())
-	c.Assert(err, IsNil)
+	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
 
 	// fix data race
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobUpdatedExported = func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -153,35 +135,36 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		checkOK = true
 	}
+	originalHook := d.GetHook()
+	defer d.SetHook(originalHook)
 	d.SetHook(tc)
 
-	d.Stop()
-	d.start(context.Background())
-
-	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
-	testCheckJobDone(c, d, job, true)
-	err = ctx.Txn().Commit(context.Background())
-	c.Assert(err, IsNil)
+	ctx := testkit.NewTestKit(t, store).Session()
+	job := testCreateForeignKey(t, d, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
+	testCheckJobDone(t, store, job.ID, true)
+	require.NoError(t, err)
 	mu.Lock()
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	require.NoError(t, hErr)
+	require.True(t, ok)
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
 	mu.Lock()
 	checkOK = false
 	mu.Unlock()
-	tc.onJobUpdated = func(job *model.Job) {
+	// fix data race pr/#9491
+	tc2 := &ddl.TestDDLCallback{}
+	tc2.OnJobUpdatedExported = func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -193,31 +176,21 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		checkOK = true
 	}
+	d.SetHook(tc2)
 
-	d.Stop()
-	d.start(context.Background())
-
-	job = testDropForeignKey(c, ctx, d, s.dbInfo, tblInfo, "c1_fk")
-	testCheckJobDone(c, d, job, false)
+	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
+	testCheckJobDone(t, store, job.ID, false)
 	mu.Lock()
 	hErr = hookErr
 	ok = checkOK
 	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
+	require.NoError(t, hErr)
+	require.True(t, ok)
+	d.SetHook(originalHook)
 
-	err = ctx.NewTxn()
-	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(t, store)
+	jobID := testDropTable(tk, t, dbInfo.Name.L, tblInfo.Name.L, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	tc.onJobUpdated = func(job *model.Job) {
-	}
-
-	d.Stop()
-	d.start(context.Background())
-
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(c, d, job, false)
-
-	err = ctx.Txn().Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "TestTraceCE",
+    "cases": [
+      "a > 0 and a < 2",
+      "a >= 1 and a < 10",
+      "a < 3 or b < 4",
+      "a = 1 and b = 2",
+      "a < 5 or a > 10"
+    ]
+  }
+]

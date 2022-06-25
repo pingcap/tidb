@@ -1,0 +1,29 @@
+# diff Configuration.
+
+check-thread-count = 4
+
+export-fix-sql = true
+
+check-struct-only = false
+
+[task]
+    output-dir = "./output"
+
+    source-instances = ["mysql1"]
+
+    target-instance = "tidb0"
+
+    target-check-tables = ["all_generate_column.t"]
+
+[data-sources]
+[data-sources.mysql1]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = ""
+
+[data-sources.tidb0]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = ""

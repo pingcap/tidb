@@ -1,0 +1,113 @@
+[
+  {
+    "name": "TestCompIndexInExprCorrCol",
+    "cases": [
+      "explain format = 'brief' select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
+      "select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t"
+    ]
+  },
+  {
+    "name": "TestIndexStringIsTrueRange",
+    "cases": [
+      "explain format = 'brief' select * from t0 where c0",
+      "explain format = 'brief' select * from t0 where c0 and c0 > '123'",
+      "explain format = 'brief' select * from t0 where c0 and c0 <> '123'",
+      "explain format = 'brief' select * from t0 where c0 is true",
+      "explain format = 'brief' select * from t0 where c0 is false",
+      "explain format = 'brief' select * from t0 where c0 and c0 in ('123','456','789')",
+      "explain format = 'brief' select * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;"
+    ]
+  },
+  {
+    "name": "TestCompIndexDNFMatch",
+    "cases": [
+      "select * from t where a = 1 and b in (1, 2) and c > 1;",
+      "select * from t where a = 1 and (b = 1 or b = 2) and c > 1;",
+      "select * from t where a = 1 and (b = 1 or b in (2, 3)) and c > 1;",
+      "select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;",
+      "select * from t where a = 1 and (b is null or b = 2);",
+      "select * from t where a = 1 and (b is null or b = 2) and c > 1;",
+      "select * from t where a = 1 and b is null and c > 1;",
+      "select * from t where a = 1 and b is null and b is null and c > 1;",
+      "select * from t where a = 1 and b is null and b = 1 and c > 1;"
+    ]
+  },
+  {
+    "name": "TestCompIndexMultiColDNF1",
+    "cases": [
+      "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;"
+    ]
+  },
+  {
+    "name": "TestCompIndexMultiColDNF2",
+    "cases": [
+      // TODO: row count of BatchPointGet should be 1.00 instead of 2.00 actually, but getEqualCondSelectivity specially
+      // handles unique index, i.e, row count 1.00 is returned with CMSketch not checked at all. We should optimize this.
+      "select * from t where a = 1 and (b,c) in ((1,1),(2,3));",
+      "select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 3));",
+      "select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;"
+    ]
+  },
+  {
+    "name": "TestPrefixIndexMultiColDNF",
+    "cases": [
+      "select * from t2 where t='aaaa';",
+      "select * from t2 where t='aaaa' or t = 'a';",
+      "select * from t2 where t='aaaa';",
+      "select * from t2 where t='aaaa' or t = 'a';"
+    ]
+  },
+  {
+    "name": "TestIndexRangeForBit",
+    "cases": [
+      "select * from t;",
+      "select * from t where a = 0;",
+      "select * from t where a = 0 or a = 4;",
+      "select * from t where a = 1;",
+      "select * from t where a = -1;",
+      "select * from t where a = 3;",
+      "select * from t where a < 1;",
+      "select * from t where a < 3;",
+      "select * from t where a < -1;",
+      "select * from t where a > 0;",
+      "select * from t where a > -1;",
+      "select * from t where a > 3;"
+    ]
+  },
+  {
+    "name": "TestIndexRangeForDecimal",
+    "cases": [
+      "select * from t1 use index(a) where a in (-1,0);",
+      "select * from t1 use index(a) where a = -1;",
+      "select * from t1 use index(a) where a > -1;",
+      "select * from t1 use index(a) where a < -1;",
+      "select * from t1 use index(a) where a <= -1;",
+      "select * from t1 use index(a) where a >= -1;",
+      "select * from t2 use index(idx) where a = 1 and b in (-1,0);",
+      "select * from t2 use index(idx) where a = 1 and b = -1;",
+      "select * from t2 use index(idx) where a = 1 and b > -1;",
+      "select * from t2 use index(idx) where a = 1 and b < -1;",
+      "select * from t2 use index(idx) where a = 1 and b <= -1;",
+      "select * from t2 use index(idx) where a = 1 and b >= -1;"
+    ]
+  },
+  {
+    "name": "TestPrefixIndexAppendPointRanges",
+    "cases": [
+      "select * from IDT_20755 use index (u_m_col) where col1 in (\"牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆\", \"物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒\", \"剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠\") and col2 in (72, 39, 73) and col3 != \"2024-10-19 08:55:32\"",
+      "select * from IDT_20755 use index (u_m_col) where col1 = \"xxxxxxxxxxxxxxx\" and col2 in (72, 73) and col3 != \"2024-10-19 08:55:32\"",
+      "select * from IDT_20755 use index (u_m_col) where col1 = \"xxxxxxxxxxxxxxx\" and col2 in (72, 73, 74) and col3 != \"2024-10-19 08:55:32\""
+    ]
+  }
+]

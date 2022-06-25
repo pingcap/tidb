@@ -8,15 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggregation
 
 import (
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type firstRowFunction struct {
@@ -24,7 +26,7 @@ type firstRowFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	if evalCtx.GotFirstRow {
 		return nil
 	}
@@ -33,9 +35,9 @@ func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stat
 	}
 	value, err := ff.Args[0].Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	evalCtx.Value = types.CopyDatum(value)
+	value.Copy(&evalCtx.Value)
 	evalCtx.GotFirstRow = true
 	return nil
 }

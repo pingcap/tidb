@@ -1,0 +1,304 @@
+set names utf8mb4;
+use test;
+drop table if exists t;
+create table t(a int, b real, c bigint as ((a+1)) virtual, e real as ((b+a)));
+insert into t values (1, 2.0, default, default), (2, 2.1, default, default), (5, 3.0, default, default),
+(5, -1.0, default, default), (0, 0.0, default, default), (-1, -2.0, default, default), (0, 0, default, default);
+
+alter table t add index idx_c(c);
+alter table t add index idx_e(e);
+
+set @@sql_mode="";
+
+# test generate column substitution
+# substitute where
+desc select * from t where a+1=3;
+select * from t where a+1=3;
+desc select a+1 from t where a+1=3;
+select a+1 from t where a+1=3;
+desc select c from t where a+1=3;
+select c from t where a+1=3;
+desc select * from t where b+a=3;
+select * from t where b+a=3;
+desc select b+a from t where b+a=3;
+select b+a from t where b+a=3;
+desc select e from t where b+a=3;
+select e from t where b+a=3;
+desc select a+1 from t where a+1 in (1, 2, 3);
+select a+1 from t where a+1 in (1, 2, 3);
+desc select * from t where a+1 in (1, 2, 3);
+select * from t where a+1 in (1, 2, 3);
+desc select a+1 from t where a+1 between 1 and 4;
+select a+1 from t where a+1 between 1 and 4;
+desc select * from t where a+1 between 1 and 4;
+select * from t where a+1 between 1 and 4;
+
+# substitute group by
+# uncomment these test case after we support virtual generate column push down
+#desc select * from t group by a+1;
+#select * from t group by a+1;
+#desc select a+1 from t group by a+1;
+#select a+1 from t group by a+1;
+#desc select b, avg(a+1) from t group by a+1;
+#select b, avg(a+1) from t group by a+1;
+#desc select count(a+1), max(a+1) from t group by a+1;
+#select count(a+1), max(a+1) from t group by a+1;
+#desc select * from t group by b+a;
+#select * from t group by b+a;
+#desc select b+a from t group by b+a;
+#select b+a from t group by b+a;
+#desc select b, avg(b+a) from t group by b+a;
+#select b, avg(b+a) from t group by b+a;
+#desc select count(b+a), max(b+a) from t group by b+a;
+#select count(b+a), max(b+a) from t group by b+a;
+
+# substitute order by
+desc select * from t order by a+1;
+select * from t order by a+1;
+desc select a+1 from t order by a+1;
+select a+1 from t order by a+1;
+desc select b+a from t order by b+a;
+select b+a from t order by b+a;
+
+# test update
+desc update t set a=1 where a+1 = 3;
+desc update t set a=2, b = 3 where b+a = 3;
+
+# test delete
+desc delete from t where a+1 = 3;
+desc delete from t where b+a = 0;
+
+# test expression index substitution
+alter table t drop index idx_c;
+alter table t drop index idx_e;
+alter table t add index expr_idx_c((a+1));
+alter table t add index expr_idx_e((b+a));
+truncate table t;
+insert into t values (1, 2.0, default, default), (2, 2.1, default, default), (5, 3.0, default, default),
+(5, -1.0, default, default), (0, 0.0, default, default), (-1, -2.0, default, default), (0, 0, default, default);
+
+# substitute where
+desc select * from t where a+1=3;
+select * from t where a+1=3;
+desc select a+1 from t where a+1=3;
+select a+1 from t where a+1=3;
+desc select c from t where a+1=3;
+select c from t where a+1=3;
+desc select * from t where b+a=3;
+select * from t where b+a=3;
+desc select b+a from t where b+a=3;
+select b+a from t where b+a=3;
+desc select e from t where b+a=3;
+select e from t where b+a=3;
+desc select a+1 from t where a+1 in (1, 2, 3);
+select a+1 from t where a+1 in (1, 2, 3);
+desc select * from t where a+1 in (1, 2, 3);
+select * from t where a+1 in (1, 2, 3);
+desc select a+1 from t where a+1 between 1 and 4;
+select a+1 from t where a+1 between 1 and 4;
+desc select * from t where a+1 between 1 and 4;
+select * from t where a+1 between 1 and 4;
+
+# substitute group by
+# uncomment these test case after we support virtual generate column push down
+#desc select * from t group by a+1;
+#select * from t group by a+1;
+#desc select a+1 from t group by a+1;
+#select a+1 from t group by a+1;
+#desc select b, avg(a+1) from t group by a+1;
+#select b, avg(a+1) from t group by a+1;
+#desc select count(a+1), max(a+1) from t group by a+1;
+#select count(a+1), max(a+1) from t group by a+1;
+#desc select * from t group by b+a;
+#select * from t group by b+a;
+#desc select b+a from t group by b+a;
+#select b+a from t group by b+a;
+#desc select b, avg(b+a) from t group by b+a;
+#select b, avg(b+a) from t group by b+a;
+#desc select count(b+a), max(b+a) from t group by b+a;
+#select count(b+a), max(b+a) from t group by b+a;
+
+# substitute order by
+desc select * from t order by a+1;
+select * from t order by a+1;
+desc select a+1 from t order by a+1;
+select a+1 from t order by a+1;
+desc select b+a from t order by b+a;
+select b+a from t order by b+a;
+
+# test update
+desc update t set a=1 where a+1 = 3;
+desc update t set a=2, b = 3 where b+a = 3;
+
+# test delete
+desc delete from t where a+1 = 3;
+desc delete from t where b+a = 0;
+
+# test expression index substitution use point get
+alter table t drop index expr_idx_c;
+alter table t drop index expr_idx_e;
+truncate table t;
+alter table t add UNIQUE expr_idx_c((a+1));
+alter table t add UNIQUE expr_idx_e((b+a));
+insert into t values (2, 2.1, default, default);
+desc select * from t where a+1 = 3;
+
+# test flen for float and double
+drop table if exists t0;
+create table t0(c0 float(24), c1 double as (c0) unique);
+explain format = 'brief' select c0 from t0; -- TableRead
+
+drop table if exists t0;
+create table t0(c0 float(25), c1 double as (c0) unique);
+explain format = 'brief' select c0 from t0; -- IndexRead
+
+drop table if exists t0;
+create table t0(c0 double, c1 double as (c0) unique);
+explain format = 'brief' select c0 from t0; -- IndexRead
+
+drop table if exists t0;
+create table t0(c0 double, c1 double as (c0) unique);
+explain format = 'brief' select c0 from t0; -- IndexRead
+
+drop table if exists t0;
+create table t0(c0 float(24), c1 float as (c0) unique);
+explain format = 'brief' select c0 from t0; -- IndexRead
+
+drop table if exists t0;
+create table t0(c0 float(25), c1 float as (c0) unique);
+explain format = 'brief' select c0 from t0; -- TableRead
+
+drop table if exists t0;
+create table t0(c0 double, c1 float as (c0) unique);
+explain format = 'brief' select c0 from t0; -- TableRead
+
+drop table if exists t0;
+create table t0(c0 double, c1 float as (c0) unique);
+explain format = 'brief' select c0 from t0; -- TableRead
+
+drop table if exists tbl1;
+create table tbl1 (id int unsigned not null auto_increment primary key, s int, index((md5(s))));
+insert into tbl1 (id) select null; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1; insert into tbl1 (id) select null from tbl1;
+update tbl1 set s=id%32;
+explain format = 'brief' select count(*) from tbl1 where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+select count(*) from tbl1 use index() where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+
+drop table if exists t;
+create table t(a int, b varchar(10), key((lower(b)), (a+1)), key((upper(b))));
+insert into t values (1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E"), (6, "F");
+analyze table t;
+desc format = 'brief' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
+desc format = 'brief' select * from t where not (lower(b) >= "a");
+desc format = 'brief' select count(upper(b)) from t group by upper(b);
+desc format = 'brief' select max(upper(b)) from t group by upper(b);
+desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
+desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
+
+drop table if exists t;
+CREATE TABLE t (
+  `a` date DEFAULT NULL,
+  `b` datetime DEFAULT NULL,
+  `c` time DEFAULT NULL,
+  `d` timestamp NULL DEFAULT NULL,
+  `e` year(4) DEFAULT NULL,
+  KEY `expression_index` ((adddate(`a`, interval 10 microsecond))),
+  KEY `expression_index2` ((timediff(`b`, '2021-03-30 08:10:00.000001'))),
+  KEY `expression_index3` ((`d`+ timestamp'0000-00-00 00:00:00.00001'))
+);
+insert into t values ('2021-01-02', '2021-03-30 08:10:00', '12:01:03', '2021-08-13 04:10:44', 2021);
+select * from t use index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+select * from t ignore index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+select * from t use index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+select * from t ignore index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+select * from t use index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+select * from t ignore index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+
+drop table if exists t;
+create table t(a int, b int as (a+1), key((a+1)), key(b));
+desc format = 'brief' select a+1 from t;
+desc format = 'brief' select b from t;
+
+create table t01(a varchar(20));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+alter table t01 add index eidx ((concat_ws('expression_index', a, 'test')));
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) not like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+
+drop table if exists t1;
+create table t1(a char, b varchar(20), c char, d varchar(20));
+alter table t1 add index eidx ((export_set(3, a, c, ',', 5)));
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
+
+select @@tidb_allow_function_for_expression_index;
+
+CREATE TABLE `PK_S_MULTI_30_tmp` (
+  `COL1` double NOT NULL,
+  `COL2` double NOT NULL,
+  `COL3` double DEFAULT NULL,
+  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 0, 0);
+alter table `PK_S_MULTI_30_tmp` add index  ((ceil(col1)));
+alter table `PK_S_MULTI_30_tmp` add index  ((floor(col1)));
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 1, 0);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
+select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, primary key(c_int, c_str(9))  clustered, key idx((reverse(c_str))));
+replace into t (c_int, c_str) values (9, "beautiful hermann");
+select reverse(c_str) from t use index(idx);
+
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, c_datetime datetime, c_timestamp timestamp, c_double double, c_decimal decimal(12, 6), c_enum enum('blue','green','red','yellow','white','orange','purple'), primary key (c_datetime) , key(c_int)  , key(c_datetime) , key((c_int + 1)), key((c_int -1)), key((lower(c_str))), key((md5(c_str))), key((reverse(c_str))), key((upper(c_str))));
+create table t2 like t1;
+insert into t1 values(11, 'loving grothendieck', '2020-02-02 19:25:49', '2020-03-27 15:17:14',     3.269, 1.851000, 'white' );
+insert into t1 values(11, 'quirky kapitsa'     , '2020-06-21 03:55:31', '2020-02-29 17:02:48',      6.94, 1.851000, 'yellow');
+insert into t1 values( 7, 'boring bouman'      , '2020-05-10 00:01:04', '2020-02-01 20:18:00', 84.096168, 6.996000, 'white' );
+insert into t2 values( 11, 'wizardly antonelli', '2020-01-30 17:27:17', '2020-01-01 10:05:31', 6.886177, 6.332000, 'green'   );
+insert into t2 values( 2, 'angry kapitsa'       , '2020-03-30 05:09:44', '2020-02-15 00:36:52', 95.798378, 3.118000, 'blue'  );
+insert into t2 values( 7, 'dreamy shamir'       , '2020-05-28 14:13:42', '2020-06-02 07:23:22', 26.623227, 3.105000, 'orange');
+begin;
+delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_decimal limit 1;
+desc format='brief' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+drop table t1, t2;
+
+drop table t;
+
+drop table if exists t1,t2;
+create table t1 (c_int int, c_str varchar(40) ,primary key (c_int)  , key(c_str(36))  , key((c_int + 1))) partition by hash (c_int) partitions 4 ;
+create table t2  like t1 ;
+insert into t1 values (1, 'sleepy kowalevski');
+insert into t2 values (3, 'unruffled chaplygin');
+select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from t1;
+select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
+
+drop table t1,t2;
+
+-- for issue 33237
+drop table if exists t1, t2;
+create table t1 (c_int int, c_decimal decimal(12, 6), primary key (c_int) nonclustered,key((c_int + 1))) ;
+create table t2 like t1;
+explain format = 'brief' select /*+ agg_to_cop() */ * from t1 where c_decimal in (select c_decimal from t2 where t2.c_int + 1 = 8 + 1);
+drop table t1;
+drop table t2;
+

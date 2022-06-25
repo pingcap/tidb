@@ -8,90 +8,93 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
-	"time"
+	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testStatSuite{})
+func TestDDLStatsInfo(t *testing.T) {
+	store, domain, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
+	d := domain.DDL()
 
-type testStatSuite struct {
-}
+	dbInfo, err := testSchemaInfo(store, "test_stat")
+	require.NoError(t, err)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+	tblInfo, err := testTableInfo(store, "t", 2)
+	require.NoError(t, err)
+	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
+	ctx := testkit.NewTestKit(t, store).Session()
+	err = sessiontxn.NewTxn(context.Background(), ctx)
+	require.NoError(t, err)
 
-func (s *testStatSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-}
+	m := testGetTable(t, domain, tblInfo.ID)
+	// insert t values (1, 1), (2, 2), (3, 3)
+	_, err = m.AddRecord(ctx, types.MakeDatums(1, 1))
+	require.NoError(t, err)
+	_, err = m.AddRecord(ctx, types.MakeDatums(2, 2))
+	require.NoError(t, err)
+	_, err = m.AddRecord(ctx, types.MakeDatums(3, 3))
+	require.NoError(t, err)
+	ctx.StmtCommit()
+	require.NoError(t, ctx.CommitTxn(context.Background()))
 
-func (s *testStatSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
-}
+	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
 
-func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
-	m, err := d.Stats(nil)
-	c.Assert(err, IsNil)
-	v := m[ddlSchemaVersion]
-	return v.(int64)
-}
-
-func (s *testStatSuite) TestStat(c *C) {
-	store := testCreateStore(c, "test_stat")
-	defer store.Close()
-
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
-	defer d.Stop()
-
-	time.Sleep(testLease)
-
-	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
-
-	// TODO: Get this information from etcd.
-	//	m, err := d.Stats(nil)
-	//	c.Assert(err, IsNil)
-	//	c.Assert(m[ddlOwnerID], Equals, d.uuid)
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo.Name},
-	}
-
-	ctx := mock.NewContext()
-	ctx.Store = store
-	done := make(chan error, 1)
-	go func() {
-		done <- d.doDDLJob(ctx, job)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 	}()
 
-	ticker := time.NewTicker(d.lease * 1)
-	defer ticker.Stop()
+	ctx = testkit.NewTestKit(t, store).Session()
+	done := make(chan error, 1)
+	go func() {
+		ctx.SetValue(sessionctx.QueryString, "skip")
+		done <- d.DoDDLJob(ctx, job)
+	}()
 
-	ver := s.getDDLSchemaVer(c, d)
-LOOP:
-	for {
+	exit := false
+	// a copy of ddl.ddlJobReorgHandle
+	ddlJobReorgHandle := "ddl_job_reorg_handle"
+	for !exit {
 		select {
-		case <-ticker.C:
-			d.close()
-			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
-			d.start(context.Background())
-			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
-			c.Assert(err, IsNil)
-			// TODO: Get this information from etcd.
-			// m, err := d.Stats(nil)
-			// c.Assert(err, IsNil)
-			break LOOP
+			require.NoError(t, err)
+			exit = true
+		case wg := <-ddl.TestCheckWorkerNumCh:
+			varMap, err := d.Stats(nil)
+			wg.Done()
+			require.NoError(t, err)
+			require.Equal(t, "1", varMap[ddlJobReorgHandle])
 		}
+	}
+}
+
+func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+	return &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args: []interface{}{unique, model.NewCIStr(indexName),
+			[]*ast.IndexPartSpecification{{
+				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
+				Length: types.UnspecifiedLength}}},
 	}
 }

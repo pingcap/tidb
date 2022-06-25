@@ -1,7 +1,3 @@
-// Copyright 2014 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,37 +8,34 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2014 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package types
 
 import (
 	"io"
-	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/parser/terror"
+	ast "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
-func IsTypeBlob(tp byte) bool {
-	switch tp {
-	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
-		return true
-	default:
-		return false
-	}
-}
+var IsTypeBlob = ast.IsTypeBlob
 
 // IsTypeChar returns a boolean indicating
 // whether the tp is the char type like a string type or a varchar type.
-func IsTypeChar(tp byte) bool {
-	return tp == mysql.TypeString || tp == mysql.TypeVarchar
-}
+var IsTypeChar = ast.IsTypeChar
 
 // IsTypeVarchar returns a boolean indicating
 // whether the tp is the varchar type like a varstring type or a varchar type.
@@ -73,9 +66,23 @@ func IsTypeTime(tp byte) bool {
 	return tp == mysql.TypeDatetime || tp == mysql.TypeDate || tp == mysql.TypeTimestamp
 }
 
-// IsTypeFloat returns a boolean indicating whether the tp is floating-point type.
-func IsTypeFloat(tp byte) bool {
-	return tp == mysql.TypeFloat || tp == mysql.TypeDouble
+// IsTypeInteger returns a boolean indicating whether the tp is integer type.
+func IsTypeInteger(tp byte) bool {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		return true
+	}
+	return false
+}
+
+// IsTypeNumeric returns a boolean indicating whether the tp is numeric type.
+func IsTypeNumeric(tp byte) bool {
+	switch tp {
+	case mysql.TypeBit, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeShort:
+		return true
+	}
+	return false
 }
 
 // IsTemporalWithDate returns a boolean indicating
@@ -87,54 +94,63 @@ func IsTemporalWithDate(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	if ft.Collate == charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)) {
-		return true
-	}
-	return false
+	return ft.GetCollate() == charset.CollationBin && IsString(ft.GetType())
 }
 
 // IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)) {
+	if ft.GetCollate() != charset.CollationBin && IsString(ft.GetType()) {
 		return true
 	}
 	return false
 }
 
-var type2Str = map[byte]string{
-	mysql.TypeBit:        "bit",
-	mysql.TypeBlob:       "text",
-	mysql.TypeDate:       "date",
-	mysql.TypeDatetime:   "datetime",
-	mysql.TypeDecimal:    "unspecified",
-	mysql.TypeNewDecimal: "decimal",
-	mysql.TypeDouble:     "double",
-	mysql.TypeEnum:       "enum",
-	mysql.TypeFloat:      "float",
-	mysql.TypeGeometry:   "geometry",
-	mysql.TypeInt24:      "mediumint",
-	mysql.TypeJSON:       "json",
-	mysql.TypeLong:       "int",
-	mysql.TypeLonglong:   "bigint",
-	mysql.TypeLongBlob:   "longtext",
-	mysql.TypeMediumBlob: "mediumtext",
-	mysql.TypeNull:       "null",
-	mysql.TypeSet:        "set",
-	mysql.TypeShort:      "smallint",
-	mysql.TypeString:     "char",
-	mysql.TypeDuration:   "time",
-	mysql.TypeTimestamp:  "timestamp",
-	mysql.TypeTiny:       "tinyint",
-	mysql.TypeTinyBlob:   "tinytext",
-	mysql.TypeVarchar:    "varchar",
-	mysql.TypeVarString:  "var_string",
-	mysql.TypeYear:       "year",
+// NeedRestoredData returns if a type needs restored data.
+// If the type is char and the collation is _bin, NeedRestoredData() returns false.
+func NeedRestoredData(ft *FieldType) bool {
+	if collate.NewCollationEnabled() &&
+		IsNonBinaryStr(ft) &&
+		!(collate.IsBinCollation(ft.GetCollate()) && !IsTypeVarchar(ft.GetType())) {
+		return true
+	}
+	return false
+}
+
+// IsString returns a boolean indicating
+// whether the field type is a string type.
+func IsString(tp byte) bool {
+	return IsTypeChar(tp) || IsTypeBlob(tp) || IsTypeVarchar(tp) || IsTypeUnspecified(tp)
+}
+
+var kind2Str = map[byte]string{
+	KindNull:          "null",
+	KindInt64:         "bigint",
+	KindUint64:        "unsigned bigint",
+	KindFloat32:       "float",
+	KindFloat64:       "double",
+	KindString:        "char",
+	KindBytes:         "bytes",
+	KindBinaryLiteral: "bit/hex literal",
+	KindMysqlDecimal:  "decimal",
+	KindMysqlDuration: "time",
+	KindMysqlEnum:     "enum",
+	KindMysqlBit:      "bit",
+	KindMysqlSet:      "set",
+	KindMysqlTime:     "datetime",
+	KindInterface:     "interface",
+	KindMinNotNull:    "min_not_null",
+	KindMaxValue:      "max_value",
+	KindRaw:           "raw",
+	KindMysqlJSON:     "json",
 }
 
 // TypeStr converts tp to a string.
-func TypeStr(tp byte) (r string) {
-	return type2Str[tp]
+var TypeStr = ast.TypeStr
+
+// KindStr converts kind to a string.
+func KindStr(kind byte) (r string) {
+	return kind2Str[kind]
 }
 
 // TypeToStr converts a field to a string.
@@ -143,18 +159,7 @@ func TypeStr(tp byte) (r string) {
 // Args:
 //	tp: type enum
 //	cs: charset
-func TypeToStr(tp byte, cs string) (r string) {
-	ts := type2Str[tp]
-	if cs != charset.CharsetBin {
-		return ts
-	}
-	if IsTypeBlob(tp) {
-		ts = strings.Replace(ts, "text", "blob", 1)
-	} else if IsTypeChar(tp) {
-		ts = strings.Replace(ts, "char", "binary", 1)
-	}
-	return ts
-}
+var TypeToStr = ast.TypeToStr
 
 // EOFAsNil filtrates errors,
 // If err is equal to io.EOF returns nil.
@@ -172,7 +177,7 @@ func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 
 // overflow returns an overflowed error.
 func overflow(v interface{}, tp byte) error {
-	return ErrOverflow.Gen("constant %v overflows %s", v, TypeStr(tp))
+	return ErrOverflow.GenWithStack("constant %v overflows %s", v, TypeStr(tp))
 }
 
 // IsTypeTemporal checks if a type is a temporal type.

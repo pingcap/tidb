@@ -1,0 +1,3082 @@
+[
+  {
+    "Name": "TestHintScope",
+    "Cases": [
+      {
+        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(test.t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)->Sort}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "IndexJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "RightHashJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.c,test.t.a)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Best": "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
+        "Best": "MergeInnerJoin{LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ s, count(s) from (select /*+ HASH_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Projection"
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ s, count(s) from (select /*+ STREAM_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Sort->Projection->StreamAgg->HashAgg->Projection"
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->HashAgg->Projection"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(test.t, c_d_e) */ * from t",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(test.t, c_d_e) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e) */ * from t",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(test.t, c_d_e) */ * from t",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t1` )"
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e) */ * from t t1",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t1` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t1, c_d_e) */ * from t t1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t.a,test.t.b)",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`), use_index(@`sel_1` `test`.`t2` `f`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.b)",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t1, c_d_e), FORCE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))}(test.t.a,test.t.b)",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t1` `c_d_e`), use_index(@`sel_1` `test`.`t2` `f`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t) */ f from t where f > 10",
+        "Best": "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t) */ f from t where f > 10",
+        "Best": "TableReader(Table(t)->Sel([gt(test.t.f, 10)]))",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, no_such_index) */ * from t",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, no_such_index) */ * from t",
+        "Best": "TableReader(Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "TableReader(Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ FORCE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+        "Best": "IndexLookUp(Index(t.f)[[NULL,+inf]], Table(t))->Sort",
+        "HasWarn": false,
+        "Hints": "use_index(@`sel_1` `test`.`t` `f`)"
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexMergeHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f_g`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t, primary, f_g) */ * from t where a < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Table(t), Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index_merge(@`sel_1` `t` `primary`, `f_g`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Table(t), Index(t.f_g)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index_merge(@`sel_1` `t` `primary`, `f_g`)"
+      },
+      {
+        "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
+      },
+      {
+        "SQL": "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+        "Best": "TableReader(Table(t)->Sel([or(lt(test.t.a, 1), gt(test.t.f, 2))]))",
+        "HasWarn": true,
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": false,
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
+      },
+      {
+        "SQL": "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+        "Best": "IndexMergeReader(PartialPlans->[Index(t.c_d_e)[[-inf,1)], Index(t.f)[(2,+inf]]], TablePlan->Table(t))",
+        "HasWarn": true,
+        "Hints": "use_index_merge(@`sel_1` `t` `c_d_e`, `f`)"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderSimpleCase",
+    "Cases": [
+      {
+        "SQL": "select * from t t1 use index(c_d_e)",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))"
+      },
+      {
+        "SQL": "select f from t use index() where f = 1",
+        "Best": "TableReader(Table(t)->Sel([eq(test.t.f, 1)]))"
+      },
+      {
+        "SQL": "select a from t where a between 1 and 2 order by c",
+        "Best": "TableReader(Table(t))->Sort->Projection"
+      },
+      {
+        "SQL": "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1] [5,5] [9,9] [13,13] [17,17]], Table(t))"
+      },
+      {
+        "SQL": "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.b],0,1)"
+      },
+      {
+        "SQL": "select * from t where t.e_str is null",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[NULL,NULL]], Table(t))"
+      },
+      {
+        "SQL": "select * from t where t.c is null",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.e],0,1)"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit, Table(t))"
+      },
+      {
+        "SQL": "select c from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t order by t.a limit 1",
+        "Best": "TableReader(Table(t)->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t order by t.a + t.b limit 1",
+        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#14],0,1)->Projection->Projection"
+      },
+      {
+        "SQL": "select c from t  limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit"
+      },
+      {
+        "SQL": "select c from t where c = 1 limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Limit)->Limit"
+      },
+      {
+        "SQL": "select c from t where c = 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])"
+      },
+      {
+        "SQL": "select c from t order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])"
+      },
+      {
+        "SQL": "select c from t where c = 1 order by e",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Sort->Projection"
+      },
+      {
+        "SQL": "select c, b from t where c = 1 limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))->Projection"
+      },
+      {
+        "SQL": "select c, b from t where c = 1 and e = 1 and b = 1 limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)])->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t where c = 1 order by d, c",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Sort->Projection"
+      },
+      {
+        "SQL": "select c_str from t where e_str = '1' order by d_str, c_str",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"1\",\"1\"]], Table(t))->Sort->Projection"
+      },
+      {
+        "SQL": "select c from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit)->Limit->Projection"
+      },
+      {
+        "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]])->TopN([test.t.a],0,1)->Projection"
+      },
+      {
+        "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit, Table(t))"
+      },
+      {
+        "SQL": "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"e\" \"d\" \"abcdefghij\",\"e\" \"d\" \"abcdefghij\"]], Table(t)->Sel([eq(test.t.c_str, abcdefghijk)]))"
+      },
+      {
+        "SQL": "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
+        "Best": "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"p\",\"p\"]], Table(t))"
+      },
+      {
+        "SQL": "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
+        "Best": "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
+      },
+      {
+        "SQL": "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
+        "Best": "UnionAll{Dual->Projection->Dual->Projection}->HashAgg->Sort"
+      },
+      {
+        "SQL": "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
+        "Best": "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Sort->Sort"
+      },
+      {
+        "SQL": "select * from (select *, NULL as xxx from t) t order by xxx",
+        "Best": "TableReader(Table(t))->Projection"
+      },
+      {
+        "SQL": "select * from t use index(f) where f = 1 and a = 1",
+        "Best": "PointGet(Index(t.f)[KindInt64 1])->Sel([eq(test.t.a, 1)])"
+      },
+      {
+        "SQL": "select * from t2 use index(b) where b = 1 and a = 1",
+        "Best": "PointGet(Index(t2.b)[KindInt64 1])->Sel([eq(test.t2.a, 1)])"
+      },
+      {
+        "SQL": "select f from t where a > 1",
+        "Best": "TableReader(Table(t))->Projection"
+      },
+      {
+        "SQL": "select f from t where a > 1 limit 10",
+        "Best": "TableReader(Table(t)->Limit)->Limit"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderJoin",
+    "Cases": [
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.c_str",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}(Column#25,Column#26)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
+        "Best": "LeftHashJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
+        "Best": "LeftHashJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.b,test.t.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)->Limit"
+      },
+      {
+        "SQL": "select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)->TopN([test.t.a],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
+        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.a)->Limit"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
+        "Best": "IndexJoin{PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 1 KindInt64 1])->TableReader(Table(t))}(test.t.b,test.t.a)->TopN([test.t.a],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.b)->TableReader(Table(t))}(test.t.b,test.t.b)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a order by t1.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
+        "Best": "RightHashJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
+        "Best": "IndexJoin{IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)->Projection"
+      },
+      {
+        "SQL": "select * from t where t.c in (select b from t s where s.a = t.a)",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)(test.t.c,test.t.b)"
+      },
+      {
+        "SQL": "select t.c in (select b from t s where s.a = t.a) from t",
+        "Best": "LeftHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.a)(test.t.c,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(test.t.a,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)->Sort"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.b and t2.a = t3.b",
+        "Best": "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))->Sort}(test.t.a,test.t.b)->Sort->TableReader(Table(t))->Sort}(test.t.a,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
+        "Best": "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d order by t1.c",
+        "Best": "MergeInnerJoin{MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)(test.t.d,test.t.d)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
+        "Best": "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t1.a = t3.a",
+        "Best": "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,NULL]], Table(t))}(test.t.a,test.t.c)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
+        "Best": "IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.a)->Projection"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.c,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.a and t2.b < 1",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([lt(test.t.b, 1)]))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2 on t1.d=t2.d and t2.c = 1",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[1 NULL,1 NULL]], Table(t))}(test.t.d,test.t.d)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.b",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 right outer join t t2 on t1.a = t2.b",
+        "Best": "RightHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ * from t t1 where t1.a in (select a from t t2)",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.c=t2.c and t1.f=t2.f",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,NULL]], Table(t))}(test.t.c,test.t.c)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a = t2.a and t1.f=t2.f",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.f=t2.f and t1.a=t2.a",
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a=t2.a and t2.a in (1, 2)",
+        "Best": "IndexJoin{BatchPointGet(Handle(t.a)[1 2])->TableReader(Table(t)->Sel([in(test.t.a, 1, 2)]))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1 NULL,1 NULL]], Table(t))}"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.b and t1.c=1 and t2.c=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+        "Best": "LeftHashJoin{IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t.b,test.t.b)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c > t1.d-10 and t2.c < t1.d+10",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
+        "Best": "LeftHashJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 2 KindInt64 4])}"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20",
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[(1 1 10,1 1 20)], Table(t))}"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderSubquery",
+    "Cases": [
+      {
+        "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)"
+      },
+      {
+        "SQL": "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->IndexReader(Index(t.f)[[NULL,+inf]]->StreamAgg)->StreamAgg}(Column#27,Column#25)->Sort"
+      },
+      {
+        "SQL": "select * from t where a in (select s.a from t s) order by t.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+      },
+      {
+        "SQL": "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->MergeSemiJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.c,test.t.c)(test.t.d,test.t.d)->Projection->StreamAgg}(Column#39,Column#37)"
+      },
+      {
+        "SQL": "select * from t where a in (select a from t) order by b",
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort"
+      },
+      {
+        "SQL": "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
+        "Best": "Apply{IndexReader(Index(t.c_d_e)[[NULL,+inf]])->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->StreamAgg}->Projection"
+      },
+      {
+        "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Projection}(test.t.a,test.t.a)->Projection"
+      },
+      {
+        "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
+        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Projection}(test.t.a,test.t.a)->Projection->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanTopN",
+    "Cases": [
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.a limit 1",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.b)->TopN([test.t.a],0,1)->TableReader(Table(t))}(test.t.b,test.t.b)->TopN([test.t.a],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.b limit 1",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)->TableReader(Table(t))}(test.t.b,test.t.b)->TopN([test.t.b],0,1)->TableReader(Table(t))}(test.t.b,test.t.b)->TopN([test.t.b],0,1)"
+      },
+      {
+        "SQL": "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b limit 1",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.b)->Limit->TableReader(Table(t))}(test.t.b,test.t.b)->Limit"
+      },
+      {
+        "SQL": "select * from t where b = 1 and c = 1 order by c limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Limit"
+      },
+      {
+        "SQL": "select * from t where c = 1 order by c limit 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Limit, Table(t))"
+      },
+      {
+        "SQL": "select * from t order by a limit 1",
+        "Best": "TableReader(Table(t)->Limit)->Limit"
+      },
+      {
+        "SQL": "select c from t order by c limit 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderBasePhysicalPlan",
+    "Cases": [
+      {
+        "SQL": "select * from t order by b limit 1 for update",
+        "Best": "TableReader(Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)->Lock",
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "update t set a = 5 where b < 1 order by d limit 1",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Update",
+        "Hints": "use_index(@`upd_1` `test`.`t` )"
+      },
+      {
+        "SQL": "update t set a = 5",
+        "Best": "TableReader(Table(t))->Update",
+        "Hints": "use_index(@`upd_1` `test`.`t` )"
+      },
+      {
+        "SQL": "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,NULL]], Table(t))}(test.t.c,test.t.c)->Delete",
+        "Hints": "use_index(@`del_1` `test`.`t1` ), use_index(@`del_1` `test`.`t2` `c_d_e`), inl_join(@`del_1` `test`.`t2`)"
+      },
+      {
+        "SQL": "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
+        "Best": "MergeInnerJoin{IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))}(test.t.c,test.t.c)->Delete",
+        "Hints": "use_index(@`del_1` `test`.`t1` `c_d_e`), use_index(@`del_1` `test`.`t2` `c_d_e`), merge_join(@`del_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
+        "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), merge_join(@`upd_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Update",
+        "Hints": "use_index(@`upd_1` `test`.`t1` ), use_index(@`upd_1` `test`.`t2` ), hash_join(@`upd_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "delete from t where b < 1 order by d limit 1",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
+        "Hints": "use_index(@`del_1` `test`.`t` )"
+      },
+      {
+        "SQL": "delete from t",
+        "Best": "TableReader(Table(t))->Delete",
+        "Hints": "use_index(@`del_1` `test`.`t` )"
+      },
+      {
+        "SQL": "delete from t use index(c_d_e) where b = 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([eq(test.t.b, 1)]))->Delete",
+        "Hints": "use_index(@`del_1` `test`.`t` `c_d_e`)"
+      },
+      {
+        "SQL": "insert into t select * from t where b < 1 order by d limit 1",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert",
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
+      },
+      {
+        "SQL": "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",
+        "Best": "Insert",
+        "Hints": ""
+      },
+      {
+        "SQL": "select 1",
+        "Best": "Dual->Projection",
+        "Hints": ""
+      },
+      {
+        "SQL": "select * from t where false",
+        "Best": "Dual",
+        "Hints": ""
+      },
+      {
+        "SQL": "show tables",
+        "Best": "Show",
+        "Hints": ""
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderUnion",
+    "Cases": [
+      {
+        "SQL": "select * from t union all select * from t",
+        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}"
+      },
+      {
+        "SQL": "select * from t union all (select * from t) order by a ",
+        "Best": "UnionAll{TableReader(Table(t))->TableReader(Table(t))}->Sort"
+      },
+      {
+        "SQL": "select * from t union all (select * from t) limit 1",
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t)->Limit)->Limit}->Limit"
+      },
+      {
+        "SQL": "select a from t union all (select c from t) order by a limit 1",
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#25],0,1)"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderUnionScan",
+    "Cases": null
+  },
+  {
+    "Name": "TestDAGPlanBuilderAgg",
+    "Cases": [
+      {
+        "SQL": "select distinct b from t",
+        "Best": "TableReader(Table(t))->HashAgg"
+      },
+      {
+        "SQL": "select count(*) from (select * from t order by b) t group by b",
+        "Best": "TableReader(Table(t))->Sort->StreamAgg"
+      },
+      {
+        "SQL": "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
+        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select sum(a), avg(b + c) from t group by d",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select sum(distinct a), avg(b + c) from t group by d",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(e + c) from t where c = 1 group by (c + d)",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(e + c) from t where c = 1 group by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(e + c) from t where c = 1 group by e",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by d",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->Projection->HashAgg"
+      },
+      {
+        "SQL": "select sum(e), avg(b + c) from t where c = 1 and b = 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort"
+      },
+      {
+        "SQL": "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by c order by k",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->HashAgg->Sort"
+      },
+      {
+        "SQL": "select sum(to_base64(e)) from t where c = 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,test.t.a)->Projection"
+      },
+      {
+        "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Projection"
+      },
+      {
+        "SQL": "select sum(e+1) from t group by e,d,c order by c",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Projection"
+      },
+      {
+        "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c,e",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Sort->Projection"
+      },
+      {
+        "SQL": "select sum(e+1) from t group by e,d,c order by c,e",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Sort->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by g order by g limit 10",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by g limit 10",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit"
+      },
+      {
+        "SQL": "select count(*) from t group by g order by g",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by g order by g desc limit 1",
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by b order by b limit 10",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->TopN([test.t.b],0,10)->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by b order by b",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Sort->Projection"
+      },
+      {
+        "SQL": "select count(*) from t group by b limit 10",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->Limit"
+      },
+      {
+        "SQL": "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g group by a.g",
+        "Best": "MergeInnerJoin{IndexReader(Index(t.g)[[NULL,+inf]])->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.g,test.t.g)->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select /*+ tidb_inlj(a,b) */ sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.g > 60 group by a.g order by a.g limit 1",
+        "Best": "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,NULL]]->Sel([gt(test.t.g, 60)]))}(test.t.g,test.t.g)->Projection->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
+        "Best": "MergeInnerJoin{IndexReader(Index(t.g)[[NULL,+inf]]->Sel([gt(test.t.a, 5)]))->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.g,test.t.g)->Projection->StreamAgg->Limit->Projection"
+      },
+      {
+        "SQL": "select sum(d) from t",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg"
+      }
+    ]
+  },
+  {
+    "Name": "TestRefine",
+    "Cases": [
+      {
+        "SQL": "select a from t where c is not null",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])"
+      },
+      {
+        "SQL": "select a from t where c >= 4",
+        "Best": "IndexReader(Index(t.c_d_e)[[4,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c <= 4",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,4]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 4 and d = 5 and e = 6",
+        "Best": "PointGet(Index(t.c_d_e)[KindInt64 4 KindInt64 5 KindInt64 6])->Projection"
+      },
+      {
+        "SQL": "select a from t where d = 4 and c = 5",
+        "Best": "IndexReader(Index(t.c_d_e)[[5 4,5 4]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 4 and e < 5",
+        "Best": "IndexReader(Index(t.c_d_e)[[4,4]]->Sel([lt(test.t.e, 5)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 4 and d <= 5 and d > 3",
+        "Best": "IndexReader(Index(t.c_d_e)[(4 3,4 5]])->Projection"
+      },
+      {
+        "SQL": "select a from t where d <= 5 and d > 3",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([le(test.t.d, 5) gt(test.t.d, 3)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c between 1 and 2",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,2]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c not between 1 and 2",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1) (2,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c <= 5 and c >= 3 and d = 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[3,5]]->Sel([eq(test.t.d, 1)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 1 or c = 2 or c = 3",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,3]])->Projection"
+      },
+      {
+        "SQL": "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,5]], Table(t))->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 5",
+        "Best": "IndexReader(Index(t.c_d_e)[[5,5]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 5 and b = 1",
+        "Best": "IndexLookUp(Index(t.c_d_e)[[5,5]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where not a",
+        "Best": "PointGet(Handle(t.a)0)"
+      },
+      {
+        "SQL": "select a from t where c in (1)",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in ('1')",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 1.0",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1) and d > 3",
+        "Best": "IndexReader(Index(t.c_d_e)[(1 3,1 +inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+        "Best": "Dual->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
+        "Best": "IndexReader(Index(t.c_d_e)[[1 3,1 3] [1 6,1 6] [2 3,2 3] [2 6,2 6] [3 3,3 3] [3 6,3 6]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3)",
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1] [2,2] [3,3]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+        "Best": "BatchPointGet(Index(t.c_d_e)[[KindInt64 1 KindInt64 1 KindInt64 1] [KindInt64 1 KindInt64 2 KindInt64 1] [KindInt64 2 KindInt64 1 KindInt64 1] [KindInt64 2 KindInt64 2 KindInt64 1] [KindInt64 3 KindInt64 1 KindInt64 1] [KindInt64 3 KindInt64 2 KindInt64 1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where d in (1, 2, 3)",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([in(test.t.d, 1, 2, 3)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c not in (1)",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1) (1,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t use index(c_d_e) where c != 1",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1) (1,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like ''",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"\",\"\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abc\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str not like 'abc'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([not(like(test.t.c_str, abc, 92))]))->Projection"
+      },
+      {
+        "SQL": "select a from t where not (c_str like 'abc' or c_str like 'abd')",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([and(not(like(test.t.c_str, abc, 92)), not(like(test.t.c_str, abd, 92)))]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like '_abc'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[NULL,+inf]]->Sel([like(test.t.c_str, _abc, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc%'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc_'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc_, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc%af'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc%af, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\_' escape ''",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\_'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\\\_'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc_\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\_%'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc=_%' escape '='",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")])->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 'abc\\__'",
+        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection"
+      },
+      {
+        "SQL": "select a from t where c_str like 123",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 1.9 and d > 3",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select a from t where c < 1.1",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,2)])->Projection"
+      },
+      {
+        "SQL": "select a from t where c <= 1.9",
+        "Best": "IndexReader(Index(t.c_d_e)[[-inf,1]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c >= 1.1",
+        "Best": "IndexReader(Index(t.c_d_e)[[2,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c > 1.9",
+        "Best": "IndexReader(Index(t.c_d_e)[(1,+inf]])->Projection"
+      },
+      {
+        "SQL": "select a from t where c = 123456789098765432101234",
+        "Best": "Dual"
+      },
+      {
+        "SQL": "select a from t where c = 'hanfei'",
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Sel([eq(cast(test.t.c, double BINARY), cast(hanfei, double BINARY))]))->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestAggEliminator",
+    "Cases": [
+      {
+        "SQL": "select max(a) from t;",
+        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
+      },
+      {
+        "SQL": "select min(a) from t;",
+        "Best": "TableReader(Table(t)->Limit)->Limit->StreamAgg"
+      },
+      {
+        "SQL": "select min(c_str) from t;",
+        "Best": "IndexReader(Index(t.c_d_e_str)[[-inf,+inf]]->Limit)->Limit->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), b from t;",
+        "Best": "TableReader(Table(t)->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a+1) from t;",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([Column#40 true],0,1)->Projection->Projection->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), min(a) from t;",
+        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(a), min(a) from t where a > 10",
+        "Best": "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(d), min(d) from t where c = 1 and d > 10",
+        "Best": "LeftHashJoin{IndexReader(Index(t.c_d_e)[(1 10,1 +inf]]->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[(1 10,1 +inf]]->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(a), max(c), min(f) from t",
+        "Best": "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit->StreamAgg}->IndexReader(Index(t.f)[[NULL,+inf]]->Limit)->Limit->StreamAgg}"
+      },
+      {
+        "SQL": "select max(a), max(b) from t",
+        "Best": "TableReader(Table(t)->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), max(c) from t where c > 10",
+        "Best": "IndexReader(Index(t.c_d_e)[(10,+inf]]->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a), min(a) from t where a * 3 + 10 < 100",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([lt(plus(mul(test.t.a, 3), 10), 100)])->StreamAgg)->StreamAgg"
+      },
+      {
+        "SQL": "select max(a) from t group by b;",
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg"
+      },
+      {
+        "SQL": "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t",
+        "Best": "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit->StreamAgg"
+      }
+    ]
+  },
+  {
+    "Name": "TestUnmatchedTableInHint",
+    "Cases": [
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ HASH_JOIN(t3, t4) */ or /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name"
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ INL_JOIN(t3, t4) */ or /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name"
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+        "Warning": ""
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
+        "Warning": "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+      }
+    ]
+  },
+  {
+    "Name": "TestJoinHints",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+        "Best": "RightHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)}(test.t.a,test.t.a)->Projection",
+        "Warning": "",
+        "Hints": "use_index(@`sel_1` `test`.`t3` `f`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), inl_join(@`sel_1` `test`.`t1`), hash_join(@`sel_1` `test`.`t3`)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+        "Best": "RightHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)}(test.t.a,test.t.a)->Projection",
+        "Warning": "",
+        "Hints": "use_index(@`sel_1` `test`.`t3` `f`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), inl_join(@`sel_1` `test`.`t1`), hash_join(@`sel_1` `test`.`t3`)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+        "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.b,test.t.a)",
+        "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
+        "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,NULL]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t2.b)",
+        "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `b`), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`)"
+      }
+    ]
+  },
+  {
+    "Name": "TestAggregationHints",
+    "Cases": [
+      {
+        "SQL": "select count(*) from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->StreamAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#26)->HashAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->HashAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#26)->Sort->StreamAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->StreamAgg",
+        "Warning": "[planner:1815]Optimizer aggregation hints are conflicted"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ distinct a from t",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([ne(Column#28, 0)])}",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([or(and(le(Column#26, 1), if(ne(Column#27, 0), <nil>, 1)), or(eq(Column#28, 0), 0))])}",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t.b,test.t.b)->HashAgg",
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e",
+        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg->Projection",
+        "Warning": ""
+      }
+    ]
+  },
+  {
+    "Name": "TestQueryBlockHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), inl_join(@`sel_2` `test`.`t3`), merge_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "MergeInnerJoin{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,NULL]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), inl_join(@`sel_2` `test`.`t3`), merge_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), merge_join(@`sel_2` `test`.`t2`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "RightHashJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` ), use_index(@`sel_2` `test`.`t3` `c_d_e`), merge_join(@`sel_2` `test`.`t2`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), use_index(@`sel_2` `test`.`t3` `c_d_e`), hash_join(@`sel_2` `test`.`t2`), inl_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+        "Plan": "IndexJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}(test.t.a,test.t.c)}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), use_index(@`sel_2` `test`.`t3` `c_d_e`), hash_join(@`sel_2` `test`.`t2`), inl_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg}->HashAgg",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), stream_agg(@`sel_2`), hash_agg(@`sel_1`)"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg}->StreamAgg",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_agg(@`sel_2`), stream_agg(@`sel_1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
+        "Plan": "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t.b, test.t.a)])->HashAgg)->HashAgg}->Projection",
+        "Hints": "use_index(@`sel_1` `test`.`t` ), use_index(@`sel_3` `test`.`t2` ), use_index(@`sel_2` `test`.`t1` ), hash_agg(@`sel_2`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t1) */ t1.b, t2.a, t2.aa from t t1, (select t1.a as a, t2.a as aa from t t1, t t2) t2 where t1.a = t2.aa;",
+        "Plan": "RightHashJoin{TableReader(Table(t))->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}}(test.t.a,test.t.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_2` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
+        "Plan": "MergeInnerJoin{LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Sort->TableReader(Table(t))->Sort}(test.t.b,test.t.b)",
+        "Hints": "use_index(@`sel_2` `test`.`t1` ), use_index(@`sel_2` `test`.`t2` `f`), hash_join(@`sel_2` `test`.`t1`), use_index(@`sel_1` `test`.`t2` ), merge_join(@`sel_1` `test`.`t1`)"
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexJoinUnionScan",
+    "Cases": [
+      {
+        "SQL": [
+          "insert into t values(1, 1)",
+          "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
+        ],
+        "Plan": [
+          "IndexJoin 12500.00 root  inner join, inner:UnionScan, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
+          "├─UnionScan(Build) 10000.00 root  ",
+          "│ └─TableReader 10000.00 root  data:TableFullScan",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─UnionScan(Probe) 1.00 root  ",
+          "  └─TableReader 1.00 root  data:TableRangeScan",
+          "    └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": [
+          "insert into t values(1, 1)",
+          "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
+        ],
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "├─UnionScan(Build) 9990.00 root  not(isnull(test.t.b))",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─UnionScan(Probe) 10000.00 root  ",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": [
+          "insert into t values(1, 1)",
+          "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
+        ],
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t.a, test.t.b)]",
+          "├─UnionScan(Build) 9990.00 root  not(isnull(test.t.b))",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─UnionScan(Probe) 10000.00 root  ",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": [
+          "insert into tt values(1)",
+          "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
+        ],
+        "Plan": [
+          "HashJoin 25000.00 root  inner join, equal:[eq(test.tt.a, test.tt.a)]",
+          "├─PartitionUnion(Build) 20000.00 root  ",
+          "│ ├─UnionScan 10000.00 root  ",
+          "│ │ └─TableReader 10000.00 root  data:TableFullScan",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ └─UnionScan 10000.00 root  ",
+          "│   └─TableReader 10000.00 root  data:TableFullScan",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "└─PartitionUnion(Probe) 20000.00 root  ",
+          "  ├─UnionScan 10000.00 root  ",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  └─UnionScan 10000.00 root  ",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMergeJoinUnionScan",
+    "Cases": [
+      {
+        "SQL": [
+          "insert into t2 values (11, 'amazing merkle')",
+          "insert into t2 values (12, 'amazing merkle')",
+          "explain format = 'brief' select /*+ MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_int = t2.c_int order by t1.c_int, t2.c_str;"
+        ],
+        "Plan": [
+          "Sort 12500.00 root  test.t1.c_int, test.t2.c_str",
+          "└─MergeJoin 12500.00 root  inner join, left key:test.t1.c_int, right key:test.t2.c_int",
+          "  ├─UnionScan(Build) 10000.00 root  ",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSemiJoinToInner",
+    "Cases": [
+      {
+        "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexHashJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,NULL]])}(test.t.d,test.t.g)}->HashAgg"
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
+      },
+      {
+        "SQL": "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
+      },
+      {
+        "SQL": "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+        "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
+      },
+      {
+        "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
+        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,NULL]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
+      },
+      {
+        "SQL": "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a",
+        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,NULL]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)->Sort"
+      }
+    ]
+  },
+  {
+    "Name": "TestAggToCopHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
+        "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
+      },
+      {
+        "SQL": "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
+        "Best": "TableReader(Table(ta)->HashAgg)->HashAgg",
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
+      },
+      {
+        "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
+        "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
+        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
+      },
+      {
+        "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a",
+        "Best": "LeftHashJoin{TableReader(Table(ta)->Sel([not(isnull(test.ta.a))]))->TableReader(Table(ta)->Sel([not(isnull(test.ta.b))]))}(test.ta.a,test.ta.b)->Projection->HashAgg",
+        "Warning": "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
+      }
+    ]
+  },
+  {
+    "Name": "TestLimitToCopHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ LIMIT_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+        "Plan": [
+          "TopN 0.83 root  test.tn.d, offset:0, count:1",
+          "└─IndexReader 0.83 root  index:TopN",
+          "  └─TopN 0.83 cop[tikv]  test.tn.d, offset:0, count:1",
+          "    └─Selection 0.83 cop[tikv]  gt(test.tn.c, 50)",
+          "      └─IndexRangeScan 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+        "Plan": [
+          "TopN 0.83 root  test.tn.d, offset:0, count:1",
+          "└─IndexReader 0.83 root  index:Selection",
+          "  └─Selection 0.83 cop[tikv]  gt(test.tn.c, 50)",
+          "    └─IndexRangeScan 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where a div 2 order by a limit 1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─Selection 1.00 root  intdiv(test.tn.a, 2)",
+          "  └─IndexReader 1.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Scalar function 'intdiv'(signature: IntDivideInt, return type: bigint(20)) is not supported to push down to storage layer now.",
+          "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
+        ]
+      },
+      {
+        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where a > 10 limit 1",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexReader 1.00 root  index:Limit",
+          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan 1.00 cop[tikv] table:tn, index:a(a, b, c, d) range:(10,+inf], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestPushdownDistinctEnable",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:avg(distinct Column#6)->Column#5",
+          "└─Projection 1.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
+          "  └─TableReader 1.00 root  data:HashAgg",
+          "    └─HashAgg 1.00 cop[tikv]  group by:test.t.a, ",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.5000"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
+        "Plan": [
+          "Projection 1.00 root  test.t.a, Column#5",
+          "└─HashAgg 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(Column#6)->test.t.a",
+          "  └─TableReader 1.00 root  data:HashAgg",
+          "    └─HashAgg 1.00 cop[tikv]  group by:test.t.a, funcs:firstrow(test.t.a)->Column#6",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+        "Plan": [
+          "Projection 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
+          "└─HashAgg 8000.00 root  group by:test.t.c, funcs:avg(Column#10, Column#11)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#12)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
+          "  └─TableReader 8000.00 root  data:HashAgg",
+          "    └─HashAgg 8000.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.b)->Column#10, funcs:sum(test.t.b)->Column#11, funcs:sum(test.t.b)->Column#12",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.0000 1 1.0000 1 1 1 1",
+          "1.3333 3 1.3333 3 2 1 4",
+          "2.0000 <nil> 2.0000 1 1 0 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 8000.00 root  index:StreamAgg",
+          "  └─StreamAgg 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(distinct c) from t;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 8000.00 root  index:StreamAgg",
+          "  └─StreamAgg 8000.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(distinct c) from t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 1.00 root  index:HashAgg",
+          "  └─HashAgg 1.00 cop[tikv]  group by:test.t.c, ",
+          "    └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(distinct Column#9)->Column#4",
+          "└─Projection 16000.00 root  cast(test.pt.b, decimal(10,0) BINARY)->Column#9",
+          "  └─PartitionUnion 16000.00 root  ",
+          "    ├─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "    │ └─TableReader 8000.00 root  data:HashAgg",
+          "    │   └─HashAgg 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(distinct Column#5)->Column#6",
+          "└─Union 16000.00 root  ",
+          "  ├─HashAgg 8000.00 root  group by:test.ta.a, funcs:firstrow(test.ta.a)->Column#5, funcs:firstrow(test.ta.a)->Column#5",
+          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │   └─HashAgg 8000.00 cop[tikv]  group by:test.ta.a, ",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  └─HashAgg 8000.00 root  group by:test.tb.a, funcs:firstrow(test.tb.a)->Column#5, funcs:firstrow(test.tb.a)->Column#5",
+          "    └─TableReader 8000.00 root  data:HashAgg",
+          "      └─HashAgg 8000.00 cop[tikv]  group by:test.tb.a, ",
+          "        └─TableFullScan 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;",
+        "Plan": [
+          "HashAgg 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
+          "└─PartitionUnion 16000.00 root  ",
+          "  ├─HashAgg 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#6, funcs:firstrow(Column#7)->Column#5",
+          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │   └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "  └─HashAgg 8000.00 root  group by:Column#10, funcs:firstrow(Column#10)->Column#6, funcs:firstrow(Column#10)->Column#5",
+          "    └─TableReader 8000.00 root  data:HashAgg",
+          "      └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
+          "        └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestPushdownDistinctDisable",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:avg(distinct Column#6)->Column#5",
+          "└─Projection 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.5000"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
+        "Plan": [
+          "Projection 1.00 root  test.t.a, Column#5",
+          "└─HashAgg 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+        "Plan": [
+          "Projection 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
+          "└─HashAgg 8000.00 root  group by:Column#17, funcs:avg(Column#10)->Column#5, funcs:count(distinct Column#11, Column#12)->Column#6, funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:firstrow(Column#16)->test.t.c",
+          "  └─Projection 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(10,0) BINARY)->Column#15, test.t.c, test.t.c",
+          "    └─TableReader 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1.0000 1 1.0000 1 1 1 1",
+          "1.3333 3 1.3333 3 2 1 4",
+          "2.0000 <nil> 2.0000 1 1 0 2"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+        "Plan": [
+          "StreamAgg 8000.00 root  group by:test.t.c, funcs:count(distinct test.t.c)->Column#5",
+          "└─IndexReader 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t, index:c(c) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "0",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(distinct Column#9)->Column#4",
+          "└─Projection 16000.00 root  cast(test.pt.b, decimal(10,0) BINARY)->Column#9",
+          "  └─PartitionUnion 16000.00 root  ",
+          "    ├─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "    │ └─TableReader 8000.00 root  data:HashAgg",
+          "    │   └─HashAgg 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(distinct Column#5)->Column#6",
+          "└─Union 16000.00 root  ",
+          "  ├─HashAgg 8000.00 root  group by:test.ta.a, funcs:firstrow(test.ta.a)->Column#5, funcs:firstrow(test.ta.a)->Column#5",
+          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │   └─HashAgg 8000.00 cop[tikv]  group by:test.ta.a, ",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  └─HashAgg 8000.00 root  group by:test.tb.a, funcs:firstrow(test.tb.a)->Column#5, funcs:firstrow(test.tb.a)->Column#5",
+          "    └─TableReader 8000.00 root  data:HashAgg",
+          "      └─HashAgg 8000.00 cop[tikv]  group by:test.tb.a, ",
+          "        └─TableFullScan 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushdownDistinctEnableAggPushDownDisable",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(distinct Column#9)->Column#4",
+          "└─Projection 16000.00 root  cast(test.pt.b, decimal(10,0) BINARY)->Column#9",
+          "  └─PartitionUnion 16000.00 root  ",
+          "    ├─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "    │ └─TableReader 8000.00 root  data:HashAgg",
+          "    │   └─HashAgg 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─HashAgg 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "      └─TableReader 8000.00 root  data:HashAgg",
+          "        └─HashAgg 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(distinct Column#5)->Column#6",
+          "└─Union 20000.00 root  ",
+          "  ├─TableReader 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tb keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;",
+        "Plan": [
+          "HashAgg 16000.00 root  group by:Column#5, funcs:firstrow(Column#6)->Column#3",
+          "└─PartitionUnion 16000.00 root  ",
+          "  ├─HashAgg 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#6, funcs:firstrow(Column#7)->Column#5",
+          "  │ └─TableReader 8000.00 root  data:HashAgg",
+          "  │   └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072312 keep order:false, stats:pseudo",
+          "  └─HashAgg 8000.00 root  group by:Column#10, funcs:firstrow(Column#10)->Column#6, funcs:firstrow(Column#10)->Column#5",
+          "    └─TableReader 8000.00 root  data:HashAgg",
+          "      └─HashAgg 8000.00 cop[tikv]  group by:date_format(test.tc.timestamp, \"%Y-%m-%d %H\"), ",
+          "        └─TableFullScan 10000.00 cop[tikv] table:tc, partition:p2020072313 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestGroupConcatOrderby",
+    "Cases": [
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 separator \"--\")->Column#5",
+          "└─Projection 10000.00 root  cast(test.test.name, var_string(20))->Column#6, test.test.name, cast(test.test.id, var_string(20))->Column#8, test.test.name, test.test.id",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500++200++30++20++20++10 3--3--1--1--2--1"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 separator \"--\")->Column#5",
+          "└─Projection 10000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name, test.ptest.id",
+          "  └─TableReader 10000.00 root partition:all data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ptest keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500++200++30++20++20++10 3--3--1--1--2--1"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
+          "└─Projection 10000.00 root  cast(test.test.name, var_string(20))->Column#5, test.test.name",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500,200,30,20,10"
+        ]
+      },
+      {
+        "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
+          "└─Projection 10000.00 root  cast(test.ptest.name, var_string(20))->Column#5, test.ptest.name",
+          "  └─TableReader 10000.00 root partition:all data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:ptest keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "500,200,30,20,10"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderWindow",
+    "Cases": [
+      {
+        "SQL": "select lead(a, 1) over (partition by null) as c from t",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestDAGPlanBuilderWindowParallel",
+    "Cases": [
+      {
+        "SQL": "select lead(a, 1) over (partition by null) as c from t",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])->Window(lead(test.t.a, 1)->Column#14 over())->Projection"
+      },
+      {
+        "SQL": "select lead(a, 1) over (partition by b) as c from t",
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
+      }
+    ]
+  },
+  {
+    "Name": "TestNominalSort",
+    "Cases": [
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, plus(test.t.a, 1)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, minus(test.t.a, 1)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, unaryminus(test.t.a)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, plus(unaryminus(test.t.a), 3)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, plus(1, test.t.a)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, minus(1, test.t.a)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, plus(minus(1, test.t.a), 3)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, desc, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, desc, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Projection 12487.50 root  test.t.a, plus(plus(1, test.t.a), 3)->Column#7",
+          "  └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
+          "    └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "      └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
+        ]
+      },
+      {
+        "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
+        "Plan": [
+          "Projection 12487.50 root  test.t.a",
+          "└─Sort 12487.50 root  Column#7",
+          "  └─Projection 12487.50 root  test.t.a, mul(3, test.t.a)->Column#7",
+          "    └─MergeJoin 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
+          "      ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:true, stats:pseudo",
+          "      └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "        └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "2"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestInlineProjection",
+    "Cases": [
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+        "Plan": "LeftHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": "LeftHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+        "Plan": "LeftHashJoin{TableReader(Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t1.a,test.t2.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+        "Plan": "RightHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.a))]))->TableReader(Table(t2))}(test.t1.a,test.t2.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` ), hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
+        "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
+        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
+      },
+      {
+        "SQL": "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
+        "Plan": "LeftHashJoin{IndexReader(Index(t1.idx_a)[[NULL,+inf]])->IndexReader(Index(t2.idx_a)[[NULL,+inf]])}->Projection",
+        "Hints": "use_index(@`sel_2` `test`.`t1` `idx_a`), use_index(@`sel_3` `test`.`t2` `idx_a`), hash_join(@`sel_2` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_hash_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_merge_join(@`sel_1` `test`.`t1`)"
+      },
+      {
+        "SQL": "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+        "Plan": "MergeInnerJoin{IndexLookUp(Index(t1.idx_a)[[-inf,+inf]], Table(t1))->Projection->IndexLookUp(Index(t2.idx_a)[[-inf,+inf]], Table(t2))->Projection}(test.t1.a,test.t2.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` `idx_a`), merge_join(@`sel_1` `test`.`t1`)"
+      }
+    ]
+  },
+  {
+    "Name": "TestHintFromDiffDatabase",
+    "Cases": [
+      {
+        "SQL": "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a",
+        "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,NULL]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
+      }
+    ]
+  },
+  {
+    "Name": "TestNthPlanHintWithExplain",
+    "Cases": [
+      {
+        "SQL": "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+        "Plan": [
+          "TableReader 0.01 root  data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp 0.01 root  ",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp 0.01 root  ",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp 0.01 root  ",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from test.tt where a=1 and b=1",
+        "Plan": [
+          "IndexLookUp 0.01 root  ",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestINMJHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexMergeJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexHashJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestEliminateMaxOneRow",
+    "Cases": [
+      {
+        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
+        "Plan": [
+          "HashJoin 9990.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)], other cond:lt(test.t2.a, test.t1.a)",
+          "├─IndexReader(Build) 7992.00 root  index:Selection",
+          "│ └─Selection 7992.00 cop[tikv]  lt(test.t1.a, test.t1.a)",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 7992.00 root  data:Selection",
+          "  └─Selection 7992.00 cop[tikv]  lt(test.t2.a, test.t2.a), not(isnull(test.t2.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
+        "Plan": [
+          "Projection 9990.00 root  test.t2.a",
+          "└─Apply 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t1.a)",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.80 root  not(isnull(test.t1.a))",
+          "    └─MaxOneRow 1.00 root  ",
+          "      └─IndexLookUp 0.00 root  ",
+          "        ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
+          "          └─TableRowIDScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);",
+        "Plan": [
+          "Projection 9990.00 root  test.t2.a",
+          "└─Apply 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t3.a)",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 0.80 root  not(isnull(test.t3.a))",
+          "    └─MaxOneRow 1.00 root  ",
+          "      └─IndexReader 2.00 root  index:IndexRangeScan",
+          "        └─IndexRangeScan 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestEnumIndex",
+    "Cases": [
+      {
+        "SQL": "select e from t where e = 'b'",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(e) range:[\"b\",\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e != 'b'",
+        "Plan": [
+          "IndexReader 40.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 40.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"c\",\"c\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 'b'",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e >= 'b'",
+        "Plan": [
+          "IndexReader 20.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"b\",\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e < 'b'",
+        "Plan": [
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a"
+        ]
+      },
+      {
+        "SQL": "select e from t where e <= 'b'",
+        "Plan": [
+          "IndexReader 40.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 40.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"b\",\"b\"], [\"a\",\"a\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e = 2",
+        "Plan": [
+          "IndexReader 10.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t, index:idx(e) range:[\"b\",\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e != 2",
+        "Plan": [
+          "IndexReader 6656.67 root  index:IndexRangeScan",
+          "└─IndexRangeScan 6656.67 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"), (\"b\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 2",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:(\"b\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "a"
+        ]
+      },
+      {
+        "SQL": "select e from t where e >= 2",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:[\"b\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "a",
+          "b"
+        ]
+      },
+      {
+        "SQL": "select e from t where e < 2",
+        "Plan": [
+          "IndexReader 3323.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"), keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e <= 2",
+        "Plan": [
+          "IndexReader 3323.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3323.33 cop[tikv] table:t, index:idx(e) range:[-inf,\"b\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > ''",
+        "Plan": [
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"b\",\"b\"], [\"a\",\"a\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 'd'",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select e from t where e > -1",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:[\"\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "",
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      {
+        "SQL": "select e from t where e > 5",
+        "Plan": [
+          "IndexReader 3333.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx(e) range:(\"\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select e from t where e = ''",
+        "Plan": [
+          "IndexReader 20.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 20.00 cop[tikv] table:t, index:idx(e) range:[\"\",\"\"], [\"\",\"\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          ""
+        ]
+      },
+      {
+        "SQL": "select e from t where e != ''",
+        "Plan": [
+          "IndexReader 30.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 30.00 cop[tikv] table:t, index:idx(e) range:[\"c\",\"c\"], [\"b\",\"b\"], [\"a\",\"a\"], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue27233",
+    "Cases": [
+      {
+        "SQL": "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;",
+        "Plan": [
+          "Sort 0.80 root  test.pk_s_multi_31.col2",
+          "└─Projection 0.80 root  test.pk_s_multi_31.col2",
+          "  └─Selection 0.80 root  gt(Column#7, 2)",
+          "    └─HashAgg 1.00 root  group by:test.pk_s_multi_31.col1, test.pk_s_multi_31.col2, funcs:firstrow(test.pk_s_multi_31.col2)->test.pk_s_multi_31.col2, funcs:count(distinct test.pk_s_multi_31.col1, test.pk_s_multi_31.col2)->Column#7",
+          "      └─HashJoin 100000000.00 root  CARTESIAN left outer join, other cond:gt(test.pk_s_multi_31.col1, test.pk_s_multi_31.col1)",
+          "        ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "        │ └─IndexFullScan 10000.00 cop[tikv] table:T2, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo",
+          "        └─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+          "          └─IndexFullScan 10000.00 cop[tikv] table:T1, index:PRIMARY(COL1, COL2) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "100"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestSelectionPartialPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where a > 1 and b > 1",
+        "Plan": [
+          "Selection 1111.11 root  gt(test.t1.b, 1)",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1",
+        "Plan": [
+          "Selection 370.37 root  gt(test.t2.b, 1)",
+          "└─IndexLookUp 1111.11 root  ",
+          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t2, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 1111.11 cop[tikv]  gt(test.t2.c, 1)",
+          "    └─TableRowIDScan 3333.33 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue28316",
+    "Cases": [
+      {
+        "SQL": "select * from t where t.a < 3 and t.a < 3",
+        "Plan": [
+          "TableReader 3323.33 root  data:Selection",
+          "└─Selection 3323.33 cop[tikv]  lt(test.t.a, 3)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestMPPSinglePartitionType",
+    "Cases": [
+      {
+        "SQL": "select count(*) from employee group by deptid+1",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#5",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#12, funcs:sum(Column#13)->Column#5",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: binary]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:Column#14, funcs:count(1)->Column#13",
+          "            └─Projection 10000.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#14",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(distinct deptid) a from employee",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#5",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee join employee e1 using(deptid)",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12487.50 mpp[tiflash]  test.employee.deptid, test.employee.empid, test.employee.salary, test.employee.empid, test.employee.salary",
+          "    └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(distinct a) from (select count(distinct deptid) a from employee) x",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#6",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct Column#5)->Column#6",
+          "      └─Projection 1.00 mpp[tiflash]  Column#5",
+          "        └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b+1",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg 1.00 mpp[tiflash]  group by:Column#12, funcs:sum(Column#13)->Column#7",
+          "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: binary]",
+          "          └─HashAgg 1.00 mpp[tiflash]  group by:Column#15, funcs:count(Column#14)->Column#13",
+          "            └─Projection 1.00 mpp[tiflash]  Column#5, plus(Column#6, 1)->Column#15",
+          "              └─Projection 1.00 mpp[tiflash]  Column#5, Column#6",
+          "                └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5, funcs:count(distinct test.employee.empid)->Column#6",
+          "                  └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "                    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "                      └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg 1.00 mpp[tiflash]  group by:Column#6, funcs:count(Column#5)->Column#7",
+          "      └─Projection 1.00 mpp[tiflash]  Column#5, Column#6",
+          "        └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5, funcs:count(distinct test.employee.empid)->Column#6",
+          "          └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "              └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee join (select count(distinct deptid) a, count(distinct empid) b from employee) e1",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 1.00 mpp[tiflash]  Column#9, Column#10",
+          "    │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#9, funcs:count(distinct test.employee.empid)->Column#10",
+          "    │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    │           └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
+          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join (select count(distinct deptid) a from employee) e2 on e1.deptid = e2.a",
+        "Plan": [
+          "TableReader 1.25 root  data:ExchangeSender",
+          "└─ExchangeSender 1.25 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 1.25 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#9)]",
+          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 1.00 mpp[tiflash]  Column#9",
+          "    │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#9",
+          "    │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    │           └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+        "Plan": [
+          "TableReader 1.25 root  data:ExchangeSender",
+          "└─ExchangeSender 1.25 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.25 mpp[tiflash]  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "    └─HashJoin 1.25 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
+          "      ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection 1.00 mpp[tiflash]  Column#5",
+          "      │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "      │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "      │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      │           └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "      │             └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(Column#5, Column#10)]",
+          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 1.00 mpp[tiflash]  Column#5",
+          "    │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "    │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "    │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    │           └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Projection(Probe) 1.00 mpp[tiflash]  Column#10",
+          "      └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#10",
+          "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "    └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
+          "      ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "      │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "      │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "      │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#5, funcs:firstrow(Column#15)->test.employee.deptid",
+          "      │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "      │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: binary]",
+          "      │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#27, funcs:count(Column#25)->Column#14, funcs:firstrow(Column#26)->Column#15",
+          "      │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#27",
+          "      │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
+          "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#10, Column#9",
+          "    │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "    │       └─Projection 8000.00 mpp[tiflash]  Column#9, test.employee.deptid",
+          "    │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#9, funcs:firstrow(Column#15)->test.employee.deptid",
+          "    │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "    │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: binary]",
+          "    │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#27, funcs:count(Column#25)->Column#14, funcs:firstrow(Column#26)->Column#15",
+          "    │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#27",
+          "    │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
+        "Plan": [
+          "TableReader 6400.00 root  data:ExchangeSender",
+          "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 6400.00 mpp[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
+          "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "    │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "    │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "    │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#17, funcs:sum(Column#18)->Column#5, funcs:firstrow(Column#19)->test.employee.deptid",
+          "    │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "    │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#17, collate: binary]",
+          "    │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#43, funcs:count(Column#41)->Column#18, funcs:firstrow(Column#42)->Column#19",
+          "    │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#43",
+          "    │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Projection(Probe) 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#12, Column#11",
+          "      └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "        └─Projection 8000.00 mpp[tiflash]  Column#11, test.employee.deptid",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:Column#20, funcs:sum(Column#21)->Column#11, funcs:firstrow(Column#22)->test.employee.deptid",
+          "            └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#20, collate: binary]",
+          "                └─HashAgg 8000.00 mpp[tiflash]  group by:Column#46, funcs:count(Column#44)->Column#21, funcs:firstrow(Column#45)->Column#22",
+          "                  └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#46",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set tidb_broadcast_join_threshold_count=1",
+        "Plan": null
+      },
+      {
+        "SQL": "set tidb_broadcast_join_threshold_size=1",
+        "Plan": null
+      },
+      {
+        "SQL": "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+        "Plan": [
+          "Projection 1.25 root  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "└─HashJoin 1.25 root  inner join, equal:[eq(test.employee.deptid, Column#5)]",
+          "  ├─TableReader(Build) 1.00 root  data:ExchangeSender",
+          "  │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Projection 1.00 mpp[tiflash]  Column#5",
+          "  │     └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "  │       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "  │         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  │           └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "  │             └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 cop[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+        "Plan": [
+          "HashJoin 1.00 root  inner join, equal:[eq(Column#5, Column#10)]",
+          "├─TableReader(Build) 1.00 root  data:ExchangeSender",
+          "│ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─Projection 1.00 mpp[tiflash]  Column#10",
+          "│     └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#10",
+          "│       └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "│         └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│           └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "│             └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 1.00 mpp[tiflash]  Column#5",
+          "      └─HashAgg 1.00 mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, test.employee.deptid)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#6, Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "    └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
+          "      ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
+          "      │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "      │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "      │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "      │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#5, funcs:firstrow(Column#15)->test.employee.deptid",
+          "      │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "      │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: binary]",
+          "      │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
+          "      │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#29",
+          "      │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#26, collate: binary]",
+          "          └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
+          "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:e2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#10, Column#9",
+          "    └─HashJoin 8000.00 mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#10)]",
+          "      ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#10, collate: binary]",
+          "      │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#10, Column#9",
+          "      │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "      │       └─Projection 8000.00 mpp[tiflash]  Column#9, test.employee.deptid",
+          "      │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#9, funcs:firstrow(Column#15)->test.employee.deptid",
+          "      │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "      │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#13, collate: binary]",
+          "      │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#29, funcs:count(Column#27)->Column#14, funcs:firstrow(Column#28)->Column#15",
+          "      │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#29",
+          "      │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#26, collate: binary]",
+          "          └─Projection 9990.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#26",
+          "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.employee.deptid))",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:e1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
+        "Plan": [
+          "TableReader 6400.00 root  data:ExchangeSender",
+          "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 6400.00 mpp[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
+          "    ├─ExchangeReceiver(Build) 6400.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
+          "    │   └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#6, Column#5",
+          "    │     └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "    │       └─Projection 8000.00 mpp[tiflash]  Column#5, test.employee.deptid",
+          "    │         └─HashAgg 8000.00 mpp[tiflash]  group by:Column#17, funcs:sum(Column#18)->Column#5, funcs:firstrow(Column#19)->test.employee.deptid",
+          "    │           └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "    │             └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#17, collate: binary]",
+          "    │               └─HashAgg 8000.00 mpp[tiflash]  group by:Column#43, funcs:count(Column#41)->Column#18, funcs:firstrow(Column#42)->Column#19",
+          "    │                 └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#43",
+          "    │                   └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─ExchangeReceiver(Probe) 6400.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: binary]",
+          "        └─Projection 6400.00 mpp[tiflash]  plus(test.employee.deptid, 1)->Column#12, Column#11",
+          "          └─Selection 6400.00 mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
+          "            └─Projection 8000.00 mpp[tiflash]  Column#11, test.employee.deptid",
+          "              └─HashAgg 8000.00 mpp[tiflash]  group by:Column#20, funcs:sum(Column#21)->Column#11, funcs:firstrow(Column#22)->test.employee.deptid",
+          "                └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#20, collate: binary]",
+          "                    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#46, funcs:count(Column#44)->Column#21, funcs:firstrow(Column#45)->Column#22",
+          "                      └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, plus(test.employee.deptid, 1)->Column#46",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

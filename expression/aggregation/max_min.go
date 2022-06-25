@@ -8,20 +8,23 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 type maxMinFunction struct {
 	aggFunction
 	isMax bool
+	ctor  collate.Collator
 }
 
 // GetResult implements Aggregation interface.
@@ -35,25 +38,25 @@ func (mmf *maxMinFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types
 }
 
 // Update implements Aggregation interface.
-func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := mmf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if evalCtx.Value.IsNull() {
-		evalCtx.Value = *(&value).Copy()
+		value.Copy(&evalCtx.Value)
 	}
 	if value.IsNull() {
 		return nil
 	}
 	var c int
-	c, err = evalCtx.Value.CompareDatum(sc, &value)
+	c, err = evalCtx.Value.Compare(sc, &value, mmf.ctor)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
-		evalCtx.Value = *(&value).Copy()
+		value.Copy(&evalCtx.Value)
 	}
 	return nil
 }

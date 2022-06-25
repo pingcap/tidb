@@ -8,191 +8,460 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package session
 
 import (
-	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/executor"
+	"bytes"
+	"context"
+	"fmt"
+	"runtime/trace"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/types"
-	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sli"
+	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
-// TxnState wraps kv.Transaction to provide a new kv.Transaction.
+// LazyTxn wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
-// 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
-type TxnState struct {
-	// States of a TxnState should be one of the followings:
+// 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
+type LazyTxn struct {
+	// States of a LazyTxn should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
 	// Pending: kv.Transaction == nil && txnFuture != nil
 	// Valid:	kv.Transaction != nil && txnFuture == nil
 	kv.Transaction
 	txnFuture *txnFuture
 
-	buf          kv.MemBuffer
-	mutations    map[int64]*binlog.TableMutation
-	dirtyTableOP []dirtyTableOperation
+	initCnt       int
+	stagingHandle kv.StagingHandle
+	mutations     map[int64]*binlog.TableMutation
+	writeSLI      sli.TxnWriteThroughputSLI
 
-	// If StmtCommit meets error (which should not happen, just in case), mark it.
-	// And rollback the whole transaction when it commit.
-	fail error
-}
-
-func (st *TxnState) init() {
-	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
-	st.mutations = make(map[int64]*binlog.TableMutation)
-}
-
-// Valid overrides Transaction interface.
-func (st *TxnState) Valid() bool {
-	return st.Transaction != nil && st.Transaction.Valid()
-}
-
-func (st *TxnState) validOrPending() bool {
-	return st.txnFuture != nil || st.Valid()
-}
-
-func (st *TxnState) String() string {
-	if st.Transaction != nil {
-		return st.Transaction.String()
+	// TxnInfo is added for the lock view feature, the data is frequent modified but
+	// rarely read (just in query select * from information_schema.tidb_trx).
+	// The data in this session would be query by other sessions, so Mutex is necessary.
+	// Since read is rare, the reader can copy-on-read to get a data snapshot.
+	mu struct {
+		sync.RWMutex
+		txninfo.TxnInfo
 	}
-	if st.txnFuture != nil {
+}
+
+// GetTableInfo returns the cached index name.
+func (txn *LazyTxn) GetTableInfo(id int64) *model.TableInfo {
+	return txn.Transaction.GetTableInfo(id)
+}
+
+// CacheTableInfo caches the index name.
+func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
+	txn.Transaction.CacheTableInfo(id, info)
+}
+
+func (txn *LazyTxn) init() {
+	txn.mutations = make(map[int64]*binlog.TableMutation)
+	txn.mu.Lock()
+	txn.mu.TxnInfo.State = txninfo.TxnIdle
+	txn.mu.Unlock()
+}
+
+func (txn *LazyTxn) initStmtBuf() {
+	if txn.Transaction == nil {
+		return
+	}
+	buf := txn.Transaction.GetMemBuffer()
+	txn.initCnt = buf.Len()
+	txn.stagingHandle = buf.Staging()
+}
+
+// countHint is estimated count of mutations.
+func (txn *LazyTxn) countHint() int {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
+		return 0
+	}
+	return txn.Transaction.GetMemBuffer().Len() - txn.initCnt
+}
+
+func (txn *LazyTxn) flushStmtBuf() {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
+		return
+	}
+	buf := txn.Transaction.GetMemBuffer()
+	buf.Release(txn.stagingHandle)
+	txn.initCnt = buf.Len()
+}
+
+func (txn *LazyTxn) cleanupStmtBuf() {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
+		return
+	}
+	buf := txn.Transaction.GetMemBuffer()
+	buf.Cleanup(txn.stagingHandle)
+	txn.initCnt = buf.Len()
+
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
+}
+
+// resetTxnInfo resets the transaction info.
+// Note: call it under lock!
+func (txn *LazyTxn) resetTxnInfo(
+	startTS uint64,
+	state txninfo.TxnRunningState,
+	entriesCount,
+	entriesSize uint64,
+	currentSQLDigest string,
+	allSQLDigests []string,
+) {
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
+	txn.mu.TxnInfo = txninfo.TxnInfo{}
+	txn.mu.TxnInfo.StartTS = startTS
+	txn.mu.TxnInfo.State = state
+	txn.mu.TxnInfo.EntriesCount = entriesCount
+	txn.mu.TxnInfo.EntriesSize = entriesSize
+	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
+	txn.mu.TxnInfo.AllSQLDigests = allSQLDigests
+}
+
+// Size implements the MemBuffer interface.
+func (txn *LazyTxn) Size() int {
+	if txn.Transaction == nil {
+		return 0
+	}
+	return txn.Transaction.Size()
+}
+
+// Valid implements the kv.Transaction interface.
+func (txn *LazyTxn) Valid() bool {
+	return txn.Transaction != nil && txn.Transaction.Valid()
+}
+
+func (txn *LazyTxn) pending() bool {
+	return txn.Transaction == nil && txn.txnFuture != nil
+}
+
+func (txn *LazyTxn) validOrPending() bool {
+	return txn.txnFuture != nil || txn.Valid()
+}
+
+func (txn *LazyTxn) String() string {
+	if txn.Transaction != nil {
+		return txn.Transaction.String()
+	}
+	if txn.txnFuture != nil {
 		return "txnFuture"
 	}
 	return "invalid transaction"
 }
 
-func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
-	st.Transaction = txn
-	st.txnFuture = nil
+// GoString implements the "%#v" format for fmt.Printf.
+func (txn *LazyTxn) GoString() string {
+	var s strings.Builder
+	s.WriteString("Txn{")
+	if txn.pending() {
+		s.WriteString("state=pending")
+	} else if txn.Valid() {
+		s.WriteString("state=valid")
+		fmt.Fprintf(&s, ", txnStartTS=%d", txn.Transaction.StartTS())
+		if len(txn.mutations) > 0 {
+			fmt.Fprintf(&s, ", len(mutations)=%d, %#v", len(txn.mutations), txn.mutations)
+		}
+	} else {
+		s.WriteString("state=invalid")
+	}
+
+	s.WriteString("}")
+	return s.String()
 }
 
-func (st *TxnState) changeInvalidToPending(future *txnFuture) {
-	st.Transaction = nil
-	st.txnFuture = future
+// GetOption implements the GetOption
+func (txn *LazyTxn) GetOption(opt int) interface{} {
+	if txn.Transaction == nil {
+		switch opt {
+		case kv.TxnScope:
+			return ""
+		}
+		return nil
+	}
+	return txn.Transaction.GetOption(opt)
 }
 
-func (st *TxnState) changePendingToValid(txnCap int) error {
-	if st.txnFuture == nil {
+func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
+	txn.Transaction = kvTxn
+	txn.initStmtBuf()
+	txn.txnFuture = nil
+
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+	txn.resetTxnInfo(
+		kvTxn.StartTS(),
+		txninfo.TxnIdle,
+		uint64(txn.Transaction.Len()),
+		uint64(txn.Transaction.Size()),
+		"",
+		nil)
+}
+
+func (txn *LazyTxn) changeToPending(future *txnFuture) {
+	txn.Transaction = nil
+	txn.txnFuture = future
+}
+
+func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
+	if txn.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
 
-	future := st.txnFuture
-	st.txnFuture = nil
+	future := txn.txnFuture
+	txn.txnFuture = nil
 
-	txn, err := future.wait()
+	defer trace.StartRegion(ctx, "WaitTsoFuture").End()
+	t, err := future.wait()
 	if err != nil {
-		st.Transaction = nil
-		return errors.Trace(err)
+		txn.Transaction = nil
+		return err
 	}
-	txn.SetCap(txnCap)
-	st.Transaction = txn
+	txn.Transaction = t
+	txn.initStmtBuf()
+
+	// The txnInfo may already recorded the first statement (usually "begin") when it's pending, so keep them.
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+	txn.resetTxnInfo(
+		t.StartTS(),
+		txninfo.TxnIdle,
+		uint64(txn.Transaction.Len()),
+		uint64(txn.Transaction.Size()),
+		txn.mu.TxnInfo.CurrentSQLDigest,
+		txn.mu.TxnInfo.AllSQLDigests)
+
 	return nil
 }
 
-func (st *TxnState) changeToInvalid() {
-	st.Transaction = nil
-	st.txnFuture = nil
+func (txn *LazyTxn) changeToInvalid() {
+	if txn.stagingHandle != kv.InvalidStagingHandle {
+		txn.Transaction.GetMemBuffer().Cleanup(txn.stagingHandle)
+	}
+	txn.stagingHandle = kv.InvalidStagingHandle
+	txn.Transaction = nil
+	txn.txnFuture = nil
+
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
+	txn.mu.TxnInfo = txninfo.TxnInfo{}
 }
 
-// dirtyTableOperation represents an operation to dirtyTable, we log the operation
-// first and apply the operation log when statement commit.
-type dirtyTableOperation struct {
-	kind   int
-	tid    int64
-	handle int64
-	row    []types.Datum
+func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
+	if len(currentSQLDigest) == 0 {
+		return
+	}
+
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+	txn.mu.TxnInfo.State = txninfo.TxnRunning
+	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
+	// Keeps at most 50 history sqls to avoid consuming too much memory.
+	const maxTransactionStmtHistory int = 50
+	if len(txn.mu.TxnInfo.AllSQLDigests) < maxTransactionStmtHistory {
+		txn.mu.TxnInfo.AllSQLDigests = append(txn.mu.TxnInfo.AllSQLDigests, currentSQLDigest)
+	}
+}
+
+func (txn *LazyTxn) onStmtEnd() {
+	txn.mu.Lock()
+	txn.mu.TxnInfo.CurrentSQLDigest = ""
+	txn.mu.TxnInfo.State = txninfo.TxnIdle
+	txn.mu.Unlock()
+}
+
+var hasMockAutoIncIDRetry = int64(0)
+
+func enableMockAutoIncIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIncIDRetry, 1)
+}
+
+func mockAutoIncIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIncIDRetry) == 1
+}
+
+var mockAutoRandIDRetryCount = int64(0)
+
+func needMockAutoRandIDRetry() bool {
+	return atomic.LoadInt64(&mockAutoRandIDRetryCount) > 0
+}
+
+func decreaseMockAutoRandIDRetryCount() {
+	atomic.AddInt64(&mockAutoRandIDRetryCount, -1)
+}
+
+// ResetMockAutoRandIDRetryCount set the number of occurrences of
+// `kv.ErrTxnRetryable` when calling TxnState.Commit().
+func ResetMockAutoRandIDRetryCount(failTimes int64) {
+	atomic.StoreInt64(&mockAutoRandIDRetryCount, failTimes)
 }
 
 // Commit overrides the Transaction interface.
-func (st *TxnState) Commit(ctx context.Context) error {
-	if st.fail != nil {
-		// If any error happen during StmtCommit, don't commit this transaction.
-		err := st.fail
-		st.fail = nil
-		return errors.Trace(err)
+func (txn *LazyTxn) Commit(ctx context.Context) error {
+	defer txn.reset()
+	if len(txn.mutations) != 0 || txn.countHint() != 0 {
+		logutil.BgLogger().Error("the code should never run here",
+			zap.String("TxnState", txn.GoString()),
+			zap.Int("staging handler", int(txn.stagingHandle)),
+			zap.Stack("something must be wrong"))
+		return errors.Trace(kv.ErrInvalidTxn)
 	}
-	return errors.Trace(st.Transaction.Commit(ctx))
+
+	txn.mu.Lock()
+	txn.mu.TxnInfo.State = txninfo.TxnCommitting
+	txn.mu.Unlock()
+
+	failpoint.Inject("mockSlowCommit", func(_ failpoint.Value) {})
+
+	// mockCommitError8942 is used for PR #8942.
+	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	// mockCommitRetryForAutoIncID is used to mock an commit retry for adjustAutoIncrementDatum.
+	failpoint.Inject("mockCommitRetryForAutoIncID", func(val failpoint.Value) {
+		if val.(bool) && !mockAutoIncIDRetry() {
+			enableMockAutoIncIDRetry()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	failpoint.Inject("mockCommitRetryForAutoRandID", func(val failpoint.Value) {
+		if val.(bool) && needMockAutoRandIDRetry() {
+			decreaseMockAutoRandIDRetryCount()
+			failpoint.Return(kv.ErrTxnRetryable)
+		}
+	})
+
+	return txn.Transaction.Commit(ctx)
 }
 
 // Rollback overrides the Transaction interface.
-func (st *TxnState) Rollback() error {
-	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
-		st.fail = nil
-	}
-	return errors.Trace(st.Transaction.Rollback())
+func (txn *LazyTxn) Rollback() error {
+	defer txn.reset()
+	txn.mu.Lock()
+	txn.mu.TxnInfo.State = txninfo.TxnRollingBack
+	txn.mu.Unlock()
+	// mockSlowRollback is used to mock a rollback which takes a long time
+	failpoint.Inject("mockSlowRollback", func(_ failpoint.Value) {})
+	return txn.Transaction.Rollback()
 }
 
-// Get overrides the Transaction interface.
-func (st *TxnState) Get(k kv.Key) ([]byte, error) {
-	val, err := st.buf.Get(k)
-	if kv.IsErrNotFound(err) {
-		val, err = st.Transaction.Get(k)
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(val) == 0 {
-		return nil, kv.ErrNotExist
-	}
-	return val, nil
+// RollbackMemDBToCheckpoint overrides the Transaction interface.
+func (txn *LazyTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
+	txn.flushStmtBuf()
+	txn.Transaction.RollbackMemDBToCheckpoint(savepoint)
+	txn.cleanup()
 }
 
-// Set overrides the Transaction interface.
-func (st *TxnState) Set(k kv.Key, v []byte) error {
-	return st.buf.Set(k, v)
+// LockKeys Wrap the inner transaction's `LockKeys` to record the status
+func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+	failpoint.Inject("beforeLockKeys", func() {})
+	t := time.Now()
+
+	var originState txninfo.TxnRunningState
+	txn.mu.Lock()
+	originState = txn.mu.TxnInfo.State
+	txn.mu.TxnInfo.State = txninfo.TxnLockWaiting
+	txn.mu.TxnInfo.BlockStartTime.Valid = true
+	txn.mu.TxnInfo.BlockStartTime.Time = t
+	txn.mu.Unlock()
+
+	err := txn.Transaction.LockKeys(ctx, lockCtx, keys...)
+
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+	txn.mu.TxnInfo.State = originState
+	txn.mu.TxnInfo.BlockStartTime.Valid = false
+	txn.mu.TxnInfo.EntriesCount = uint64(txn.Transaction.Len())
+	txn.mu.TxnInfo.EntriesSize = uint64(txn.Transaction.Size())
+	return err
 }
 
-// Delete overrides the Transaction interface.
-func (st *TxnState) Delete(k kv.Key) error {
-	return st.buf.Delete(k)
+func (txn *LazyTxn) reset() {
+	txn.cleanup()
+	txn.changeToInvalid()
 }
 
-// Seek overrides the Transaction interface.
-func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Seek(k)
-	if err != nil {
-		return nil, errors.Trace(err)
+func (txn *LazyTxn) cleanup() {
+	txn.cleanupStmtBuf()
+	txn.initStmtBuf()
+	for key := range txn.mutations {
+		delete(txn.mutations, key)
 	}
-	retrieverIt, err := st.Transaction.Seek(k)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse overrides the Transaction interface.
-func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.SeekReverse(k)
-	if err != nil {
-		return nil, errors.Trace(err)
+// KeysNeedToLock returns the keys need to be locked.
+func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
+	if txn.stagingHandle == kv.InvalidStagingHandle {
+		return nil, nil
 	}
-	retrieverIt, err := st.Transaction.SeekReverse(k)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return kv.NewUnionIter(bufferIt, retrieverIt, true)
+	keys := make([]kv.Key, 0, txn.countHint())
+	buf := txn.Transaction.GetMemBuffer()
+	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
+		if !keyNeedToLock(k, v, flags) {
+			return
+		}
+		keys = append(keys, k)
+	})
+	return keys, nil
 }
 
-func (st *TxnState) cleanup() {
-	st.buf.Reset()
-	for key := range st.mutations {
-		delete(st.mutations, key)
+func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
+	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
+	if !isTableKey {
+		// meta key always need to lock.
+		return true
 	}
-	if st.dirtyTableOP != nil {
-		st.dirtyTableOP = st.dirtyTableOP[:0]
+	if flags.HasPresumeKeyNotExists() {
+		return true
 	}
+
+	// lock row key, primary key and unique index for delete operation,
+	if len(v) == 0 {
+		return flags.HasNeedLocked() || tablecodec.IsRecordKey(k)
+	}
+
+	if tablecodec.IsUntouchedIndexKValue(k, v) {
+		return false
+	}
+	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
+	// Put row key and unique index need to lock.
+	return !isNonUniqueIndex
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
@@ -216,83 +485,64 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 	m1.Sequence = append(m1.Sequence, m2.Sequence...)
 }
 
-func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
-	switch op.kind {
-	case executor.DirtyTableAddRow:
-		dirtyDB.AddRow(op.tid, op.handle, op.row)
-	case executor.DirtyTableDeleteRow:
-		dirtyDB.DeleteRow(op.tid, op.handle)
-	case executor.DirtyTableTruncate:
-		dirtyDB.TruncateTable(op.tid)
-	}
+type txnFailFuture struct{}
+
+func (txnFailFuture) Wait() (uint64, error) {
+	return 0, errors.New("mock get timestamp fail")
 }
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future oracle.Future
-	store  kv.Storage
-	span   opentracing.Span
+	future   oracle.Future
+	store    kv.Storage
+	txnScope string
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
-	tf.span.Finish()
+	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-		return tf.store.BeginWithStartTS(startTS)
+		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
+	} else if config.GetGlobalConfig().Store == "unistore" {
+		return nil, err
 	}
 
+	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.Begin()
+	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
 }
 
-func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
-	oracleStore := s.store.GetOracle()
-	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store, span}
+// HasDirtyContent checks whether there's dirty update on the given table.
+// Put this function here is to avoid cycle import.
+func (s *session) HasDirtyContent(tid int64) bool {
+	if s.txn.Transaction == nil {
+		return false
+	}
+	seekKey := tablecodec.EncodeTablePrefix(tid)
+	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
+	terror.Log(err)
+	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
 }
 
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit() {
-	if s.txn.fail != nil {
-		return
-	}
+	defer func() {
+		s.txn.cleanup()
+	}()
 
-	defer s.txn.cleanup()
 	st := &s.txn
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
-		// gofail: var mockStmtCommitError bool
-		// if mockStmtCommitError {
-		// 	return errors.New("mock stmt commit error")
-		// }
-		if len(v) == 0 {
-			return errors.Trace(st.Transaction.Delete(k))
-		}
-		return errors.Trace(st.Transaction.Set(k, v))
-	})
-	if err != nil {
-		s.txn.fail = errors.Trace(err)
-		return
-	}
+	st.flushStmtBuf()
 
 	// Need to flush binlog.
 	for tableID, delta := range st.mutations {
 		mutation := getBinlogMutation(s, tableID)
 		mergeToMutation(mutation, delta)
 	}
-
-	if len(st.dirtyTableOP) > 0 {
-		dirtyDB := executor.GetDirtyDB(s)
-		for _, op := range st.dirtyTableOP {
-			mergeToDirtyDB(dirtyDB, op)
-		}
-	}
 }
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
 	s.txn.cleanup()
-	return
 }
 
 // StmtGetMutation implements the sessionctx.Context interface.
@@ -302,8 +552,4 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
 	}
 	return st.mutations[tableID]
-}
-
-func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
-	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle, row})
 }

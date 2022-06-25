@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,306 +16,443 @@ package aggregation
 
 import (
 	"math"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testAggFuncSuit{})
-
-type testAggFuncSuit struct {
+type mockAggFuncSuite struct {
 	ctx     sessionctx.Context
-	rows    []types.DatumRow
-	nullRow types.DatumRow
+	rows    []chunk.Row
+	nullRow chunk.Row
 }
 
-func generateRowData() []types.DatumRow {
-	rows := make([]types.DatumRow, 0, 5050)
+func createAggFuncSuite() (s *mockAggFuncSuite) {
+	s = new(mockAggFuncSuite)
+	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
+	s.rows = make([]chunk.Row, 0, 5050)
 	for i := 1; i <= 100; i++ {
 		for j := 0; j < i; j++ {
-			rows = append(rows, types.MakeDatums(i))
+			s.rows = append(s.rows, chunk.MutRowFromDatums(types.MakeDatums(i)).ToRow())
 		}
 	}
-	return rows
+	s.nullRow = chunk.MutRowFromDatums([]types.Datum{{}}).ToRow()
+	return
 }
 
-func (s *testAggFuncSuit) SetUpSuite(c *C) {
-	s.ctx = mock.NewContext()
-	s.rows = generateRowData()
-	s.nullRow = []types.Datum{{}}
-}
-
-func (s *testAggFuncSuit) TestAvg(c *C) {
+func TestAvg(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	avgFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	avgFunc := desc.GetAggFunc(ctx)
 	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := avgFunc.GetResult(evalCtx)
-	c.Assert(result.IsNull(), IsTrue)
+	require.True(t, result.IsNull())
 
 	for _, row := range s.rows {
 		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	result = avgFunc.GetResult(evalCtx)
 	needed := types.NewDecFromStringForTest("67.000000000000000000000000000000")
-	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
-	err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
-	c.Assert(err, IsNil)
+	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
+	err = avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
+	require.NoError(t, err)
 	result = avgFunc.GetResult(evalCtx)
-	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
+	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
 
-	distinctAvgFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, true).GetAggFunc()
+	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
+	require.NoError(t, err)
+	distinctAvgFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctAvgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	for _, row := range s.rows {
 		err := distinctAvgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	result = distinctAvgFunc.GetResult(evalCtx)
 	needed = types.NewDecFromStringForTest("50.500000000000000000000000000000")
-	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
+	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
 	partialResult := distinctAvgFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetInt64(), Equals, int64(100))
+	require.Equal(t, int64(100), partialResult[0].GetInt64())
 	needed = types.NewDecFromStringForTest("5050")
-	c.Assert(partialResult[1].GetMysqlDecimal().Compare(needed) == 0, IsTrue, Commentf("%v, %v ", result.GetMysqlDecimal(), needed))
+	require.Equalf(t, 0, partialResult[1].GetMysqlDecimal().Compare(needed), "%v, %v ", result.GetMysqlDecimal(), needed)
 }
 
-func (s *testAggFuncSuit) TestAvgFinalMode(c *C) {
-	rows := make([]types.DatumRow, 0, 100)
+func TestAvgFinalMode(t *testing.T) {
+	s := createAggFuncSuite()
+	rows := make([][]types.Datum, 0, 100)
 	for i := 1; i <= 100; i++ {
 		rows = append(rows, types.MakeDatums(i, types.NewDecFromInt(int64(i*i))))
 	}
+	ctx := mock.NewContext()
 	cntCol := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	sumCol := &expression.Column{
 		Index:   1,
-		RetType: types.NewFieldType(mysql.TypeDecimal),
+		RetType: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	aggFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{cntCol, sumCol}, false)
+	aggFunc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{cntCol, sumCol}, false)
+	require.NoError(t, err)
 	aggFunc.Mode = FinalMode
-	avgFunc := aggFunc.GetAggFunc()
+	avgFunc := aggFunc.GetAggFunc(ctx)
 	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range rows {
-		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		c.Assert(err, IsNil)
+		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(row).ToRow())
+		require.NoError(t, err)
 	}
 	result := avgFunc.GetResult(evalCtx)
 	needed := types.NewDecFromStringForTest("67.000000000000000000000000000000")
-	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
+	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
 }
 
-func (s *testAggFuncSuit) TestSum(c *C) {
+func TestSum(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	sumFunc := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	sumFunc := desc.GetAggFunc(ctx)
 	evalCtx := sumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := sumFunc.GetResult(evalCtx)
-	c.Assert(result.IsNull(), IsTrue)
+	require.True(t, result.IsNull())
 
 	for _, row := range s.rows {
 		err := sumFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	result = sumFunc.GetResult(evalCtx)
 	needed := types.NewDecFromStringForTest("338350")
-	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
-	err := sumFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
-	c.Assert(err, IsNil)
+	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
+	err = sumFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
+	require.NoError(t, err)
 	result = sumFunc.GetResult(evalCtx)
-	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
+	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
 	partialResult := sumFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetMysqlDecimal().Compare(needed) == 0, IsTrue)
+	require.True(t, partialResult[0].GetMysqlDecimal().Compare(needed) == 0)
 
-	distinctSumFunc := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, true).GetAggFunc()
+	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, true)
+	require.NoError(t, err)
+	distinctSumFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctSumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	for _, row := range s.rows {
 		err := distinctSumFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	result = distinctSumFunc.GetResult(evalCtx)
 	needed = types.NewDecFromStringForTest("5050")
-	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
+	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
 }
 
-func (s *testAggFuncSuit) TestBitAnd(c *C) {
+func TestBitAnd(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	bitAndFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	bitAndFunc := desc.GetAggFunc(ctx)
 	evalCtx := bitAndFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitAndFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(math.MaxUint64))
+	require.Equal(t, uint64(math.MaxUint64), result.GetUint64())
 
-	row := types.MakeDatums(1)
-	err := bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitAndFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
 	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	result = bitAndFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
-	row = types.MakeDatums(1)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitAndFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
-	row = types.MakeDatums(3)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitAndFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
-	row = types.MakeDatums(2)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitAndFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(0))
+	require.Equal(t, uint64(0), result.GetUint64())
 	partialResult := bitAndFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetUint64(), Equals, uint64(0))
+	require.Equal(t, uint64(0), partialResult[0].GetUint64())
+
+	// test bit_and( decimal )
+	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	bitAndFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+
+	result = bitAndFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(math.MaxUint64), result.GetUint64())
+
+	var dec types.MyDecimal
+	err = dec.FromString([]byte("1.234"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitAndFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(1), result.GetUint64())
+
+	err = dec.FromString([]byte("3.012"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitAndFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(1), result.GetUint64())
+
+	err = dec.FromString([]byte("2.12345678"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitAndFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(0), result.GetUint64())
 }
 
-func (s *testAggFuncSuit) TestBitOr(c *C) {
+func TestBitOr(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	bitOrFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	bitOrFunc := desc.GetAggFunc(ctx)
 	evalCtx := bitOrFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitOrFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(0))
+	require.Equal(t, uint64(0), result.GetUint64())
 
-	row := types.MakeDatums(1)
-	err := bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitOrFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
 	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	result = bitOrFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
-	row = types.MakeDatums(1)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitOrFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
-	row = types.MakeDatums(3)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitOrFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(3))
+	require.Equal(t, uint64(3), result.GetUint64())
 
-	row = types.MakeDatums(2)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitOrFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(3))
+	require.Equal(t, uint64(3), result.GetUint64())
 	partialResult := bitOrFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetUint64(), Equals, uint64(3))
+	require.Equal(t, uint64(3), partialResult[0].GetUint64())
+
+	// test bit_or( decimal )
+	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	bitOrFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+
+	result = bitOrFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(0), result.GetUint64())
+
+	var dec types.MyDecimal
+	err = dec.FromString([]byte("12.234"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitOrFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(12), result.GetUint64())
+
+	err = dec.FromString([]byte("1.012"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitOrFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(13), result.GetUint64())
+	err = dec.FromString([]byte("15.12345678"))
+	require.NoError(t, err)
+
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitOrFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(15), result.GetUint64())
+
+	err = dec.FromString([]byte("16.00"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitOrFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(31), result.GetUint64())
 }
 
-func (s *testAggFuncSuit) TestBitXor(c *C) {
+func TestBitXor(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	bitXorFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	bitXorFunc := desc.GetAggFunc(ctx)
 	evalCtx := bitXorFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitXorFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(0))
+	require.Equal(t, uint64(0), result.GetUint64())
 
-	row := types.MakeDatums(1)
-	err := bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitXorFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
 	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	result = bitXorFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
-	row = types.MakeDatums(1)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitXorFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(0))
+	require.Equal(t, uint64(0), result.GetUint64())
 
-	row = types.MakeDatums(3)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitXorFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(3))
+	require.Equal(t, uint64(3), result.GetUint64())
 
-	row = types.MakeDatums(2)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = bitXorFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 	partialResult := bitXorFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), partialResult[0].GetUint64())
+
+	// test bit_xor( decimal )
+	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	bitXorFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+
+	result = bitXorFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(0), result.GetUint64())
+
+	var dec types.MyDecimal
+	err = dec.FromString([]byte("1.234"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitXorFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(1), result.GetUint64())
+
+	err = dec.FromString([]byte("1.012"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitXorFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(0), result.GetUint64())
+
+	err = dec.FromString([]byte("2.12345678"))
+	require.NoError(t, err)
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
+	result = bitXorFunc.GetResult(evalCtx)
+	require.Equal(t, uint64(2), result.GetUint64())
 }
 
-func (s *testAggFuncSuit) TestCount(c *C) {
+func TestCount(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	countFunc := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	countFunc := desc.GetAggFunc(ctx)
 	evalCtx := countFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := countFunc.GetResult(evalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(0))
+	require.Equal(t, int64(0), result.GetInt64())
 
 	for _, row := range s.rows {
-		err := countFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-		c.Assert(err, IsNil)
+		err := countFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
 	}
 	result = countFunc.GetResult(evalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(5050))
-	err := countFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
-	c.Assert(err, IsNil)
+	require.Equal(t, int64(5050), result.GetInt64())
+	err = countFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
+	require.NoError(t, err)
 	result = countFunc.GetResult(evalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(5050))
+	require.Equal(t, int64(5050), result.GetInt64())
 	partialResult := countFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetInt64(), Equals, int64(5050))
+	require.Equal(t, int64(5050), partialResult[0].GetInt64())
 
-	distinctCountFunc := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, true).GetAggFunc()
+	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, true)
+	require.NoError(t, err)
+	distinctCountFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctCountFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range s.rows {
-		err := distinctCountFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-		c.Assert(err, IsNil)
+		err := distinctCountFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
 	}
 	result = distinctCountFunc.GetResult(evalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(100))
+	require.Equal(t, int64(100), result.GetInt64())
 }
 
-func (s *testAggFuncSuit) TestConcat(c *C) {
+func TestConcat(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -323,127 +461,142 @@ func (s *testAggFuncSuit) TestConcat(c *C) {
 		Index:   1,
 		RetType: types.NewFieldType(mysql.TypeVarchar),
 	}
-	concatFunc := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false)
+	require.NoError(t, err)
+	concatFunc := desc.GetAggFunc(ctx)
 	evalCtx := concatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := concatFunc.GetResult(evalCtx)
-	c.Assert(result.IsNull(), IsTrue)
+	require.True(t, result.IsNull())
 
-	row := types.MakeDatums(1, "x")
-	err := concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row := chunk.MutRowFromDatums(types.MakeDatums(1, "x"))
+	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = concatFunc.GetResult(evalCtx)
-	c.Assert(result.GetString(), Equals, "1")
+	require.Equal(t, "1", result.GetString())
 
-	row[0].SetInt64(2)
-	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row.SetDatum(0, types.NewIntDatum(2))
+	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = concatFunc.GetResult(evalCtx)
-	c.Assert(result.GetString(), Equals, "1x2")
+	require.Equal(t, "1x2", result.GetString())
 
-	row[0].SetNull()
-	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row.SetDatum(0, types.NewDatum(nil))
+	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = concatFunc.GetResult(evalCtx)
-	c.Assert(result.GetString(), Equals, "1x2")
+	require.Equal(t, "1x2", result.GetString())
 	partialResult := concatFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetString(), Equals, "1x2")
+	require.Equal(t, "1x2", partialResult[0].GetString())
 
-	distinctConcatFunc := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true).GetAggFunc()
+	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true)
+	require.NoError(t, err)
+	distinctConcatFunc := desc.GetAggFunc(ctx)
 	evalCtx = distinctConcatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
-	row[0].SetInt64(1)
-	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row.SetDatum(0, types.NewIntDatum(1))
+	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = distinctConcatFunc.GetResult(evalCtx)
-	c.Assert(result.GetString(), Equals, "1")
+	require.Equal(t, "1", result.GetString())
 
-	row[0].SetInt64(1)
-	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row.SetDatum(0, types.NewIntDatum(1))
+	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = distinctConcatFunc.GetResult(evalCtx)
-	c.Assert(result.GetString(), Equals, "1")
+	require.Equal(t, "1", result.GetString())
 }
 
-func (s *testAggFuncSuit) TestFirstRow(c *C) {
+func TestFirstRow(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 
-	firstRowFunc := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	firstRowFunc := desc.GetAggFunc(ctx)
 	evalCtx := firstRowFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
-	row := types.MakeDatums(1)
-	err := firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result := firstRowFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 
-	row = types.MakeDatums(2)
-	err = firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+	require.NoError(t, err)
 	result = firstRowFunc.GetResult(evalCtx)
-	c.Assert(result.GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), result.GetUint64())
 	partialResult := firstRowFunc.GetPartialResult(evalCtx)
-	c.Assert(partialResult[0].GetUint64(), Equals, uint64(1))
+	require.Equal(t, uint64(1), partialResult[0].GetUint64())
 }
 
-func (s *testAggFuncSuit) TestMaxMin(c *C) {
+func TestMaxMin(t *testing.T) {
+	s := createAggFuncSuite()
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 
-	maxFunc := NewAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{col}, false).GetAggFunc()
-	minFunc := NewAggFuncDesc(s.ctx, ast.AggFuncMin, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	maxFunc := desc.GetAggFunc(ctx)
+	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncMin, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	minFunc := desc.GetAggFunc(ctx)
 	maxEvalCtx := maxFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	minEvalCtx := minFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := maxFunc.GetResult(maxEvalCtx)
-	c.Assert(result.IsNull(), IsTrue)
+	require.True(t, result.IsNull())
 	result = minFunc.GetResult(minEvalCtx)
-	c.Assert(result.IsNull(), IsTrue)
+	require.True(t, result.IsNull())
 
-	row := types.MakeDatums(2)
-	err := maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row := chunk.MutRowFromDatums(types.MakeDatums(2))
+	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = maxFunc.GetResult(maxEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(2))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	require.Equal(t, int64(2), result.GetInt64())
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = minFunc.GetResult(minEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(2))
+	require.Equal(t, int64(2), result.GetInt64())
 
-	row[0].SetInt64(3)
-	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row.SetDatum(0, types.NewIntDatum(3))
+	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = maxFunc.GetResult(maxEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(3))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	require.Equal(t, int64(3), result.GetInt64())
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = minFunc.GetResult(minEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(2))
+	require.Equal(t, int64(2), result.GetInt64())
 
-	row[0].SetInt64(1)
-	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row.SetDatum(0, types.NewIntDatum(1))
+	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = maxFunc.GetResult(maxEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(3))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	require.Equal(t, int64(3), result.GetInt64())
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = minFunc.GetResult(minEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(1))
+	require.Equal(t, int64(1), result.GetInt64())
 
-	row[0].SetNull()
-	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	row.SetDatum(0, types.NewDatum(nil))
+	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = maxFunc.GetResult(maxEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(3))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
-	c.Assert(err, IsNil)
+	require.Equal(t, int64(3), result.GetInt64())
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
+	require.NoError(t, err)
 	result = minFunc.GetResult(minEvalCtx)
-	c.Assert(result.GetInt64(), Equals, int64(1))
+	require.Equal(t, int64(1), result.GetInt64())
 	partialResult := minFunc.GetPartialResult(minEvalCtx)
-	c.Assert(partialResult[0].GetInt64(), Equals, int64(1))
+	require.Equal(t, int64(1), partialResult[0].GetInt64())
 }

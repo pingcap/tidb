@@ -8,33 +8,32 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package server
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/stretchr/testify/require"
 )
 
-type tidbResultSetTestSuite struct{}
-
-var _ = Suite(tidbResultSetTestSuite{})
-
-func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
+func createColumnByTypeAndLen(tp byte, cl uint32) *ColumnInfo {
 	return &ColumnInfo{
 		Schema:             "test",
 		Table:              "dual",
 		OrgTable:           "",
 		Name:               "a",
 		OrgName:            "a",
-		ColumnLength:       len,
-		Charset:            uint16(mysql.CharsetIDs[charset.CharsetUTF8]),
+		ColumnLength:       cl,
+		Charset:            uint16(mysql.CharsetNameToID(charset.CharsetUTF8)),
 		Flag:               uint16(mysql.UnsignedFlag),
 		Decimal:            uint8(0),
 		Type:               tp,
@@ -42,50 +41,57 @@ func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
 		DefaultValue:       nil,
 	}
 }
-func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
+func TestConvertColumnInfo(t *testing.T) {
 	// Test "mysql.TypeBit", for: https://github.com/pingcap/tidb/issues/5405.
+	ftb := types.NewFieldTypeBuilder()
+	ftb.SetType(mysql.TypeBit).SetFlag(mysql.UnsignedFlag).SetFlen(1).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
 	resultField := ast.ResultField{
 		Column: &model.ColumnInfo{
-			Name:   model.NewCIStr("a"),
-			ID:     0,
-			Offset: 0,
-			FieldType: types.FieldType{
-				Tp:      mysql.TypeBit,
-				Flag:    mysql.UnsignedFlag,
-				Flen:    1,
-				Decimal: 0,
-				Charset: charset.CharsetUTF8,
-				Collate: charset.CollationUTF8,
-			},
-			Comment: "column a is the first column in table dual",
+			Name:      model.NewCIStr("a"),
+			ID:        0,
+			Offset:    0,
+			FieldType: ftb.Build(),
+			Comment:   "column a is the first column in table dual",
 		},
 		ColumnAsName: model.NewCIStr("a"),
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
 	colInfo := convertColumnInfo(&resultField)
-	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeBit, 1))
+	require.Equal(t, createColumnByTypeAndLen(mysql.TypeBit, 1), colInfo)
 
 	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
+	ftpb := types.NewFieldTypeBuilder()
+	ftpb.SetType(mysql.TypeTiny).SetFlag(mysql.UnsignedFlag).SetFlen(1).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
 	resultField = ast.ResultField{
 		Column: &model.ColumnInfo{
-			Name:   model.NewCIStr("a"),
-			ID:     0,
-			Offset: 0,
-			FieldType: types.FieldType{
-				Tp:      mysql.TypeTiny,
-				Flag:    mysql.UnsignedFlag,
-				Flen:    1,
-				Decimal: 0,
-				Charset: charset.CharsetUTF8,
-				Collate: charset.CollationUTF8,
-			},
-			Comment: "column a is the first column in table dual",
+			Name:      model.NewCIStr("a"),
+			ID:        0,
+			Offset:    0,
+			FieldType: ftpb.Build(),
+			Comment:   "column a is the first column in table dual",
 		},
 		ColumnAsName: model.NewCIStr("a"),
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
 	colInfo = convertColumnInfo(&resultField)
-	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeTiny, 1))
+	require.Equal(t, createColumnByTypeAndLen(mysql.TypeTiny, 1), colInfo)
+
+	ftpb1 := types.NewFieldTypeBuilder()
+	ftpb1.SetType(mysql.TypeYear).SetFlag(mysql.ZerofillFlag).SetFlen(4).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
+	resultField = ast.ResultField{
+		Column: &model.ColumnInfo{
+			Name:      model.NewCIStr("a"),
+			ID:        0,
+			Offset:    0,
+			FieldType: ftpb1.Build(),
+			Comment:   "column a is the first column in table dual",
+		},
+		ColumnAsName: model.NewCIStr("a"),
+		TableAsName:  model.NewCIStr("dual"),
+		DBName:       model.NewCIStr("test"),
+	}
+	colInfo = convertColumnInfo(&resultField)
+	require.Equal(t, uint32(4), colInfo.ColumnLength)
 }

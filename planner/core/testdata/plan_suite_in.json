@@ -1,0 +1,787 @@
+[
+  {
+    "name": "TestHintScope",
+    "cases": [
+      // join hints
+      "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(test.t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ HASH_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(test.t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(test.t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b",
+      // aggregation hints
+      "select /*+ STREAM_AGG() */ s, count(s) from (select /*+ HASH_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+      "select /*+ HASH_AGG() */ s, count(s) from (select /*+ STREAM_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+      "select /*+ HASH_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
+      "select /*+ STREAM_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s"
+    ]
+  },
+  {
+    "name": "TestIndexHint",
+    "cases": [
+      // simple case
+      "select /*+ USE_INDEX(t, c_d_e) */ * from t",
+      "select /*+ USE_INDEX(test.t, c_d_e) */ * from t",
+      "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ IGNORE_INDEX(test.t, c_d_e) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e) */ * from t",
+      "select /*+ FORCE_INDEX(test.t, c_d_e) */ * from t",
+      "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
+      "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ FORCE_INDEX(t, c_d_e) */ * from t t1",
+      "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
+      "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ FORCE_INDEX(t1, c_d_e) */ * from t t1",
+      "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ FORCE_INDEX(t1, c_d_e), FORCE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
+      // test multiple indexes
+      "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+      "select /*+ FORCE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+      // use TablePath when the hint only contains table.
+      "select /*+ USE_INDEX(t) */ f from t where f > 10",
+      "select /*+ FORCE_INDEX(t) */ f from t where f > 10",
+      // there will be a warning instead of error when index not exist
+      "select /*+ USE_INDEX(t, no_such_index) */ * from t",
+      "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+      "select /*+ FORCE_INDEX(t, no_such_index) */ * from t",
+      // use both use_index and ignore_index, same as index hints in sql.
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      // use both force_index and ignore_index, same as index hints in sql.
+      "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c"
+    ]
+  },
+  {
+    "name": "TestIndexMergeHint",
+    "cases": [
+      "select /*+ USE_INDEX_MERGE(t, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t, primary, f_g) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
+      "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderSimpleCase",
+    "cases":[
+      // Test index hint.
+      "select * from t t1 use index(c_d_e)",
+      "select f from t use index() where f = 1",
+      // Test ts + Sort vs. DoubleRead + filter.
+      "select a from t where a between 1 and 2 order by c",
+      // Test DNF condition + Double Read.
+      "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
+      "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
+      // Test TopN to table branch in double read.
+      "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
+      // Test Null Range
+      "select * from t where t.e_str is null",
+      // Test Null Range but the column has not null flag.
+      "select * from t where t.c is null",
+      // Test TopN to index branch in double read.
+      "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
+      // Test TopN to Limit in double read.
+      "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+      // Test TopN to Limit in index single read.
+      "select c from t where t.c = 1 and t.e = 1 order by t.d limit 1",
+      // Test TopN to Limit in table single read.
+      "select c from t order by t.a limit 1",
+      // Test TopN push down in table single read.
+      "select c from t order by t.a + t.b limit 1",
+      // Test Limit push down in table single read.
+      "select c from t  limit 1",
+      // Test Limit push down in index single read.
+      "select c from t where c = 1 limit 1",
+      // Test index single read and Selection.
+      "select c from t where c = 1",
+      // Test index single read and Sort.
+      "select c from t order by c",
+      // Test index single read and Sort.
+      "select c from t where c = 1 order by e",
+      // Test Limit push down in double single read.
+      "select c, b from t where c = 1 limit 1",
+      // Test Selection + Limit push down in double single read.
+      "select c, b from t where c = 1 and e = 1 and b = 1 limit 1",
+      // Test Order by multi columns.
+      "select c from t where c = 1 order by d, c",
+      // Test for index with length.
+      "select c_str from t where e_str = '1' order by d_str, c_str",
+      // Test PK in index single read.
+      "select c from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+      // Test composed index.
+      // FIXME: The TopN didn't be pushed.
+      "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
+      // Test PK in index double read.
+      "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
+      // Test index filter condition push down.
+      "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
+      "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
+      "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
+      // Test embedded ORDER BY which imposes on different number of columns than outer query.
+      "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
+      "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
+      "select * from (select *, NULL as xxx from t) t order by xxx",
+      "select * from t use index(f) where f = 1 and a = 1",
+      "select * from t2 use index(b) where b = 1 and a = 1",
+      // Test inline project for Limit
+      "select f from t where a > 1",
+      "select f from t where a > 1 limit 10"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderJoin",
+    "cases": [
+      "select * from t t1 join t t2 on t1.a = t2.c_str",
+      "select * from t t1 join t t2 on t1.b = t2.a",
+      "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
+      "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
+      "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
+      "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
+      // Test hash join's hint.
+      "select /*+ TIDB_HJ(t1, t2) */ * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
+      "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
+      "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
+      "select * from t t1 join t t2 on t1.a = t2.a order by t1.a",
+      "select * from t t1 left outer join t t2 on t1.a = t2.a right outer join t t3 on t1.a = t3.a",
+      "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
+      "select * from t where t.c in (select b from t s where s.a = t.a)",
+      "select t.c in (select b from t s where s.a = t.a) from t",
+      // Test Single Merge Join.
+      // Merge Join now enforce a sort.
+      "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a",
+      // Test Single Merge Join + Sort.
+      "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a",
+      "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.a",
+      // Test Single Merge Join + Sort + desc.
+      "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.a = t2.a order by t2.a desc",
+      "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
+      // Test Multi Merge Join.
+      "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
+      "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.b and t2.a = t3.b",
+      // Test Multi Merge Join with multi keys.
+      // TODO: More tests should be added.
+      "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d",
+      "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.c = t2.c and t1.d = t2.d and t3.c = t1.c and t3.d = t1.d order by t1.c",
+      // Test Multi Merge Join + Outer Join.
+      "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
+      "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t1.a = t3.a",
+      // Test Index Join + TableScan.
+      "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+      // Test Index Join + DoubleRead.
+      "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.c",
+      // Test Index Join + SingleRead.
+      "select /*+ TIDB_INLJ(t2) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+      // Test Index Join + Order by.
+      "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t1.c",
+      // Test Index Join + Order by.
+      "select /*+ TIDB_INLJ(t1, t2) */ t1.a, t2.a from t t1, t t2 where t1.a = t2.a order by t2.c",
+      // Test Index Join + TableScan + Rotate.
+      "select /*+ TIDB_INLJ(t1) */ t1.a , t2.a from t t1, t t2 where t1.a = t2.c",
+      // Test Index Join + OuterJoin + TableScan.
+      "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.a and t2.b < 1",
+      "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2 on t1.d=t2.d and t2.c = 1",
+      // Test Index Join failed.
+      "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 left outer join t t2 on t1.a = t2.b",
+      // Test Index Join failed.
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 right outer join t t2 on t1.a = t2.b",
+      // Test Semi Join hint success.
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
+      // Test Semi Join hint fail.
+      "select /*+ TIDB_INLJ(t1) */ * from t t1 where t1.a in (select a from t t2)",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.c=t2.c and t1.f=t2.f",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a = t2.a and t1.f=t2.f",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.f=t2.f and t1.a=t2.a",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a=t2.a and t2.a in (1, 2)",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.b and t1.c=1 and t2.c=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c > t1.d-10 and t2.c < t1.d+10",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b = t2.c and t2.c=1 and t2.d=2 and t2.e=4",
+      "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t2.c=1 and t2.d=1 and t2.e > 10 and t2.e < 20"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderSubquery",
+    "cases": [
+      // Test join key with cast.
+      "select * from t where exists (select s.a from t s having sum(s.a) = t.a )",
+      "select * from t where exists (select s.a from t s having sum(s.a) = t.a ) order by t.a",
+      // FIXME: Report error by resolver.
+      // "select * from t where exists (select s.a from t s having s.a = t.a ) order by t.a",
+      "select * from t where a in (select s.a from t s) order by t.a",
+      // Test Nested sub query.
+      "select * from t where exists (select s.a from t s where s.c in (select c from t as k where k.d = s.d) having sum(s.a) = t.a )",
+      // Test Semi Join + Order by.
+      "select * from t where a in (select a from t) order by b",
+      // Test Apply.
+      "select t.c in (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
+      "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
+      "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a"
+    ]
+  },
+  {
+    "name": "TestDAGPlanTopN",
+    "cases": [
+      "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.a limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b order by t1.b limit 1",
+      "select * from t t1 left join t t2 on t1.b = t2.b left join t t3 on t2.b = t3.b limit 1",
+      "select * from t where b = 1 and c = 1 order by c limit 1",
+      "select * from t where c = 1 order by c limit 1",
+      "select * from t order by a limit 1",
+      "select c from t order by c limit 1"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderBasePhysicalPlan",
+    "cases": [
+      // Test for update.
+      // TODO: This is not reasonable. Mysql do like this because the limit of InnoDB, should TiDB keep consistency with MySQL?
+      "select * from t order by b limit 1 for update",
+      // Test complex update.
+      "update t set a = 5 where b < 1 order by d limit 1",
+      // Test simple update.
+      "update t set a = 5",
+      // TODO: Test delete/update with join.
+      // Test join hint for delete and update
+      "delete /*+ TIDB_INLJ(t1, t2) */ t1 from t t1, t t2 where t1.c=t2.c",
+      "delete /*+ TIDB_SMJ(t1, t2) */ from t1 using t t1, t t2 where t1.c=t2.c",
+      "update /*+ TIDB_SMJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
+      "update /*+ TIDB_HJ(t1, t2) */ t t1, t t2 set t1.c=1, t2.c=1 where t1.a=t2.a",
+      // Test complex delete.
+      "delete from t where b < 1 order by d limit 1",
+      // Test simple delete.
+      "delete from t",
+      // Test "USE INDEX" hint in delete statement from single table
+      "delete from t use index(c_d_e) where b = 1",
+      // Test complex insert.
+      "insert into t select * from t where b < 1 order by d limit 1",
+      // Test simple insert.
+      "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",
+      // Test dual.
+      "select 1",
+      "select * from t where false",
+      // Test show.
+      "show tables"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderUnion",
+    "cases": [
+      // Test simple union.
+      "select * from t union all select * from t",
+      // Test Order by + Union.
+      "select * from t union all (select * from t) order by a ",
+      // Test Limit + Union.
+      "select * from t union all (select * from t) limit 1",
+      // Test TopN + Union.
+      "select a from t union all (select c from t) order by a limit 1"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderUnionScan",
+    "cases": [
+      // Read table.
+      "select * from t",
+      "select * from t where b = 1",
+      "select * from t where a = 1",
+      "select * from t where a = 1 order by a",
+      "select * from t where a = 1 order by b",
+      "select * from t where a = 1 limit 1",
+      "select * from t where c = 1",
+      "select c from t where c = 1"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderAgg",
+    "cases": [
+      // Test distinct.
+      "select distinct b from t",
+      "select count(*) from (select * from t order by b) t group by b",
+      "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
+      // Test agg + table.
+      "select sum(a), avg(b + c) from t group by d",
+      "select sum(distinct a), avg(b + c) from t group by d",
+      //  Test group by (c + d)
+      "select sum(e), avg(e + c) from t where c = 1 group by (c + d)",
+      // Test stream agg + index single.
+      "select sum(e), avg(e + c) from t where c = 1 group by c",
+      // Test hash agg + index single.
+      "select sum(e), avg(e + c) from t where c = 1 group by e",
+      // Test hash agg + index double.
+      "select sum(e), avg(b + c) from t where c = 1 and e = 1 group by d",
+      // Test stream agg + index double.
+      "select sum(e), avg(b + c) from t where c = 1 and b = 1",
+      // Test hash agg + order.
+      "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by d order by k",
+      // Test stream agg + order.
+      "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by c order by k",
+      // Test agg can't push down.
+      "select sum(to_base64(e)) from t where c = 1",
+      "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
+      // Test stream agg with multi group by columns.
+      "select sum(to_base64(e)) from t group by e,d,c order by c",
+      "select sum(e+1) from t group by e,d,c order by c",
+      "select sum(to_base64(e)) from t group by e,d,c order by c,e",
+      "select sum(e+1) from t group by e,d,c order by c,e",
+      // Test stream agg + limit or sort
+      "select count(*) from t group by g order by g limit 10",
+      "select count(*) from t group by g limit 10",
+      "select count(*) from t group by g order by g",
+      "select count(*) from t group by g order by g desc limit 1",
+      // Test hash agg + limit or sort
+      "select count(*) from t group by b order by b limit 10",
+      "select count(*) from t group by b order by b",
+      "select count(*) from t group by b limit 10",
+      // Test merge join + stream agg
+      "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g group by a.g",
+      // Test index join + stream agg
+      "select /*+ tidb_inlj(a,b) */ sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.g > 60 group by a.g order by a.g limit 1",
+      "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
+      "select sum(d) from t"
+    ]
+  },
+  {
+   "name": "TestRefine",
+    "cases": [
+      "select a from t where c is not null",
+      "select a from t where c >= 4",
+      "select a from t where c <= 4",
+      "select a from t where c = 4 and d = 5 and e = 6",
+      "select a from t where d = 4 and c = 5",
+      "select a from t where c = 4 and e < 5",
+      "select a from t where c = 4 and d <= 5 and d > 3",
+      "select a from t where d <= 5 and d > 3",
+      "select a from t where c between 1 and 2",
+      "select a from t where c not between 1 and 2",
+      "select a from t where c <= 5 and c >= 3 and d = 1",
+      "select a from t where c = 1 or c = 2 or c = 3",
+      "select b from t where c = 1 or c = 2 or c = 3 or c = 4 or c = 5",
+      "select a from t where c = 5",
+      "select a from t where c = 5 and b = 1",
+      "select a from t where not a",
+      "select a from t where c in (1)",
+      "select a from t where c in ('1')",
+      "select a from t where c = 1.0",
+      "select a from t where c in (1) and d > 3",
+      "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
+      "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
+      "select a from t where c in (1, 2, 3)",
+      "select a from t where c in (1, 2, 3) and d in (1,2) and e = 1",
+      "select a from t where d in (1, 2, 3)",
+      "select a from t where c not in (1)",
+      "select a from t use index(c_d_e) where c != 1",
+      // test like
+      "select a from t where c_str like ''",
+      "select a from t where c_str like 'abc'",
+      "select a from t where c_str not like 'abc'",
+      "select a from t where not (c_str like 'abc' or c_str like 'abd')",
+      "select a from t where c_str like '_abc'",
+      "select a from t where c_str like 'abc%'",
+      "select a from t where c_str like 'abc_'",
+      "select a from t where c_str like 'abc%af'",
+      "select a from t where c_str like 'abc\\_' escape ''",
+      "select a from t where c_str like 'abc\\_'",
+      "select a from t where c_str like 'abc\\\\_'",
+      "select a from t where c_str like 'abc\\_%'",
+      "select a from t where c_str like 'abc=_%' escape '='",
+      "select a from t where c_str like 'abc\\__'",
+      // Check that 123 is converted to string '123'. index can be used.
+      "select a from t where c_str like 123",
+      "select a from t where c = 1.9 and d > 3",
+      "select a from t where c < 1.1",
+      "select a from t where c <= 1.9",
+      "select a from t where c >= 1.1",
+      "select a from t where c > 1.9",
+      "select a from t where c = 123456789098765432101234",
+      "select a from t where c = 'hanfei'"
+    ]
+  },
+  {
+    "name": "TestAggEliminator",
+    "cases": [
+      // Max to Limit + Sort-Desc.
+      "select max(a) from t;",
+      // Min to Limit + Sort.
+      "select min(a) from t;",
+      // Min to Limit + Sort, and isnull() should be added.
+      "select min(c_str) from t;",
+      // Do nothing to max + firstrow.
+      "select max(a), b from t;",
+      // If max/min contains scalar function, we can still do transformation.
+      "select max(a+1) from t;",
+      // Min + Max to Limit + Sort + Join.
+      "select max(a), min(a) from t;",
+      // Min + Max with range condition.
+      "select max(a), min(a) from t where a > 10",
+      // Min + Max with unified index range condition.
+      "select max(d), min(d) from t where c = 1 and d > 10",
+      // Min + Max with multiple columns
+      "select max(a), max(c), min(f) from t",
+      // Do nothing if any column has no index.
+      "select max(a), max(b) from t",
+      // Do nothing if any column has a non-range condition.
+      "select max(a), max(c) from t where c > 10",
+      // Do nothing if the condition cannot be pushed down to range.
+      "select max(a), min(a) from t where a * 3 + 10 < 100",
+      // Do nothing to max with groupby.
+      "select max(a) from t group by b;",
+      // If inner is not a data source, we can still do transformation.
+      "select max(a) from (select t1.a from t t1 join t t2 on t1.a=t2.a) t"
+    ]
+  },
+  {
+    "name": "TestUnmatchedTableInHint",
+    "cases": [
+      "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
+      "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a"
+    ]
+  },
+  {
+    "name": "TestJoinHints",
+    "cases": [
+      "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+      "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
+      "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
+      "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;"
+    ]
+  },
+  {
+    "name":"TestAggregationHints",
+    "cases": [
+      // without Aggregation hints
+      {"SQL": "select count(*) from t t1, t t2 where t1.a = t2.b"},
+      {"SQL": "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"},
+      // with Aggregation hints
+      {"SQL": "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"},
+      {"SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"},
+      // test conflict warning
+      {"SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"},
+      {"SQL": "select /*+ STREAM_AGG() */ distinct a from t"},
+      // additional test
+      {"SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)"},
+      {"SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)"},
+      {"SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)"},
+      {"SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b", "AggPushDown": true},
+      {"SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e"}
+    ]
+  },
+  {
+    "name": "TestQueryBlockHint",
+    "cases": [
+      "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@sel_2 t3) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ MERGE_JOIN(@sel_1 t1), INL_JOIN(@qb t3) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_JOIN(@sel_1 t1), MERGE_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t2) */ t1.a, t1.b from t t1, (select t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ INL_JOIN(@sel_1 t1), HASH_JOIN(@qb t2) */ t1.a, t1.b from t t1, (select /*+ QB_NAME(qb) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+      "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
+      "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
+      "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
+      "select /*+ HASH_JOIN(@sel_1 t1), HASH_JOIN(@sel_2 t1) */ t1.b, t2.a, t2.aa from t t1, (select t1.a as a, t2.a as aa from t t1, t t2) t2 where t1.a = t2.aa;",
+      "select /*+ HASH_JOIN(@sel_2 t1@sel_2, t2@sel_2), MERGE_JOIN(@sel_1 t1@sel_1, t2@sel_1) */ * from (select t1.a, t1.b from t t1, t t2 where t1.a = t2.a) t1, t t2 where t1.b = t2.b"
+    ]
+  },
+  {
+    "name": "TestIndexJoinUnionScan",
+    "cases": [
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + TableScan.
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + DoubleRead.
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into t values(1, 1)",
+        // Test Index Join + UnionScan + IndexScan.
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ t1.a , t2.b from t t1, t t2 where t1.a = t2.b"
+      ],
+      [
+        "insert into tt values(1)",
+        "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
+      ]
+    ]
+  },
+  {
+    "name": "TestMergeJoinUnionScan",
+    "cases": [
+      [
+        "insert into t2 values (11, 'amazing merkle')",
+        "insert into t2 values (12, 'amazing merkle')",
+        // Test Merge Join + UnionScan + TableScan.
+        "explain format = 'brief' select /*+ MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_int = t2.c_int order by t1.c_int, t2.c_str;"
+      ]
+    ]
+  },
+  {
+    "name": "TestSemiJoinToInner",
+    "cases": [
+      "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;"
+    ]
+  },
+  {
+    "name": "TestIndexJoinHint",
+    "cases": [
+      "select /*+ INL_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
+      // Issue 15484
+      "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
+      "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a"
+    ]
+  },
+  {
+    "name": "TestAggToCopHint",
+    "cases": [
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
+      "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
+      "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a"
+    ]
+  },
+  {
+    "name": "TestLimitToCopHint",
+    "cases": [
+      "select /*+ LIMIT_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+      "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+      "select /*+ LIMIT_TO_COP() */ a from tn where a div 2 order by a limit 1",
+      "select /*+ LIMIT_TO_COP() */ a from tn where a > 10 limit 1"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctEnable",
+    "cases": [
+      "select /*+ HASH_AGG() */ avg(distinct a) from t;", // InjectProjBelowAgg
+      "select /*+ HASH_AGG() */ a, count(distinct a) from t;", // firstrow(a) cannot be removed.
+      "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;", // can push down
+      "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
+      "select /*+ HASH_AGG() */ count(distinct c) from t;", // can push down
+      "select count(distinct c) from t group by c;",
+      "select count(distinct c) from t;", // should not use streamAgg because c is not in group by
+
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+
+      "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctDisable",
+    "cases": [
+      // do not pushdown even AGG_TO_COP is specified.
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
+      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
+      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctEnableAggPushDownDisable",
+    "cases": [
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
+      "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;"
+    ]
+  },
+  {
+    "name": "TestGroupConcatOrderby",
+    "cases": [
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderWindow",
+    "cases":[
+      "select lead(a, 1) over (partition by null) as c from t"
+    ]
+  },
+  {
+    "name": "TestDAGPlanBuilderWindowParallel",
+    "cases":[
+      "select lead(a, 1) over (partition by null) as c from t",
+      "select lead(a, 1) over (partition by b) as c from t"
+    ]
+  },
+  {
+    "name": "TestNominalSort",
+    "cases": [
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3",
+      "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a"
+    ]
+  },
+  {
+    "name": "TestInlineProjection",
+    "cases":[
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;",
+      "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
+      "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
+    ]
+  },
+  {
+    "name": "TestHintFromDiffDatabase",
+    "cases": [
+      "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
+    ]
+  },
+  {
+    "name": "TestNthPlanHintWithExplain",
+    "cases": [
+      "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select * from test.tt where a=1 and b=1"
+    ]
+  },
+  {
+    "name": "TestINMJHint",
+    "cases": [
+      "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ inl_hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ inl_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+      "select /*+ hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b"
+    ]
+  },
+  {
+    "name": "TestEliminateMaxOneRow",
+    "cases": [
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
+      "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
+    ]
+  },
+  {
+    "name": "TestEnumIndex",
+    "cases": [
+      "select e from t where e = 'b'",
+      "select e from t where e != 'b'",
+      "select e from t where e > 'b'",
+      "select e from t where e >= 'b'",
+      "select e from t where e < 'b'",
+      "select e from t where e <= 'b'",
+      "select e from t where e = 2",
+      "select e from t where e != 2",
+      "select e from t where e > 2",
+      "select e from t where e >= 2",
+      "select e from t where e < 2",
+      "select e from t where e <= 2",
+
+      // Out of range
+      "select e from t where e > ''",
+      "select e from t where e > 'd'",
+      "select e from t where e > -1",
+      "select e from t where e > 5",
+
+      // zero-value
+      "select e from t where e = ''",
+      "select e from t where e != ''"
+    ]
+  },
+  {
+    "name": "TestIssue27233",
+    "cases": [
+      "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;"
+    ]
+  },
+  {
+    "name": "TestSelectionPartialPushDown",
+    "cases": [
+      // Make sure row_count(tikv_selection) == row_count(table_reader) and row_count(table_reader) > row_count(tidb_selection)
+      "select * from t1 where a > 1 and b > 1",
+      // Make sure row_count(tikv_selection) == row_count(index_lookup) and row_count(index_lookup) > row_count(tidb_selection)
+      "select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1"
+    ]
+  },
+  {
+    "name": "TestIssue28316",
+    "cases": [
+        "select * from t where t.a < 3 and t.a < 3"
+    ]
+  },
+  {
+    "name": "TestMPPSinglePartitionType",
+    "cases": [
+      // test normal aggregation, MPP2Phase.
+      "select count(*) from employee group by deptid+1",
+      // test normal aggregation, MPPScalar.
+      "select count(distinct deptid) a from employee",
+      // test normal join, Broadcast.
+      "select * from employee join employee e1 using(deptid)",
+      // test redundant collect exchange can be eliminated.
+      "select count(distinct a) from (select count(distinct deptid) a from employee) x",
+      // test mppScalar agg below mpp2Phase agg.
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b+1",
+      // test mppScalar agg below mpp1Phase agg, TODO: add hint to enforce
+      // test mppScalar agg below mppTiDB agg, TODO: add hint to enforce
+      "select count(a) from (select count(distinct deptid) a, count(distinct empid) b from employee) x group by b",
+      // test mppScalar agg below join
+      "select * from employee join (select count(distinct deptid) a, count(distinct empid) b from employee) e1",
+      "select * from employee e1 join (select count(distinct deptid) a from employee) e2 on e1.deptid = e2.a",
+      "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+      "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+      // test mpp2Phase agg below join
+      "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+      "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d",
+      // non-broadcast join
+      "set tidb_broadcast_join_threshold_count=1",
+      "set tidb_broadcast_join_threshold_size=1",
+      "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
+      "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
+      "select * from employee e1 join employee e2 on e1.deptid = e2.deptid",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join employee e2 on e1.d = e2.deptid",
+      "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
+      "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d"
+    ]
+  }
+]

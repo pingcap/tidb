@@ -8,18 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package json
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testJSONSuite) TestContainsAnyAsterisk(c *C) {
+func TestContainsAnyAsterisk(t *testing.T) {
 	var tests = []struct {
-		exprString        string
+		expression        string
 		containsAsterisks bool
 	}{
 		{"$.a[b]", false},
@@ -27,16 +30,21 @@ func (s *testJSONSuite) TestContainsAnyAsterisk(c *C) {
 		{"$.*[b]", true},
 		{"$**.a[b]", true},
 	}
-	for _, tt := range tests {
-		pe, err := ParseJSONPathExpr(tt.exprString)
-		c.Assert(err, IsNil)
-		c.Assert(pe.flags.containsAnyAsterisk(), Equals, tt.containsAsterisks)
+
+	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
+		t.Run(test.expression, func(t *testing.T) {
+			pe, err := ParseJSONPathExpr(test.expression)
+			require.NoError(t, err)
+			require.Equal(t, test.containsAsterisks, pe.flags.containsAnyAsterisk())
+		})
 	}
 }
 
-func (s *testJSONSuite) TestValidatePathExpr(c *C) {
+func TestValidatePathExpr(t *testing.T) {
 	var tests = []struct {
-		exprString string
+		expression string
 		success    bool
 		legs       int
 	}{
@@ -52,13 +60,94 @@ func (s *testJSONSuite) TestValidatePathExpr(c *C) {
 		{`$        No Valid Legs Here .a.b.c`, false, 0},
 	}
 
-	for _, tt := range tests {
-		pe, err := ParseJSONPathExpr(tt.exprString)
-		if tt.success {
-			c.Assert(err, IsNil)
-			c.Assert(len(pe.legs), Equals, tt.legs)
-		} else {
-			c.Assert(err, NotNil)
-		}
+	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
+		t.Run(test.expression, func(t *testing.T) {
+			pe, err := ParseJSONPathExpr(test.expression)
+			if test.success {
+				require.NoError(t, err)
+				require.Len(t, pe.legs, test.legs)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestPathExprToString(t *testing.T) {
+	var tests = []struct {
+		expression string
+	}{
+		{"$.a[1]"},
+		{"$.a[*]"},
+		{"$.*[2]"},
+		{"$**.a[3]"},
+		{`$."\"hello\""`},
+	}
+	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
+		t.Run(test.expression, func(t *testing.T) {
+			pe, err := ParseJSONPathExpr(test.expression)
+			require.NoError(t, err)
+			require.Equal(t, test.expression, pe.String())
+		})
+	}
+}
+
+func TestPushBackOneIndexLeg(t *testing.T) {
+	var tests = []struct {
+		expression          string
+		index               int
+		expected            string
+		containsAnyAsterisk bool
+	}{
+		{"$", 1, "$[1]", false},
+		{"$.a[1]", 1, "$.a[1][1]", false},
+		{"$.a[1]", -1, "$.a[1][*]", true},
+		{"$.a[*]", 10, "$.a[*][10]", true},
+		{"$.*[2]", 2, "$.*[2][2]", true},
+		{"$**.a[3]", 3, "$**.a[3][3]", true},
+	}
+
+	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
+		t.Run(test.expression, func(t *testing.T) {
+			pe, err := ParseJSONPathExpr(test.expression)
+			require.NoError(t, err)
+
+			pe = pe.pushBackOneIndexLeg(test.index)
+			require.Equal(t, test.expected, pe.String())
+			require.Equal(t, test.containsAnyAsterisk, pe.ContainsAnyAsterisk())
+		})
+	}
+}
+
+func TestPushBackOneKeyLeg(t *testing.T) {
+	var tests = []struct {
+		expression          string
+		key                 string
+		expected            string
+		containsAnyAsterisk bool
+	}{
+		{"$", "aa", "$.aa", false},
+		{"$.a[1]", "aa", "$.a[1].aa", false},
+		{"$.a[1]", "*", "$.a[1].*", true},
+		{"$.a[*]", "k", "$.a[*].k", true},
+		{"$.*[2]", "bb", "$.*[2].bb", true},
+		{"$**.a[3]", "cc", "$**.a[3].cc", true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.expression, func(t *testing.T) {
+			pe, err := ParseJSONPathExpr(test.expression)
+			require.NoError(t, err)
+
+			pe = pe.pushBackOneKeyLeg(test.key)
+			require.Equal(t, test.expected, pe.String())
+			require.Equal(t, test.containsAnyAsterisk, pe.ContainsAnyAsterisk())
+		})
 	}
 }

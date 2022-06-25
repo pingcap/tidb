@@ -1,0 +1,1 @@
+CREATE DATABASE `unused_config_keys`;

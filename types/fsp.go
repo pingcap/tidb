@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +19,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 const (
@@ -38,8 +39,10 @@ func CheckFsp(fsp int) (int, error) {
 	if fsp == UnspecifiedFsp {
 		return DefaultFsp, nil
 	}
-	if fsp < MinFsp || fsp > MaxFsp {
+	if fsp < MinFsp {
 		return DefaultFsp, errors.Errorf("Invalid fsp %d", fsp)
+	} else if fsp > MaxFsp {
+		return MaxFsp, nil
 	}
 	return fsp, nil
 }
@@ -86,9 +89,12 @@ func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
 	return
 }
 
-// alignFrac is used to generate alignment frac, like `100` -> `100000`
+// alignFrac is used to generate alignment frac, like `100` -> `100000` ,`-100` -> `-100000`
 func alignFrac(s string, fsp int) string {
 	sl := len(s)
+	if sl > 0 && s[0] == '-' {
+		sl = sl - 1
+	}
 	if sl < fsp {
 		return s + strings.Repeat("0", fsp-sl)
 	}

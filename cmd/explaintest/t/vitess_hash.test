@@ -1,0 +1,13 @@
+use test;
+drop table if exists t;
+create table t(
+    customer_id bigint,
+    id bigint,
+    expected_shard bigint unsigned,
+    computed_shard bigint unsigned null,
+    primary key (customer_id, id)
+);
+create index t_vitess_shard on t((vitess_hash(customer_id) >> 56));
+explain format = 'brief' select customer_id from t where (vitess_hash(customer_id) >> 56) = x'd6' ORDER BY id;
+explain format = 'brief' select id from t where (vitess_hash(customer_id) >> 56) IN (x'e0', x'e1') AND id BETWEEN 2 AND 5 ORDER BY id;
+explain format = 'brief' select hex(vitess_hash(1123)) from t;

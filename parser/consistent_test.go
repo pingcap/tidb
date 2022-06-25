@@ -16,57 +16,47 @@ package parser
 import (
 	"io/ioutil"
 	"os"
-	"path"
-	"runtime"
 	"sort"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
+	requires "github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testConsistentSuite{})
-
-type testConsistentSuite struct {
-}
-
-func (s *testConsistentSuite) TestKeywordConsistent(c *C) {
-	_, filename, _, _ := runtime.Caller(0)
-	parserFilename := path.Join(path.Dir(filename), "parser.y")
+func TestKeywordConsistent(t *testing.T) {
+	parserFilename := "parser.y"
 	parserFile, err := os.Open(parserFilename)
-	c.Assert(err, IsNil)
+	requires.NoError(t, err)
 	data, err := ioutil.ReadAll(parserFile)
-	c.Assert(err, IsNil)
+	requires.NoError(t, err)
 	content := string(data)
 
-	reservedKeywordStartMarker := "\t/* The following tokens belong to ReservedKeyword. */"
-	unreservedKeywordStartMarker := "\t/* The following tokens belong to UnReservedKeyword. */"
-	notKeywordTokenStartMarker := "\t/* The following tokens belong to NotKeywordToken. */"
-	tidbKeywordStartMarker := "\t/* The following tokens belong to TiDBKeyword. */"
+	reservedKeywordStartMarker := "\t/* The following tokens belong to ReservedKeyword. Notice: make sure these tokens are contained in ReservedKeyword. */"
+	unreservedKeywordStartMarker := "\t/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */"
+	notKeywordTokenStartMarker := "\t/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */"
+	tidbKeywordStartMarker := "\t/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */"
 	identTokenEndMarker := "%token\t<item>"
 
 	reservedKeywords := extractKeywords(content, reservedKeywordStartMarker, unreservedKeywordStartMarker)
-
 	unreservedKeywords := extractKeywords(content, unreservedKeywordStartMarker, notKeywordTokenStartMarker)
-
 	notKeywordTokens := extractKeywords(content, notKeywordTokenStartMarker, tidbKeywordStartMarker)
-
 	tidbKeywords := extractKeywords(content, tidbKeywordStartMarker, identTokenEndMarker)
 
 	for k, v := range aliases {
-		c.Assert(k != v, IsTrue)
-		c.Assert(tokenMap[k], Equals, tokenMap[v])
+		requires.NotEqual(t, k, v)
+		requires.Equal(t, tokenMap[v], tokenMap[k])
 	}
 	keywordCount := len(reservedKeywords) + len(unreservedKeywords) + len(notKeywordTokens) + len(tidbKeywords)
-	c.Assert(len(tokenMap)-len(aliases), Equals, keywordCount)
+	requires.Equal(t, keywordCount-len(windowFuncTokenMap), len(tokenMap)-len(aliases))
 
-	unreservedCollectionDef := extratKeywordsFromCollectionDef(content, "\nUnReservedKeyword:")
-	c.Assert(unreservedKeywords, DeepEquals, unreservedCollectionDef)
+	unreservedCollectionDef := extractKeywordsFromCollectionDef(content, "\nUnReservedKeyword:")
+	requires.Equal(t, unreservedCollectionDef, unreservedKeywords)
 
-	notKeywordTokensCollectionDef := extratKeywordsFromCollectionDef(content, "\nNotKeywordToken:")
-	c.Assert(notKeywordTokens, DeepEquals, notKeywordTokensCollectionDef)
+	notKeywordTokensCollectionDef := extractKeywordsFromCollectionDef(content, "\nNotKeywordToken:")
+	requires.Equal(t, notKeywordTokensCollectionDef, notKeywordTokens)
 
-	tidbKeywordsCollectionDef := extratKeywordsFromCollectionDef(content, "\nTiDBKeyword:")
-	c.Assert(tidbKeywords, DeepEquals, tidbKeywordsCollectionDef)
+	tidbKeywordsCollectionDef := extractKeywordsFromCollectionDef(content, "\nTiDBKeyword:")
+	requires.Equal(t, tidbKeywordsCollectionDef, tidbKeywords)
 }
 
 func extractMiddle(str, startMarker, endMarker string) string {
@@ -83,6 +73,7 @@ func extractMiddle(str, startMarker, endMarker string) string {
 }
 
 func extractQuotedWords(strs []string) []string {
+	//nolint: prealloc
 	var words []string
 	for _, str := range strs {
 		word := extractMiddle(str, "\"", "\"")
@@ -101,7 +92,7 @@ func extractKeywords(content, startMarker, endMarker string) []string {
 	return extractQuotedWords(lines)
 }
 
-func extratKeywordsFromCollectionDef(content, startMarker string) []string {
+func extractKeywordsFromCollectionDef(content, startMarker string) []string {
 	keywordSection := extractMiddle(content, startMarker, "\n\n")
 	words := strings.Split(keywordSection, "|")
 	return extractQuotedWords(words)

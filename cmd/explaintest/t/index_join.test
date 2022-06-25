@@ -1,0 +1,30 @@
+use test;
+drop table if exists t1, t2;
+create table t1(a bigint, b bigint, index idx(a));
+create table t2(a bigint, b bigint, index idx(a));
+insert into t1 values(1, 1), (1, 1), (1, 1), (1, 1), (1, 1);
+insert into t2 values(1, 1);
+
+analyze table t1, t2;
+set session tidb_hashagg_partial_concurrency = 1;
+set session tidb_hashagg_final_concurrency = 1;
+
+-- Test https://github.com/pingcap/tidb/issues/9577
+-- we expect the following two SQL chose t2 as the outer table
+explain format = 'brief' select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
+explain format = 'brief' select * from t1 join t2 on t1.a=t2.a;
+
+-- Test https://github.com/pingcap/tidb/issues/10516
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null);
+create table t2(a int not null, b int not null, key a(a));
+
+set @@tidb_opt_insubq_to_join_and_agg=0;
+explain format = 'brief' select /*+ TIDB_INLJ(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2);
+show warnings;
+set @@tidb_opt_insubq_to_join_and_agg=1;
+
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null, key a(a));
+create table t2(a int not null, b int not null, key a(a));
+explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2);

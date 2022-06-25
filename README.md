@@ -1,76 +1,85 @@
 ![](docs/logo_with_text.png)
 
+[![LICENSE](https://img.shields.io/github/license/pingcap/tidb.svg)](https://github.com/pingcap/tidb/blob/master/LICENSE)
+[![Language](https://img.shields.io/badge/Language-Go-blue.svg)](https://golang.org/)
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
-![Project Status](https://img.shields.io/badge/version-2.0-green.svg)
+[![GitHub release](https://img.shields.io/github/tag/pingcap/tidb.svg?label=release)](https://github.com/pingcap/tidb/releases)
+[![GitHub release date](https://img.shields.io/github/release-date/pingcap/tidb.svg)](https://github.com/pingcap/tidb/releases)
 [![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
-[![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb/badge.svg?branch=master)](https://coveralls.io/github/pingcap/tidb?branch=master)
+[![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
+[![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
 
 ## What is TiDB?
 
-TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is a Hybrid Transactional/Analytical Processing (HTAP) database. Inspired by the design of Google F1 and Google Spanner, TiDB features infinite horizontal scalability, strong consistency, and high availability. The goal of TiDB is to serve as a one-stop solution for online transactions and analyses.
+TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports Hybrid Transactional and Analytical Processing (HTAP) workloads. It is MySQL compatible and features horizontal scalability, strong consistency, and high availability.
 
-- __Horizontal scalability__
+- [Key features](https://docs.pingcap.com/tidb/stable/overview#key-features)
+- [Architecture](#architecture)
+- [MySQL Compatibility](https://docs.pingcap.com/tidb/stable/mysql-compatibility)
 
-Grow TiDB as your business grows. You can increase the capacity for storage and computation simply by adding more machines.
-
-- __Compatible with MySQL protocol__
-
-Use TiDB as MySQL. You can replace MySQL with TiDB to power your application without changing a single line of code in most cases.
-
-- __Automatic Failover and high availability__
-
-Your data and applications are always-on. TiDB automatically handles malfunctions and protects your applications from machine failures or even downtime of an entire data-center.
-
-- __Consistent distributed transactions__
-
-Think of TiDB as a single-machine RDBMS. You can start a transaction that crosses multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
-
-- __Online DDL__
-
-Evolve TiDB schemas as your requirement changes. You can add new columns and indexes without stopping or affecting the on-going operations.
-
-- __Multiple storage engine support__
-
-Power TiDB with your most favorite engines. TiDB supports local storage engines such as GolevelDB, as well as [TiKV](https://github.com/pingcap/tikv), a distributed storage engine.
-
-For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10/17/how-we-build-tidb/).
-
-## Adopters
-
-You can view the list of TiDB adopters [here](https://github.com/pingcap/docs/blob/master/adopters.md).
-
-## Roadmap
-
-Read the [Roadmap](https://github.com/pingcap/docs/blob/master/ROADMAP.md).
+For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
 ## Quick start
 
-Read the [Quick Start](https://pingcap.com/doc-QUICKSTART).
+### Start with TiDB Cloud
 
-## Documentation
+TiDB Cloud is the fully-managed service of TiDB, currently available on AWS and GCP.
 
-+ [English](https://pingcap.com/docs)
-+ [简体中文](https://pingcap.com/docs-cn)
+Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/free-trial).
+
+See [TiDB Cloud Quick Start Guide](https://docs.pingcap.com/tidbcloud/tidb-cloud-quickstart).
+
+### Start with TiDB
+
+See [TiDB Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
+
+### Start developing TiDB
+
+See [Get Started](https://pingcap.github.io/tidb-dev-guide/get-started/introduction.html) chapter of [TiDB Dev Guide](https://pingcap.github.io/tidb-dev-guide/index.html).
+
+## Community
+
+You can join these groups and chats to discuss and ask TiDB related questions:
+
+- [TiDB Internals Forum](https://internals.tidb.io/)
+- [Slack Channel](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
+- [TiDB User Group Forum (Chinese)](https://asktug.com)
+
+In addition, you may enjoy following:
+
+- [@PingCAP](https://twitter.com/PingCAP) on Twitter
+- Question tagged [#tidb on StackOverflow](https://stackoverflow.com/questions/tagged/tidb)
+- The PingCAP Team [English Blog](https://en.pingcap.com/blog) and [Chinese Blog](https://pingcap.com/blog-cn/)
+
+For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
+
+## Contributing
+
+The [community repository](https://github.com/pingcap/community) hosts all information about the TiDB community, including how to contribute to TiDB, how TiDB community is governed, how special interest groups are organized, etc.
+
+[<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
+
+Contributions are welcomed and greatly appreciated. All the contributors are welcomed to claim your reward by filing this [form](https://forms.pingcap.com/f/tidb-contribution-swag). See [Contribution to TiDB](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/introduction.html) for details on typical contribution workflows. For more contributing information, click on the contributor icon above.
+
+## Adopters
+
+View the current list of in-production TiDB adopters [here](https://docs.pingcap.com/tidb/stable/adopters).
+
+## Case studies
+
+- [English](https://pingcap.com/case-studies)
+- [简体中文](https://pingcap.com/cases-cn/)
 
 ## Architecture
 
 ![architecture](./docs/architecture.png)
 
-## Contributing
-Contributions are welcomed and greatly appreciated. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for details on submitting patches and the contribution workflow.
-
-## Connect with us
-
-- **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
-- **Reddit**: https://www.reddit.com/r/TiDB/
-- **Stack Overflow**: https://stackoverflow.com/questions/tagged/tidb
-- **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
-
 ## License
+
 TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
 
 ## Acknowledgments
+
 - Thanks [cznic](https://github.com/cznic) for providing some great open source tools.
 - Thanks [GolevelDB](https://github.com/syndtr/goleveldb), [BoltDB](https://github.com/boltdb/bolt), and [RocksDB](https://github.com/facebook/rocksdb) for their powerful storage engines.

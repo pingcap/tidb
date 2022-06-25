@@ -1,0 +1,9 @@
+drop table if exists t;
+create table t (id int, c1 timestamp);
+load stats 's/explain_stats_t.json';
+show columns from t;
+explain t;
+describe t;
+desc t;
+desc t c1;
+desc t id;

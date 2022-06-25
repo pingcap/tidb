@@ -8,8 +8,11 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// #nosec G404
 
 package main
 
@@ -18,7 +21,8 @@ import (
 	"math/rand"
 	"time"
 
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 const (
@@ -46,11 +50,6 @@ func randInt64(min int64, max int64) int64 {
 	return min + rand.Int63n(max-min+1)
 }
 
-func randBool() bool {
-	value := randInt(0, 1)
-	return value == 1
-}
-
 // reference: http://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-golang
 func randString(n int) string {
 	b := make([]byte, n)
@@ -76,7 +75,7 @@ func randDate(col *column) string {
 	}
 
 	min, max := col.min, col.max
-	if len(min) == 0 {
+	if min == "" {
 		year := time.Now().Year()
 		month := randInt(1, 12)
 		day := randInt(1, 28)
@@ -85,19 +84,19 @@ func randDate(col *column) string {
 
 	minTime, err := time.Parse(dateFormat, min)
 	if err != nil {
-		log.Warnf("randDate err %s", err)
+		log.Warn("parse min date failed", zap.Error(err))
 	}
-	if len(max) == 0 {
-		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
+	if max == "" {
+		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour) // nolint: durationcheck
 		return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
 	}
 
 	maxTime, err := time.Parse(dateFormat, max)
 	if err != nil {
-		log.Warnf("randDate err %s", err)
+		log.Warn("parse max date failed", zap.Error(err))
 	}
 	days := int(maxTime.Sub(minTime).Hours() / 24)
-	t := minTime.Add(time.Duration(randInt(0, days)) * 24 * time.Hour)
+	t := minTime.Add(time.Duration(randInt(0, days)) * 24 * time.Hour) // nolint: durationcheck
 	return fmt.Sprintf("%04d-%02d-%02d", t.Year(), t.Month(), t.Day())
 }
 
@@ -106,7 +105,7 @@ func randTime(col *column) string {
 		return col.hist.randDate("SECOND", "%H:%i:%s", timeFormat)
 	}
 	min, max := col.min, col.max
-	if len(min) == 0 || len(max) == 0 {
+	if min == "" || max == "" {
 		hour := randInt(0, 23)
 		min := randInt(0, 59)
 		sec := randInt(0, 59)
@@ -115,11 +114,11 @@ func randTime(col *column) string {
 
 	minTime, err := time.Parse(timeFormat, min)
 	if err != nil {
-		log.Warnf("randTime err %s", err)
+		log.Warn("parse min time failed", zap.Error(err))
 	}
 	maxTime, err := time.Parse(timeFormat, max)
 	if err != nil {
-		log.Warnf("randTime err %s", err)
+		log.Warn("parse max time failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
@@ -131,7 +130,7 @@ func randTimestamp(col *column) string {
 		return col.hist.randDate("SECOND", "%Y-%m-%d %H:%i:%s", dateTimeFormat)
 	}
 	min, max := col.min, col.max
-	if len(min) == 0 {
+	if min == "" {
 		year := time.Now().Year()
 		month := randInt(1, 12)
 		day := randInt(1, 28)
@@ -143,16 +142,16 @@ func randTimestamp(col *column) string {
 
 	minTime, err := time.Parse(dateTimeFormat, min)
 	if err != nil {
-		log.Warnf("randTimestamp err %s", err)
+		log.Warn("parse min timestamp failed", zap.Error(err))
 	}
-	if len(max) == 0 {
-		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour)
+	if max == "" {
+		t := minTime.Add(time.Duration(randInt(0, 365)) * 24 * time.Hour) // nolint: durationcheck
 		return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d", t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second())
 	}
 
 	maxTime, err := time.Parse(dateTimeFormat, max)
 	if err != nil {
-		log.Warnf("randTimestamp err %s", err)
+		log.Warn("parse max timestamp failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)
@@ -164,17 +163,17 @@ func randYear(col *column) string {
 		return col.hist.randDate("YEAR", "%Y", yearFormat)
 	}
 	min, max := col.min, col.max
-	if len(min) == 0 || len(max) == 0 {
+	if min == "" || max == "" {
 		return fmt.Sprintf("%04d", time.Now().Year()-randInt(0, 10))
 	}
 
 	minTime, err := time.Parse(yearFormat, min)
 	if err != nil {
-		log.Warnf("randYear err %s", err)
+		log.Warn("parse min year failed", zap.Error(err))
 	}
 	maxTime, err := time.Parse(yearFormat, max)
 	if err != nil {
-		log.Warnf("randYear err %s", err)
+		log.Warn("parse max year failed", zap.Error(err))
 	}
 	seconds := int(maxTime.Sub(minTime).Seconds())
 	t := minTime.Add(time.Duration(randInt(0, seconds)) * time.Second)

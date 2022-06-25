@@ -8,64 +8,95 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package types
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testEnumSuite{})
-
-type testEnumSuite struct {
-}
-
-func (s *testEnumSuite) TestEnum(c *C) {
-	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Elems    []string
-		Name     string
-		Expected int
-	}{
-		{[]string{"a", "b"}, "a", 1},
-		{[]string{"a"}, "b", 0},
-		{[]string{"a"}, "1", 1},
-	}
-
-	for _, t := range tbl {
-		e, err := ParseEnumName(t.Elems, t.Name)
-		if t.Expected == 0 {
-			c.Assert(err, NotNil)
-			c.Assert(e.ToNumber(), Equals, float64(0))
-			c.Assert(e.String(), Equals, "")
-			continue
+func TestEnum(t *testing.T) {
+	t.Run("ParseEnum", func(t *testing.T) {
+		tests := []struct {
+			Elems    []string
+			Name     string
+			Expected int
+		}{
+			{[]string{"a", "b"}, "a", 1},
+			{[]string{"a"}, "b", 0},
+			{[]string{"a"}, "1", 1},
 		}
 
-		c.Assert(err, IsNil)
-		c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
-		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
-	}
+		for _, collation := range []string{mysql.DefaultCollationName, "utf8_unicode_ci"} {
+			for _, test := range tests {
+				e, err := ParseEnum(test.Elems, test.Name, collation)
+				if test.Expected == 0 {
+					require.Error(t, err)
+					require.Equal(t, float64(0), e.ToNumber())
+					require.Equal(t, "", e.String())
+					continue
+				}
 
-	tblNumber := []struct {
-		Elems    []string
-		Number   uint64
-		Expected int
-	}{
-		{[]string{"a"}, 1, 1},
-		{[]string{"a"}, 0, 0},
-	}
+				require.NoError(t, err)
+				require.Equal(t, test.Elems[test.Expected-1], e.String())
+				require.Equal(t, float64(test.Expected), e.ToNumber())
+			}
+		}
+	})
 
-	for _, t := range tblNumber {
-		e, err := ParseEnumValue(t.Elems, t.Number)
-		if t.Expected == 0 {
-			c.Assert(err, NotNil)
-			continue
+	t.Run("ParseEnum_ci", func(t *testing.T) {
+		tests := []struct {
+			Elems    []string
+			Name     string
+			Expected int
+		}{
+			{[]string{"a", "b"}, "A     ", 1},
+			{[]string{"a"}, "A", 1},
+			{[]string{"a"}, "b", 0},
+			{[]string{"啊"}, "啊", 1},
+			{[]string{"a"}, "1", 1},
 		}
 
-		c.Assert(err, IsNil)
-		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
-	}
+		for _, test := range tests {
+			e, err := ParseEnum(test.Elems, test.Name, "utf8_general_ci")
+			if test.Expected == 0 {
+				require.Error(t, err)
+				require.Equal(t, float64(0), e.ToNumber())
+				require.Equal(t, "", e.String())
+				continue
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, test.Elems[test.Expected-1], e.String())
+			require.Equal(t, float64(test.Expected), e.ToNumber())
+		}
+	})
+
+	t.Run("ParseEnumValue", func(t *testing.T) {
+		tests := []struct {
+			Elems    []string
+			Number   uint64
+			Expected int
+		}{
+			{[]string{"a"}, 1, 1},
+			{[]string{"a"}, 0, 0},
+		}
+
+		for _, test := range tests {
+			e, err := ParseEnumValue(test.Elems, test.Number)
+			if test.Expected == 0 {
+				require.Error(t, err)
+				continue
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, float64(test.Expected), e.ToNumber())
+		}
+	})
 }

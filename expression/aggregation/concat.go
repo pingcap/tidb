@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,15 +18,23 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type concatFunction struct {
 	aggFunction
 	separator string
+	maxLen    uint64
 	sepInited bool
+	// truncated according to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
+	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
+	// generated.
+	truncated bool
 }
 
 func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
@@ -36,26 +45,26 @@ func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datu
 	}
 }
 
-func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row chunk.Row) error {
 	sepArg := cf.Args[len(cf.Args)-1]
 	sepDatum, err := sepArg.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	if sepDatum.IsNull() {
-		return errors.Errorf("Invalid separator argument.")
+		return errors.Errorf("Invalid separator argument")
 	}
 	cf.separator, err = sepDatum.ToString()
-	return errors.Trace(err)
+	return err
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
 	if !cf.sepInited {
 		err := cf.initSeparator(sc, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		cf.sepInited = true
 	}
@@ -64,9 +73,9 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	for i, length := 0, len(cf.Args)-1; i < length; i++ {
 		value, err := cf.Args[i].Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		if value.GetValue() == nil {
+		if value.IsNull() {
 			return nil
 		}
 		datumBuf = append(datumBuf, value)
@@ -74,7 +83,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	if cf.HasDistinct {
 		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !d {
 			return nil
@@ -88,14 +97,24 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	for _, val := range datumBuf {
 		cf.writeValue(evalCtx, val)
 	}
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	if cf.maxLen > 0 && uint64(evalCtx.Buffer.Len()) > cf.maxLen {
+		i := mathutil.MaxInt
+		if uint64(i) > cf.maxLen {
+			i = int(cf.maxLen)
+		}
+		evalCtx.Buffer.Truncate(i)
+		if !cf.truncated {
+			sc.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(cf.Args[0].String()))
+		}
+		cf.truncated = true
+	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
 func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	if evalCtx.Buffer != nil {
-		d.SetString(evalCtx.Buffer.String())
+		d.SetString(evalCtx.Buffer.String(), cf.RetTp.GetCollate())
 	} else {
 		d.SetNull()
 	}

@@ -1,0 +1,265 @@
+set names utf8mb4;
+set @@sql_mode = '';
+-- test for builtin function hex(), length(), ascii(), octet_length()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select hex(a), hex(b), hex(c) from t;
+select length(a), length(b), length(c) from t;
+select ascii(a), ascii(b), ascii(c) from t;
+select octet_length(a), octet_length(b), octet_length(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select hex(a), hex(b), hex(c) from t;
+select length(a), length(b), length(c) from t;
+select ascii(a), ascii(b), ascii(c) from t;
+select octet_length(a), octet_length(b), octet_length(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function upper() and lower()
+drop table if exists t;
+create table t (a char(100) charset utf8mb4, b char(100) charset gbk);
+insert into t values ('àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ', 'àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ');
+select upper(a), upper(b) from t;
+select lower(a), lower(b) from t;
+set @@tidb_enable_vectorized_expression = true;
+select upper(a), upper(b) from t;
+select lower(a), lower(b) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function to_base64()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select to_base64(a), to_base64(b), to_base64(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select to_base64(a), to_base64(b), to_base64(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function convert()
+drop table if exists t;
+create table t(a char(10));
+insert into t values ('中文'), ('啊'), ('a'), ('1'), ('ㅂ');
+set @@tidb_enable_vectorized_expression = true;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+select hex(convert('中文' using gbk)), convert('中文' using gbk);
+select hex(convert('啊' using gbk)), convert('啊' using gbk);
+select hex(convert('a' using gbk)), convert('a' using gbk);
+select hex(convert('1' using gbk)), convert('1' using gbk);
+select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
+select hex(convert(0xe240 using gbk)), convert(0xe240 using gbk);
+select hex(convert(0x1e240 using gbk)), convert(0x1e240 using gbk);
+select convert(a using binary), convert(convert(a using gbk) using binary) from t;
+select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
+select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+set @@tidb_enable_vectorized_expression = false;
+select hex(convert(a using gbk)), convert(a using gbk) from t;
+select hex(convert('中文' using gbk)), convert('中文' using gbk);
+select hex(convert('啊' using gbk)), convert('啊' using gbk);
+select hex(convert('a' using gbk)), convert('a' using gbk);
+select hex(convert('1' using gbk)), convert('1' using gbk);
+select hex(convert('ㅂ' using gbk)), convert('ㅂ' using gbk);
+select hex(convert(0xe240 using gbk)), convert(0xe240 using gbk);
+select hex(convert(0x1e240 using gbk)), convert(0x1e240 using gbk);
+select convert(a using binary) from t;
+select convert(convert('中文' using gbk) using binary), convert('中文' using binary);
+select convert(convert('ㅂ' using gbk) using binary), convert('ㅂ' using binary);
+
+-- test for builtin function md5()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(a), md5(b), md5(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select md5(a), md5(b), md5(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function decode()/encode()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+set @@tidb_enable_vectorized_expression = true;
+select decode(encode(a,"monty"),"monty") = a, md5(decode(encode(b,"monty"),"monty")) = md5(b), decode(encode(c,"monty"),"monty") = c from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function password()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select password(a), password(b), password(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select password(a), password(b), password(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function sha1()/sha()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha1(a), sha1(b), sha1(c) from t;
+select sha(a), sha(b), sha(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select sha1(a), sha1(b), sha1(c) from t;
+select sha(a), sha(b), sha(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function sha2()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+set @@tidb_enable_vectorized_expression = true;
+select sha2(a, 0), sha2(b, 0), sha2(c, 0) from t;
+select sha2(a, 224), sha2(b, 224), sha2(c, 224) from t;
+select sha2(a, 256), sha2(b, 256), sha2(c, 256) from t;
+select sha2(a, 384), sha2(b, 384), sha2(c, 384) from t;
+select sha2(a, 514), sha2(b, 514), sha2(c, 514) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for push md5() builtin function down to unistore
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+set @@tidb_enable_vectorized_expression = true;
+select md5(b) from t where md5(b) = 'a45d4af7b243e7f393fa09bed72ac73e';
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function char()
+drop table if exists t;
+create table t (a char(20));
+insert into t values ('65'), ('123456'), ('123456789');
+select char(a using gbk), char(a using utf8), char(a) from t;
+select char(12345678 using gbk);
+set @@tidb_enable_vectorized_expression = true;
+select char(a using gbk), char(a using utf8), char(a) from t;
+select char(12345678 using gbk);
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function compress()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+set @@tidb_enable_vectorized_expression = true;
+select md5(compress(a)), md5(compress(b)), md5(compress(c)) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function aes_decrypt()
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_decrypt(0x91C44DE866D0745252, '1234567890123456', '1234567890123456')) as a, hex(aes_decrypt(0xA7C77BF214A1, '1234567890123456', '1234567890123456')) as b;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_decrypt(0xC54279F381B0710E145E94106F03C94C, '123')) as a, hex(aes_decrypt(0x7A747EC6F1906276D036B1F3CE27BAAB, '123')) as b;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin function ord()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('中文', '中文', '中文');
+select ord(a), ord(b), ord(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select ord(a), ord(b), ord(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一', '一', 0xe4b880);
+insert into t values ('一', '一', 0xd2bb);
+insert into t values ('一', '一', 0xe4ba8c);
+insert into t values ('一', '一', 0xb6fe);
+
+set @@tidb_enable_vectorized_expression = true;
+select hex(concat(a, c)), hex(concat(b, c)) from t;
+select hex(concat(a, 0xe4b880)), hex(concat(b, 0xd2bb)) from t;
+select a = 0xe4b880, b = 0xd2bb from t;
+select a = c, b = c from t;
+select hex(insert(a, 1, 2, 0xe4ba8c)), hex(insert(b, 1, 2, 0xb6fe)) from t;
+select hex(insert(a, 1, 2, c)), hex(insert(b, 1, 2, c)) from t;
+select hex(lpad(a, 5, 0xe4ba8c)), hex(lpad(b, 5, 0xb6fe)) from t;
+select hex(lpad(a, 5, c)), hex(lpad(b, 5, c)) from t;
+select hex(rpad(a, 5, 0xe4ba8c)), hex(rpad(b, 5, 0xb6fe)) from t;
+select hex(rpad(a, 5, c)), hex(rpad(b, 5, c)) from t;
+select hex(elt(2, a, 0xe4ba8c)), hex(elt(2, b, 0xb6fe)) from t;
+select hex(elt(2, a, c)), hex(elt(2, b, c)) from t;
+select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
+select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
+select a like 0xe4b880, b like 0xd2bb from t;
+
+--error 3854
+select a = 0xb6fe from t;
+--error 3854
+select b = 0xe4ba8c from t;
+--error 3854
+select concat(a, 0xb6fe) from t;
+--error 3854
+select concat(b, 0xe4ba8c) from t;
+--error 3854
+select concat(convert('a' using gbk), 0x3fff) from t;
+--error 3854
+select concat(convert('a' using gbk), 0x3fffffffffffffff) from t;
+
+set @@tidb_enable_vectorized_expression = false;
+select hex(concat(a, c)), hex(concat(b, c)) from t;
+select hex(concat(a, 0xe4b880)), hex(concat(b, 0xd2bb)) from t;
+select a = 0xe4b880, b = 0xd2bb from t;
+select a = c, b = c from t;
+select hex(insert(a, 1, 2, 0xe4ba8c)), hex(insert(b, 1, 2, 0xb6fe)) from t;
+select hex(insert(a, 1, 2, c)), hex(insert(b, 1, 2, c)) from t;
+select hex(lpad(a, 5, 0xe4ba8c)), hex(lpad(b, 5, 0xb6fe)) from t;
+select hex(lpad(a, 5, c)), hex(lpad(b, 5, c)) from t;
+select hex(rpad(a, 5, 0xe4ba8c)), hex(rpad(b, 5, 0xb6fe)) from t;
+select hex(rpad(a, 5, c)), hex(rpad(b, 5, c)) from t;
+select hex(elt(2, a, 0xe4ba8c)), hex(elt(2, b, 0xb6fe)) from t;
+select hex(elt(2, a, c)), hex(elt(2, b, c)) from t;
+select hex(instr(a, 0xe4b880)), hex(instr(b, 0xd2bb)) from t;
+select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;
+select a like 0xe4b880, b like 0xd2bb from t;
+
+--error 3854
+select a = 0xb6fe from t;
+--error 3854
+select b = 0xe4ba8c from t;
+--error 3854
+select concat(a, 0xb6fe) from t;
+--error 3854
+select concat(b, 0xe4ba8c) from t;
+
+-- test for builtin function aes_encrypt()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+set @@block_encryption_mode='aes-128-ofb';
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+set @@tidb_enable_vectorized_expression = true;
+select hex(aes_encrypt(a, '123', '1234567890123456')), hex(aes_encrypt(b, '123', '1234567890123456')), hex(aes_encrypt(c, '123', '1234567890123456')) from t;
+set @@block_encryption_mode='aes-128-ecb';
+select hex(aes_encrypt(a, '123')), hex(aes_encrypt(b, '123')), hex(aes_encrypt(c, '123')) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for builtin crc32()
+drop table if exists t;
+create table t (a char(20) charset utf8mb4, b char(20) charset gbk, c binary(20));
+insert into t values ('一二三', '一二三', '一二三');
+select crc32(a), crc32(b), crc32(c) from t;
+set @@tidb_enable_vectorized_expression = true;
+select crc32(a), crc32(b), crc32(c) from t;
+set @@tidb_enable_vectorized_expression = false;
+
+-- test for elt
+drop table if exists t;
+create table t (a enum('a一','b二','c三','d四') default 'c三', b binary(10)) charset=gbk;
+insert into t values (1, 0x1234);
+set @@tidb_enable_vectorized_expression = true;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+set @@tidb_enable_vectorized_expression = false;
+select hex(elt(1, a, b)), hex(elt(1, a, 0x12)) from t;
+
