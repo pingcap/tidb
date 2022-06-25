@@ -555,6 +555,8 @@ type taskMetaMgr interface {
 	// need to update or any new tasks. There is at most one lightning who can execute the action function at the same time.
 	// Note that action may be executed multiple times due to transaction retry, caller should make sure it's idempotent.
 	CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error
+	// CanPauseSchedulerByKeyRange returns whether the scheduler can pause by the key range.
+	CanPauseSchedulerByKeyRange() bool
 	CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error)
 	// CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
 	// Return values: first boolean indicates whether switch back tidb cluster to normal state (restore schedulers, switch tikv to normal)
@@ -867,6 +869,10 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 	}, nil
 }
 
+func (m *dbTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
+	return m.pd.CanPauseSchedulerByKeyRange()
+}
+
 // CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
 // Return values: first boolean indicates whether switch back tidb cluster to normal state (restore schedulers, switch tikv to normal)
 // the second boolean indicates whether to clean up the metadata in tidb
@@ -1058,6 +1064,10 @@ func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.
 	}, nil
 }
 
+func (m noopTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
+	return false
+}
+
 func (m noopTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	return true, nil
 }
@@ -1166,6 +1176,10 @@ func (m *singleTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action fu
 
 func (m *singleTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
 	return m.pd.RemoveSchedulers(ctx)
+}
+
+func (m *singleTaskMetaMgr) CanPauseSchedulerByKeyRange() bool {
+	return m.pd.CanPauseSchedulerByKeyRange()
 }
 
 func (m *singleTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
