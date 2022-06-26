@@ -104,11 +104,19 @@ func (c *EBSBackupInfo) ConfigFromFile(path string) error {
 	return nil
 }
 
+func (c *EBSBackupInfo) CheckClusterInfo() {
+	if c.ClusterInfo == nil {
+		c.ClusterInfo = &ClusterInfo{}
+	}
+}
+
 func (c *EBSBackupInfo) SetClusterID(id uint64) {
+	c.CheckClusterInfo()
 	c.ClusterInfo.ID = id
 }
 
 func (c *EBSBackupInfo) SetAllocID(id uint64) {
+	c.CheckClusterInfo()
 	c.ClusterInfo.MaxAllocID = id
 }
 
