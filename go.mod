@@ -95,7 +95,10 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-require github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+require (
+	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/emirpasic/gods v1.18.1
+)
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
@@ -122,7 +125,6 @@ require (
 	github.com/eapache/go-resiliency v1.2.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
-	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.0.1 // indirect
 	github.com/form3tech-oss/jwt-go v3.2.5+incompatible // indirect
 	github.com/fsnotify/fsnotify v1.5.1 // indirect

@@ -67,10 +67,6 @@ func (recovery Recovery) newTiKVClient(ctx context.Context, tikvAddr string) (re
 		return nil, errors.Trace(err)
 	}
 
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	//TODO: when we release this connection
 	//defer conn.Close()
 
@@ -101,10 +97,6 @@ func (recovery Recovery) newTiKVRecoveryClient(ctx context.Context, tikvAddr str
 			Timeout: time.Duration(3) * time.Second,
 		}),
 	)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -319,7 +311,7 @@ func (recovery Recovery) ApplyRecoveryPlan(ctx context.Context, allStores []*met
 }
 
 // a worker pool to all tikv for execute delete all data whose has ts > resolvedTs
-func (recovery Recovery) ResolvedData(ctx context.Context, allStores []*metapb.Store, resolvedTs uint64) (err error) {
+func (recovery Recovery) ResolveData(ctx context.Context, allStores []*metapb.Store, resolvedTs uint64) (err error) {
 
 	eg, ectx := errgroup.WithContext(ctx)
 	totalTiKVs := recovery.instances
@@ -331,8 +323,8 @@ func (recovery Recovery) ResolvedData(ctx context.Context, allStores []*metapb.S
 		storeAddr := store.Address
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			tikv, _ := recovery.newTiKVRecoveryClient(ectx, storeAddr)
-			req := &recovpb.ResolvedRequest{ResolvedTs: resolvedTs}
-			resp, err := tikv.ResolvedKvData(ectx, req)
+			req := &recovpb.ResolveRequest{ResolvedTs: resolvedTs}
+			resp, err := tikv.ResolveKvData(ectx, req)
 			if err != nil {
 				log.Error("read region meta failied", zap.Uint64("storeID", store.Id))
 				return err
@@ -373,7 +365,7 @@ func RecoverCluster(ctx context.Context, resolvedTs uint64, totalTiKVs int, allS
 	// TODO send message to clone the streams
 	time.Sleep(time.Second * 3) // Sleep to wait grpc streams get closed.
 
-	recovery.ResolvedData(ctx, allStores, resolvedTs)
+	recovery.ResolveData(ctx, allStores, resolvedTs)
 	log.Info("region recovery phase completed.")
 
 	return nil
