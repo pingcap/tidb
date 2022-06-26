@@ -2735,7 +2735,6 @@ func TestDropColumnWithAutoInc(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema=1;")
 	tk.MustExec("create table t(a int, b int auto_increment, c int, key(b))")
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
