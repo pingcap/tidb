@@ -190,6 +190,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			appendRemoveProjTraceStep(apply, proj, opt)
 			return s.optimize(ctx, p, opt)
 		} else if li, ok := innerPlan.(*LogicalLimit); ok {
+			//if offset is not zero, subquery will become always true or always false. This scenario optimizer has internal optimizations.
 			if li.Offset == 0 {
 				innerPlan = li.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
