@@ -167,16 +167,18 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
-	// The several fields below are mainly for some statistics features, like stmt summary and slow query.
+	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
 	// Note:
 	//   Avoid accessing these fields directly, use their Setter/Getter methods instead.
 	//   Other fields should be the zero value or be consistent with the plan field.
+	// TODO: more clearly distinguish between the value is empty and the value has not been set
 	planNormalized string
 	planDigest     *parser.Digest
 	encodedPlan    string
 	planHint       string
 	planHintSet    bool
+	binaryPlan     string
 	// To avoid cycle import, we use interface{} for the following two fields.
 	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
 	flatPlan interface{}
@@ -366,6 +368,16 @@ func (sc *StatementContext) GetFlatPlan() interface{} {
 // SetFlatPlan sets the flatPlan field of stmtctx
 func (sc *StatementContext) SetFlatPlan(flat interface{}) {
 	sc.flatPlan = flat
+}
+
+// GetBinaryPlan gets the binaryPlan field of stmtctx
+func (sc *StatementContext) GetBinaryPlan() string {
+	return sc.binaryPlan
+}
+
+// SetBinaryPlan sets the binaryPlan field of stmtctx
+func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
+	sc.binaryPlan = binaryPlan
 }
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.

@@ -143,6 +143,9 @@ type operatorCtx struct {
 
 // FlattenPhysicalPlan generates a FlatPhysicalPlan from a PhysicalPlan, Insert, Delete, Update, Explain or Execute.
 func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
+	if p == nil {
+		return nil
+	}
 	res := &FlatPhysicalPlan{
 		buildSideFirst: buildSideFirst,
 	}

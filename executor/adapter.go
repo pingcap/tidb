@@ -1025,7 +1025,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		buf.WriteByte(']')
 		indexNames = buf.String()
 	}
-	flat := FlattenPhysicalPlanForStmtCtx(stmtCtx)
+	flat := getFlatPlan(stmtCtx)
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1045,7 +1045,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	binaryPlan := ""
 	if variable.GenerateBinaryPlan.Load() {
-		binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(a.Ctx, flat)
+		binaryPlan = getBinaryPlan(a.Ctx)
 		binaryPlan = variable.SlowLogBinaryPlanPrefix + binaryPlan + variable.SlowLogPlanSuffix
 	}
 
@@ -1145,9 +1145,9 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p plannercore.Plan) i
 	return rootStats.GetActRows()
 }
 
-// FlattenPhysicalPlanForStmtCtx generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
+// getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
 // then stores it in stmtCtx.flatPlan.
-func FlattenPhysicalPlanForStmtCtx(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPlan {
+func getFlatPlan(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPlan {
 	pp := stmtCtx.GetPlan()
 	if pp == nil {
 		return nil
@@ -1163,6 +1163,18 @@ func FlattenPhysicalPlanForStmtCtx(stmtCtx *stmtctx.StatementContext) *plannerco
 		return flat
 	}
 	return nil
+}
+
+func getBinaryPlan(sCtx sessionctx.Context) string {
+	stmtCtx := sCtx.GetSessionVars().StmtCtx
+	binaryPlan := stmtCtx.GetBinaryPlan()
+	if len(binaryPlan) > 0 {
+		return binaryPlan
+	}
+	flat := getFlatPlan(stmtCtx)
+	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx, flat)
+	stmtCtx.SetBinaryPlan(binaryPlan)
+	return binaryPlan
 }
 
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
@@ -1184,7 +1196,7 @@ func getPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
 	if len(normalized) > 0 && planDigest != nil {
 		return normalized, planDigest
 	}
-	flat := FlattenPhysicalPlanForStmtCtx(stmtCtx)
+	flat := getFlatPlan(stmtCtx)
 	normalized, planDigest = plannercore.NormalizeFlatPlan(flat)
 	stmtCtx.SetPlanDigest(normalized, planDigest)
 	return normalized, planDigest
@@ -1198,7 +1210,7 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 	if len(encodedPlan) > 0 && (!genHint || hintSet) {
 		return
 	}
-	flat := FlattenPhysicalPlanForStmtCtx(stmtCtx)
+	flat := getFlatPlan(stmtCtx)
 	if len(encodedPlan) == 0 {
 		encodedPlan = plannercore.EncodeFlatPlan(flat)
 		stmtCtx.SetEncodedPlan(encodedPlan)
@@ -1266,8 +1278,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var binPlanGen func() string
 	if variable.GenerateBinaryPlan.Load() {
 		binPlanGen = func() string {
-			flat := FlattenPhysicalPlanForStmtCtx(stmtCtx)
-			binPlan := plannercore.BinaryPlanStrFromFlatPlan(a.Ctx, flat)
+			binPlan := getBinaryPlan(a.Ctx)
 			return binPlan
 		}
 	}
