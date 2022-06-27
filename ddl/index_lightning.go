@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (
@@ -38,15 +39,48 @@ const (
 )
 
 // Whether Fast DDl is allowed.
-func IsAllowFastDDL() bool {
+func IsAllowFastDDL(w *worker) bool {
 	// Only when both TiDBFastDDL is set to on and Lightning env is inited successful,
 	// the add index could choose lightning path to do backfill procedure.
 	// ToDo: need check PiTR is off currently.
-	if variable.FastDDL.Load() && lit.GlobalLightningEnv.IsInited {
+	if variable.FastDDL.Load() && lit.GlobalLightningEnv.IsInited && !isPiTREnable(w) {
 		return true
 	} else {
 		return false
 	}
+}
+
+func isPiTREnable(w *worker) bool {
+	var (
+		ctx sessionctx.Context
+		valStr string = "show config where name = 'log-backup.enable'"
+		err error
+		retVal bool = false
+	)
+	ctx, err = w.sessPool.get()
+	if err != nil  {
+		return true
+	}
+	defer w.sessPool.put(ctx)
+	rows, fields, errSQL := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil, valStr)
+	if errSQL != nil {
+		return true 
+	}
+	if len(rows) == 0 {
+		return true
+	}
+	for _, row := range rows {
+		d := row.GetDatum(3, &fields[3].Column.FieldType)
+		value, errField := d.ToString()
+		if errField != nil {
+			return true
+		}
+		if value == "true" {
+			retVal = true
+			break
+		}
+	}
+	return retVal
 }
 
 func isLightningEnabled(id int64) bool {
