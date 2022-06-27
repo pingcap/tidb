@@ -97,6 +97,10 @@ require (
 
 require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/charithe/durationcheck v0.0.9
+	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
+	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
+	github.com/kyoh86/exportloopref v0.1.8
 	honnef.co/go/tools v0.0.1-2020.1.4
 )
 
