@@ -1981,15 +1981,16 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	// validation test for list columns partition
 	tk.MustExec(`CREATE TABLE t3 (id int, store_id int)
 	PARTITION BY LIST COLUMNS (id, store_id) (
-		PARTITION pNorth VALUES IN ((1, 1), (2, 2)),
-		PARTITION pEast VALUES IN ((3, 3), (4, 4))
+		PARTITION p0 VALUES IN ((1, 1), (2, 2)),
+		PARTITION p1 VALUES IN ((3, 3), (4, 4))
 	);`)
 	tk.MustExec(`create table t4 (id int, store_id int);`)
 	tk.MustExec(`insert into t3 values (1, 1);`)
 	tk.MustExec(`insert into t4 values (2, 2);`)
-	tk.MustExec("alter table t3 exchange partition pNorth with table t4")
+	tk.MustExec("alter table t3 exchange partition p0 with table t4")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
 
-	tk.MustQuery("select * from t3 partition(p0)").Check(testkit.Rows(""))
+	tk.MustQuery("select * from t3 partition(p0)").Check(testkit.Rows("2 2"))
 	tk.MustGetErrCode("alter table t3 exchange partition p1 with table t4", tmysql.ErrRowDoesNotMatchPartition)
 
 	// test exchange partition from different databases
@@ -2227,67 +2228,93 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			// default
-			"create table pt17 (id int not null default 1) partition by hash(id) partitions 1;",
-			"create table nt17 (id int not null);",
+			// auto_increment
+			"create table pt17 (id bigint not null primary key auto_increment) partition by hash(id) partitions 1;",
+			"create table nt17 (id bigint not null primary key);",
 			"alter table pt17 exchange partition p0 with table nt17;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			// auto_random
+			"create table pt18 (id bigint not null primary key AUTO_RANDOM) partition by hash(id) partitions 1;",
+			"create table nt18 (id bigint not null primary key);",
+			"alter table pt18 exchange partition p0 with table nt18;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			// default
+			"create table pt19 (id int not null default 1) partition by hash(id) partitions 1;",
+			"create table nt19 (id int not null);",
+			"alter table pt19 exchange partition p0 with table nt19;",
 			nil,
 		},
 		{
 			// view test
-			"create table pt18 (id int not null) partition by hash(id) partitions 1;",
-			"create view nt18 as select id from nt17;",
-			"alter table pt18 exchange partition p0 with table nt18",
+			"create table pt20 (id int not null) partition by hash(id) partitions 1;",
+			"create view nt20 as select id from nt17;",
+			"alter table pt20 exchange partition p0 with table nt20",
 			dbterror.ErrCheckNoSuchTable,
 		},
 		{
-			"create table pt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored) partition by hash(id) partitions 1;",
-			"create table nt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
-			"alter table pt19 exchange partition p0 with table nt19;",
+			"create table pt21 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored) partition by hash(id) partitions 1;",
+			"create table nt21 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
+			"alter table pt21 exchange partition p0 with table nt21;",
 			dbterror.ErrUnsupportedOnGeneratedColumn,
 		},
 		{
-			"create table pt20 (id int not null) partition by hash(id) partitions 1;",
-			"create table nt20 (id int default null);",
-			"alter table pt20 exchange partition p0 with table nt20;",
-			dbterror.ErrTablesDifferentMetadata,
-		},
-		{
-			// unsigned
-			"create table pt21 (id int unsigned) partition by hash(id) partitions 1;",
-			"create table nt21 (id int);",
-			"alter table pt21 exchange partition p0 with table nt21;",
-			dbterror.ErrTablesDifferentMetadata,
-		},
-		{
-			// zerofill
-			"create table pt22 (id int) partition by hash(id) partitions 1;",
-			"create table nt22 (id int zerofill);",
+			"create table pt22 (id int not null) partition by hash(id) partitions 1;",
+			"create table nt22 (id int default null);",
 			"alter table pt22 exchange partition p0 with table nt22;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			"create table pt23 (id int, lname varchar(10) charset binary) partition by hash(id) partitions 1;",
-			"create table nt23 (id int, lname varchar(10));",
+			// unsigned
+			"create table pt23 (id int unsigned) partition by hash(id) partitions 1;",
+			"create table nt23 (id int);",
 			"alter table pt23 exchange partition p0 with table nt23;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			"create table pt25 (id int, a datetime on update current_timestamp) partition by hash(id) partitions 1;",
-			"create table nt25 (id int, a datetime);",
-			"alter table pt25 exchange partition p0 with table nt25;",
-			nil,
-		},
-		{
-			"create table pt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
-			"create table nt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(id, ' ')) virtual);",
-			"alter table pt26 exchange partition p0 with table nt26;",
+			// zerofill
+			"create table pt24 (id int) partition by hash(id) partitions 1;",
+			"create table nt24 (id int zerofill);",
+			"alter table pt24 exchange partition p0 with table nt24;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
-			"create table pt27 (a int key, b int, index(a)) partition by hash(a) partitions 1;",
-			"create table nt27 (a int not null, b int, index(a));",
+			"create table pt25 (id int, lname varchar(10) charset binary) partition by hash(id) partitions 1;",
+			"create table nt25 (id int, lname varchar(10));",
+			"alter table pt25 exchange partition p0 with table nt25;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt26 (id int, a datetime on update current_timestamp) partition by hash(id) partitions 1;",
+			"create table nt26 (id int, a datetime);",
+			"alter table pt26 exchange partition p0 with table nt26;",
+			nil,
+		},
+		{
+			"create table pt27 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
+			"create table nt27 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(id, ' ')) virtual);",
 			"alter table pt27 exchange partition p0 with table nt27;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt28 (a int primary key, b int, index(a)) partition by hash(a) partitions 1;",
+			"create table nt28 (a int not null, b int, index(a));",
+			"alter table pt28 exchange partition p0 with table nt28;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt29 (a int primary key, b int) partition by hash(a) partitions 1;",
+			"create table nt29 (a int not null, b int, index(a));",
+			"alter table pt29 exchange partition p0 with table nt29;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt30 (a int primary key, b int) partition by hash(a) partitions 1;",
+			"create table nt30 (a int, b int, unique index(a));",
+			"alter table pt30 exchange partition p0 with table nt30;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
 	}
@@ -2311,6 +2338,43 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 	}
 	err = tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 	require.NoError(t, err)
+}
+
+// TestExchangePartitionHook is temporary test, needs to be deleted before merging into master.
+func TestExchangePartitionHook(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	// why use tkCancel, not tk.
+	tkCancel := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 VALUES LESS THAN (9),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE)
+		);`)
+	tk.MustExec(`create table nt(a int);`)
+
+	tk.MustExec(`insert into pt values (0), (4), (7)`)
+	tk.MustExec("insert into nt values (1)")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hookFunc := func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition {
+			tkCancel.MustExec("use test")
+			tkCancel.MustExec("insert into nt values (5)")
+		}
+	}
+	dom.DDL().SetHook(hook)
+	hook.OnJobUpdatedExported = hookFunc
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1]\n[5"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {

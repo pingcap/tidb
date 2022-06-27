@@ -1397,6 +1397,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	d.mu.RLock()
+	d.mu.hook.OnJobUpdated(job)
+	d.mu.RUnlock()
+
 	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
@@ -1604,6 +1608,8 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		if len(pi.Columns) == 0 {
 			sql, paramList = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
 		} else if len(pi.Columns) == 1 {
+			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
+		} else {
 			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
