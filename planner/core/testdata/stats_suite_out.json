@@ -193,26 +193,22 @@
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
           "StreamAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
-          "└─Apply 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
-          "  ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
-          "  │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
-          "  └─Limit(Probe) 3.00 root  offset:0, count:3",
-          "    └─IndexReader 3.00 root  index:Limit",
-          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
-          "        └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+          "└─MergeJoin 4.00 root  left outer semi join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b",
+          "  ├─IndexReader(Build) 9.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9.00 cop[tikv] table:t2, index:a(a, b) keep order:true",
+          "  └─IndexReader(Probe) 4.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
         ]
       },
       {
         "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
         "Plan": [
           "StreamAgg 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#10)->Column#11",
-          "└─Apply 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
-          "  ├─IndexReader(Build) 4.00 root  index:IndexFullScan",
-          "  │ └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
-          "  └─Limit(Probe) 3.00 root  offset:0, count:3",
-          "    └─IndexReader 3.00 root  index:Limit",
-          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
-          "        └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+          "└─MergeJoin 4.00 root  anti left outer semi join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b",
+          "  ├─IndexReader(Build) 9.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9.00 cop[tikv] table:t2, index:a(a, b) keep order:true",
+          "  └─IndexReader(Probe) 4.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
         ]
       },
       {
