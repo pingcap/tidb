@@ -45,8 +45,9 @@ const (
 
 var (
 	// PlanDiscardedEncoded indicates the discard plan because it is too long
-	PlanDiscardedEncoded       = "[discard]"
-	planDiscardedDecoded       = "(plan discarded because too long)"
+	PlanDiscardedEncoded = "[discard]"
+	planDiscardedDecoded = "(plan discarded because too long)"
+	// BinaryPlanDiscardedEncoded is a special binary plan that represents it's discarded because of too long.
 	BinaryPlanDiscardedEncoded = func() string {
 		binary := &tipb.ExplainData{DiscardedDueToTooLong: true}
 		proto, err := binary.Marshal()

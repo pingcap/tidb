@@ -27,12 +27,17 @@ type partitionAccesser interface {
 	accessObject(sessionctx.Context) AccessObject
 }
 
+// AccessObject represents what is accessed by an operator.
+// It corresponds to the "access object" column in an EXPLAIN statement result.
 type AccessObject interface {
 	String() string
 	NormalizedString() string
+	// SetIntoPB transform itself into a protobuf message and set into the binary plan.
 	SetIntoPB(*tipb.ExplainOperator)
 }
 
+// DynamicPartitionAccessObject represents the partitions accessed by the children of this operator.
+// It's mainly used in dynamic pruning mode.
 type DynamicPartitionAccessObject struct {
 	Database      string
 	Table         string
@@ -53,6 +58,7 @@ func (d *DynamicPartitionAccessObject) String() string {
 	return "partition:" + strings.Join(d.Partitions, ",")
 }
 
+// DynamicPartitionAccessObjects is a list of DynamicPartitionAccessObject.
 type DynamicPartitionAccessObjects []*DynamicPartitionAccessObject
 
 func (d DynamicPartitionAccessObjects) String() string {
@@ -73,10 +79,12 @@ func (d DynamicPartitionAccessObjects) String() string {
 	return b.String()
 }
 
+// NormalizedString implements AccessObject.
 func (d DynamicPartitionAccessObjects) NormalizedString() string {
 	return d.String()
 }
 
+// SetIntoPB implements AccessObject.
 func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 	if len(d) == 0 || pb == nil {
 		return
@@ -99,12 +107,14 @@ func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 	pb.AccessObject = &tipb.ExplainOperator_DynamicPartitionObjects{DynamicPartitionObjects: &pbObjs}
 }
 
+// IndexAccess represents the index accessed by an operator.
 type IndexAccess struct {
 	Name             string
 	Cols             []string
 	IsClusteredIndex bool
 }
 
+// ToPB turns itself into a protobuf message.
 func (a *IndexAccess) ToPB() *tipb.IndexAccess {
 	if a == nil {
 		return nil
@@ -116,6 +126,8 @@ func (a *IndexAccess) ToPB() *tipb.IndexAccess {
 	}
 }
 
+// ScanAccessObject represents the access to a table.
+// It may also represent the access to indexes and partitions of a table.
 type ScanAccessObject struct {
 	Database   string
 	Table      string
@@ -123,6 +135,7 @@ type ScanAccessObject struct {
 	Partitions []string
 }
 
+// NormalizedString implements AccessObject.
 func (s *ScanAccessObject) NormalizedString() string {
 	var b strings.Builder
 	if len(s.Table) > 0 {
@@ -137,7 +150,7 @@ func (s *ScanAccessObject) NormalizedString() string {
 		} else {
 			b.WriteString(", index:")
 		}
-		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ",") + ")")
+		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ", ") + ")")
 	}
 	return b.String()
 }
@@ -156,11 +169,12 @@ func (s *ScanAccessObject) String() string {
 		} else {
 			b.WriteString(", index:")
 		}
-		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ",") + ")")
+		b.WriteString(index.Name + "(" + strings.Join(index.Cols, ", ") + ")")
 	}
 	return b.String()
 }
 
+// SetIntoPB implements AccessObject.
 func (s *ScanAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	if s == nil || pb == nil {
 		return
@@ -176,16 +190,19 @@ func (s *ScanAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	pb.AccessObject = &tipb.ExplainOperator_ScanObject{ScanObject: &pbObj}
 }
 
+// OtherAccessObject represents other kinds of access.
 type OtherAccessObject string
 
 func (o OtherAccessObject) String() string {
 	return string(o)
 }
 
+// NormalizedString implements AccessObject.
 func (o OtherAccessObject) NormalizedString() string {
 	return o.String()
 }
 
+// SetIntoPB implements AccessObject.
 func (o OtherAccessObject) SetIntoPB(pb *tipb.ExplainOperator) {
 	if pb == nil {
 		return
