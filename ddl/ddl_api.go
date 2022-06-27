@@ -5385,12 +5385,13 @@ func (d *ddl) dropTableObject(
 		err = d.callHookOnChanged(job, err)
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
+			continue
 		} else if err != nil {
 			return errors.Trace(err)
 		}
 
 		if !config.TableLockEnabled() {
-			return nil
+			continue
 		}
 		if ok, _ := ctx.CheckTableLocked(tableInfo.Meta().ID); ok {
 			ctx.ReleaseTableLockByTableIDs([]int64{tableInfo.Meta().ID})
