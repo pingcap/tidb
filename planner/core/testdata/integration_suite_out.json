@@ -2472,18 +2472,22 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
         "Plan": [
-          "HashJoin_17 9.00 103.20 root  CARTESIAN left outer semi join",
-          "├─Selection_29(Build) 0.80 11.18 root  eq(2, Column#18)",
-          "│ └─StreamAgg_50 1.00 8.18 root  funcs:count(Column#29)->Column#18",
-          "│   └─TableReader_51 1.00 5.17 root  data:StreamAgg_34",
-          "│     └─StreamAgg_34 1.00 49.50 batchCop[tiflash]  funcs:count(1)->Column#29",
-          "│       └─TableFullScan_49 3.00 40.50 batchCop[tiflash] table:t1 keep order:false",
-          "└─Projection_18(Probe) 9.00 71.62 root  1->Column#25",
-          "  └─HashJoin_19 9.00 48.22 root  CARTESIAN left outer join",
-          "    ├─TableReader_28(Build) 3.00 5.66 root  data:TableFullScan_27",
-          "    │ └─TableFullScan_27 3.00 40.50 cop[tiflash] table:t2 keep order:false",
-          "    └─TableReader_22(Probe) 3.00 10.16 root  data:TableFullScan_21",
-          "      └─TableFullScan_21 3.00 108.00 cop[tikv] table:t keep order:false"
+          "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
+          "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
+          "│ └─StreamAgg_60 1.00 8.18 root  funcs:count(Column#32)->Column#18",
+          "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
+          "│     └─StreamAgg_44 1.00 49.50 batchCop[tiflash]  funcs:count(1)->Column#32",
+          "│       └─TableFullScan_59 3.00 40.50 batchCop[tiflash] table:t1 keep order:false",
+          "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
+          "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
+          "    ├─TableReader_24(Build) 3.00 10.16 root  data:TableFullScan_23",
+          "    │ └─TableFullScan_23 3.00 108.00 cop[tikv] table:t keep order:false",
+          "    └─Projection_27(Probe) 1.00 21.95 root  1->Column#26",
+          "      └─Limit_30 1.00 3.35 root  offset:0, count:1",
+          "        └─TableReader_38 1.00 3.35 root  data:ExchangeSender_37",
+          "          └─ExchangeSender_37 1.00 19.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─Limit_36 1.00 19.50 mpp[tiflash]  offset:0, count:1",
+          "              └─TableFullScan_35 1.00 19.50 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
