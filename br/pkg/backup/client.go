@@ -579,17 +579,18 @@ func (bc *Client) BackupRange(
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) (err error) {
-	logutil.CL(ctx).Info("backup range started")
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
-		logutil.CL(ctx).Info("backup range completed", zap.Duration("take", elapsed))
+		logutil.CL(ctx).Info("backup range completed",
+			logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
+			zap.Duration("take", elapsed))
 		key := "range start:" + hex.EncodeToString(req.StartKey) + " end:" + hex.EncodeToString(req.EndKey)
 		if err != nil {
 			summary.CollectFailureUnit(key, err)
 		}
 	}()
-	logutil.CL(ctx).Info("backup started",
+	logutil.CL(ctx).Info("backup range started",
 		logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
 		zap.Uint64("rateLimit", req.RateLimit),
 		zap.Uint32("concurrency", req.Concurrency))
