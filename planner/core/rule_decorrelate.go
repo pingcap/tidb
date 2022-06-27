@@ -196,6 +196,11 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				// TODO: Actually, it can be optimized. We need to keep the APPLY can be decorrelated.
 				goto NoOptimize
 			}
+			//If subquery has some filter condition, we will not optimize limit.
+			if len(apply.LeftConditions) > 0 || len(apply.RightConditions) > 0 || len(apply.OtherConditions) > 0 || len(apply.EqualConditions) > 0 {
+				// TODO: Actually, it can be optimized. We need to keep the APPLY can be decorrelated.
+				goto NoOptimize
+			}
 			if li.Offset == 0 {
 				innerPlan = li.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
