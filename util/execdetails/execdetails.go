@@ -347,20 +347,17 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, avgTime time.Duration, totalTasks, totalLoops, totalThreads int32) {
+func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32) {
 	procTimes = make([]time.Duration, 0, 32)
-	var avgTimeNs int64
 	for _, instanceStats := range crs.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
+			totalTime += time.Duration(stat.consume)
 			totalLoops += stat.loop
 			totalThreads += stat.threads
 			totalTasks++
-			// Calculate the average time iteratively to avoid overflow.
-			avgTimeNs += (stat.consume - avgTimeNs) / int64(totalTasks)
 		}
 	}
-	avgTime = time.Duration(avgTimeNs)
 	return
 }
 
@@ -369,7 +366,8 @@ func (crs *CopRuntimeStats) String() string {
 		return ""
 	}
 
-	procTimes, avgTime, totalTasks, totalLoops, totalThreads := crs.MergeBasicStats()
+	procTimes, totalTime, totalTasks, totalLoops, totalThreads := crs.MergeBasicStats()
+	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
 	isTiFlashCop := crs.storeType == "tiflash"
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
