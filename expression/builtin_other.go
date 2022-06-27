@@ -85,12 +85,8 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-<<<<<<< HEAD
-	if err := c.verifyArgs(args); err != nil {
-=======
 	args, err = c.verifyArgs(ctx, args)
 	if err != nil {
->>>>>>> caad839ae... planner: fix the wrong range built for bit columns when reusing cached plan (#33090)
 		return nil, err
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -161,8 +157,6 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-<<<<<<< HEAD
-=======
 func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
 	columnType := args[0].GetType()
 	validatedArgs := make([]Expression, 0, len(args))
@@ -184,7 +178,6 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 	return validatedArgs, err
 }
 
->>>>>>> caad839ae... planner: fix the wrong range built for bit columns when reusing cached plan (#33090)
 // nolint:structcheck
 type baseInSig struct {
 	baseBuiltinFunc
