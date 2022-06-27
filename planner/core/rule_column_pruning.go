@@ -115,6 +115,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	appendColumnPruneTraceStep(la, prunedColumns, opt)
 	appendFunctionPruneTraceStep(la, prunedFunctions, opt)
+	//nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)

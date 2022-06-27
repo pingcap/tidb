@@ -82,21 +82,76 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	dbInfo := &model.DBInfo{Name: schema}
-	if charsetInfo != nil {
-		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
+func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
+	var placementPolicyRef *model.PolicyRefInfo
+	sessionVars := ctx.GetSessionVars()
+
+	// If no charset and/or collation is specified use collation_server and character_set_server
+	charsetOpt := &ast.CharsetOpt{}
+	if sessionVars.GlobalVarsAccessor != nil {
+		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		dbInfo.Charset = chs
-		dbInfo.Collate = coll
-	} else {
-		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
+		charsetOpt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		if err != nil {
+			return err
+		}
 	}
 
+	explicitCharset := false
+	explicitCollation := false
+	if len(stmt.Options) != 0 {
+		for _, val := range stmt.Options {
+			switch val.Tp {
+			case ast.DatabaseOptionCharset:
+				charsetOpt.Chs = val.Value
+				explicitCharset = true
+			case ast.DatabaseOptionCollate:
+				charsetOpt.Col = val.Value
+				explicitCollation = true
+			case ast.DatabaseOptionPlacementPolicy:
+				placementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(val.Value),
+				}
+			}
+		}
+	}
+
+	if charsetOpt.Col != "" {
+		coll, err := collate.GetCollationByName(charsetOpt.Col)
+		if err != nil {
+			return err
+		}
+
+		// The collation is not valid for the specified character set.
+		// Try to remove any of them, but not if they are explicitly defined.
+		if coll.CharsetName != charsetOpt.Chs {
+			if explicitCollation && !explicitCharset {
+				// Use the explicitly set collation, not the implicit charset.
+				charsetOpt.Chs = ""
+			}
+			if !explicitCollation && explicitCharset {
+				// Use the explicitly set charset, not the (session) collation.
+				charsetOpt.Col = ""
+			}
+		}
+
+	}
+	dbInfo := &model.DBInfo{Name: stmt.Name}
+	chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetOpt.Chs, Col: charsetOpt.Col})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	dbInfo.Charset = chs
+	dbInfo.Collate = coll
 	dbInfo.PlacementPolicyRef = placementPolicyRef
-	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError)
+
+	onExist := OnExistError
+	if stmt.IfNotExists {
+		onExist = OnExistIgnore
+	}
+	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
 func (d *ddl) CreateSchemaWithInfo(
@@ -147,6 +202,12 @@ func (d *ddl) CreateSchemaWithInfo(
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+
+	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+
 	return errors.Trace(err)
 }
 
@@ -158,7 +219,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 	}
 
 	// Check if need to change charset/collation.
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -181,7 +242,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 }
 
 func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -276,7 +337,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -520,11 +581,14 @@ func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) 
 	return nil
 }
 
-func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
+func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	old, ok := is.SchemaByName(schema)
+	old, ok := is.SchemaByName(stmt.Name)
 	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
+		if stmt.IfExists {
+			return nil
+		}
+		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
 	job := &model.Job{
 		SchemaID:    old.ID,
@@ -537,13 +601,19 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) {
+			if stmt.IfExists {
+				return nil
+			}
+			return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
+		}
 		return errors.Trace(err)
 	}
 	if !config.TableLockEnabled() {
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs := is.SchemaTables(schema)
+	tbs := is.SchemaTables(stmt.Name)
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
 		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
@@ -1628,59 +1698,11 @@ func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
 	if tblInfo.PKIsHandle {
 		return nil
 	}
-	pk := getPrimaryKey(tblInfo)
+	pk := tblInfo.GetPrimaryKey()
 	if pk != nil && pk.Invisible {
 		return dbterror.ErrPKIndexCantBeInvisible
 	}
 	return nil
-}
-
-// getPrimaryKey extract the primary key in a table and return `IndexInfo`
-// The returned primary key could be explicit or implicit.
-// If there is no explicit primary key in table,
-// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
-// For more information about implicit primary key, see
-// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
-func getPrimaryKey(tblInfo *model.TableInfo) *model.IndexInfo {
-	var implicitPK *model.IndexInfo
-
-	for _, key := range tblInfo.Indices {
-		if key.Primary {
-			// table has explicit primary key
-			return key
-		}
-		// The case index without any columns should never happen, but still do a check here
-		if len(key.Columns) == 0 {
-			continue
-		}
-		// find the first unique key with NOT NULL columns
-		if implicitPK == nil && key.Unique {
-			// ensure all columns in unique key have NOT NULL flag
-			allColNotNull := true
-			skip := false
-			for _, idxCol := range key.Columns {
-				col := model.FindColumnInfo(tblInfo.Cols(), idxCol.Name.L)
-				// This index has a column in DeleteOnly state,
-				// or it is expression index (it defined on a hidden column),
-				// it can not be implicit PK, go to next index iterator
-				if col == nil || col.Hidden {
-					skip = true
-					break
-				}
-				if !mysql.HasNotNullFlag(col.GetFlag()) {
-					allColNotNull = false
-					break
-				}
-			}
-			if skip {
-				continue
-			}
-			if allColNotNull {
-				implicitPK = key
-			}
-		}
-	}
-	return implicitPK
 }
 
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
@@ -2951,8 +2973,21 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	return false
 }
 
+// resolveAlterTableAddColumns splits "add columns" to multiple spec. For example,
+// `ALTER TABLE ADD COLUMN (c1 INT, c2 INT)` is split into
+// `ALTER TABLE ADD COLUMN c1 INT, ADD COLUMN c2 INT`.
+func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
+	specs := make([]*ast.AlterTableSpec, len(spec.NewColumns))
+	for i, col := range spec.NewColumns {
+		t := *spec
+		t.NewColumns = []*ast.ColumnDef{col}
+		specs[i] = &t
+	}
+	return specs
+}
+
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occurred error.
+// returns valid specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlgorithmTypeDefault
@@ -2964,7 +2999,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
-		validSpecs = append(validSpecs, spec)
+		if spec.Tp == ast.AlterTableAddColumns && len(spec.NewColumns) > 1 {
+			validSpecs = append(validSpecs, resolveAlterTableAddColumns(spec)...)
+		} else {
+			validSpecs = append(validSpecs, spec)
+		}
 	}
 
 	// Verify whether the algorithm is supported.
@@ -3045,9 +3084,10 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	}
 
 	if len(validSpecs) > 1 {
+		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
 		case ast.AlterTableAddColumns:
-			err = d.AddColumns(sctx, ident, validSpecs)
+			useMultiSchemaChange = true
 		case ast.AlterTableDropColumn:
 			err = d.DropColumns(sctx, ident, validSpecs)
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
@@ -3058,7 +3098,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return nil
+		if !useMultiSchemaChange {
+			return nil
+		}
 	}
 
 	if len(validSpecs) > 1 {
@@ -3069,11 +3111,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
-			if len(spec.NewColumns) != 1 {
-				err = d.AddColumns(sctx, ident, []*ast.AlterTableSpec{spec})
-			} else {
-				err = d.AddColumn(sctx, ident, spec)
-			}
+			err = d.AddColumn(sctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
@@ -3524,6 +3562,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
+	err = checkAfterPositionExists(t.Meta(), spec.Position)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3532,15 +3574,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0},
+		Args:       []interface{}{col, spec.Position, 0, spec.IfNotExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	// column exists, but if_not_exists flags is true, so we ignore this error.
-	if infoschema.ErrColumnExists.Equal(err) && spec.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
