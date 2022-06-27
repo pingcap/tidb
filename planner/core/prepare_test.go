@@ -1624,24 +1624,19 @@ func (s *testPlanSerialSuite) TestIssue28254(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
 }
 
-<<<<<<< HEAD
-func (s *testPlanSerialSuite) TestIssue29486(c *C) {
+func (s *testPlanSerialSuite) TestIssue33067(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-=======
-func TestIssue33067(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
 	orgEnable := core.PreparedPlanCacheEnabled()
-	defer core.SetPreparedPlanCache(orgEnable)
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
 	core.SetPreparedPlanCache(true)
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk := testkit.NewTestKitWithSession(t, store, se)
 
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS `t`")
@@ -1655,10 +1650,11 @@ func TestIssue33067(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
-func TestIssue29486(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
->>>>>>> caad839ae... planner: fix the wrong range built for bit columns when reusing cached plan (#33090)
+func (s *testPlanSerialSuite) TestIssue29486(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
