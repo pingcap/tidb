@@ -1479,6 +1479,37 @@ func TestTiDBTrx(t *testing.T) {
 		"[null,null,\"update `test_tidb_trx` set `i` = `i` + ?\"]"))
 }
 
+func TestTiDBTrxSummary(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("drop table if exists test_tidb_trx")
+	tk.MustExec("create table test_tidb_trx(i int)")
+	_, beginDigest := parser.NormalizeDigest("begin")
+	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
+	_, commitDigest := parser.NormalizeDigest("commit")
+	txninfo.Recorder.Clean()
+	txninfo.Recorder.SetMinDuration(500 * time.Millisecond)
+	defer txninfo.Recorder.SetMinDuration(2147483647)
+	txninfo.Recorder.ResizeSummaries(128)
+	defer txninfo.Recorder.ResizeSummaries(0)
+	tk.MustExec("begin")
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	time.Sleep(1 * time.Second)
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	tk.MustExec("commit")
+	// it is possible for TRX_SUMMARY to have other rows (due to parallel execution of tests)
+	for _, row := range tk.MustQuery("select * from information_schema.TRX_SUMMARY;").Rows() {
+		// so we just look for the row we are looking for
+		if row[0] == "1bb679108d0012a8" {
+			require.Equal(t, strings.TrimSpace(row[1].(string)), "[\""+beginDigest.String()+"\",\""+digest.String()+"\",\""+digest.String()+"\",\""+commitDigest.String()+"\"]")
+			return
+		}
+	}
+	t.Fatal("cannot find the expected row")
+}
+
 func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
