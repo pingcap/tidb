@@ -219,5 +219,4 @@ func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
 			// ignore
 		}
 	}
-	p.profileData = nil
 }
