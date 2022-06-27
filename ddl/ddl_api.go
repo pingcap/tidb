@@ -2973,8 +2973,21 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	return false
 }
 
+// resolveAlterTableAddColumns splits "add columns" to multiple spec. For example,
+// `ALTER TABLE ADD COLUMN (c1 INT, c2 INT)` is split into
+// `ALTER TABLE ADD COLUMN c1 INT, ADD COLUMN c2 INT`.
+func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
+	specs := make([]*ast.AlterTableSpec, len(spec.NewColumns))
+	for i, col := range spec.NewColumns {
+		t := *spec
+		t.NewColumns = []*ast.ColumnDef{col}
+		specs[i] = &t
+	}
+	return specs
+}
+
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occurred error.
+// returns valid specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlgorithmTypeDefault
@@ -2986,7 +2999,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
-		validSpecs = append(validSpecs, spec)
+		if spec.Tp == ast.AlterTableAddColumns && len(spec.NewColumns) > 1 {
+			validSpecs = append(validSpecs, resolveAlterTableAddColumns(spec)...)
+		} else {
+			validSpecs = append(validSpecs, spec)
+		}
 	}
 
 	// Verify whether the algorithm is supported.
@@ -3067,9 +3084,10 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	}
 
 	if len(validSpecs) > 1 {
+		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
 		case ast.AlterTableAddColumns:
-			err = d.AddColumns(sctx, ident, validSpecs)
+			useMultiSchemaChange = true
 		case ast.AlterTableDropColumn:
 			err = d.DropColumns(sctx, ident, validSpecs)
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
@@ -3080,7 +3098,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return nil
+		if !useMultiSchemaChange {
+			return nil
+		}
 	}
 
 	if len(validSpecs) > 1 {
@@ -3091,11 +3111,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
-			if len(spec.NewColumns) != 1 {
-				err = d.AddColumns(sctx, ident, []*ast.AlterTableSpec{spec})
-			} else {
-				err = d.AddColumn(sctx, ident, spec)
-			}
+			err = d.AddColumn(sctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
@@ -3546,6 +3562,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
+	err = checkAfterPositionExists(t.Meta(), spec.Position)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3554,15 +3574,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0},
+		Args:       []interface{}{col, spec.Position, 0, spec.IfNotExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	// column exists, but if_not_exists flags is true, so we ignore this error.
-	if infoschema.ErrColumnExists.Equal(err) && spec.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
