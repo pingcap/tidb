@@ -5390,6 +5390,10 @@ func (d *ddl) dropTableObject(
 			return errors.Trace(err)
 		}
 
+		// unlock table after drop
+		if tableObjectType != tableObject {
+			continue
+		}
 		if !config.TableLockEnabled() {
 			continue
 		}
