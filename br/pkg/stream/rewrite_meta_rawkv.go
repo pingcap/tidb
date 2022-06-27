@@ -309,9 +309,10 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 	partitions := newTableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
-			_, exist := tableReplace.PartitionMap[tbl.ID]
+			newID, exist := tableReplace.PartitionMap[tbl.ID]
 			if !exist {
-				newID, err := sr.genGenGlobalID(context.Background())
+				var err error
+				newID, err = sr.genGenGlobalID(context.Background())
 				if err != nil {
 					return nil, false, errors.Trace(err)
 				}
@@ -320,8 +321,8 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 
 			log.Debug("update partition",
 				zap.String("partition-name", tbl.Name.String()),
-				zap.Int64("old-id", tbl.ID), zap.Int64("new-id", tableReplace.PartitionMap[tbl.ID]))
-			partitions.Definitions[i].ID = tableReplace.PartitionMap[tbl.ID]
+				zap.Int64("old-id", tbl.ID), zap.Int64("new-id", newID))
+			partitions.Definitions[i].ID = newID
 		}
 	}
 
