@@ -647,7 +647,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	var litWorkerCnt int
 	if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
 		litWorkerCnt, err = prepareLightningEngine(job, indexInfo.ID, int(workerCnt))
-		if err == nil && workerCnt > int32(litWorkerCnt) {
+		if err == nil && workerCnt >= int32(litWorkerCnt) {
 			workerCnt = int32(litWorkerCnt)
 			setNeedRestoreJob(job.ID, true)
 		} else {
