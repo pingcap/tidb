@@ -225,7 +225,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 		return
 	}
 	if ds.statisticTable == nil {
-		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.physicalTableID)
+		ds.statisticTable = getStatsTable(ds.ctx, ds.tableInfo, ds.tableInfo.ID)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),

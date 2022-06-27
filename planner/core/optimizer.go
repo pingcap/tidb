@@ -326,15 +326,20 @@ func refineCETrace(sctx sessionctx.Context) {
 		return i.RowCount < j.RowCount
 	})
 	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
 		tbl, ok := is.TableByID(rec.TableID)
-		if !ok {
-			logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
-				zap.Int64("table id", rec.TableID))
+		if ok {
+			rec.TableName = tbl.Meta().Name.O
 			continue
 		}
-		rec.TableName = tbl.Meta().Name.O
+		tbl, _, _ = is.FindTableByPartitionID(rec.TableID)
+		if tbl != nil {
+			rec.TableName = tbl.Meta().Name.O
+			continue
+		}
+		logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
+			zap.Int64("table id", rec.TableID))
 	}
 }
 
