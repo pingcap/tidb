@@ -351,7 +351,7 @@ func IsFastPlan(p plannercore.Plan) bool {
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
-// like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
+// like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	defer func() {
@@ -708,7 +708,10 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout, len(keys))
+		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
+		if err != nil {
+			return err
+		}
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
@@ -730,43 +733,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 }
 
-// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
-func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
-	txn, err := seCtx.Txn(false)
-	if err != nil {
-		return err
-	}
-	if !txn.Valid() {
-		return errors.Trace(kv.ErrInvalidTxn)
-	}
-
-	// The Oracle serializable isolation is actually SI in pessimistic mode.
-	// Do not update ForUpdateTS when the user is using the Serializable isolation level.
-	// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
-	// Support for this does not mean that TiDB supports serializable isolation of MySQL.
-	// tidb_skip_isolation_level_check should still be disabled by default.
-	if seCtx.GetSessionVars().IsIsolation(ast.Serializable) {
-		return nil
-	}
-	if newForUpdateTS == 0 {
-		// Because the ForUpdateTS is used for the snapshot for reading data in DML.
-		// We can avoid allocating a global TSO here to speed it up by using the local TSO.
-		version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
-		if err != nil {
-			return err
-		}
-		newForUpdateTS = version.Ver
-	}
-	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
-	return nil
-}
-
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (_ Executor, err error) {
 	if lockErr == nil {
 		return nil, nil
 	}
+	failpoint.Inject("assertPessimisticLockErr", func() {
+		if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errWriteConflict")
+		} else if terror.ErrorEqual(kv.ErrKeyExists, lockErr) {
+			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errDuplicateKey")
+		}
+	})
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
@@ -774,7 +752,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		}
 	}()
 
-	action, err := sessiontxn.GetTxnManager(a.Ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	txnManager := sessiontxn.GetTxnManager(a.Ctx)
+	action, err := txnManager.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	if err != nil {
 		return nil, err
 	}
@@ -789,10 +768,17 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.retryCount++
 	a.retryStartTime = time.Now()
 
-	err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx)
+	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
 		return nil, err
 	}
+
+	// Without this line of code, the result will still be correct. But it can ensure that the update time of for update read
+	// is determined which is beneficial for testing.
+	if _, err = txnManager.GetStmtForUpdateTS(); err != nil {
+		return nil, err
+	}
+
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointOnStmtRetryAfterLockError)
 
 	e, err := a.buildExecutor()
