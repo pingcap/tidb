@@ -193,28 +193,22 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	estRows	task	access object	operator info
-Apply_15	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
-├─TableReader_18(Build)	9990.00	root		data:Selection_17
-│ └─Selection_17	9990.00	cop[tikv]		not(isnull(test.t1.a))
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_19(Probe)	0.80	root		not(isnull(test.t2.a))
-  └─Limit_20	1.00	root		offset:0, count:1
-    └─TableReader_25	1.00	root		data:Limit_24
-      └─Limit_24	1.00	cop[tikv]		offset:0, count:1
-        └─Selection_23	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
-          └─TableFullScan_22	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin_11	7984.01	root		semi join, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
+├─TableReader_17(Build)	9980.01	root		data:Selection_16
+│ └─Selection_16	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│   └─TableFullScan_15	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_14(Probe)	9980.01	root		data:Selection_13
+  └─Selection_13	9980.01	cop[tikv]		not(isnull(test.t1.a)), not(isnull(test.t1.b))
+    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	estRows	task	access object	operator info
-Apply_17	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
-├─TableReader_20(Build)	9990.00	root		data:Selection_19
-│ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t1.a))
-│   └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_21(Probe)	0.80	root		not(isnull(test.t2.a))
-  └─Limit_23	1.00	root		offset:0, count:1
-    └─TableReader_28	1.00	root		data:Limit_27
-      └─Limit_27	1.00	cop[tikv]		offset:0, count:1
-        └─Selection_26	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
-          └─TableFullScan_25	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin_13	7984.01	root		semi join, equal:[eq(test.t1.a, test.t2.a)], other cond:gt(test.t2.b, test.t1.b)
+├─TableReader_19(Build)	9980.01	root		data:Selection_18
+│ └─Selection_18	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│   └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_16(Probe)	9980.01	root		data:Selection_15
+  └─Selection_15	9980.01	cop[tikv]		not(isnull(test.t1.a)), not(isnull(test.t1.b))
+    └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int not null, index idx(a));
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a limit 5;
