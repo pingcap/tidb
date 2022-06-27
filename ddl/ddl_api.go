@@ -82,21 +82,76 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	dbInfo := &model.DBInfo{Name: schema}
-	if charsetInfo != nil {
-		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
+func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
+	var placementPolicyRef *model.PolicyRefInfo
+	sessionVars := ctx.GetSessionVars()
+
+	// If no charset and/or collation is specified use collation_server and character_set_server
+	charsetOpt := &ast.CharsetOpt{}
+	if sessionVars.GlobalVarsAccessor != nil {
+		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		dbInfo.Charset = chs
-		dbInfo.Collate = coll
-	} else {
-		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
+		charsetOpt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		if err != nil {
+			return err
+		}
 	}
 
+	explicitCharset := false
+	explicitCollation := false
+	if len(stmt.Options) != 0 {
+		for _, val := range stmt.Options {
+			switch val.Tp {
+			case ast.DatabaseOptionCharset:
+				charsetOpt.Chs = val.Value
+				explicitCharset = true
+			case ast.DatabaseOptionCollate:
+				charsetOpt.Col = val.Value
+				explicitCollation = true
+			case ast.DatabaseOptionPlacementPolicy:
+				placementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(val.Value),
+				}
+			}
+		}
+	}
+
+	if charsetOpt.Col != "" {
+		coll, err := collate.GetCollationByName(charsetOpt.Col)
+		if err != nil {
+			return err
+		}
+
+		// The collation is not valid for the specified character set.
+		// Try to remove any of them, but not if they are explicitly defined.
+		if coll.CharsetName != charsetOpt.Chs {
+			if explicitCollation && !explicitCharset {
+				// Use the explicitly set collation, not the implicit charset.
+				charsetOpt.Chs = ""
+			}
+			if !explicitCollation && explicitCharset {
+				// Use the explicitly set charset, not the (session) collation.
+				charsetOpt.Col = ""
+			}
+		}
+
+	}
+	dbInfo := &model.DBInfo{Name: stmt.Name}
+	chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetOpt.Chs, Col: charsetOpt.Col})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	dbInfo.Charset = chs
+	dbInfo.Collate = coll
 	dbInfo.PlacementPolicyRef = placementPolicyRef
-	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError)
+
+	onExist := OnExistError
+	if stmt.IfNotExists {
+		onExist = OnExistIgnore
+	}
+	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
 func (d *ddl) CreateSchemaWithInfo(
@@ -147,6 +202,12 @@ func (d *ddl) CreateSchemaWithInfo(
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+
+	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+
 	return errors.Trace(err)
 }
 
@@ -520,11 +581,14 @@ func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) 
 	return nil
 }
 
-func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
+func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	old, ok := is.SchemaByName(schema)
+	old, ok := is.SchemaByName(stmt.Name)
 	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
+		if stmt.IfExists {
+			return nil
+		}
+		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
 	job := &model.Job{
 		SchemaID:    old.ID,
@@ -537,13 +601,19 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) {
+			if stmt.IfExists {
+				return nil
+			}
+			return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
+		}
 		return errors.Trace(err)
 	}
 	if !config.TableLockEnabled() {
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs := is.SchemaTables(schema)
+	tbs := is.SchemaTables(stmt.Name)
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
 		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
