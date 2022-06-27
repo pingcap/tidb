@@ -597,7 +597,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 		return nil, err
 	}
 	if a.Ctx.GetSessionVars().PessimisticTransactionAggressiveLocking {
-		logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
+		//logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
 		txn.StartAggressiveLocking()
 	}
 	for {
@@ -687,7 +687,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	if sctx.GetSessionVars().PessimisticTransactionAggressiveLocking {
-		logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
+		//logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
 		txn.StartAggressiveLocking()
 	}
 	isFirstAttempt := true
