@@ -757,13 +757,12 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	if isLightningEnabled(job.ID) {
 		indexInfo.SubState = model.StateMergeSync
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-		if err != nil {
-			return false, ver, errors.Trace(err)
-		}
-		return false, ver, nil
+		done = false
+	} else {
+		done = true
 	}
 	cleanUpLightningEnv(reorgInfo, false)
-	return true, ver, errors.Trace(err)
+	return done, ver, errors.Trace(err)
 }
 
 func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
