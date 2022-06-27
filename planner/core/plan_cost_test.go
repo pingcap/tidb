@@ -460,6 +460,7 @@ func TestNewCostInterfaceRandGen(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, d int, k int, key b(b), key cd(c, d), unique key(k))`)
+	tk.MustExec(`set @@tidb_enable_paging = off`)
 
 	queries := []string{
 		`SELECT a FROM t WHERE a is null AND d in (5307, 15677, 57970)`,

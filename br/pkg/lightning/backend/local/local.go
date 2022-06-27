@@ -1392,8 +1392,32 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		return err
 	}
 
+	if len(ranges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+		subCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		var startKey, endKey []byte
+		if len(ranges[0].start) > 0 {
+			startKey = codec.EncodeBytes(nil, ranges[0].start)
+		}
+		if len(ranges[len(ranges)-1].end) > 0 {
+			endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].end)
+		}
+		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
+
 	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
 		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
+
+	failpoint.Inject("ReadyForImportEngine", func() {})
+
 	for {
 		unfinishedRanges := lf.unfinishedRanges(ranges)
 		if len(unfinishedRanges) == 0 {

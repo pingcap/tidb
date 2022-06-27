@@ -657,11 +657,11 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		defer func() { b.inSelectLockStmt = false }()
 	}
 	b.hasLock = true
-	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
+
+	// Build 'select for update' using the 'for update' ts.
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
 		return nil
 	}
-	// Build 'select for update' using the 'for update' ts.
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -865,14 +865,11 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	b.inInsertStmt = true
-	if v.SelectPlan != nil {
-		// Try to update the forUpdateTS for insert/replace into select statements.
-		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
-		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
-			return nil
-		}
+
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1768,7 +1765,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
 			strings.ToLower(infoschema.TableAttributes),
-			strings.ToLower(infoschema.TablePlacementPolicies):
+			strings.ToLower(infoschema.TablePlacementPolicies),
+			strings.ToLower(infoschema.TableTrxSummary),
+			strings.ToLower(infoschema.ClusterTableTrxSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2114,10 +2113,11 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 			}
 		}
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2171,10 +2171,11 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+
+	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2188,34 +2189,6 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblColPosInfos: v.TblColPosInfos,
 	}
 	return deleteExec
-}
-
-// updateForUpdateTSIfNeeded updates the ForUpdateTS for a pessimistic transaction if needed.
-// PointGet executor will get conflict error if the ForUpdateTS is older than the latest commitTS,
-// so we don't need to update now for better latency.
-func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.PhysicalPlan) error {
-	txnCtx := b.ctx.GetSessionVars().TxnCtx
-	if !txnCtx.IsPessimistic {
-		return nil
-	}
-	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
-		return nil
-	}
-	// Activate the invalid txn, use the txn startTS as newForUpdateTS
-	txn, err := b.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	if !txn.Valid() {
-		_, err := b.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	// GetStmtForUpdateTS will auto update the for update ts if necessary
-	_, err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
-	return err
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
@@ -2435,6 +2408,15 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 }
 
 // getAdjustedSampleRate calculate the sample rate by the table size. If we cannot get the table size. We use the 0.001 as the default sample rate.
+// From the paper "Random sampling for histogram construction: how much is enough?"'s Corollary 1 to Theorem 5,
+// for a table size n, histogram size k, maximum relative error in bin size f, and error probability gamma,
+// the minimum random sample size is
+//         r = 4 * k * ln(2*n/gamma) / f^2
+// If we take f = 0.5, gamma = 0.01, n =1e6, we would got r = 305.82* k.
+// Since the there's log function over the table size n, the r grows slowly when the n increases.
+// If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
+// So if we don't consider the top-n values, we can keep the sample size at 300*256.
+// But we may take some top-n before building the histogram, so we increase the sample a little.
 func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
 	statsHandle := domain.GetDomain(sctx).StatsHandle()
 	defaultRate := 0.001
@@ -4099,6 +4081,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
+	//nolint: prealloc
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
@@ -4651,18 +4634,26 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 
-	startTS, err := b.getSnapshotTS()
+	if plan.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
+	}
+
+	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		tblInfo:          plan.TblInfo,
 		idxInfo:          plan.IndexInfo,
 		rowDecoder:       decoder,
-		startTS:          startTS,
+		snapshotTS:       snapshotTS,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		keepOrder:        plan.KeepOrder,
@@ -4675,9 +4666,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
+
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
+		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
 	}
+
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -4687,6 +4680,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.lock {
 		b.hasLock = true
 	}
+
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
 		e.idxVals = plan.IndexValues

@@ -2387,6 +2387,12 @@ func TestTimeBuiltin(t *testing.T) {
 
 	// for unix_timestamp
 	tk.MustExec("SET time_zone = '+00:00';")
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00.000001');").Check(testkit.Rows("0.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:00.999999');").Check(testkit.Rows("0.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-01-01 00:00:01.000000');").Check(testkit.Rows("1.000000"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');").Check(testkit.Rows("2147483647.999999"))
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08.000000');").Check(testkit.Rows("0.000000"))
+
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(151113);")
 	result.Check(testkit.Rows("1447372800"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP(20151113);")

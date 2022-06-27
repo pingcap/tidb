@@ -2043,6 +2043,8 @@ func doDMLWorks(s Session) {
 			vVal = variable.AssertionFastStr
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
+		case variable.TiDBEnablePaging:
+			vVal = variable.BoolToOnOff(variable.DefTiDBEnablePaging)
 		}
 		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 		values = append(values, value)

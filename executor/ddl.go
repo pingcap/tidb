@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -248,70 +247,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	var opt *ast.CharsetOpt
-	var placementPolicyRef *model.PolicyRefInfo
-	var err error
-	sessionVars := e.ctx.GetSessionVars()
-
-	// If no charset and/or collation is specified use collation_server and character_set_server
-	opt = &ast.CharsetOpt{}
-	if sessionVars.GlobalVarsAccessor != nil {
-		opt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
-		if err != nil {
-			return err
-		}
-		opt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
-		if err != nil {
-			return err
-		}
-	}
-
-	explicitCharset := false
-	explicitCollation := false
-	if len(s.Options) != 0 {
-		for _, val := range s.Options {
-			switch val.Tp {
-			case ast.DatabaseOptionCharset:
-				opt.Chs = val.Value
-				explicitCharset = true
-			case ast.DatabaseOptionCollate:
-				opt.Col = val.Value
-				explicitCollation = true
-			case ast.DatabaseOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(val.Value),
-				}
-			}
-		}
-	}
-
-	if opt.Col != "" {
-		coll, err := collate.GetCollationByName(opt.Col)
-		if err != nil {
-			return err
-		}
-
-		// The collation is not valid for the specified character set.
-		// Try to remove any of them, but not if they are explicitly defined.
-		if coll.CharsetName != opt.Chs {
-			if explicitCollation && !explicitCharset {
-				// Use the explicitly set collation, not the implicit charset.
-				opt.Chs = ""
-			}
-			if !explicitCollation && explicitCharset {
-				// Use the explicitly set charset, not the (session) collation.
-				opt.Col = ""
-			}
-		}
-
-	}
-
-	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, placementPolicyRef)
-	if err != nil {
-		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
-			err = nil
-		}
-	}
+	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, s)
 	return err
 }
 
@@ -375,7 +311,7 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
-	dbName := model.NewCIStr(s.Name)
+	dbName := s.Name
 
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
@@ -383,14 +319,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		return errors.New("Drop 'mysql' database is forbidden")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
-	if infoschema.ErrDatabaseNotExists.Equal(err) {
-		if s.IfExists {
-			err = nil
-		} else {
-			err = infoschema.ErrDatabaseDropExists.GenWithStackByArgs(s.Name)
-		}
-	}
+	err := domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, s)
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
