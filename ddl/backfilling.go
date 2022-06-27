@@ -647,9 +647,14 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	var litWorkerCnt int
 	if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
 		litWorkerCnt, err = prepareLightningEngine(job, indexInfo.ID, int(workerCnt))
-		if err != nil && workerCnt > int32(litWorkerCnt) {
+		if err == nil && workerCnt > int32(litWorkerCnt) {
 			workerCnt = int32(litWorkerCnt)
 			setNeedRestoreJob(job.ID, true)
+		} else {
+			// Be here, means Lightning environment can not be set up 
+			variable.FastDDL.Store(false)
+			logutil.BgLogger().Error("Lighting Create Engine failed.", zap.Error(err))
+			return errors.Trace(err)
 		}
     }
 	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
