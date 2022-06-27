@@ -162,7 +162,7 @@ func (_ glue_lit) Record(string, uint64) {
 
 func IsEngineLightningBackfill(id int64) bool {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey, false)
 	if !exist {
 		return false 
 	} else {
@@ -172,7 +172,7 @@ func IsEngineLightningBackfill(id int64) bool {
 
 func SetEnable(id int64, value bool) {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey, false)
 	if exist {
 		bc.enabled = value
 	}
@@ -180,7 +180,7 @@ func SetEnable(id int64, value bool) {
 
 func NeedRestore(id int64) bool {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey, false)
 	if !exist {
 		return false 
 	} else {
@@ -190,7 +190,7 @@ func NeedRestore(id int64) bool {
 
 func SetNeedRestore(id int64, value bool) {
 	bcKey := GenBackendContextKey(id)
-	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	bc, exist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey, false)
 	if exist {
 		bc.needRestore = value
 	}

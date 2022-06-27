@@ -246,7 +246,7 @@ func CanRestoreReorgTask(jobId int64, indexId int64) bool {
 	engineInfoKey := GenEngineInfoKey(jobId, indexId)
 	bcKey := GenBackendContextKey(jobId)
 	_, enExist := GlobalLightningEnv.LitMemRoot.EngineMgr.LoadEngineInfo(engineInfoKey)
-	_, bcExist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey)
+	_, bcExist := GlobalLightningEnv.LitMemRoot.getBackendContext(bcKey, true)
 	if enExist && bcExist {
 		return true
 	}

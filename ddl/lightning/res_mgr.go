@@ -336,7 +336,7 @@ func (m *LightningMemoryRoot) RegistWorkerContext(engineInfoKey string, id int) 
 func (m *LightningMemoryRoot) deleteBackendEngines(bcKey string) error {
 	var err error = nil
 	var count int = 0
-	bc, exist := m.getBackendContext(bcKey)
+	bc, exist := m.getBackendContext(bcKey, true)
 	if !exist {
 		log.L().Error(LERR_GET_BACKEND_FAILED, zap.String("backend key", bcKey))
 		return err
@@ -366,10 +366,12 @@ func (m *LightningMemoryRoot) deleteBackendEngines(bcKey string) error {
 	return err
 }
 
-func (m *LightningMemoryRoot) getBackendContext(bcKey string) (*BackendContext, bool) {
+func (m *LightningMemoryRoot) getBackendContext(bcKey string, needLog bool) (*BackendContext, bool) {
 	bc, exist := m.backendCache[bcKey]
 	if !exist {
-		log.L().Warn(LWAR_BACKEND_NOT_EXIST, zap.String("backend key:", bcKey))
+		if needLog {
+			log.L().Warn(LWAR_BACKEND_NOT_EXIST, zap.String("backend key:", bcKey))
+		}
 		return nil, false
 	}
 	return bc, exist
