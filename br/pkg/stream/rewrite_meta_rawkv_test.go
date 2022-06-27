@@ -16,7 +16,7 @@ var increaseID int64 = 100
 
 func mockGenGenGlobalID(ctx context.Context) (int64, error) {
 	increaseID++
-	return int64(increaseID), nil
+	return increaseID, nil
 }
 
 func ProduceValue(tableName string, dbID int64) ([]byte, error) {
