@@ -576,6 +576,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(t, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
+			// Convert the "not exists" error to a warning.
 			job.Warning = toTError(err)
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			return ver, nil

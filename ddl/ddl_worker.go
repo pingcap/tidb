@@ -450,7 +450,14 @@ func jobNeedGC(job *model.Job) bool {
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			return true
 		case model.ActionMultiSchemaChange:
-			return true
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job)
+				needGC := jobNeedGC(proxyJob)
+				if needGC {
+					return true
+				}
+			}
+			return false
 		}
 	}
 	return false
