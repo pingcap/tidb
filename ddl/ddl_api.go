@@ -5256,71 +5256,167 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	return errors.Trace(err)
 }
 
-// DropTable will proceed even if some table in the list does not exists.
-func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
+// If one drop those tables by mistake, it's difficult to recover.
+// In the worst case, the whole TiDB cluster fails to bootstrap, so we prevent user from dropping them.
+var systemTables = map[string]struct{}{
+	"tidb":                 {},
+	"gc_delete_range":      {},
+	"gc_delete_range_done": {},
+}
+
+func isSystemTable(schema, table string) bool {
+	if schema != "mysql" {
+		return false
+	}
+	if _, ok := systemTables[table]; ok {
+		return true
+	}
+	return false
+}
+
+type objectType int
+
+const (
+	tableObject objectType = iota
+	viewObject
+	sequenceObject
+)
+
+// dropTableObject provides common logic to DROP TABLE/VIEW/SEQUENCE.
+func (d *ddl) dropTableObject(
+	ctx sessionctx.Context,
+	objects []*ast.TableName,
+	ifExists bool,
+	tableObjectType objectType,
+) error {
+	var (
+		notExistTables []string
+		sessVars       = ctx.GetSessionVars()
+		is             = d.GetInfoSchemaWithInterceptor(ctx)
+		dropExistErr   *terror.Error
+		jobType        model.ActionType
+	)
+
+	switch tableObjectType {
+	case tableObject:
+		dropExistErr = infoschema.ErrTableDropExists
+		jobType = model.ActionDropTable
+	case viewObject:
+		dropExistErr = infoschema.ErrTableDropExists
+		jobType = model.ActionDropView
+	case sequenceObject:
+		dropExistErr = infoschema.ErrSequenceDropExists
+		jobType = model.ActionDropSequence
 	}
 
-	if tb.Meta().IsView() {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
-	}
-	if tb.Meta().IsSequence() {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
-	}
-	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
-	}
+	for _, tn := range objects {
+		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
+		schema, ok := is.SchemaByName(tn.Schema)
+		if !ok {
+			// TODO: we should return special error for table not exist, checking "not exist" is not enough,
+			// because some other errors may contain this error string too.
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		}
+		tableInfo, err := is.TableByName(tn.Schema, tn.Name)
+		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		} else if err != nil {
+			return err
+		}
 
-	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     tb.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: schema.State,
-		TableName:   tb.Meta().Name.L,
-		Type:        model.ActionDropTable,
-		BinlogInfo:  &model.HistoryInfo{},
-	}
+		// precheck before build DDL job
+		switch tableObjectType {
+		case tableObject:
+			if !tableInfo.Meta().IsBaseTable() {
+				notExistTables = append(notExistTables, fullti.String())
+				continue
+			}
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	if err != nil {
-		return errors.Trace(err)
+			tempTableType := tableInfo.Meta().TempTableType
+			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
+				logutil.BgLogger().Warn("admin check table before drop",
+					zap.String("database", fullti.Schema.O),
+					zap.String("table", fullti.Name.O),
+				)
+				exec := ctx.(sqlexec.RestrictedSQLExecutor)
+				_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				if err != nil {
+					return err
+				}
+			}
+
+			if tableInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+				return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
+			}
+		case viewObject:
+			if !tableInfo.Meta().IsView() {
+				return dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "VIEW")
+			}
+		case sequenceObject:
+			if !tableInfo.Meta().IsSequence() {
+				err = dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "SEQUENCE")
+				if ifExists {
+					ctx.GetSessionVars().StmtCtx.AppendNote(err)
+					continue
+				}
+				return err
+			}
+		}
+
+		// Protect important system table from been dropped by a mistake.
+		// I can hardly find a case that a user really need to do this.
+		if isSystemTable(tn.Schema.L, tn.Name.L) {
+			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+		}
+
+		job := &model.Job{
+			SchemaID:    schema.ID,
+			TableID:     tableInfo.Meta().ID,
+			SchemaName:  schema.Name.L,
+			SchemaState: schema.State,
+			TableName:   tableInfo.Meta().Name.L,
+			Type:        jobType,
+			BinlogInfo:  &model.HistoryInfo{},
+		}
+
+		err = d.DoDDLJob(ctx, job)
+		err = d.callHookOnChanged(job, err)
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+
+		if !config.TableLockEnabled() {
+			return nil
+		}
+		if ok, _ := ctx.CheckTableLocked(tableInfo.Meta().ID); ok {
+			ctx.ReleaseTableLockByTableIDs([]int64{tableInfo.Meta().ID})
+		}
+
 	}
-	if !config.TableLockEnabled() {
-		return nil
+	if len(notExistTables) > 0 && !ifExists {
+		return dropExistErr.GenWithStackByArgs(strings.Join(notExistTables, ","))
 	}
-	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	// We need add warning when use if exists.
+	if len(notExistTables) > 0 && ifExists {
+		for _, table := range notExistTables {
+			sessVars.StmtCtx.AppendNote(dropExistErr.GenWithStackByArgs(table))
+		}
 	}
 	return nil
 }
 
+// DropTable will proceed even if some table in the list does not exists.
+func (d *ddl) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject)
+}
+
 // DropView will proceed even if some view in the list does not exists.
-func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !tb.Meta().IsView() {
-		return dbterror.ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "VIEW")
-	}
-
-	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     tb.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: tb.Meta().State,
-		TableName:   tb.Meta().Name.L,
-		Type:        model.ActionDropView,
-		BinlogInfo:  &model.HistoryInfo{},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
+func (d *ddl) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
 }
 
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
@@ -6606,34 +6702,8 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {
-	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !tbl.Meta().IsSequence() {
-		err = dbterror.ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "SEQUENCE")
-		if ifExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return err
-	}
-
-	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     tbl.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: tbl.Meta().State,
-		TableName:   tbl.Meta().Name.L,
-		Type:        model.ActionDropSequence,
-		BinlogInfo:  &model.HistoryInfo{},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
+func (d *ddl) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
+	return d.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
 }
 
 func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName model.CIStr, visibility ast.IndexVisibility) error {

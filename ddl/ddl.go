@@ -106,9 +106,9 @@ type DDL interface {
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
-	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error)
-	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 		columnNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr, ifExists bool) error
@@ -122,7 +122,7 @@ type DDL interface {
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
 	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
-	DropSequence(ctx sessionctx.Context, tableIdent ast.Ident, ifExists bool) (err error)
+	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
