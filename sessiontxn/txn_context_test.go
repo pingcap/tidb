@@ -447,7 +447,7 @@ func TestTxnContextForHistoricalRead(t *testing.T) {
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 11"))
+		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 10"))
 	})
 
 	tk.MustExec("rollback")
