@@ -47,7 +47,7 @@ func (s *testRestoreClientSuite) TearDownTest(c *C) {
 }
 
 func (s *testRestoreClientSuite) TestCreateTables(c *C) {
-	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
 
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -103,7 +103,7 @@ func (s *testRestoreClientSuite) TestCreateTables(c *C) {
 
 func (s *testRestoreClientSuite) TestIsOnline(c *C) {
 
-	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
 
 	c.Assert(client.IsOnline(), IsFalse)
@@ -113,7 +113,7 @@ func (s *testRestoreClientSuite) TestIsOnline(c *C) {
 
 func (s *testRestoreClientSuite) TestPreCheckTableClusterIndex(c *C) {
 
-	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), s.mock.PDClient, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
 
 	info, err := s.mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -205,7 +205,7 @@ func (s *testRestoreClientSuite) TestPreCheckTableTiFlashReplicas(c *C) {
 
 	client, err := restore.NewRestoreClient(gluetidb.New(), fakePDClient{
 		stores: mockStores,
-	}, s.mock.Storage, nil, defaultKeepaliveCfg)
+	}, s.mock.Storage, nil, defaultKeepaliveCfg, false)
 	c.Assert(err, IsNil)
 
 	tables := make([]*metautil.Table, 4)

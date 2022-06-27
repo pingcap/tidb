@@ -70,7 +70,8 @@ type IndexNestedLoopHashJoin struct {
 	// taskCh is only used when `keepOuterOrder` is true.
 	taskCh chan *indexHashJoinTask
 
-	stats *indexLookUpJoinRuntimeStats
+	stats    *indexLookUpJoinRuntimeStats
+	prepared bool
 }
 
 type indexHashJoinOuterWorker struct {
@@ -155,7 +156,6 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.finished.Store(false)
-	e.startWorkers(ctx)
 	return nil
 }
 
@@ -229,6 +229,10 @@ func (e *IndexNestedLoopHashJoin) wait4JoinWorkers() {
 
 // Next implements the IndexNestedLoopHashJoin Executor interface.
 func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	req.Reset()
 	if e.keepOuterOrder {
 		return e.runInOrder(ctx, req)
@@ -321,6 +325,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	e.joinChkResourceCh = nil
 	e.finished.Store(false)
+	e.prepared = false
 	return e.baseExecutor.Close()
 }
 
@@ -498,7 +503,9 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			break
 		}
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
-		if err != nil {
+		if err != nil && !task.keepOuterOrder {
+			// Only need check non-keep-outer-order case because the
+			// `joinResult` had been sent to the `resultCh` when err != nil.
 			joinResult.err = err
 			break
 		}
