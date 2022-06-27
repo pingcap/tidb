@@ -1,14 +1,29 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package core
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tipb/go-tipb"
-	"strconv"
-	"strings"
 )
 
 // A plan is dataAccesser means it can access underlying data.
@@ -101,8 +116,8 @@ func (d DynamicPartitionAccessObjects) SetIntoPB(pb *tipb.ExplainOperator) {
 		pbObj.Partitions = obj.Partitions
 	}
 	pbObjs := tipb.DynamicPartitionAccessObjects{Objects: make([]*tipb.DynamicPartitionAccessObject, 0, len(d))}
-	for _, obj := range pbObjSlice {
-		pbObjs.Objects = append(pbObjs.Objects, &obj)
+	for i := range pbObjSlice {
+		pbObjs.Objects = append(pbObjs.Objects, &pbObjSlice[i])
 	}
 	pb.AccessObject = &tipb.ExplainOperator_DynamicPartitionObjects{DynamicPartitionObjects: &pbObjs}
 }

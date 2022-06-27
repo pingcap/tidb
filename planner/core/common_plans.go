@@ -18,6 +18,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
@@ -53,8 +56,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
-	"strconv"
-	"strings"
 )
 
 var planCacheCounter = metrics.PlanCacheCounter.WithLabelValues("prepare")
