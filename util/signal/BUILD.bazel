@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "signal",
+    srcs = [
+        "signal_posix.go",
+        "signal_wasm.go",
+        "signal_windows.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/signal",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)

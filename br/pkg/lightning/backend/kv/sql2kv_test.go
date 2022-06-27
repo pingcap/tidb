@@ -89,7 +89,7 @@ func TestEncode(t *testing.T) {
 	strictMode, err := NewTableKVEncoder(tbl, &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
-	})
+	}, nil, logger)
 	require.NoError(t, err)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
 	require.Regexp(t, "failed to cast value as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint", err)
@@ -121,7 +121,7 @@ func TestEncode(t *testing.T) {
 	mockMode, err := NewTableKVEncoder(mockTbl, &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567891,
-	})
+	}, nil, logger)
 	require.NoError(t, err)
 	_, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1}, "1.csv", 1234)
 	require.EqualError(t, err, "mock error")
@@ -131,7 +131,7 @@ func TestEncode(t *testing.T) {
 		SQLMode:   mysql.ModeNone,
 		Timestamp: 1234567892,
 		SysVars:   map[string]string{"tidb_row_format_version": "1"},
-	})
+	}, nil, logger)
 	require.NoError(t, err)
 	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
 	require.NoError(t, err)
@@ -153,7 +153,7 @@ func TestDecode(t *testing.T) {
 	decoder, err := NewTableKVDecoder(tbl, "`test`.`c1`", &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
-	})
+	}, log.L())
 	require.NoError(t, err)
 	require.NotNil(t, decoder)
 	require.Equal(t, decoder.Name(), "`test`.`c1`")
@@ -208,7 +208,7 @@ func TestDecodeIndex(t *testing.T) {
 	strictMode, err := NewTableKVEncoder(tbl, &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
-	})
+	}, nil, log.L())
 	require.NoError(t, err)
 	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1, -1}, "1.csv", 123)
 	data := pairs.(*KvPairs)
@@ -217,7 +217,7 @@ func TestDecodeIndex(t *testing.T) {
 	decoder, err := NewTableKVDecoder(tbl, "`test`.``", &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
-	})
+	}, log.L())
 	require.NoError(t, err)
 	h1, err := decoder.DecodeHandleFromRowKey(data.pairs[0].Key)
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestEncodeRowFormatV2(t *testing.T) {
 		SQLMode:   mysql.ModeNone,
 		Timestamp: 1234567892,
 		SysVars:   map[string]string{"tidb_row_format_version": "2"},
-	})
+	}, nil, log.L())
 	require.NoError(t, err)
 	pairs, err := noneMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
 	require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestEncodeTimestamp(t *testing.T) {
 			"tidb_row_format_version": "1",
 			"time_zone":               "+08:00",
 		},
-	})
+	}, nil, log.L())
 	require.NoError(t, err)
 	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1}, "1.csv", 1234)
 	require.NoError(t, err)
@@ -320,7 +320,7 @@ func TestEncodeDoubleAutoIncrement(t *testing.T) {
 		SysVars: map[string]string{
 			"tidb_row_format_version": "2",
 		},
-	})
+	}, nil, log.L())
 	require.NoError(t, err)
 
 	strDatumForID := types.NewStringDatum("1")
@@ -386,7 +386,7 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 			SysVars: map[string]string{
 				"tidb_row_format_version": "2",
 			},
-		})
+		}, nil, log.L())
 		require.NoError(t, err)
 
 		realRowID := encoder.(*tableKVEncoder).autoIDFn(rowID)
@@ -447,7 +447,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 		Timestamp:      1234567893,
 		SysVars:        map[string]string{"tidb_row_format_version": "2"},
 		AutoRandomSeed: 456,
-	})
+	}, nil, log.L())
 	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewNop()}
 	pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 70, []int{-1, 0}, "1.csv", 1234)
@@ -482,7 +482,7 @@ func TestShardRowId(t *testing.T) {
 		Timestamp:      1234567893,
 		SysVars:        map[string]string{"tidb_row_format_version": "2"},
 		AutoRandomSeed: 456,
-	})
+	}, nil, log.L())
 	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewNop()}
 	keyMap := make(map[int64]struct{}, 16)
@@ -636,7 +636,7 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	// Construct the corresponding KV encoder.
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tableInfo)
 	require.NoError(b, err)
-	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}})
+	encoder, err := NewTableKVEncoder(tbl, &SessionOptions{SysVars: map[string]string{"tidb_row_format_version": "2"}}, nil, log.L())
 	require.NoError(b, err)
 	logger := log.Logger{Logger: zap.NewNop()}
 

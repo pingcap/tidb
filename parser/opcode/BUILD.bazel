@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "opcode",
+    srcs = ["opcode.go"],
+    importpath = "github.com/pingcap/tidb/parser/opcode",
+    visibility = ["//visibility:public"],
+    deps = ["//parser/format"],
+)
+
+go_test(
+    name = "opcode_test",
+    srcs = ["opcode_test.go"],
+    embed = [":opcode"],
+)
