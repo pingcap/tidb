@@ -332,6 +332,7 @@ func refineCETrace(sctx sessionctx.Context) {
 		if !ok {
 			logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
 				zap.Int64("table id", rec.TableID))
+			continue
 		}
 		rec.TableName = tbl.Meta().Name.O
 	}
