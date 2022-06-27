@@ -1867,6 +1867,11 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
+
+	// Encode StatementContext. We encode it here to avoid circle dependency.
+	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
+	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
+	sessionStates.Warnings = s.StmtCtx.GetWarnings()
 	return
 }
 
@@ -1902,6 +1907,11 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
+
+	// Decode StatementContext.
+	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
+	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
 }
 

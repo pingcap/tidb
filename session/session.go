@@ -3544,15 +3544,16 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
 func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
-	if err = s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
-		return err
-	}
-
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
 		if err = variable.SetSessionSystemVar(s.sessionVars, name, val); err != nil {
 			return err
 		}
+	}
+
+	// Decode stmt ctx after session vars because setting session vars may override stmt ctx, such as warnings.
+	if err = s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
+		return err
 	}
 	return err
 }
