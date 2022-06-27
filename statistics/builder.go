@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"bytes"
+	"github.com/pingcap/tidb/util/memory"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -221,11 +222,26 @@ func BuildHistAndTopN(
 	collector *SampleCollector,
 	tp *types.FieldType,
 	isColumn bool,
+	memTracker *memory.Tracker,
 ) (*Histogram, *TopN, error) {
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer func() {
+		if memTracker != nil {
+			memTracker.Consume(bufferedMemSize)
+			memTracker.Release(bufferedReleaseSize)
+		}
+	}()
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			return codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
+			if memTracker != nil {
+				deltaSize := int64(cap(encoded))
+				memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+				memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
+			}
+			return encoded, err
 		}
 	} else {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {

@@ -761,6 +761,8 @@ workLoop:
 				e.memTracker.Consume(collectorMemSize)
 				bufferedMemSize := int64(0)
 				bufferedReleaseSize := int64(0)
+				defer e.memTracker.Consume(bufferedMemSize)
+				defer e.memTracker.Release(bufferedReleaseSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
 				// When it's new collation data, we need to use its collate key instead of original value because only
@@ -793,8 +795,6 @@ workLoop:
 					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
-				e.memTracker.Consume(bufferedMemSize)
-				e.memTracker.Release(bufferedReleaseSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -815,6 +815,8 @@ workLoop:
 				e.memTracker.Consume(collectorMemSize)
 				bufferedMemSize := int64(0)
 				bufferedReleaseSize := int64(0)
+				defer e.memTracker.Consume(bufferedMemSize)
+				defer e.memTracker.Release(bufferedReleaseSize)
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
@@ -849,8 +851,6 @@ workLoop:
 					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
-				e.memTracker.Consume(bufferedMemSize)
-				e.memTracker.Release(bufferedReleaseSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -868,7 +868,7 @@ workLoop:
 					e.memTracker.Release(collector.MemSize)
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()
@@ -1016,7 +1016,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if e.StatsVersion < 2 {
 			hg, err = statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		} else {
-			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true)
+			hg, topn, err = statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), col.ID, collectors[i], &col.FieldType, true, nil)
 			topNs = append(topNs, topn)
 		}
 		if err != nil {
