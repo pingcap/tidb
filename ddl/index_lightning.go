@@ -95,7 +95,7 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexId int64
 		err := lit.FinishIndexOp(ctx, engineInfoKey, tbl, unique)
 		if err != nil {
 			err = errors.Trace(err)
-				return err
+			return err
 		}
 		// After import local data into TiKV, then the progress set to 100.
 		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
@@ -123,15 +123,15 @@ func importPartialDataToTiKV(jobId int64, indexIds int64) error {
 // Check if this reorg is a restore reorg task
 // Check if current lightning reorg task can be executed continuely.
 // Otherwise, restart the reorg task.
-func canRestoreReorgTask(reorg *reorgInfo, indexId int64) bool {
+func canRestoreReorgTask(job *model.Job, indexId int64) bool {
 	// The reorg just start, do nothing
-	if reorg.SnapshotVer == 0 {
+	if job.SnapshotVer == 0 {
 		return false
 	}
 
 	// Check if backend and engine are cached.
-	if !lit.CanRestoreReorgTask(reorg.ID, indexId) {
-		reorg.SnapshotVer = 0
+	if !lit.CanRestoreReorgTask(job.ID, indexId) {
+		job.SnapshotVer = 0
 		return false
 	}
 	return true
@@ -182,10 +182,10 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 			panic("panic test")
 		}
 	})
-    fetchTag := "AddIndexLightningFetchdata" + strconv.Itoa(w.id)
+	fetchTag := "AddIndexLightningFetchdata" + strconv.Itoa(w.id)
 	writeTag := "AddIndexLightningWritedata" + strconv.Itoa(w.id)
-    txnTag := "AddIndexLightningBackfillDataInTxn" + strconv.Itoa(w.id)
-	
+	txnTag := "AddIndexLightningBackfillDataInTxn" + strconv.Itoa(w.id)
+
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
@@ -194,7 +194,7 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
-		
+
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		logSlowOperations(time.Since(oprStartTime), fetchTag, 1000)
 		if err != nil {

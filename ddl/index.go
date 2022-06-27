@@ -581,7 +581,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 		indexInfo.State = model.StatePublic
 		// Set sub state to stateNone to stop double write, if used lightning build index.
-		tempIndexes := genTempIndexes(job.Args, indexInfo)
+		var eid uint64 = 0
+		if indexInfo.SubState != model.StateNone {
+			eid = codec.EncodeIntToCmpUint(tablecodec.TempIndexPrefix | indexInfo.ID)
+		}
 		indexInfo.SubState = model.StateNone
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
@@ -597,10 +600,12 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// ToDo：clean temp index as needed
-		if tempIndexes != nil {
-			job.Args = append(job.Args, tempIndexes)
+		if eid == 0 {
+			job.Args = []interface{}{eid, getPartitionIDs(tblInfo)}
+		} else {
+			job.Args = []interface{}{codec.DecodeCmpUintToInt(eid), getPartitionIDs(tblInfo)}
 		}
-	default:
+		default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
 
@@ -615,16 +620,19 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	// backfill process finished, no need to do reorg task restore checking.
 	if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
 		// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consist.
-		if !canRestoreReorgTask(reorgInfo, indexInfo.ID) {
+		if !canRestoreReorgTask(job, indexInfo.ID) {
 			reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 			if err != nil || reorgInfo.first {
 				return false, ver, errors.Trace(err)
 			}
 		}
+	} else if !isLightningEnabled(job.ID) && !needRestoreJob(job.ID) && indexInfo.SubState != model.StateNone {
+		job.SnapshotVer = 0
+		reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 	}
-	
+
 	// Check and set up lightning Backend. Whether use lightning add index will depends on
-	// TiDBFastDDL sysvars is true or false at this time. Also if IsLightningEnabled mean 
+	// TiDBFastDDL sysvars is true or false at this time. Also if IsLightningEnabled mean
 	// restore lightning reorg task, no need to init the lightning environment another time.
 	if !isLightningEnabled(job.ID) {
 		// If it is a empty table, do not need start lightning backfiller.
@@ -633,7 +641,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		// Check if the reorg task is re-entry task, If TiDB is restarted, then currently
 		// reorg task should be restart.
-		if IsAllowFastDDL() && job.SnapshotVer == 0 {
+		if IsAllowFastDDL() && indexInfo.SubState == model.StateNone {
 			err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
 			if err == nil {
 				setLightningEnabled(job.ID, true)
@@ -683,7 +691,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			return false, 0, errors.New("Lightning backfill: should not happened")
 		}
 	}
-	return false, ver, nil;
+	return false, ver, nil
 }
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -698,8 +706,8 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return false, ver, errors.Trace(err)
 	}
 
-    doReorg, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
-    if isLightningEnabled(reorgInfo.ID) || indexInfo.SubState != model.StateNone {
+	doReorg, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
+	if isLightningEnabled(reorgInfo.ID) || indexInfo.SubState != model.StateNone {
 		if err != nil {
 			logutil.BgLogger().Error("Lightning: Add index backfill processing:", zap.String("Error:", err.Error()))
 			return done, ver, err
@@ -739,14 +747,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	// Ingest data to TiKV
 	err = importIndexDataToStore(w.ctx, reorgInfo, indexInfo.ID, indexInfo.Unique, tbl)
-    if err != nil {
+	if err != nil {
 		logutil.BgLogger().Warn("Lightning import error:", zap.Error(err))
 		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
 		return false, ver, errors.Trace(err)
 	}
 
 	// Cleanup lightning environment
-	cleanUpLightningEnv(reorgInfo, false)
 	if isLightningEnabled(job.ID) {
 		indexInfo.SubState = model.StateMergeSync
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
@@ -755,6 +762,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 		return false, ver, nil
 	}
+	cleanUpLightningEnv(reorgInfo, false)
 	return true, ver, errors.Trace(err)
 }
 
@@ -835,11 +843,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args[0] = indexInfo.ID
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
-            // Also need cleanup lightning add index's temp index data
-			tempIndexes := genTempIndexes(job.Args, indexInfo)
-			if tempIndexes != nil {
-				job.Args = append(job.Args, tempIndexes)
-			}
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
@@ -849,20 +852,6 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	job.SchemaState = indexInfo.State
 	return ver, errors.Trace(err)
-}
-
-// genTempIndexes used to cleanup temp index data for create index failed or canceled.
-func genTempIndexes(Args []interface{}, indexInfo *model.IndexInfo) (TempIndexes []int64) {
-    if indexInfo.SubState != model.StateNone {
-		TempIndexes = make([]int64, 0, len(Args))
-		for _, idx := range Args {
-			idx_val := idx.(int64)
-			eid := codec.EncodeIntToCmpUint(tablecodec.TempIndexPrefix | idx_val)
-			TempIndexes = append(TempIndexes, int64(eid))
-		}
-		return TempIndexes
-	}
-	return nil
 }
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {

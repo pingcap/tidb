@@ -1135,7 +1135,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	return
 }
 
-const TempIndexPrefix = 0xffff
+const TempIndexPrefix = 0x7fff000000000000
 
 func IndexKey2TempIndexKey(indexID int64, key []byte) {
 	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | indexID)

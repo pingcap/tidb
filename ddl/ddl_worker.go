@@ -419,15 +419,30 @@ func jobNeedGC(job *model.Job) bool {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			var needGC bool = false
 			if job.State != model.JobStateRollbackDone {
+				// ToDo: Need refactor later
 				// When using lightning backfill, the job.Args length > 0
-				if job.Type == model.ActionAddIndex && job.RawArgs != nil{
-					logutil.BgLogger().Info("Lightning clean temp index data,", zap.String("Job Args:", job.String()),
-						zap.String("RawArgs:", string(job.RawArgs)))
+				if job.Type == model.ActionAddIndex {
 					needGC = true
-				} 
+					var indexID int64 = 0
+					var partitionIDs []int64
+					err := job.DecodeArgs(&indexID, &partitionIDs)
+					if err != nil{
+						logutil.BgLogger().Info("Lightning clean temp index data failed, please clean it manually,", zap.String("Job Args:", job.String()),
+							zap.String("RawArgs:", string(job.RawArgs)))
+						needGC = false
+					}
+					if indexID == 0 {
+						needGC = false
+					}
+					if err == nil && indexID != 0 {
+						needGC = true
+					}
+				}
+			} else {
+				needGC = true
 			}
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			if !needGC {
+			if needGC {
 				return true
 			}
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,

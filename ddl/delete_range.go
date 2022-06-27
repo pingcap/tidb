@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -314,6 +315,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
+		eid := codec.EncodeIntToCmpUint(tablecodec.TempIndexPrefix | indexID)
 		if len(partitionIDs) > 0 {
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
@@ -321,11 +323,27 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 				if err := doInsert(ctx, s, job.ID, ea.alloc(), startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
+				// Clean temp index data to avoid Garbage data that generate from adding index with lightning backfill data
+				if job.State == model.JobStateRollbackDone {
+					startKey := tablecodec.EncodeTableIndexPrefix(pid, int64(eid))
+					endKey := tablecodec.EncodeTableIndexPrefix(pid, int64(eid))
+					if err := doInsert(ctx, s, job.ID, ea.alloc(), startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
+						return errors.Trace(err)
+				}
+				}
 			}
 		} else {
 			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			return doInsert(ctx, s, job.ID, ea.alloc(), startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
+			if err := doInsert(ctx, s, job.ID, ea.alloc(), startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID)); err != nil {
+				return errors.Trace(err)
+			}
+			// Clean temp index data for non-partition table.
+			if job.State == model.JobStateRollbackDone {
+				startKey := tablecodec.EncodeTableIndexPrefix(tableID, int64(eid))
+				endKey := tablecodec.EncodeTableIndexPrefix(tableID, int64(eid))
+				return doInsert(ctx, s, job.ID, ea.alloc(), startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
+			}
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID

@@ -36,7 +36,7 @@ const (
 	_tb                      = 1024 * _gb
 	_pb                      = 1024 * _tb
 	flush_size               = 1 * _mb
-	minStorageQuota          = 100 * _gb
+	minStorageQuota          = 10 * _gb
 	importThreadhold float32 = 0.15
 )
 
@@ -166,7 +166,7 @@ func (l *LightningEnv) parseDiskQuota(val int) error {
 
 // Generate lightning local store dir in TiDB datadir.
 func genLightningDataDir(sortPath string) (string, error) {
-	sortPath = filepath.Join(sortPath, "/tmp_ddl")
+	sortPath = filepath.Join("/tmp", "/tmp_ddl")
 	shouldCreate := true
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
