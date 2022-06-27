@@ -569,9 +569,9 @@ func (s *localSuite) TestBatchSplitByRangesNoValidKeys(c *C) {
 	s.doTestBatchSplitRegionByRanges(context.Background(), c, &splitRegionNoValidKeyHook{returnErrTimes: math.MaxInt32}, ".*no valid key.*", defaultHook{})
 }
 
-func TestSplitAndScatterRegionInBatches(t *testing.T) {
+func (s *localSuite) TestSplitAndScatterRegionInBatches(c *C) {
 	splitHook := defaultHook{}
-	deferFunc := splitHook.setup(t)
+	deferFunc := splitHook.setup(c)
 	defer deferFunc()
 
 	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
@@ -593,18 +593,18 @@ func TestSplitAndScatterRegionInBatches(t *testing.T) {
 	}
 
 	err := local.SplitAndScatterRegionInBatches(ctx, ranges, nil, true, 1000, 4)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
 	rangeEnd := codec.EncodeBytes([]byte{}, []byte("b"))
 	regions, err := restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	result := [][]byte{[]byte("a"), []byte("a00"), []byte("a01"), []byte("a02"), []byte("a03"), []byte("a04"),
 		[]byte("a05"), []byte("a06"), []byte("a07"), []byte("a08"), []byte("a09"), []byte("a10"), []byte("a11"),
 		[]byte("a12"), []byte("a13"), []byte("a14"), []byte("a15"), []byte("a16"), []byte("a17"), []byte("a18"),
 		[]byte("a19"), []byte("a20"), []byte("b"),
 	}
-	checkRegionRanges(t, regions, result)
+	checkRegionRanges(c, regions, result)
 }
 
 type reportAfterSplitHook struct {
