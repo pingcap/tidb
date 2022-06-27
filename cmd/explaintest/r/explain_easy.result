@@ -126,13 +126,15 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:COLUMNS	table_schema:["test"], table_name:["t1"], column_name:["c1"]
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
-Projection	12487.50	root		eq(test.t1.c2, test.t2.c2)->Column#11
-└─HashJoin	12487.50	root		left outer join, equal:[eq(test.t1.c1, test.t2.c1)]
-  ├─TableReader(Build)	9990.00	root		data:Selection
-  │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t2.c1))
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t2 keep order:false, stats:pseudo
-  └─TableReader(Probe)	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Projection 10000.00 root  eq(test.t1.c2, test.t2.c2)->Column#11
+└─Apply 10000.00 root  CARTESIAN left outer join
+  ├─TableReader(Build) 10000.00 root  data:TableFullScan
+  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo
+  └─TopN(Probe) 0.00 root  test.t2.c1, offset:0, count:1
+    └─TableReader 0.00 root  data:TopN
+      └─TopN 0.00 cop[tikv]  test.t2.c1, offset:0, count:1
+        └─Selection 0.00 cop[tikv]  eq(test.t1.c1, test.t2.c1)
+          └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1

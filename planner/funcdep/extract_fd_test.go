@@ -255,21 +255,21 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	}{
 		{
 			sql: "select * from X where exists (select * from Y where m=a limit 1)",
-			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			// For this query, it's essentially a semi join, for every `a` in X, do the inner loop once.
 			//   +- datasource(x)
-			//   +- limit
+			//    +- where
 			//     +- datasource(Y)
-			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection",
 			// Since semi join will keep the **all** rows of the outer table, it's FD can be derived.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
 		},
 		{
 			sql: "select a, b from X where exists (select * from Y where m=a limit 1)",
-			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			// For this query, it's essentially a semi join, for every `a` in X, do the inner loop once.
 			//   +- datasource(x)
-			//   +- limit
+			//   +- where
 			//     +- datasource(Y)
-			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection", // semi join
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
 			// Since semi join will keep the **part** rows of the outer table, it's FD can be derived.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2)}",
 		},
