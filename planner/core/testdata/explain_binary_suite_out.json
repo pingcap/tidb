@@ -33,7 +33,6 @@
                 "store_type": 2,
                 "AccessObject": null,
                 "operator_info": "keep order:false, stats:pseudo",
-                "memory_bytes": -1,
                 "disk_bytes": -1
               }
             ],
@@ -44,7 +43,6 @@
             "store_type": 1,
             "AccessObject": null,
             "operator_info": "data:TableFullScan_4",
-            "memory_bytes": 165,
             "disk_bytes": -1
           },
           "with_runtime_stats": true
@@ -74,7 +72,6 @@
                             "store_type": 2,
                             "AccessObject": null,
                             "operator_info": "keep order:false, stats:pseudo",
-                            "memory_bytes": -1,
                             "disk_bytes": -1
                           }
                         ],
@@ -86,7 +83,6 @@
                         "store_type": 1,
                         "AccessObject": null,
                         "operator_info": "index:IndexFullScan_14",
-                        "memory_bytes": 162,
                         "disk_bytes": -1
                       },
                       {
@@ -101,7 +97,6 @@
                             "store_type": 2,
                             "AccessObject": null,
                             "operator_info": "keep order:false, stats:pseudo",
-                            "memory_bytes": -1,
                             "disk_bytes": -1
                           }
                         ],
@@ -113,7 +108,6 @@
                         "store_type": 1,
                         "AccessObject": null,
                         "operator_info": "data:TableFullScan_16",
-                        "memory_bytes": 161,
                         "disk_bytes": -1
                       }
                     ],
@@ -123,8 +117,7 @@
                     "task_type": 1,
                     "store_type": 1,
                     "AccessObject": null,
-                    "operator_info": "CARTESIAN inner join",
-                    "memory_bytes": 9616
+                    "operator_info": "CARTESIAN inner join"
                   }
                 ],
                 "est_rows": 100000000,
@@ -133,7 +126,6 @@
                 "store_type": 1,
                 "AccessObject": null,
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#8",
-                "memory_bytes": 9080,
                 "disk_bytes": -1
               }
             ],
@@ -144,7 +136,6 @@
             "store_type": 1,
             "AccessObject": null,
             "operator_info": "funcs:sum(Column#8)->Column#7",
-            "memory_bytes": 18608,
             "disk_bytes": -1
           },
           "with_runtime_stats": true
@@ -164,7 +155,6 @@
                 "store_type": 2,
                 "AccessObject": null,
                 "operator_info": "range:(100,+inf], keep order:false, stats:pseudo",
-                "memory_bytes": -1,
                 "disk_bytes": -1
               }
             ],
@@ -174,7 +164,6 @@
             "store_type": 1,
             "AccessObject": null,
             "operator_info": "index:IndexRangeScan_5",
-            "memory_bytes": 162,
             "disk_bytes": -1
           },
           "with_runtime_stats": true
@@ -198,7 +187,6 @@
                     "store_type": 2,
                     "AccessObject": null,
                     "operator_info": "keep order:false, stats:pseudo",
-                    "memory_bytes": -1,
                     "disk_bytes": -1
                   }
                 ],
@@ -208,7 +196,6 @@
                 "store_type": 2,
                 "AccessObject": null,
                 "operator_info": "gt(test.t.a, 100)",
-                "memory_bytes": -1,
                 "disk_bytes": -1
               }
             ],
@@ -218,7 +205,6 @@
             "store_type": 1,
             "AccessObject": null,
             "operator_info": "data:Selection_6",
-            "memory_bytes": 163,
             "disk_bytes": -1
           },
           "with_runtime_stats": true
@@ -240,8 +226,7 @@
                     "task_type": 1,
                     "store_type": 1,
                     "AccessObject": null,
-                    "operator_info": "data:CTE_0",
-                    "memory_bytes": 1520
+                    "operator_info": "data:CTE_0"
                   }
                 ],
                 "driver_side": 2,
@@ -252,7 +237,6 @@
                 "store_type": 1,
                 "AccessObject": null,
                 "operator_info": "not(isnull(test.t.a))",
-                "memory_bytes": 760,
                 "disk_bytes": -1
               },
               {
@@ -265,8 +249,7 @@
                     "task_type": 1,
                     "store_type": 1,
                     "AccessObject": null,
-                    "operator_info": "data:CTE_1",
-                    "memory_bytes": 1520
+                    "operator_info": "data:CTE_1"
                   }
                 ],
                 "driver_side": 1,
@@ -277,7 +260,6 @@
                 "store_type": 1,
                 "AccessObject": null,
                 "operator_info": "not(isnull(test.t2.a))",
-                "memory_bytes": 760,
                 "disk_bytes": -1
               }
             ],
@@ -286,8 +268,7 @@
             "task_type": 1,
             "store_type": 1,
             "AccessObject": null,
-            "operator_info": "inner join, equal:[eq(test.t.a, test.t2.a)]",
-            "memory_bytes": 18056
+            "operator_info": "inner join, equal:[eq(test.t.a, test.t2.a)]"
           },
           "ctes": [
             {
@@ -308,7 +289,6 @@
                           "store_type": 2,
                           "AccessObject": null,
                           "operator_info": "keep order:false, stats:pseudo",
-                          "memory_bytes": -1,
                           "disk_bytes": -1
                         }
                       ],
@@ -319,7 +299,6 @@
                       "store_type": 1,
                       "AccessObject": null,
                       "operator_info": "data:TableFullScan_15",
-                      "memory_bytes": 165,
                       "disk_bytes": -1
                     }
                   ],
@@ -331,7 +310,6 @@
                   "store_type": 1,
                   "AccessObject": null,
                   "operator_info": "not(isnull(test.t.a))",
-                  "memory_bytes": 760,
                   "disk_bytes": -1
                 }
               ],
@@ -340,8 +318,7 @@
               "task_type": 1,
               "store_type": 1,
               "AccessObject": null,
-              "operator_info": "Non-Recursive CTE",
-              "memory_bytes": 1520
+              "operator_info": "Non-Recursive CTE"
             },
             {
               "name": "CTE_1",
@@ -361,7 +338,6 @@
                           "store_type": 2,
                           "AccessObject": null,
                           "operator_info": "keep order:false, stats:pseudo",
-                          "memory_bytes": -1,
                           "disk_bytes": -1
                         }
                       ],
@@ -372,7 +348,6 @@
                       "store_type": 1,
                       "AccessObject": null,
                       "operator_info": "data:TableFullScan_20",
-                      "memory_bytes": 165,
                       "disk_bytes": -1
                     }
                   ],
@@ -384,7 +359,6 @@
                   "store_type": 1,
                   "AccessObject": null,
                   "operator_info": "not(isnull(test.t2.a))",
-                  "memory_bytes": 760,
                   "disk_bytes": -1
                 }
               ],
@@ -393,8 +367,7 @@
               "task_type": 1,
               "store_type": 1,
               "AccessObject": null,
-              "operator_info": "Non-Recursive CTE",
-              "memory_bytes": 1520
+              "operator_info": "Non-Recursive CTE"
             }
           ],
           "with_runtime_stats": true
@@ -410,8 +383,7 @@
             "task_type": 1,
             "store_type": 1,
             "AccessObject": null,
-            "operator_info": "data:CTE_0",
-            "memory_bytes": 2660
+            "operator_info": "data:CTE_0"
           },
           "ctes": [
             {
@@ -428,7 +400,6 @@
                       "store_type": 1,
                       "AccessObject": null,
                       "operator_info": "rows:1",
-                      "memory_bytes": -1,
                       "disk_bytes": -1
                     }
                   ],
@@ -456,7 +427,6 @@
                           "store_type": 1,
                           "AccessObject": null,
                           "operator_info": "Scan on CTE_0",
-                          "memory_bytes": -1,
                           "disk_bytes": -1
                         }
                       ],
@@ -467,7 +437,6 @@
                       "store_type": 1,
                       "AccessObject": null,
                       "operator_info": "lt(Column#3, 5)",
-                      "memory_bytes": 380,
                       "disk_bytes": -1
                     }
                   ],
@@ -479,7 +448,6 @@
                   "store_type": 1,
                   "AccessObject": null,
                   "operator_info": "cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5",
-                  "memory_bytes": 380,
                   "disk_bytes": -1
                 }
               ],
@@ -488,8 +456,7 @@
               "task_type": 1,
               "store_type": 1,
               "AccessObject": null,
-              "operator_info": "Recursive CTE",
-              "memory_bytes": 2660
+              "operator_info": "Recursive CTE"
             }
           ],
           "with_runtime_stats": true

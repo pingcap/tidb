@@ -44,6 +44,8 @@ func simplifyBinaryOperator(pb *tipb.ExplainOperator) {
 	pb.CopExecInfo = ""
 	// AccessObject field is an interface and json.Unmarshall can't handle it, so we don't check it.
 	pb.AccessObject = nil
+	// MemoryBytes is not stable sometimes.
+	pb.MemoryBytes = 0
 	if len(pb.Children) > 0 {
 		for _, op := range pb.Children {
 			if op != nil {
@@ -58,6 +60,8 @@ func TestExplainBinary(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	// I'm not sure why, but if I don't set this, it will be false sometimes and the cost in the result will be different.
+	tk.MustExec("set @@tidb_enable_chunk_rpc=true")
 
 	var input []string
 	var output []struct {
