@@ -15,7 +15,6 @@
 package isolation
 
 import (
-	"github.com/pingcap/tidb/sessiontxn"
 	"math"
 
 	"github.com/pingcap/tidb/kv"
@@ -23,6 +22,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
