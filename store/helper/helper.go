@@ -792,20 +792,21 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
-	req := new(http.Request)
 	for _, host := range pdHosts {
-		req, err = http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
-		if err != nil {
-			// Try to request from another PD node when some nodes may down.
-			if strings.Contains(err.Error(), "connection refused") {
-				continue
-			}
-			return errors.Trace(err)
+		err = requestPDForOneHost(host, method, uri, body, res)
+		if err == nil {
+			break
 		}
+		// Try to request from another PD node when some nodes may down.
 	}
+	return err
+}
+
+func requestPDForOneHost(host, method, uri string, body io.Reader, res interface{}) error {
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+host+uri))
+	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
@@ -820,12 +821,10 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 			logutil.BgLogger().Error("close body failed", zap.Error(err))
 		}
 	}()
-
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }
 
