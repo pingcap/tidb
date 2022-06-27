@@ -351,7 +351,7 @@ func (m *LightningMemoryRoot) deleteBackendEngines(bcKey string) error {
 		delete(m.EngineMgr.enginePool, eiKey)
 		m.currUsage -= m.structSize[string(ALLOC_WORKER_CONTEXT)] * int64(wCnt)
 		count++
-		log.L().Info(LINFO_CLOSE_ENGINE, zap.String("backend key", bcKey),
+		log.L().Info(LINFO_DEL_ENGINE, zap.String("backend key", bcKey),
 			zap.String("engine id", eiKey),
 			zap.String("Current Memory Usage:", strconv.FormatInt(m.currUsage, 10)),
 			zap.String("Memory limitation:", strconv.FormatInt(m.maxLimit, 10)))

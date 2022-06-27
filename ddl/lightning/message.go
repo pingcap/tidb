@@ -49,6 +49,7 @@ const (
 	LINFO_CLEANUP_ENGINE       string = "Lightning: CleanUp one engine for index reorg task"
 	LINFO_CREATE_WRITER        string = "Lightning: Create one local Writer for Index reorg task"
 	LINFO_CLOSE_ENGINE         string = "Lightning: Flush all writer and get closed engine"
+	LINFO_DEL_ENGINE       	   string = "Lightning: Delete one engine"
 	LINFO_LOCAL_DUPL_CHECK     string = "Lightning: Start Local duplicate checking"
 	LINFO_REMOTE_DUPL_CHECK    string = "Lightning: Start remote duplicate checking"
 	LINFO_START_TO_IMPORT      string = "Lightning: Start to import data"

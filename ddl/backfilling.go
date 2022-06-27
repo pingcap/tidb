@@ -651,7 +651,8 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			workerCnt = int32(litWorkerCnt)
 			setNeedRestoreJob(job.ID, true)
 		} else {
-			// Be here, means Lightning environment can not be set up 
+			// Be here, means Lightning environment can not be set up
+			// ToDo：set up original backfill to new flow in the future.
 			variable.FastDDL.Store(false)
 			logutil.BgLogger().Error("Lighting Create Engine failed.", zap.Error(err))
 			return errors.Trace(err)
