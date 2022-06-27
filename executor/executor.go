@@ -1927,6 +1927,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = false
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	case *ast.SetSessionStatesStmt:
+		sc.InSetSessionStatesStmt = true
+		sc.IgnoreTruncate = true
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
@@ -1945,12 +1950,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
 	sc.PrevAffectedRows = 0
-	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt {
+	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt || vars.StmtCtx.InSetSessionStatesStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
-	} else if vars.StmtCtx.AffectedRowsSetInForce != 0 {
-		sc.PrevAffectedRows = vars.StmtCtx.AffectedRowsSetInForce
 	}
 	if globalConfig.Instance.EnableCollectExecutionInfo {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,

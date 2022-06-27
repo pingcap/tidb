@@ -116,6 +116,7 @@ type StatementContext struct {
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	InCreateOrAlterStmt    bool
+	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
@@ -176,8 +177,6 @@ type StatementContext struct {
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
-	// AffectedRowsSetInForce is the affected rows set in a `set session_states` statement.
-	AffectedRowsSetInForce int64
 	// PrevLastInsertID is the last insert ID of previous statement.
 	PrevLastInsertID uint64
 	// LastInsertID is the auto-generated ID in the current statement.
