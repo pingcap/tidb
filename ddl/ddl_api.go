@@ -5326,7 +5326,13 @@ func (d *ddl) dropTableObject(
 			return err
 		}
 
-		// precheck before build DDL job
+		// prechecks before build DDL job
+
+		// Protect important system table from been dropped by a mistake.
+		// I can hardly find a case that a user really need to do this.
+		if isSystemTable(tn.Schema.L, tn.Name.L) {
+			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+		}
 		switch tableObjectType {
 		case tableObject:
 			if !tableInfo.Meta().IsBaseTable() {
@@ -5363,12 +5369,6 @@ func (d *ddl) dropTableObject(
 				}
 				return err
 			}
-		}
-
-		// Protect important system table from been dropped by a mistake.
-		// I can hardly find a case that a user really need to do this.
-		if isSystemTable(tn.Schema.L, tn.Name.L) {
-			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
 
 		job := &model.Job{
