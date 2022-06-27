@@ -835,7 +835,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
+				if e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
@@ -860,7 +860,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
+		if e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
 		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
