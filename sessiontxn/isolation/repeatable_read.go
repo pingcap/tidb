@@ -51,7 +51,7 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.RepeatableRead
 			},
-			onTxnActive: func(txn kv.Transaction) {
+			onTxnActive: func(txn kv.Transaction, _ *sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
@@ -69,7 +69,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	}
 
 	var txn kv.Transaction
-	if txn, err = p.ActivateTxn(); err != nil {
+	if txn, err = p.ActivateTxn(nil); err != nil {
 		return 0, err
 	}
 

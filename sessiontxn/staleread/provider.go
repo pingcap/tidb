@@ -92,7 +92,7 @@ func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
 }
 
 // ActivateTxn activates the transaction.
-func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
+func (p *StalenessTxnContextProvider) ActivateTxn(_ *sessiontxn.EnterNewTxnType) (kv.Transaction, error) {
 	return nil, nil
 }
 

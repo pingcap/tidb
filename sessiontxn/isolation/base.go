@@ -43,7 +43,7 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction)
+	onTxnActive            func(kv.Transaction, *sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
@@ -104,7 +104,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		_, err = p.ActivateTxn()
+		_, err = p.ActivateTxn(&tp)
 	}
 
 	return err
@@ -118,7 +118,7 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	if _, err := p.ActivateTxn(); err != nil {
+	if _, err := p.ActivateTxn(nil); err != nil {
 		return 0, err
 	}
 
@@ -129,7 +129,7 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	if _, err := p.ActivateTxn(); err != nil {
+	if _, err := p.ActivateTxn(nil); err != nil {
 		return 0, err
 	}
 
@@ -160,14 +160,14 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
-	txn, err := p.ActivateTxn()
+	txn, err := p.ActivateTxn(nil)
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
 }
 
-func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
+func (p *baseTxnContextProvider) ActivateTxn(tp *sessiontxn.EnterNewTxnType) (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -212,7 +212,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	if p.onTxnActive != nil {
-		p.onTxnActive(txn)
+		p.onTxnActive(txn, tp)
 	}
 
 	p.txn = txn

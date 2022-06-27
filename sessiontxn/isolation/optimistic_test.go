@@ -234,6 +234,7 @@ func TestOptimisticProviderInitialize(t *testing.T) {
 	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
 	assert = activeOptimisticTxnAssert(t, se, true)
 	assert.causalConsistencyOnly = true
+	assert.couldRetry = true
 	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
 	assert.Check(t)
 

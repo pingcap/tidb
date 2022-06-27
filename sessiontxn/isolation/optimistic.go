@@ -15,6 +15,7 @@
 package isolation
 
 import (
+	"github.com/pingcap/tidb/sessiontxn"
 	"math"
 
 	"github.com/pingcap/tidb/kv"
@@ -37,9 +38,9 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 		baseTxnContextProvider: baseTxnContextProvider{
 			sctx:                  sctx,
 			causalConsistencyOnly: causalConsistencyOnly,
-			onTxnActive: func(_ kv.Transaction) {
+			onTxnActive: func(_ kv.Transaction, tp *sessiontxn.EnterNewTxnType) {
 				sessVars := sctx.GetSessionVars()
-				sessVars.TxnCtx.CouldRetry = isTxnRetryable(sessVars)
+				sessVars.TxnCtx.CouldRetry = isTxnRetryable(sessVars, tp)
 			},
 		},
 	}
@@ -54,7 +55,11 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 // If the session is already in transaction, enable retry or internal SQL could retry.
 // If not, the transaction could always retry, because it should be auto committed transaction.
 // Anyway the retry limit is 0, the transaction could not retry.
-func isTxnRetryable(sessVars *variable.SessionVars) bool {
+func isTxnRetryable(sessVars *variable.SessionVars, tp *sessiontxn.EnterNewTxnType) bool {
+	if tp != nil && *tp == sessiontxn.EnterNewTxnDefault {
+		return false
+	}
+
 	// If retry limit is 0, the transaction could not retry.
 	if sessVars.RetryLimit == 0 {
 		return false

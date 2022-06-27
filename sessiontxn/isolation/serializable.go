@@ -38,7 +38,7 @@ func NewPessimisticSerializableTxnContextProvider(sctx sessionctx.Context,
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.Serializable
 			},
-			onTxnActive: func(txn kv.Transaction) {
+			onTxnActive: func(txn kv.Transaction, _ *sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},

@@ -131,7 +131,7 @@ type TxnContextProvider interface {
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
 	// ActivateTxn activates the transaction.
-	ActivateTxn() (kv.Transaction, error)
+	ActivateTxn(tp *EnterNewTxnType) (kv.Transaction, error)
 }
 
 // TxnManager is an interface providing txn context management in session
