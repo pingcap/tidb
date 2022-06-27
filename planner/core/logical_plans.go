@@ -1261,6 +1261,8 @@ type ShowContents struct {
 type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.

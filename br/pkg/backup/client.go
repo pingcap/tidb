@@ -530,7 +530,7 @@ func (bc *Client) BackupRange(
 	// TODO: test fine grained backup.
 	err = bc.fineGrainedBackup(
 		ctx, startKey, endKey, req.StartVersion, req.EndVersion, req.CompressionType, req.CompressionLevel,
-		req.RateLimit, req.Concurrency, results, progressCallBack)
+		req.RateLimit, req.Concurrency, req.IsRawKv, req.CipherInfo, results, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -574,10 +574,12 @@ func (bc *Client) BackupRange(
 	return nil
 }
 
-func (bc *Client) findRegionLeader(ctx context.Context, key []byte) (*metapb.Peer, error) {
+func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	key = codec.EncodeBytes([]byte{}, key)
+	if !isRawKv {
+		key = codec.EncodeBytes([]byte{}, key)
+	}
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
@@ -608,6 +610,8 @@ func (bc *Client) fineGrainedBackup(
 	compressLevel int32,
 	rateLimit uint64,
 	concurrency uint32,
+	isRawKv bool,
+	cipherInfo *backuppb.CipherInfo,
 	rangeTree rtree.RangeTree,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -658,7 +662,7 @@ func (bc *Client) fineGrainedBackup(
 				for rg := range retry {
 					backoffMs, err :=
 						bc.handleFineGrained(ctx, boFork, rg, lastBackupTS, backupTS,
-							compressType, compressLevel, rateLimit, concurrency, respCh)
+							compressType, compressLevel, rateLimit, concurrency, isRawKv, cipherInfo, respCh)
 					if err != nil {
 						errCh <- err
 						return
@@ -803,9 +807,11 @@ func (bc *Client) handleFineGrained(
 	compressionLevel int32,
 	rateLimit uint64,
 	concurrency uint32,
+	isRawKv bool,
+	cipherInfo *backuppb.CipherInfo,
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
-	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey)
+	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey, isRawKv)
 	if pderr != nil {
 		return 0, errors.Trace(pderr)
 	}
@@ -820,8 +826,10 @@ func (bc *Client) handleFineGrained(
 		StorageBackend:   bc.backend,
 		RateLimit:        rateLimit,
 		Concurrency:      concurrency,
+		IsRawKv:          isRawKv,
 		CompressionType:  compressType,
 		CompressionLevel: compressionLevel,
+		CipherInfo:       cipherInfo,
 	}
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
@@ -926,9 +934,17 @@ backupLoop:
 		})
 		bcli, err := client.Backup(ctx, &req)
 		failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-			if val.(bool) {
-				logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-				err = status.Error(codes.Unavailable, "Unavailable error")
+			switch val.(string) {
+			case "Unavaiable":
+				{
+					logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
+					err = status.Error(codes.Unavailable, "Unavailable error")
+				}
+			case "Internal":
+				{
+					logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
+					err = status.Error(codes.Internal, "Internal error")
+				}
 			}
 		})
 		failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
@@ -994,9 +1010,15 @@ const (
 
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-
-	if status.Code(err) == codes.Unavailable {
-		return true
+	// some errors can be retried
+	// https://github.com/pingcap/tidb/issues/34350
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded,
+		codes.ResourceExhausted, codes.Aborted, codes.Internal:
+		{
+			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
+			return true
+		}
 	}
 
 	// At least, there are two possible cancel() call,
@@ -1004,6 +1026,7 @@ func isRetryableError(err error) bool {
 	if status.Code(err) == codes.Canceled {
 		if s, ok := status.FromError(err); ok {
 			if strings.Contains(s.Message(), gRPC_Cancel) {
+				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
 				return true
 			}
 		}
