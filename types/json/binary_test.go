@@ -347,7 +347,6 @@ func TestBinaryJSONMerge(t *testing.T) {
 
 func mustParseBinaryFromString(t *testing.T, s string) BinaryJSON {
 	result, err := ParseBinaryFromString(s)
-	print(s)
 	require.NoError(t, err)
 	return result
 }
