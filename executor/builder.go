@@ -4689,7 +4689,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.snapshot = cacheTableSnapshot{e.snapshot, b.getCacheTable(plan.TblInfo, snapshotTS)}
+		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
+			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+		}
 	}
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {

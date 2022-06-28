@@ -79,7 +79,9 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e.Init(p, snapshotTS, snapshot)
 
 	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.snapshot = cacheTableSnapshot{e.snapshot, b.getCacheTable(p.TblInfo, snapshotTS)}
+		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
+			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+		}
 	}
 
 	if e.lock {
