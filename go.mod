@@ -48,7 +48,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20210618053735-57843e8185c4
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20210628060001-1793e022b962
+	github.com/pingcap/tipb v0.0.0-20211025074540-e1c7362eeeb4
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -68,6 +68,7 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.8.0
 	go.uber.org/automaxprocs v1.2.0
+	go.uber.org/goleak v0.10.0
 	go.uber.org/zap v1.17.0
 	golang.org/x/net v0.0.0-20210316092652-d523dce5a7f4
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9

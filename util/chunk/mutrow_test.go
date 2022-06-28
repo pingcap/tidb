@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func (s *testChunkSuite) TestMutRow(c *check.C) {
@@ -85,6 +86,27 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
 	mutRow.SetDatum(0, types.NewDurationDatum(dur))
 	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
+}
+
+func (s *testChunkSuite) TestIssue29947(c *check.C) {
+	mutRow := MutRowFromTypes(allTypes)
+	nilDatum := types.NewDatum(nil)
+
+	dataBefore := make([][]byte, 0, len(mutRow.c.columns))
+	elemBufBefore := make([][]byte, 0, len(mutRow.c.columns))
+	for _, col := range mutRow.c.columns {
+		dataBefore = append(dataBefore, col.data)
+		elemBufBefore = append(elemBufBefore, col.elemBuf)
+	}
+	for i, col := range mutRow.c.columns {
+		mutRow.SetDatum(i, nilDatum)
+		c.Assert(col.IsNull(0), check.IsTrue)
+		for _, off := range col.offsets {
+			c.Assert(off, check.Equals, int64(0))
+		}
+		c.Assert(hack.String(col.data), check.Equals, hack.String(dataBefore[i]))
+		c.Assert(hack.String(col.elemBuf), check.Equals, hack.String(elemBufBefore[i]))
+	}
 }
 
 func BenchmarkMutRowSetRow(b *testing.B) {
