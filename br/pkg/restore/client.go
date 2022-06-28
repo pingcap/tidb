@@ -869,24 +869,20 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 		}
 
 		eg, ectx := errgroup.WithContext(ctx)
-
-	CommunicateWithAllStores:
 		for _, store := range stores {
-			select {
-			case <-ectx.Done():
-				// when got the first error from eg, ectx will be canceled and then break the loop
-				break CommunicateWithAllStores
-			default:
-				finalStore := store
-				rc.workerPool.ApplyOnErrorGroup(eg,
-					func() error {
-						err = rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						return nil
-					})
+			if err := ectx.Err(); err != nil {
+				return errors.Trace(err)
 			}
+
+			finalStore := store
+			rc.workerPool.ApplyOnErrorGroup(eg,
+				func() error {
+					err = rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					return nil
+				})
 		}
 
 		if err := eg.Wait(); err != nil {
@@ -1089,51 +1085,47 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 	bfConf.MaxDelay = time.Second * 3
 
 	eg, ectx := errgroup.WithContext(ctx)
-
-CommunicateWithAllStores:
 	for _, store := range stores {
-		select {
-		case <-ectx.Done():
-			// when got the first error from eg, ectx will be canceled and then break the loop
-			break CommunicateWithAllStores
-		default:
-			opt := grpc.WithInsecure()
-			if rc.tlsConf != nil {
-				opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
-			}
-
-			finalStore := store
-			rc.workerPool.ApplyOnErrorGroup(eg,
-				func() error {
-					gctx, cancel := context.WithTimeout(ectx, time.Second*5)
-					connection, err := grpc.DialContext(
-						gctx,
-						finalStore.GetAddress(),
-						opt,
-						grpc.WithBlock(),
-						grpc.FailOnNonTempDialError(true),
-						grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-						// we don't need to set keepalive timeout here, because the connection lives
-						// at most 5s. (shorter than minimal value for keepalive time!)
-					)
-					cancel()
-					if err != nil {
-						return errors.Trace(err)
-					}
-					client := import_sstpb.NewImportSSTClient(connection)
-					_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
-						Mode: mode,
-					})
-					if err != nil {
-						return errors.Trace(err)
-					}
-					err = connection.Close()
-					if err != nil {
-						log.Error("close grpc connection failed in switch mode", zap.Error(err))
-					}
-					return nil
-				})
+		if err := ectx.Err(); err != nil {
+			return errors.Trace(err)
 		}
+
+		opt := grpc.WithInsecure()
+		if rc.tlsConf != nil {
+			opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
+		}
+
+		finalStore := store
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				gctx, cancel := context.WithTimeout(ectx, time.Second*5)
+				connection, err := grpc.DialContext(
+					gctx,
+					finalStore.GetAddress(),
+					opt,
+					grpc.WithBlock(),
+					grpc.FailOnNonTempDialError(true),
+					grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+					// we don't need to set keepalive timeout here, because the connection lives
+					// at most 5s. (shorter than minimal value for keepalive time!)
+				)
+				cancel()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				client := import_sstpb.NewImportSSTClient(connection)
+				_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
+					Mode: mode,
+				})
+				if err != nil {
+					return errors.Trace(err)
+				}
+				err = connection.Close()
+				if err != nil {
+					log.Error("close grpc connection failed in switch mode", zap.Error(err))
+				}
+				return nil
+			})
 	}
 
 	if err = eg.Wait(); err != nil {
