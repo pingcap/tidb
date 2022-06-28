@@ -1710,7 +1710,15 @@ func BuildFinalModeAggregation(
 
 			finalAggFunc.OrderByItems = byItems
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
-			finalAggFunc.Mode = aggregation.CompleteMode
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
+			if aggFunc.Mode == aggregation.CompleteMode {
+				finalAggFunc.Mode = aggregation.CompleteMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
+			}
 		} else {
 			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
 				// group_concat can only run in one phase if it has order by items but without distinct property
@@ -1783,8 +1791,20 @@ func BuildFinalModeAggregation(
 				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
 			}
 
+<<<<<<< HEAD
 			finalAggFunc.Mode = aggregation.FinalMode
 			funcMap[aggFunc] = finalAggFunc
+=======
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
+			if aggFunc.Mode == aggregation.CompleteMode {
+				finalAggFunc.Mode = aggregation.FinalMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
+			}
+>>>>>>> d99b35822... *: only add default value for final aggregation to fix the aggregate push down (partition) union case (#35443)
 		}
 
 		finalAggFunc.Args = args
@@ -1845,7 +1865,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	}
 	// no avgs
 	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
-	if len(p.schema.Columns) == len(newSchema.Columns) && !p.isFinalAgg() {
+	if len(p.schema.Columns) == len(newSchema.Columns) && !p.IsFinalAgg() {
 		return nil
 	}
 	// add remaining columns to exprs
