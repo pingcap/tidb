@@ -409,6 +409,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		sctx.GetSessionVars().StmtCtx.MemTracker.SetBytesLimit(sctx.GetSessionVars().StmtCtx.MemQuotaQuery)
 	}
 
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstBuild)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -768,6 +769,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.retryCount++
 	a.retryStartTime = time.Now()
 
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeOnStmtRetryAfterLockError)
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
 		return nil, err
@@ -779,8 +781,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, err
 	}
 
-	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointOnStmtRetryAfterLockError)
-
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorRebuildWhenLockError)
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -794,6 +795,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
 	})
 
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorRerunWhenLockError)
 	if err = e.Open(ctx); err != nil {
 		return nil, err
 	}

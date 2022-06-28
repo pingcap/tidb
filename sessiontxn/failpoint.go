@@ -35,13 +35,19 @@ var AssertTxnInfoSchemaKey stringutil.StringerStr = "assertTxnInfoSchemaKey"
 // Only for test
 var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSchemaAfterRetryKey"
 
+// BreakPointBeforeExecutorFirstBuild is the key for the stop point where session stops before executor's first build
+// Only for test
+var BreakPointBeforeExecutorFirstBuild = "beforeExecutorFirstBuild"
+
 // BreakPointBeforeExecutorFirstRun is the key for the stop point where session stops before executor's first run
 // Only for test
 var BreakPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
 
-// BreakPointOnStmtRetryAfterLockError s the key for the stop point where session stops after OnStmtRetry when lock error happens
-// Only for test
-var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
+var BreakPointBeforeOnStmtRetryAfterLockError = "lockErrorAndBeforeOnStmtRetryCalled"
+
+var BreakPointBeforeExecutorRebuildWhenLockError = "beforeExecutorRebuildWhenLockError"
+
+var BreakPointBeforeExecutorRerunWhenLockError = "beforeExecutorRerunWhenLockError"
 
 // AssertLockErr is used to record the lock errors we encountered
 // Only for test

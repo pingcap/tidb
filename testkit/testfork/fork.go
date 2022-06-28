@@ -96,22 +96,39 @@ func (s *pickStack) Valid() bool {
 	return s.valid
 }
 
+func expectPickStackExhausted(t testing.TB, s *pickStack) {
+	require.Equal(t, len(s.stack), s.pos)
+}
+
 // T is used by for test
 type T struct {
 	*testing.T
 	stack *pickStack
+	Desc  func() string
 }
 
 // RunTest runs the test function `f` multiple times util all the values in `Pick` are tested.
 func RunTest(t *testing.T, f func(t *T)) {
 	idx := 0
 	for stack := newPickStack(); stack.Valid(); stack.NextStack() {
+		var desc func() string
 		success := t.Run("", func(t *testing.T) {
-			f(&T{T: t, stack: stack})
+			currentT := &T{T: t, stack: stack}
+			defer func() {
+				desc = currentT.Desc
+			}()
+			f(currentT)
+			expectPickStackExhausted(t, stack)
 		})
 
+		if desc == nil {
+			desc = func() string {
+				return fmt.Sprintf("SubTest #%v failed: %s\n", idx, stack.ValuesText())
+			}
+		}
+
 		if !success {
-			_, err := fmt.Fprintf(os.Stderr, "SubTest #%v failed, failed values: %s\n", idx, stack.ValuesText())
+			_, err := fmt.Fprintf(os.Stderr, desc())
 			require.NoError(t, err)
 		}
 		idx++

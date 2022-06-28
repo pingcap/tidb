@@ -115,6 +115,11 @@ func NewSteppedTestKit(t testing.TB, store kv.Storage) *SteppedTestKit {
 	return tk
 }
 
+// IsIdle returns whether the testkit is idle
+func (tk *SteppedTestKit) IsIdle() bool {
+	return tk.cmdStopAt == ""
+}
+
 // ExpectIdle checks no command is running
 func (tk *SteppedTestKit) ExpectIdle() {
 	require.Equal(tk.t, "", tk.cmdStopAt)
