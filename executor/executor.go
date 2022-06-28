@@ -1928,12 +1928,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
+		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
 		sc.IgnoreTruncate = false
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	case *ast.SetSessionStatesStmt:
+		sc.InSetSessionStatesStmt = true
+		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
@@ -1954,7 +1959,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
 	sc.PrevAffectedRows = 0
-	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt {
+	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt || vars.StmtCtx.InSetSessionStatesStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
