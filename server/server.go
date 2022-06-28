@@ -723,11 +723,11 @@ func killConn(conn *clientConn) {
 	// If the connection being killed is a DDL Job,
 	// we need to CANCEL the matching jobID first.
 	if sessVars.StmtCtx.IsDDLJobInQueue {
-		jobId := sessVars.StmtCtx.DDLJobID
+		jobID := sessVars.StmtCtx.DDLJobID
 		err := kv.RunInNewTxn(context.Background(), conn.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 			// errs is the error per job, there is only one submitted
 			// err is the error of the overall task
-			errs, err := ddl.CancelJobs(txn, []int64{jobId})
+			errs, err := ddl.CancelJobs(txn, []int64{jobID})
 			if len(errs) > 0 {
 				logutil.BgLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
 			}
