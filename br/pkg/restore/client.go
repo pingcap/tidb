@@ -1090,14 +1090,13 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 			return errors.Trace(err)
 		}
 
-		opt := grpc.WithInsecure()
-		if rc.tlsConf != nil {
-			opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
-		}
-
 		finalStore := store
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
+				opt := grpc.WithInsecure()
+				if rc.tlsConf != nil {
+					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
+				}
 				gctx, cancel := context.WithTimeout(ectx, time.Second*5)
 				connection, err := grpc.DialContext(
 					gctx,
