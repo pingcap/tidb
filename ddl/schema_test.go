@@ -312,7 +312,7 @@ func TestSchemaWaitJob(t *testing.T) {
 	genIDs, err := genGlobalIDs(store, 1)
 	require.NoError(t, err)
 	schemaID := genIDs[0]
-	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, se, d2, store)
+	doDDLJobErr(t, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, testkit.NewTestKit(t, store).Session(), d2, store)
 }
 
 func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d ddl.DDL, store kv.Storage) *model.Job {
@@ -324,6 +324,7 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	// TODO: check error detail
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.Error(t, d.DoDDLJob(ctx, job))
 	testCheckJobCancelled(t, store, job, nil)
 

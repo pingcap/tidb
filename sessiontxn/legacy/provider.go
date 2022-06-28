@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -92,7 +93,7 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 		}
 
 		sessVars.TxnCtx.IsPessimistic = p.Pessimistic
-		if _, err := p.activeTxn(); err != nil {
+		if _, err := p.activateTxn(); err != nil {
 			return err
 		}
 
@@ -189,18 +190,27 @@ func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 
-//// todo: remove
-//// Advise is used to give advice to provider
-//func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType, _ []any) error {
-//	switch tp {
-//	case sessiontxn.AdviceWarmUp:
-//		p.Sctx.PrepareTSFuture(p.Ctx)
-//	}
-//	return nil
-//}
+func (p *SimpleTxnContextProvider) prepareTSFuture() error {
+	if p.Sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.Sctx) || p.Sctx.GetPreparedTSFuture() != nil {
+		return nil
+	}
 
-// activeTxn actives the txn
-func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
+	txn, err := p.Sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	if txn.Valid() {
+		return nil
+	}
+
+	txnScope := p.Sctx.GetSessionVars().CheckAndGetTxnScope()
+	future := sessiontxn.NewOracleFuture(p.Ctx, p.Sctx, txnScope)
+	return p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope)
+}
+
+// activateTxn actives the txn
+func (p *SimpleTxnContextProvider) activateTxn() (kv.Transaction, error) {
 	if p.isTxnActive {
 		return p.Sctx.Txn(true)
 	}
@@ -224,8 +234,7 @@ func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 
 // AdviseWarmup provides warmup for inner state
 func (p *SimpleTxnContextProvider) AdviseWarmup() error {
-	p.Sctx.PrepareTSFuture(p.Ctx)
-	return nil
+	return p.prepareTSFuture()
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan

@@ -47,7 +47,11 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
+		agg, err := aggregation.AggFuncToPBExpr(ctx, client, aggFunc, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		aggExec.AggFunc = append(aggExec.AggFunc, agg)
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {
@@ -73,7 +77,11 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
+		agg, err := aggregation.AggFuncToPBExpr(ctx, client, aggFunc, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		aggExec.AggFunc = append(aggExec.AggFunc, agg)
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {
@@ -258,13 +266,19 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	hashColTypes := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
 		hashCols = append(hashCols, col.Col)
-		tp := expression.ToPBFieldType(col.Col.RetType)
+		tp, err := expression.ToPBFieldTypeWithCheck(col.Col.RetType, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		tp.Collate = col.CollateID
 		hashColTypes = append(hashColTypes, tp)
 	}
 	allFieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
 	for _, column := range e.Schema().Columns {
-		pbType := expression.ToPBFieldType(column.RetType)
+		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		allFieldTypes = append(allFieldTypes, pbType)
 	}
 	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
@@ -301,7 +315,10 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.Sto
 
 	fieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
 	for _, column := range e.Schema().Columns {
-		pbType := expression.ToPBFieldType(column.RetType)
+		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, kv.TiFlash)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		fieldTypes = append(fieldTypes, pbType)
 	}
 	ecExec := &tipb.ExchangeReceiver{
@@ -435,8 +452,12 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 		chs, coll := equalCondition.CharsetAndCollation()
 		retType.SetCharset(chs)
 		retType.SetCollate(coll)
-		probeFiledTypes = append(probeFiledTypes, expression.ToPBFieldType(retType))
-		buildFiledTypes = append(buildFiledTypes, expression.ToPBFieldType(retType))
+		ty, err := expression.ToPBFieldTypeWithCheck(retType, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		probeFiledTypes = append(probeFiledTypes, ty)
+		buildFiledTypes = append(buildFiledTypes, ty)
 	}
 	join := &tipb.Join{
 		JoinType:                pbJoinType,

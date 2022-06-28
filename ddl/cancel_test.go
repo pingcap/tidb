@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
@@ -46,17 +45,17 @@ func testMatchCancelState(t *testing.T, job *model.Job, cancelState interface{},
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {
 			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
-			assert.Failf(t, msg, "use []model.SchemaState as cancel states instead")
+			require.Failf(t, msg, "use []model.SchemaState as cancel states instead")
 			return false
 		}
 		return job.SchemaState == v
 	case subStates: // For multi-schema change sub-jobs.
 		if job.MultiSchemaInfo == nil {
 			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
-			assert.Failf(t, msg, "use model.SchemaState as the cancel state instead")
+			require.Failf(t, msg, "use model.SchemaState as the cancel state instead")
 			return false
 		}
-		assert.Equal(t, len(job.MultiSchemaInfo.SubJobs), len(v), sql)
+		require.Equal(t, len(job.MultiSchemaInfo.SubJobs), len(v), sql)
 		for i, subJobSchemaState := range v {
 			if job.MultiSchemaInfo.SubJobs[i].SchemaState != subJobSchemaState {
 				return false
@@ -171,11 +170,11 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition truncate partition p3", true, model.StateNone, true, false, nil},
 	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},
 	// Add columns.
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateNone, true, false, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", false, model.StatePublic, false, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateNone, model.StateNone}, true, false, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateDeleteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteReorganization, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", false, subStates{model.StatePublic, model.StatePublic}, false, true, nil},
 	// Drop columns.
 	// TODO: fix schema state.
 	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, nil},

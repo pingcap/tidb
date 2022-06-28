@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,7 +102,7 @@ func TestColumnAdd(t *testing.T) {
 		tbl := external.GetTableByName(t, internal, "test", "t")
 		if job.SchemaState != model.StatePublic {
 			for _, col := range tbl.Cols() {
-				assert.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
+				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
 		}
 	}
@@ -418,7 +417,13 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	require.NoError(t, err)
 	require.Equal(t, historyJob.State, model.JobStateSynced)
 	if isAdd {
-		require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		if historyJob.Type == model.ActionMultiSchemaChange {
+			for _, sub := range historyJob.MultiSchemaInfo.SubJobs {
+				require.Equal(t, sub.SchemaState, model.StatePublic)
+			}
+		} else {
+			require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		}
 	} else {
 		require.Equal(t, historyJob.SchemaState, model.StateNone)
 	}
