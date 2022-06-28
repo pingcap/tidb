@@ -48,11 +48,11 @@ type baseTxnContextProvider struct {
 	getStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
-	ctx           context.Context
-	infoSchema    infoschema.InfoSchema
-	txn           kv.Transaction
-	isTxnPrepared bool
-	tp            *sessiontxn.EnterNewTxnType
+	ctx             context.Context
+	infoSchema      infoschema.InfoSchema
+	txn             kv.Transaction
+	isTxnPrepared   bool
+	enterNewTxnType *sessiontxn.EnterNewTxnType
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -81,7 +81,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
-	p.tp = &tp
+	p.enterNewTxnType = &tp
 	p.ctx = ctx
 	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
@@ -188,7 +188,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 
-	if *p.tp == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+	if *p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
 	}
 
@@ -211,7 +211,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	if p.onTxnActive != nil {
-		p.onTxnActive(txn, p.tp)
+		p.onTxnActive(txn, p.enterNewTxnType)
 	}
 
 	p.txn = txn

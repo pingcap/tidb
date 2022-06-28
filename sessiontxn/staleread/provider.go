@@ -63,7 +63,7 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		return p.enterNewStaleTxn(ctx)
+		return p.activateStaleTxn(ctx)
 	case sessiontxn.EnterNewTxnWithReplaceProvider:
 		return p.enterNewStaleTxnWithReplaceProvider(ctx)
 	default:
@@ -71,7 +71,7 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 	}
 }
 
-func (p *StalenessTxnContextProvider) enterNewStaleTxn(ctx context.Context) error {
+func (p *StalenessTxnContextProvider) activateStaleTxn(ctx context.Context) error {
 	if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return p.txn, nil
 	}
 
-	err := p.enterNewStaleTxn(p.ctx)
+	err := p.activateStaleTxn(p.ctx)
 	if err != nil {
 		return nil, err
 	}
