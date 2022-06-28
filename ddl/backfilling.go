@@ -648,12 +648,17 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	// then go back use kernel way to reorg index.
 	var litWorkerCnt int
 	if isLightningEnabled(job.ID) && !needRestoreJob(job.ID) {
-		litWorkerCnt, err = prepareLightningEngine(job, indexInfo.ID, int(workerCnt))
-		if err == nil && workerCnt >= int32(litWorkerCnt) {
-			workerCnt = int32(litWorkerCnt)
-			setNeedRestoreJob(job.ID, true)
+		if !isPiTREnable(w) {
+			litWorkerCnt, err = prepareLightningEngine(job, indexInfo.ID, int(workerCnt))
+			if err == nil && workerCnt >= int32(litWorkerCnt) {
+				workerCnt = int32(litWorkerCnt)
+				setNeedRestoreJob(job.ID, true)
+			} else {
+				logutil.BgLogger().Error("Lighting Create Engine failed.", zap.Error(err))
+			}
 		} else {
-			logutil.BgLogger().Error("Lighting Create Engine failed.", zap.Error(err))
+			// if enabled PiTR, use txn do backfill with new flow.
+			logutil.BgLogger().Error("PiTR enabled, disabled lightning backfill.")
 		}
     }
 	backfillWorkers := make([]*backfillWorker, 0, workerCnt)

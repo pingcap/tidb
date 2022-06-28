@@ -1,7 +1,6 @@
 package ddl_test
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"testing"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -34,25 +32,18 @@ func testLitAddIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 }
 
 func TestEnableLightning(t *testing.T) {
-	var options []ddl.Option
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	options = append(options, ddl.WithInfoCache(ic))
-	d := ddl.NewDDL(context.Background(), options...)
-	err := d.Start(nil)
-	
 	// Check default value, Current is off
 	allow := ddl.IsAllowFastDDL()
-    require.Equal(t, false, allow)
-    // Set illedge value
+	require.Equal(t, false, allow)
+	// Set illedge value
 	err := tk.ExecToErr("set @@global.tidb_fast_ddl = abc")
 	require.Error(t, err)
 	allow = ddl.IsAllowFastDDL()
-    require.Equal(t, false, allow)
+	require.Equal(t, false, allow)
 
 	// set to on
 	tk.MustExec("set @@global.tidb_fast_ddl = on")

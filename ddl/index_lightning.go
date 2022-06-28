@@ -39,11 +39,11 @@ const (
 )
 
 // Whether Fast DDl is allowed.
-func IsAllowFastDDL(w *worker) bool {
+func IsAllowFastDDL() bool {
 	// Only when both TiDBFastDDL is set to on and Lightning env is inited successful,
 	// the add index could choose lightning path to do backfill procedure.
 	// ToDo: need check PiTR is off currently.
-	if variable.FastDDL.Load() && lit.GlobalLightningEnv.IsInited && !isPiTREnable(w) {
+	if variable.FastDDL.Load() && lit.GlobalLightningEnv.IsInited {
 		return true
 	} else {
 		return false
@@ -68,7 +68,7 @@ func isPiTREnable(w *worker) bool {
 		return true 
 	}
 	if len(rows) == 0 {
-		return true
+		return false
 	}
 	for _, row := range rows {
 		d := row.GetDatum(3, &fields[3].Column.FieldType)
