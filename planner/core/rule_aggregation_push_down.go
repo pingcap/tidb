@@ -372,6 +372,22 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 		}
 	}
 	pushedAgg := a.splitPartialAgg(agg)
+<<<<<<< HEAD
+=======
+	if pushedAgg == nil {
+		return nil
+	}
+
+	// Update the agg mode for the pushed down aggregation.
+	for _, aggFunc := range pushedAgg.AggFuncs {
+		if aggFunc.Mode == aggregation.CompleteMode {
+			aggFunc.Mode = aggregation.Partial1Mode
+		} else if aggFunc.Mode == aggregation.FinalMode {
+			aggFunc.Mode = aggregation.Partial2Mode
+		}
+	}
+
+>>>>>>> d99b35822... *: only add default value for final aggregation to fix the aggregate push down (partition) union case (#35443)
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
