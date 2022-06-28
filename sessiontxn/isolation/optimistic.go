@@ -38,7 +38,7 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 		baseTxnContextProvider: baseTxnContextProvider{
 			sctx:                  sctx,
 			causalConsistencyOnly: causalConsistencyOnly,
-			onTxnActive: func(_ kv.Transaction, tp *sessiontxn.EnterNewTxnType) {
+			onTxnActive: func(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
 				sessVars := sctx.GetSessionVars()
 				sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
 			},
@@ -55,8 +55,8 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 // If the session is already in transaction, enable retry or internal SQL could retry.
 // If not, the transaction could always retry, because it should be auto committed transaction.
 // Anyway the retry limit is 0, the transaction could not retry.
-func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp *sessiontxn.EnterNewTxnType) bool {
-	if tp != nil && *tp == sessiontxn.EnterNewTxnDefault {
+func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.EnterNewTxnType) bool {
+	if tp == sessiontxn.EnterNewTxnDefault {
 		return false
 	}
 

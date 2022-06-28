@@ -43,7 +43,7 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction, *sessiontxn.EnterNewTxnType)
+	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
@@ -52,7 +52,7 @@ type baseTxnContextProvider struct {
 	infoSchema      infoschema.InfoSchema
 	txn             kv.Transaction
 	isTxnPrepared   bool
-	enterNewTxnType *sessiontxn.EnterNewTxnType
+	enterNewTxnType sessiontxn.EnterNewTxnType
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -81,7 +81,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
-	p.enterNewTxnType = &tp
+	p.enterNewTxnType = tp
 	p.ctx = ctx
 	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
@@ -188,7 +188,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 
-	if *p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
 	}
 
