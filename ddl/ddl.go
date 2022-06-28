@@ -101,9 +101,9 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) error
+	CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
-	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
+	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
@@ -712,6 +712,12 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
+		// In multiple schema change, we don't run the job.
+		// Instead, we merge all the jobs into one pending job.
+		return appendToSubJobs(mci, job)
+	}
+
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
@@ -786,12 +792,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					}
 				}
 			}
-
-			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
-				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-				}
-			}
+			appendMultiChangeWarningsToOwnerCtx(ctx, historyJob)
 
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil

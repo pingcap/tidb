@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1051,12 +1052,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.updateDeltaForTableID(id)
 	}
-
-	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
+	lockCtx, err := newLockCtx(e.ctx, lockWaitTime, len(e.keys))
+	if err != nil {
+		return err
+	}
+	return doLockKeys(ctx, e.ctx, lockCtx, e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *tikvstore.LockCtx {
-	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+	seVars := sctx.GetSessionVars()
+	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.Killed
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
@@ -1091,7 +1100,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64, numKeys int) *
 	if lockCtx.ForUpdateTS > 0 && seVars.AssertionLevel != variable.AssertionLevelOff {
 		lockCtx.InitCheckExistence(numKeys)
 	}
-	return lockCtx
+	return lockCtx, nil
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
@@ -1928,12 +1937,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
+		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
 		sc.IgnoreTruncate = false
+		sc.IgnoreZeroInDate = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	case *ast.SetSessionStatesStmt:
+		sc.InSetSessionStatesStmt = true
+		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
@@ -1954,7 +1968,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
 	sc.PrevAffectedRows = 0
-	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt {
+	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt || vars.StmtCtx.InSetSessionStatesStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
