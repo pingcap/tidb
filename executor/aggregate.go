@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -599,10 +600,11 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
-		for _, af := range w.aggFuncs {
+		partialResults[i] = make([]aggfuncs.PartialResult, len(w.aggFuncs))
+		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
-			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta + 8 // the memory usage of PartialResult
+			partialResults[i][j] = partialResult
+			allMemDelta += memDelta + int64(unsafe.Sizeof(partialResult)) // the memory usage of PartialResult
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
@@ -654,13 +656,12 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		for reachEnd := false; !reachEnd; {
 			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
 			groupKeysLen := len(groupKeys)
-			memSize := getGroupKeyMemUsage(w.groupKeys)
-			w.groupKeys = w.groupKeys[:0]
+			w.groupKeys = make([][]byte, groupKeysLen)
 			for i := 0; i < groupKeysLen; i++ {
-				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
+				w.groupKeys[i] = []byte(groupKeys[i])
 			}
 			failpoint.Inject("ConsumeRandomPanic", nil)
-			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
+			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys))
 			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
 			allMemDelta := int64(0)
 			for i, groupKey := range groupKeys {
@@ -695,13 +696,14 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		return
 	}
 	execStart := time.Now()
-	memSize := getGroupKeyMemUsage(w.groupKeys)
-	w.groupKeys = w.groupKeys[:0]
+	w.groupKeys = make([][]byte, len(w.groupSet.StringSet))
+	groupKeysIndex := 0
 	for groupKey := range w.groupSet.StringSet {
-		w.groupKeys = append(w.groupKeys, []byte(groupKey))
+		w.groupKeys[groupKeysIndex] = []byte(groupKey)
+		groupKeysIndex++
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
+	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys))
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
 	for i := 0; i < len(w.groupSet.StringSet); i++ {
 		for j, af := range w.aggFuncs {
