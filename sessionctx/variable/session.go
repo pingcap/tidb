@@ -1041,10 +1041,10 @@ type SessionVars struct {
 	LastTxnInfo string
 
 	// LastQueryInfo keeps track the info of last query.
-	LastQueryInfo QueryInfo
+	LastQueryInfo sessionstates.QueryInfo
 
 	// LastDDLInfo keeps track the info of last DDL.
-	LastDDLInfo LastDDLInfo
+	LastDDLInfo sessionstates.LastDDLInfo
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
@@ -1850,6 +1850,28 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 		sessionStates.UserVarTypes[name] = userVarType.Clone()
 	}
 	s.UsersLock.RUnlock()
+
+	// Encode other session contexts.
+	sessionStates.PreparedStmtID = s.preparedStmtID
+	sessionStates.Status = s.Status
+	sessionStates.CurrentDB = s.CurrentDB
+	sessionStates.LastTxnInfo = s.LastTxnInfo
+	if s.LastQueryInfo.StartTS != 0 {
+		sessionStates.LastQueryInfo = &s.LastQueryInfo
+	}
+	if s.LastDDLInfo.SeqNum != 0 {
+		sessionStates.LastDDLInfo = &s.LastDDLInfo
+	}
+	sessionStates.LastFoundRows = s.LastFoundRows
+	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
+	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
+	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
+	sessionStates.FoundInBinding = s.PrevFoundInBinding
+
+	// Encode StatementContext. We encode it here to avoid circle dependency.
+	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
+	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
+	sessionStates.Warnings = s.StmtCtx.GetWarnings()
 	return
 }
 
@@ -1866,6 +1888,30 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 		s.UserVarTypes[name] = userVarType.Clone()
 	}
 	s.UsersLock.Unlock()
+
+	// Decode other session contexts.
+	s.preparedStmtID = sessionStates.PreparedStmtID
+	s.Status = sessionStates.Status
+	s.CurrentDB = sessionStates.CurrentDB
+	s.LastTxnInfo = sessionStates.LastTxnInfo
+	if sessionStates.LastQueryInfo != nil {
+		s.LastQueryInfo = *sessionStates.LastQueryInfo
+	}
+	if sessionStates.LastDDLInfo != nil {
+		s.LastDDLInfo = *sessionStates.LastDDLInfo
+	}
+	s.LastFoundRows = sessionStates.LastFoundRows
+	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
+	if sessionStates.MPPStoreLastFailTime != nil {
+		s.MPPStoreLastFailTime = sessionStates.MPPStoreLastFailTime
+	}
+	s.FoundInPlanCache = sessionStates.FoundInPlanCache
+	s.FoundInBinding = sessionStates.FoundInBinding
+
+	// Decode StatementContext.
+	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
+	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
 }
 
@@ -2456,20 +2502,6 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
-}
-
-// QueryInfo represents the information of last executed query. It's used to expose information for test purpose.
-type QueryInfo struct {
-	TxnScope    string `json:"txn_scope"`
-	StartTS     uint64 `json:"start_ts"`
-	ForUpdateTS uint64 `json:"for_update_ts"`
-	ErrMsg      string `json:"error,omitempty"`
-}
-
-// LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.
-type LastDDLInfo struct {
-	Query  string `json:"query"`
-	SeqNum uint64 `json:"seq_num"`
 }
 
 // TxnReadTS indicates the value and used situation for tx_read_ts
