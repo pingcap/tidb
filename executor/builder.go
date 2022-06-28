@@ -640,7 +640,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		defer func() { b.inSelectLockStmt = false }()
 	}
 	b.hasLock = true
-	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
+	if b.err = b.updateForUpdateTSIfNeeded(); b.err != nil {
 		return nil
 	}
 
@@ -846,13 +846,10 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	b.inInsertStmt = true
-	if v.SelectPlan != nil {
-		// Try to update the forUpdateTS for insert/replace into select statements.
-		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
-		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
-			return nil
-		}
+	if b.err = b.updateForUpdateTSIfNeeded(); b.err != nil {
+		return nil
 	}
+
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1710,7 +1707,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
 			strings.ToLower(infoschema.TableAttributes),
-			strings.ToLower(infoschema.TablePlacementPolicies):
+			strings.ToLower(infoschema.TablePlacementPolicies),
+			strings.ToLower(infoschema.TableTrxSummary),
+			strings.ToLower(infoschema.ClusterTableTrxSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -2056,7 +2055,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 			}
 		}
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+	if b.err = b.updateForUpdateTSIfNeeded(); b.err != nil {
 		return nil
 	}
 	selExec := b.build(v.SelectPlan)
@@ -2112,7 +2111,8 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+
+	if b.err = b.updateForUpdateTSIfNeeded(); b.err != nil {
 		return nil
 	}
 	selExec := b.build(v.SelectPlan)
@@ -2130,31 +2130,9 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	return deleteExec
 }
 
-// updateForUpdateTSIfNeeded updates the ForUpdateTS for a pessimistic transaction if needed.
-// PointGet executor will get conflict error if the ForUpdateTS is older than the latest commitTS,
-// so we don't need to update now for better latency.
-func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.PhysicalPlan) error {
-	txnCtx := b.ctx.GetSessionVars().TxnCtx
-	if !txnCtx.IsPessimistic {
-		return nil
-	}
-	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
-		return nil
-	}
-	// Activate the invalid txn, use the txn startTS as newForUpdateTS
-	txn, err := b.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	if !txn.Valid() {
-		_, err := b.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
+func (b *executorBuilder) updateForUpdateTSIfNeeded() error {
 	// GetStmtForUpdateTS will auto update the for update ts if necessary
-	_, err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
+	_, err := sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
 	return err
 }
 
@@ -4601,18 +4579,26 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 
-	startTS, err := b.getSnapshotTS()
+	if plan.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
+	}
+
+	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		tblInfo:          plan.TblInfo,
 		idxInfo:          plan.IndexInfo,
 		rowDecoder:       decoder,
-		startTS:          startTS,
+		snapshotTS:       snapshotTS,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		keepOrder:        plan.KeepOrder,
@@ -4625,9 +4611,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
+
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
+		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
 	}
+
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -4637,6 +4625,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.lock {
 		b.hasLock = true
 	}
+
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
 		e.idxVals = plan.IndexValues

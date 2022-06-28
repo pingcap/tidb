@@ -151,6 +151,7 @@ go_library(
         "//util",
         "//util/admin",
         "//util/bitmap",
+        "//util/breakpoint",
         "//util/chunk",
         "//util/codec",
         "//util/collate",
