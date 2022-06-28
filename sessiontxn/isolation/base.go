@@ -83,10 +83,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 
 	p.tp = &tp
 	p.ctx = ctx
-	// For normal `sessionctx.Context` the `GetDomainInfoSchema` should always return a non-nil value with type `infoschema.InfoSchema`
-	// However for some test cases we are using `mock.Context` which will return nil for this method,
-	// so we use `p.infoSchema, _ = ...` to avoid panic in test cases
-	p.infoSchema, _ = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
