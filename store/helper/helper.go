@@ -851,15 +851,20 @@ func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res inte
 }
 
 func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res interface{}) error {
-	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+host+uri))
-	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
+	urlVar := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), host, uri)
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
+	req, err := http.NewRequest(method, urlVar, body)
 	if err != nil {
+		logutil.BgLogger().Warn("requestPDForOneHost new request",
+			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
 	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("requestPDForOneHost do request",
+			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
 	metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
@@ -867,7 +872,8 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Warn("requestPDForOneHost close body",
+				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
 	err = json.NewDecoder(resp.Body).Decode(res)
