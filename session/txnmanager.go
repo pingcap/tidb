@@ -16,14 +16,15 @@ package session
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
+	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 )
 
@@ -53,10 +54,15 @@ func newTxnManager(sctx sessionctx.Context) *txnManager {
 }
 
 func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
-	if m.ctxProvider == nil {
-		return nil
+	if m.ctxProvider != nil {
+		return m.ctxProvider.GetTxnInfoSchema()
 	}
-	return m.ctxProvider.GetTxnInfoSchema()
+
+	if is := m.sctx.GetDomainInfoSchema(); is != nil {
+		return is.(infoschema.InfoSchema)
+	}
+
+	return nil
 }
 
 func (m *txnManager) GetStmtReadTS() (uint64, error) {
@@ -70,7 +76,20 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
-	return m.ctxProvider.GetStmtForUpdateTS()
+
+	ts, err := m.ctxProvider.GetStmtForUpdateTS()
+	if err != nil {
+		return 0, err
+	}
+
+	failpoint.Inject("assertTxnManagerForUpdateTSEqual", func() {
+		sessVars := m.sctx.GetSessionVars()
+		if txnCtxForUpdateTS := sessVars.TxnCtx.GetForUpdateTS(); sessVars.SnapshotTS == 0 && ts != txnCtxForUpdateTS {
+			panic(fmt.Sprintf("forUpdateTS not equal %d != %d", ts, txnCtxForUpdateTS))
+		}
+	})
+
+	return ts, nil
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
@@ -78,15 +97,25 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 }
 
 func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
-	m.ctxProvider = m.newProviderWithRequest(r)
-	if err := m.ctxProvider.OnInitialize(ctx, r.Type); err != nil {
+	ctxProvider, err := m.newProviderWithRequest(r)
+	if err != nil {
 		return err
 	}
 
+	if err = ctxProvider.OnInitialize(ctx, r.Type); err != nil {
+		m.sctx.RollbackTxn(ctx)
+		return err
+	}
+
+	m.ctxProvider = ctxProvider
 	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
 	return nil
+}
+
+func (m *txnManager) OnTxnEnd() {
+	m.ctxProvider = nil
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
@@ -113,24 +142,58 @@ func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
-func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) sessiontxn.TxnContextProvider {
-	if r.Provider != nil {
-		return r.Provider
+func (m *txnManager) AdviseWarmup() error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.AdviseWarmup()
 	}
+	return nil
+}
 
-	txnMode := r.TxnMode
-	if txnMode == "" {
-		txnMode = m.sctx.GetSessionVars().TxnMode
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
+	if m.ctxProvider != nil {
+		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
+	}
+	return nil
+}
+
+func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (sessiontxn.TxnContextProvider, error) {
+	if r.Provider != nil {
+		return r.Provider, nil
 	}
 
 	if r.StaleReadTS > 0 {
-		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
+		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 
-	return &legacy.SimpleTxnContextProvider{
-		Sctx:                  m.sctx,
-		Pessimistic:           txnMode == ast.Pessimistic,
-		CausalConsistencyOnly: r.CausalConsistencyOnly,
-		UpdateForUpdateTS:     executor.UpdateForUpdateTS,
+	sessVars := m.sctx.GetSessionVars()
+
+	txnMode := r.TxnMode
+	if txnMode == "" {
+		txnMode = sessVars.TxnMode
+	}
+
+	switch txnMode {
+	case "", ast.Optimistic:
+		// When txnMode is 'OPTIMISTIC' or '', the transaction should be optimistic
+		return isolation.NewOptimisticTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+	case ast.Pessimistic:
+		// When txnMode is 'PESSIMISTIC', the provider should be determined by the isolation level
+		switch sessVars.IsolationLevelForNewTxn() {
+		case ast.ReadCommitted:
+			return isolation.NewPessimisticRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+		case ast.Serializable:
+			// The Oracle serializable isolation is actually SI in pessimistic mode.
+			// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+			// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+			// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+			// tidb_skip_isolation_level_check should still be disabled by default.
+			return isolation.NewPessimisticSerializableTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+		default:
+			// We use Repeatable read for all other cases.
+			return isolation.NewPessimisticRRTxnContextProvider(m.sctx, r.CausalConsistencyOnly), nil
+		}
+	default:
+		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -182,12 +183,15 @@ func TestTable(t *testing.T) {
 	require.NoError(t, err)
 	doDDLJobErr(t, dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d, store)
 
+	ctx = testkit.NewTestKit(t, store).Session()
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	count := 2000
 	tbl := testGetTable(t, domain, tblInfo.ID)
 	for i := 1; i <= count; i++ {
 		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
+	require.NoError(t, ctx.CommitTxn(context.Background()))
 
 	jobID := testDropTable(testkit.NewTestKit(t, store), t, dbInfo.Name.L, tblInfo.Name.L, domain)
 	testCheckJobDone(t, store, jobID, false)
@@ -314,8 +318,7 @@ func TestRenameTables(t *testing.T) {
 
 	job := testRenameTables(t, ctx, d, []int64{dbInfo.ID, dbInfo.ID}, []int64{dbInfo.ID, dbInfo.ID}, []*model.CIStr{&newTblInfos[0].Name, &newTblInfos[1].Name}, []int64{tblInfos[0].ID, tblInfos[1].ID}, []*model.CIStr{&dbInfo.Name, &dbInfo.Name}, []*model.CIStr{&tblInfos[0].Name, &tblInfos[1].Name})
 
-	txn, _ := ctx.Txn(true)
-	historyJob, err := meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
+	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 	require.NoError(t, err)
 	wantTblInfos := historyJob.BinlogInfo.MultipleTableInfos
 	require.Equal(t, wantTblInfos[0].Name.L, "tt1")

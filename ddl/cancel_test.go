@@ -32,10 +32,39 @@ import (
 type testCancelJob struct {
 	sql         string
 	ok          bool
-	cancelState model.SchemaState
+	cancelState interface{} // model.SchemaState | []model.SchemaState
 	onJobBefore bool
 	onJobUpdate bool
 	prepareSQL  []string
+}
+
+type subStates = []model.SchemaState
+
+func testMatchCancelState(t *testing.T, job *model.Job, cancelState interface{}, sql string) bool {
+	switch v := cancelState.(type) {
+	case model.SchemaState:
+		if job.Type == model.ActionMultiSchemaChange {
+			msg := fmt.Sprintf("unexpected multi-schema change(sql: %s, cancel state: %s)", sql, v)
+			require.Failf(t, msg, "use []model.SchemaState as cancel states instead")
+			return false
+		}
+		return job.SchemaState == v
+	case subStates: // For multi-schema change sub-jobs.
+		if job.MultiSchemaInfo == nil {
+			msg := fmt.Sprintf("not multi-schema change(sql: %s, cancel state: %v)", sql, v)
+			require.Failf(t, msg, "use model.SchemaState as the cancel state instead")
+			return false
+		}
+		require.Equal(t, len(job.MultiSchemaInfo.SubJobs), len(v), sql)
+		for i, subJobSchemaState := range v {
+			if job.MultiSchemaInfo.SubJobs[i].SchemaState != subJobSchemaState {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 var allTestCase = []testCancelJob{
@@ -141,11 +170,11 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition truncate partition p3", true, model.StateNone, true, false, nil},
 	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},
 	// Add columns.
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateNone, true, false, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteOnly, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t add column c41 bigint, add column c42 bigint", false, model.StatePublic, false, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateNone, model.StateNone}, true, false, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateDeleteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteOnly, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, subStates{model.StateWriteReorganization, model.StateNone}, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", false, subStates{model.StatePublic, model.StatePublic}, false, true, nil},
 	// Drop columns.
 	// TODO: fix schema state.
 	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, nil},
@@ -246,7 +275,7 @@ func TestCancel(t *testing.T) {
 	cancelWhenReorgNotStart := false
 
 	hookFunc := func(job *model.Job) {
-		if job.SchemaState == allTestCase[i.Load()].cancelState && !cancel {
+		if testMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel {
 			if !cancelWhenReorgNotStart && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}

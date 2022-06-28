@@ -21,117 +21,105 @@ type metrics struct {
 	taskChannelCapacity            *prometheus.GaugeVec
 }
 
-var defaultMetrics *metrics
-
-func newMetrics(f promutil.Factory, labelNames []string) *metrics {
+func newMetrics(f promutil.Factory, constLabels prometheus.Labels) *metrics {
 	m := metrics{}
 	m.finishedSizeGauge = f.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "dumpling",
-			Subsystem: "dump",
-			Name:      "finished_size",
-			Help:      "counter for dumpling finished file size",
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "dump",
+			Name:        "finished_size",
+			Help:        "counter for dumpling finished file size",
+			ConstLabels: constLabels,
+		}, []string{})
 	m.estimateTotalRowsCounter = f.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "dumpling",
-			Subsystem: "dump",
-			Name:      "estimate_total_rows",
-			Help:      "estimate total rows for dumpling tables",
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "dump",
+			Name:        "estimate_total_rows",
+			Help:        "estimate total rows for dumpling tables",
+			ConstLabels: constLabels,
+		}, []string{})
 	m.finishedRowsGauge = f.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "dumpling",
-			Subsystem: "dump",
-			Name:      "finished_rows",
-			Help:      "counter for dumpling finished rows",
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "dump",
+			Name:        "finished_rows",
+			Help:        "counter for dumpling finished rows",
+			ConstLabels: constLabels,
+		}, []string{})
 	m.finishedTablesCounter = f.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "dumpling",
-			Subsystem: "dump",
-			Name:      "finished_tables",
-			Help:      "counter for dumpling finished tables",
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "dump",
+			Name:        "finished_tables",
+			Help:        "counter for dumpling finished tables",
+			ConstLabels: constLabels,
+		}, []string{})
 	m.writeTimeHistogram = f.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "dumpling",
-			Subsystem: "write",
-			Name:      "write_duration_time",
-			Help:      "Bucketed histogram of write time (s) of files",
-			Buckets:   prometheus.ExponentialBuckets(0.00005, 2, 20),
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "write",
+			Name:        "write_duration_time",
+			Help:        "Bucketed histogram of write time (s) of files",
+			Buckets:     prometheus.ExponentialBuckets(0.00005, 2, 20),
+			ConstLabels: constLabels,
+		}, []string{})
 	m.receiveWriteChunkTimeHistogram = f.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Namespace: "dumpling",
-			Subsystem: "write",
-			Name:      "receive_chunk_duration_time",
-			Help:      "Bucketed histogram of receiving time (s) of chunks",
-			Buckets:   prometheus.ExponentialBuckets(0.00005, 2, 20),
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "write",
+			Name:        "receive_chunk_duration_time",
+			Help:        "Bucketed histogram of receiving time (s) of chunks",
+			Buckets:     prometheus.ExponentialBuckets(0.00005, 2, 20),
+			ConstLabels: constLabels,
+		}, []string{})
 	m.errorCount = f.NewCounterVec(
 		prometheus.CounterOpts{
-			Namespace: "dumpling",
-			Subsystem: "dump",
-			Name:      "error_count",
-			Help:      "Total error count during dumping progress",
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "dump",
+			Name:        "error_count",
+			Help:        "Total error count during dumping progress",
+			ConstLabels: constLabels,
+		}, []string{})
 	m.taskChannelCapacity = f.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Namespace: "dumpling",
-			Subsystem: "dump",
-			Name:      "channel_capacity",
-			Help:      "The task channel capacity during dumping progress",
-		}, labelNames)
+			Namespace:   "dumpling",
+			Subsystem:   "dump",
+			Name:        "channel_capacity",
+			Help:        "The task channel capacity during dumping progress",
+			ConstLabels: constLabels,
+		}, []string{})
 	return &m
 }
 
-// InitMetricsVector inits metrics vectors.
-// This function must run before RegisterMetrics
-func InitMetricsVector(labels prometheus.Labels) {
-	labelNames := make([]string, 0, len(labels))
-	for name := range labels {
-		labelNames = append(labelNames, name)
-	}
-	defaultMetrics = newMetrics(&promutil.PlainNoAutoRegisterFactory{}, labelNames)
+func (m *metrics) registerTo(registry promutil.Registry) {
+	registry.MustRegister(m.finishedSizeGauge)
+	registry.MustRegister(m.finishedRowsGauge)
+	registry.MustRegister(m.estimateTotalRowsCounter)
+	registry.MustRegister(m.finishedTablesCounter)
+	registry.MustRegister(m.writeTimeHistogram)
+	registry.MustRegister(m.receiveWriteChunkTimeHistogram)
+	registry.MustRegister(m.errorCount)
+	registry.MustRegister(m.taskChannelCapacity)
 }
 
-// RegisterMetrics registers metrics.
-func RegisterMetrics(registry *prometheus.Registry) {
-	if defaultMetrics == nil || defaultMetrics.finishedSizeGauge == nil {
-		return
-	}
-	registry.MustRegister(defaultMetrics.finishedSizeGauge)
-	registry.MustRegister(defaultMetrics.finishedRowsGauge)
-	registry.MustRegister(defaultMetrics.estimateTotalRowsCounter)
-	registry.MustRegister(defaultMetrics.finishedTablesCounter)
-	registry.MustRegister(defaultMetrics.writeTimeHistogram)
-	registry.MustRegister(defaultMetrics.receiveWriteChunkTimeHistogram)
-	registry.MustRegister(defaultMetrics.errorCount)
-	registry.MustRegister(defaultMetrics.taskChannelCapacity)
-}
-
-// RemoveLabelValuesWithTaskInMetrics removes metrics of specified labels.
-func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
-	if defaultMetrics.finishedSizeGauge == nil {
-		return
-	}
-	defaultMetrics.finishedSizeGauge.Delete(labels)
-	defaultMetrics.finishedRowsGauge.Delete(labels)
-	defaultMetrics.estimateTotalRowsCounter.Delete(labels)
-	defaultMetrics.finishedTablesCounter.Delete(labels)
-	defaultMetrics.writeTimeHistogram.Delete(labels)
-	defaultMetrics.receiveWriteChunkTimeHistogram.Delete(labels)
-	defaultMetrics.errorCount.Delete(labels)
-	defaultMetrics.taskChannelCapacity.Delete(labels)
+func (m *metrics) unregisterFrom(registry promutil.Registry) {
+	registry.Unregister(m.finishedSizeGauge)
+	registry.Unregister(m.finishedRowsGauge)
+	registry.Unregister(m.estimateTotalRowsCounter)
+	registry.Unregister(m.finishedTablesCounter)
+	registry.Unregister(m.writeTimeHistogram)
+	registry.Unregister(m.receiveWriteChunkTimeHistogram)
+	registry.Unregister(m.errorCount)
+	registry.Unregister(m.taskChannelCapacity)
 }
 
 // ReadCounter reports the current value of the counter.
-func ReadCounter(counterVec *prometheus.CounterVec, labels prometheus.Labels) float64 {
+func ReadCounter(counterVec *prometheus.CounterVec) float64 {
 	if counterVec == nil {
 		return math.NaN()
 	}
-	counter := counterVec.With(labels)
+	counter := counterVec.With(nil)
 	var metric dto.Metric
 	if err := counter.Write(&metric); err != nil {
 		return math.NaN()
@@ -140,35 +128,35 @@ func ReadCounter(counterVec *prometheus.CounterVec, labels prometheus.Labels) fl
 }
 
 // AddCounter adds a counter.
-func AddCounter(counterVec *prometheus.CounterVec, labels prometheus.Labels, v float64) {
+func AddCounter(counterVec *prometheus.CounterVec, v float64) {
 	if counterVec == nil {
 		return
 	}
-	counterVec.With(labels).Add(v)
+	counterVec.With(nil).Add(v)
 }
 
 // IncCounter incs a counter.
-func IncCounter(counterVec *prometheus.CounterVec, labels prometheus.Labels) {
+func IncCounter(counterVec *prometheus.CounterVec) {
 	if counterVec == nil {
 		return
 	}
-	counterVec.With(labels).Inc()
+	counterVec.With(nil).Inc()
 }
 
 // ObserveHistogram observes a histogram
-func ObserveHistogram(histogramVec *prometheus.HistogramVec, labels prometheus.Labels, v float64) {
+func ObserveHistogram(histogramVec *prometheus.HistogramVec, v float64) {
 	if histogramVec == nil {
 		return
 	}
-	histogramVec.With(labels).Observe(v)
+	histogramVec.With(nil).Observe(v)
 }
 
 // ReadGauge reports the current value of the gauge.
-func ReadGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels) float64 {
+func ReadGauge(gaugeVec *prometheus.GaugeVec) float64 {
 	if gaugeVec == nil {
 		return math.NaN()
 	}
-	gauge := gaugeVec.With(labels)
+	gauge := gaugeVec.With(nil)
 	var metric dto.Metric
 	if err := gauge.Write(&metric); err != nil {
 		return math.NaN()
@@ -177,33 +165,33 @@ func ReadGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels) float64 
 }
 
 // AddGauge adds a gauge
-func AddGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels, v float64) {
+func AddGauge(gaugeVec *prometheus.GaugeVec, v float64) {
 	if gaugeVec == nil {
 		return
 	}
-	gaugeVec.With(labels).Add(v)
+	gaugeVec.With(nil).Add(v)
 }
 
 // SubGauge subs a gauge
-func SubGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels, v float64) {
+func SubGauge(gaugeVec *prometheus.GaugeVec, v float64) {
 	if gaugeVec == nil {
 		return
 	}
-	gaugeVec.With(labels).Sub(v)
+	gaugeVec.With(nil).Sub(v)
 }
 
 // IncGauge incs a gauge
-func IncGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels) {
+func IncGauge(gaugeVec *prometheus.GaugeVec) {
 	if gaugeVec == nil {
 		return
 	}
-	gaugeVec.With(labels).Inc()
+	gaugeVec.With(nil).Inc()
 }
 
 // DecGauge decs a gauge
-func DecGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels) {
+func DecGauge(gaugeVec *prometheus.GaugeVec) {
 	if gaugeVec == nil {
 		return
 	}
-	gaugeVec.With(labels).Dec()
+	gaugeVec.With(nil).Dec()
 }

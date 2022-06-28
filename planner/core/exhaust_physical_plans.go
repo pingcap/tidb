@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
@@ -592,7 +592,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		for i, idxOff := range keyOffMapList {
 			keyOffMap[idxOff] = i
 		}
-		sort.Slice(keyOffMapList, func(i, j int) bool { return keyOffMapList[i] < keyOffMapList[j] })
+		slices.Sort(keyOffMapList)
 		keyIsIndexPrefix := true
 		for keyOff, idxOff := range keyOffMapList {
 			if keyOff != idxOff {

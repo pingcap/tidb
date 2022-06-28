@@ -99,3 +99,13 @@ func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.Stmt
 func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
+
+// AdviseWarmup provides warmup for inner state
+func (p *StalenessTxnContextProvider) AdviseWarmup() error {
+	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
+}

@@ -101,9 +101,9 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) error
+	CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
-	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
+	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
@@ -476,6 +476,14 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
+		d.ownerManager.SetBeOwnerHook(func() {
+			var err error
+			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+			if err != nil {
+				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+			}
+		})
+
 		err := d.ownerManager.CampaignOwner()
 		if err != nil {
 			return errors.Trace(err)
@@ -495,11 +503,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
-		}
-
-		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-		if err != nil {
-			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
@@ -544,7 +547,7 @@ func (d *ddl) close() {
 	d.schemaSyncer.Close()
 
 	for _, worker := range d.workers {
-		worker.close()
+		worker.Close()
 	}
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -709,6 +712,12 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
+		// In multiple schema change, we don't run the job.
+		// Instead, we merge all the jobs into one pending job.
+		return appendToSubJobs(mci, job)
+	}
+
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
@@ -783,12 +792,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					}
 				}
 			}
-
-			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
-				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-				}
-			}
+			appendMultiChangeWarningsToOwnerCtx(ctx, historyJob)
 
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
@@ -812,7 +816,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 }
 
-func (d *ddl) callHookOnChanged(err error) error {
+func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
+	if job.State == model.JobStateNone {
+		// We don't call the hook if the job haven't run yet.
+		return err
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
@@ -978,7 +986,7 @@ func GetDDLInfo(txn kv.Transaction) (*Info, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(t).GetDDLReorgHandle(addIdxJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1179,4 +1187,9 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 // AddHistoryDDLJob adds DDL job to history table.
 func AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
 	return t.AddHistoryDDLJob(job, updateRawArgs)
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func GetLastHistoryDDLJobsIterator(m *meta.Meta) (meta.LastJobIterator, error) {
+	return m.GetLastHistoryDDLJobsIterator()
 }

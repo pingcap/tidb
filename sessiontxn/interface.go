@@ -93,8 +93,27 @@ func NoIdea() (StmtErrorAction, error) {
 	return StmtActionNoIdea, nil
 }
 
+// TxnAdvisable providers a collection of optimizations within transaction
+type TxnAdvisable interface {
+	// AdviseWarmup provides warmup for inner state
+	AdviseWarmup() error
+	// AdviseOptimizeWithPlan providers optimization according to the plan
+	AdviseOptimizeWithPlan(plan interface{}) error
+}
+
+// OptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
+// and then do `AdviseWarmup` to do some tso fetch if necessary
+func OptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
+	txnManager := GetTxnManager(sctx)
+	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
+		return err
+	}
+	return txnManager.AdviseWarmup()
+}
+
 // TxnContextProvider provides txn context
 type TxnContextProvider interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
@@ -114,7 +133,10 @@ type TxnContextProvider interface {
 
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
+	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
+	// If the session is not in any transaction, for example: between two autocommit statements,
+	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 	GetStmtReadTS() (uint64, error)
@@ -125,6 +147,8 @@ type TxnManager interface {
 
 	// EnterNewTxn enters a new transaction.
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
+	// OnTxnEnd is the hook that should be called after transaction commit or rollback
+	OnTxnEnd()
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error

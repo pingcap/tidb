@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sessiontxn",
+    srcs = [
+        "failpoint.go",
+        "interface.go",
+        "txn.go",
+    ],
+    importpath = "github.com/pingcap/tidb/sessiontxn",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//infoschema",
+        "//parser/ast",
+        "//sessionctx",
+        "//util/stringutil",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
+
+go_test(
+    name = "sessiontxn_test",
+    srcs = [
+        "txn_context_test.go",
+        "txn_manager_test.go",
+    ],
+    deps = [
+        ":sessiontxn",
+        "//domain",
+        "//infoschema",
+        "//kv",
+        "//parser/ast",
+        "//planner/core",
+        "//sessionctx",
+        "//sessiontxn/staleread",
+        "//testkit",
+        "//testkit/testfork",
+        "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

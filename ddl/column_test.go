@@ -691,7 +691,7 @@ func TestAddColumn(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, newColName, "", defaultColValue, dom)
+	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColName, "", defaultColValue, dom)
 	testCheckJobDone(t, store, jobID, true)
 
 	require.True(t, checkOK)
@@ -762,7 +762,7 @@ func TestAddColumns(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testCreateColumns(tk, t, testNewContext(store), tableID, newColNames, positions, defaultColValue, dom)
+	jobID := testCreateColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, newColNames, positions, defaultColValue, dom)
 
 	testCheckJobDone(t, store, jobID, true)
 	mu.Lock()
@@ -825,7 +825,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testDropColumnInternal(tk, t, testNewContext(store), tableID, colName, false, dom)
+	jobID := testDropColumnInternal(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colName, false, dom)
 	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr
@@ -890,7 +890,7 @@ func TestDropColumns(t *testing.T) {
 
 	d.SetHook(tc)
 
-	jobID := testDropColumns(tk, t, testNewContext(store), tableID, colNames, false, dom)
+	jobID := testDropColumns(tk, t, testkit.NewTestKit(t, store).Session(), tableID, colNames, false, dom)
 	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr

@@ -837,11 +837,11 @@ func runTestInSchemaState(
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	require.NoError(t, err)
 	cbFunc := func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
 			return
 		}
-		prevState = job.SchemaState
-		if job.SchemaState != state {
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != state {
 			return
 		}
 		for _, sqlWithErr := range sqlWithErrs {
@@ -875,6 +875,14 @@ func runTestInSchemaState(
 			rows.Check(testkit.Rows(expectQuery.rows...))
 		}
 	}
+}
+
+func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		subs := job.MultiSchemaInfo.SubJobs
+		return subs[len(subs)-1].SchemaState
+	}
+	return job.SchemaState
 }
 
 func TestShowIndex(t *testing.T) {
@@ -983,7 +991,7 @@ func TestParallelAlterModifyColumnWithData(t *testing.T) {
 	sql := "ALTER TABLE t MODIFY COLUMN c int;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		require.EqualError(t, err2, "[ddl:8245]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
 		rs, err := tk.Exec("select * from t")
 		require.NoError(t, err)
 		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
@@ -1057,7 +1065,7 @@ func TestParallelAlterModifyColumnToNotNullWithData(t *testing.T) {
 	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
-		require.EqualError(t, err2, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		require.EqualError(t, err2, "[ddl:8245]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
 		rs, err := tk.Exec("select * from t")
 		require.NoError(t, err)
 		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
@@ -1359,7 +1367,7 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
 			return
 		}

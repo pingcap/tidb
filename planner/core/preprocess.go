@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
@@ -124,9 +123,6 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-
-	v.initTxnContextProviderIfNecessary(node)
-
 	return errors.Trace(v.err)
 }
 
@@ -720,20 +716,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
-	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
+	if isIncorrectName(stmt.Name.L) && !stmt.AlterDefaultDatabase {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
@@ -1626,6 +1622,12 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 			return
 		}
 	}
+	if node.Tp.EvalType() == types.ETDatetime {
+		if node.Tp.GetDecimal() > types.MaxFsp {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.GetDecimal(), "CAST", types.MaxFsp)
+			return
+		}
+	}
 }
 
 func (p *preprocessor) updateStateFromStaleReadProcessor() error {
@@ -1683,20 +1685,8 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 		return p.InfoSchema
 	}
 
-	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	p.InfoSchema = sessiontxn.GetTxnManager(p.ctx).GetTxnInfoSchema()
 	return p.InfoSchema
-}
-
-func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
-	if p.err != nil || p.flag&initTxnContextProvider == 0 {
-		return
-	}
-
-	if provider, ok := sessiontxn.GetTxnManager(p.ctx).GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
-		// When the current provider is `legacy.SimpleTxnContextProvider` it should to keep the logic equals to the old implement.
-		// After refactoring, the `legacy.SimpleTxnContextProvider` will be removed, and this code will be removed too.
-		provider.InfoSchema = p.ensureInfoSchema()
-	}
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {

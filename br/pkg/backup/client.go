@@ -486,9 +486,6 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 		return errors.Trace(err)
 	}
 	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-	if err != nil {
-		return errors.Trace(err)
-	}
 	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -537,7 +534,9 @@ func (bc *Client) BackupRanges(
 	progressCallBack func(ProgressUnit),
 ) error {
 	init := time.Now()
-	defer log.Info("Backup Ranges", zap.Duration("take", time.Since(init)))
+	defer func() {
+		log.Info("Backup Ranges", zap.Duration("take", time.Since(init)))
+	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.BackupRanges", opentracing.ChildOf(span.Context()))

@@ -1488,9 +1488,9 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		// ref2: https://github.com/pingcap/tidb/issues/24953
 		resultTp.AddFlag((a.GetFlag() & mysql.UnsignedFlag) & (b.GetFlag() & mysql.UnsignedFlag))
 	}
-	resultTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+	resultTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 	// `flen - decimal` is the fraction before '.'
-	resultTp.SetFlen(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+	resultTp.SetFlenUnderLimit(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
 	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
 		resultTp.SetFlen(mysql.MaxIntWidth)
@@ -3806,7 +3806,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 	if b.capFlag&canExpandAST != 0 {
-		// To be compabitle with MySQL, we add alias name for each select field when creating view.
+		// To be compatible with MySQL, we add alias name for each select field when creating view.
 		sel.Fields.Fields, err = b.addAliasName(ctx, sel, p)
 		if err != nil {
 			return nil, err
@@ -6901,6 +6901,8 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.RetType = col.RetType.Clone()
 		col.UniqueID = svar.AllocPlanColumnID()
 		col.RetType.DelFlag(mysql.NotNullFlag)
+		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.
+		col.CleanHashCode()
 	}
 	return res
 }
