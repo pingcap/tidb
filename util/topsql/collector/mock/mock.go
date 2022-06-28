@@ -30,14 +30,11 @@ import (
 
 // TopSQLCollector uses for testing.
 type TopSQLCollector struct {
-	sync.Mutex
-	// sql_digest -> normalized SQL
-	sqlMap map[string]string
-	// plan_digest -> normalized plan
-	planMap map[string]string
-	// (sql + plan_digest) -> sql stats
+	sqlMap      map[string]string
+	planMap     map[string]string
 	sqlStatsMap map[string]*collector.SQLCPUTimeRecord
 	collectCnt  atomic.Int64
+	sync.Mutex
 }
 
 // NewTopSQLCollector uses for testing.

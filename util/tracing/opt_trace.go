@@ -18,23 +18,23 @@ import "fmt"
 
 // PlanTrace indicates for the Plan trace information
 type PlanTrace struct {
-	ID         int          `json:"id"`
-	TP         string       `json:"type"`
-	Children   []*PlanTrace `json:"-"`
-	ChildrenID []int        `json:"children"`
-	Cost       float64      `json:"cost"`
-	Selected   bool         `json:"selected"`
-	ProperType string       `json:"property"`
+	TP         string `json:"type"`
+	ProperType string `json:"property"`
 	// ExplainInfo should be implemented by each implemented Plan
-	ExplainInfo string `json:"info"`
+	ExplainInfo string       `json:"info"`
+	Children    []*PlanTrace `json:"-"`
+	ChildrenID  []int        `json:"children"`
+	ID          int          `json:"id"`
+	Cost        float64      `json:"cost"`
+	Selected    bool         `json:"selected"`
 }
 
 // LogicalOptimizeTracer indicates the trace for the whole logicalOptimize processing
 type LogicalOptimizeTracer struct {
+	// curRuleTracer indicates the current rule Tracer during optimize by rule
+	curRuleTracer    *LogicalRuleOptimizeTracer
 	FinalLogicalPlan []*PlanTrace                 `json:"final"`
 	Steps            []*LogicalRuleOptimizeTracer `json:"steps"`
-	// curRuleTracer indicates the current rule Tracer during optimize by rule
-	curRuleTracer *LogicalRuleOptimizeTracer
 }
 
 // AppendRuleTracerBeforeRuleOptimize add plan tracer before optimize
@@ -75,10 +75,10 @@ func (tracer *LogicalOptimizeTracer) removeUselessStep() {
 // LogicalRuleOptimizeTracer indicates the trace for the LogicalPlan tree before and after
 // logical rule optimize
 type LogicalRuleOptimizeTracer struct {
-	Index    int                            `json:"index"`
-	Before   []*PlanTrace                   `json:"before"`
 	RuleName string                         `json:"name"`
+	Before   []*PlanTrace                   `json:"before"`
 	Steps    []LogicalRuleOptimizeTraceStep `json:"steps"`
+	Index    int                            `json:"index"`
 }
 
 // buildLogicalRuleOptimizeTracerBeforeOptimize build rule tracer before rule optimize
@@ -96,8 +96,8 @@ func buildLogicalRuleOptimizeTracerBeforeOptimize(index int, name string, before
 type LogicalRuleOptimizeTraceStep struct {
 	Action string `json:"action"`
 	Reason string `json:"reason"`
-	ID     int    `json:"id"`
 	TP     string `json:"type"`
+	ID     int    `json:"id"`
 	Index  int    `json:"index"`
 }
 
@@ -135,10 +135,10 @@ func flattenLogicalPlanTrace(node *PlanTrace, wrapper *flattenWrapper) {
 
 // CETraceRecord records an expression and related cardinality estimation result.
 type CETraceRecord struct {
-	TableID   int64  `json:"-"`
 	TableName string `json:"table_name"`
 	Type      string `json:"type"`
 	Expr      string `json:"expr"`
+	TableID   int64  `json:"-"`
 	RowCount  uint64 `json:"row_count"`
 }
 
@@ -158,9 +158,9 @@ func DedupCETrace(records []*CETraceRecord) []*CETraceRecord {
 // PhysicalOptimizeTracer indicates the trace for the whole physicalOptimize processing
 type PhysicalOptimizeTracer struct {
 	PhysicalPlanCostDetails map[int]*PhysicalPlanCostDetail `json:"costs"`
+	Candidates              map[int]*CandidatePlanTrace     `json:"candidates"`
 	// final indicates the final physical plan trace
-	Final      []*PlanTrace                `json:"final"`
-	Candidates map[int]*CandidatePlanTrace `json:"candidates"`
+	Final []*PlanTrace `json:"final"`
 }
 
 // AppendCandidate appends physical CandidatePlanTrace in tracer.
@@ -232,10 +232,10 @@ func (tracer *OptimizeTracer) RecordFinalPlan(final *PlanTrace) {
 
 // PhysicalPlanCostDetail indicates cost detail
 type PhysicalPlanCostDetail struct {
-	ID     int                    `json:"id"`
-	TP     string                 `json:"type"`
 	Params map[string]interface{} `json:"params"`
+	TP     string                 `json:"type"`
 	Desc   string                 `json:"desc"`
+	ID     int                    `json:"id"`
 }
 
 // NewPhysicalPlanCostDetail creates a cost detail

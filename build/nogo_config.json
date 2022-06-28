@@ -142,6 +142,20 @@
       ".*_/testmain\\.go$": "ignore code"
     }
   },
+  "fieldalignment": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_/testmain\\.go$": "ignore code",
+      ".*_test\\.go$": "ignore test code"
+    },
+    "only_files": {
+      "util/checksum": "util/checksum code",
+      "util/cpuprofile": "util/cpuprofile code",
+      "store/mockstore/unistore/util": "store/mockstore/unistore/util code",
+      "ddl/util/": "ddl/util code"
+    }
+  },
   "findcall": {
     "exclude_files": {
       "/external/": "no need to vet third party code",

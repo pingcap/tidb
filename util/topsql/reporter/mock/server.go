@@ -29,16 +29,18 @@ import (
 )
 
 type mockAgentServer struct {
-	sync.Mutex
-	addr       string
-	grpcServer *grpc.Server
-	sqlMetas   map[string]tipb.SQLMeta
-	planMetas  map[string]string
-	records    [][]*tipb.TopSQLRecord
-	hang       struct {
-		beginTime atomic.Value // time.Time
-		endTime   atomic.Value // time.Time
+	hang struct {
+		beginTime atomic.Value
+		endTime   atomic.Value
 	}
+	grpcServer *grpc.Server
+	sqlMetas   map[ // time.Time
+	// time.Time
+	string]tipb.SQLMeta
+	planMetas map[string]string
+	addr      string
+	records   [][]*tipb.TopSQLRecord
+	sync.Mutex
 }
 
 // StartMockAgentServer starts the mock agent server.

@@ -65,17 +65,14 @@ func ProfileHTTPHandler(w http.ResponseWriter, r *http.Request) {
 // Collector is a cpu profile collector, it collect cpu profile data from globalCPUProfiler.
 type Collector struct {
 	ctx       context.Context
+	writer    io.Writer
+	err       error
 	cancel    context.CancelFunc
-	started   bool
 	firstRead chan struct{}
+	dataCh    ProfileConsumer
+	result    *profile.Profile
 	wg        sync.WaitGroup
-
-	dataCh ProfileConsumer
-	writer io.Writer
-
-	// Following fields uses to store the result data of collected.
-	result *profile.Profile
-	err    error
+	started   bool
 }
 
 // NewCollector returns a new NewCollector.
