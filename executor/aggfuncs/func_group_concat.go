@@ -352,13 +352,14 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
 
 	for h.currSize > h.limitSize {
 		debt := h.currSize - h.limitSize
-		if uint64(h.rows[0].buffer.Len()) > debt {
+		backI= len(h.rows)-1
+		if uint64(h.rows[backI].buffer.Len()) > debt {
 			h.currSize -= debt
-			h.rows[0].buffer.Truncate(h.rows[0].buffer.Len() - int(debt))
+			h.rows[backI].buffer.Truncate(h.rows[backI].buffer.Len() - int(debt))
 		} else {
-			h.currSize -= uint64(h.rows[0].buffer.Len()) + h.sepSize
-			memDelta -= int64(h.rows[0].buffer.Cap())
-			for _, dt := range h.rows[0].byItems {
+			h.currSize -= uint64(h.rows[backI].buffer.Len()) + h.sepSize
+			memDelta -= int64(h.rows[backI].buffer.Cap())
+			for _, dt := range h.rows[backI].byItems {
 				memDelta -= GetDatumMemSize(dt)
 			}
 			heap.Pop(h)
