@@ -14,6 +14,11 @@
 
 package core
 
+import (
+	"github.com/pingcap/tidb/types"
+	"strconv"
+)
+
 func isNumber(c byte) bool {
 	if c >= '0' && c <= '9' {
 		return true
@@ -44,13 +49,13 @@ func isSchema(c byte) bool {
 }
 
 // FastLexer ...
-func FastLexer(sql string) (string, []string, bool) {
+func FastLexer(sql string) (string, []types.Datum, bool) {
 	sqlText := make([]byte, 0, len(sql))
-	var constantParams [][]byte
 	var constantParam []byte
 	isStringStatus := false
 	isNumberStatus := false
 	isSchemaNameStatus := false
+	var params []types.Datum
 
 	for _, c := range []byte(sql) {
 		if isNumberStatus {
@@ -58,26 +63,26 @@ func FastLexer(sql string) (string, []string, bool) {
 				constantParam = append(constantParam, c)
 				continue
 			} else {
-				numConstantParam := make([]byte, 0, len(constantParam))
-				// copy(numConstantParam, constantParam)
-				for _, ch := range constantParam {
-					numConstantParam = append(numConstantParam, ch)
+				numConstantParam, err := strconv.ParseInt(string(constantParam), 10, 64)
+				if err != nil {
+					return "", nil, false
 				}
+				var numConst types.Datum
+				numConst.SetInt64(numConstantParam)
+				params = append(params, numConst)
 				constantParam = constantParam[:0]
-				constantParams = append(constantParams, numConstantParam)
 				sqlText = append(sqlText, '?')
 				isNumberStatus = false
 			}
 		} else if isStringStatus {
 			constantParam = append(constantParam, c)
 			if isString(c) {
-				stringConstantParam := make([]byte, 0, len(constantParam))
-				// copy(stringConstantParam, constantParam)
-				for _, ch := range constantParam {
-					stringConstantParam = append(stringConstantParam, ch)
-				}
+				stringConstParam := string(constantParam)
+				var stringConst types.Datum
+				// TODO: set the collation
+				stringConst.SetString(stringConstParam, "utf8mb4_bin")
 				constantParam = constantParam[:0]
-				constantParams = append(constantParams, stringConstantParam)
+				params = append(params, stringConst)
 				sqlText = append(sqlText, '?')
 				isStringStatus = false
 			}
@@ -100,12 +105,19 @@ func FastLexer(sql string) (string, []string, bool) {
 			sqlText = append(sqlText, c)
 		}
 	}
-	if isStringStatus || isNumberStatus {
+	if isStringStatus {
 		return "", nil, false
+	} else if isNumberStatus {
+		numConstantParam, err := strconv.ParseInt(string(constantParam), 10, 64)
+		if err != nil {
+			return "", nil, false
+		}
+		var numConst types.Datum
+		numConst.SetInt64(numConstantParam)
+		params = append(params, numConst)
+		constantParam = constantParam[:0]
+		sqlText = append(sqlText, '?')
 	}
-	params := make([]string, 0, len(constantParams))
-	for _, param := range constantParams {
-		params = append(params, string(param))
-	}
+
 	return string(sqlText), params, true
 }

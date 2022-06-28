@@ -52,6 +52,8 @@ type TiDBContext struct {
 	session.Session
 	currentDB string
 	stmts     map[int]*TiDBStatement
+	// TODO: update the test to make
+	query2ID map[string]uint32
 }
 
 // TiDBStatement implements PreparedStatement.
@@ -202,8 +204,21 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 		Session:   se,
 		currentDB: dbname,
 		stmts:     make(map[int]*TiDBStatement),
+		query2ID:  make(map[string]uint32),
 	}
 	return tc, nil
+}
+
+// GetStmtID xxx
+func (tc *TiDBContext) GetStmtID(sql string) (uint32, bool) {
+	value, ok := tc.query2ID[sql]
+	return value, ok
+}
+
+// SetStmtID xxx
+func (tc *TiDBContext) SetStmtID(sql string, stmtID uint32) {
+	tc.query2ID[sql] = stmtID
+	return
 }
 
 // GetWarnings implements QueryCtx GetWarnings method.

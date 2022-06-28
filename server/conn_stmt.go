@@ -228,6 +228,40 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	return err
 }
 
+// handlePreparedStmt used for both general plan cache and handleStmtExecute.
+func (cc *clientConn) handlePreparedStmt(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) error {
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	if err != nil {
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+		if txnErr != nil {
+			return txnErr
+		}
+
+		if retryable && action == sessiontxn.StmtActionRetryReady {
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+			return err
+		}
+	}
+	_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	if allowTiFlashFallback && err != nil && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
+		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+		// server and fallback to TiKV.
+		prevErr := err
+		delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
+		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
+	}
+	return err
+}
+
 // The first return value indicates whether the call of executePreparedStmtAndWriteResult has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
 func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stmt PreparedStatement, args []types.Datum, useCursor bool) (bool, error) {

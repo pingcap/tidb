@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func parseRawArgs(sctx sessionctx.Context, rawArgs []string) ([]types.Datum, error) {
-	// TODO
-	return nil, nil
-}
+//func parseRawArgs(sctx sessionctx.Context, rawArgs []string) ([]types.Datum, error) {
+//	// TODO
+//	return nil, nil
+//}
 
 func getStmtIDByRawSQL(sctx sessionctx.Context, rawSQL string) (stmtID uint32, existed bool) {
 	// TODO
@@ -45,7 +45,7 @@ func getPlanFromCache(ctx context.Context, sctx sessionctx.Context, handler prep
 		return nil, false, nil
 	}
 
-	rawSQL, rawArgs, ok := FastLexer(originalSQL)
+	rawSQL, params, ok := FastLexer(originalSQL)
 	if !ok {
 		return nil, false, nil
 	}
@@ -58,10 +58,10 @@ func getPlanFromCache(ctx context.Context, sctx sessionctx.Context, handler prep
 		}
 	}
 
-	params, err := parseRawArgs(sctx, rawArgs)
-	if err != nil {
-		return nil, false, err
-	}
+	//params, err := parseRawArgs(sctx, rawArgs)
+	//if err != nil {
+	//	return nil, false, err
+	//}
 
 	rs, err = handler.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {

@@ -89,8 +89,9 @@ func CreateMockConn(t *testing.T, store kv.Storage, server *Server) MockConn {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tc := &TiDBContext{
-		Session: se,
-		stmts:   make(map[int]*TiDBStatement),
+		Session:  se,
+		stmts:    make(map[int]*TiDBStatement),
+		query2ID: make(map[string]uint32),
 	}
 
 	cc := &clientConn{

@@ -1823,17 +1823,12 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 
-	// TODO: add a switch to control
-	usePC := false
-	if usePC {
-		// sqlText, constParams, ok := fastLexer(sql)
-		_, _, ok := plannercore.FastLexer(sql)
-		if ok {
-			// Use the sqlText to get the plan from plan cache
-		} else {
-			// Failed to use the plan cache
-			usePC = false
-		}
+	stmt, args, exists, err := GetStatement4GeneralSQL(cc.ctx.TiDBContext, cc.ctx, sql)
+	if err != nil {
+		// TODO: log the error
+	}
+	if exists {
+		return cc.handlePreparedStmt(ctx, stmt, args, false)
 	}
 
 	stmts, err := cc.ctx.Parse(ctx, sql)
