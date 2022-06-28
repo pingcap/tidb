@@ -191,7 +191,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			return s.optimize(ctx, p, opt)
 		} else if li, ok := innerPlan.(*LogicalLimit); ok {
 			//If offset is not zero, subquery will become always true or always false. This scenario optimizer has internal optimizations.
-			//If apply is not SemiJoin, innerplan which is limit will expand the join result.
+			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
 				// TODO: Actually, it can be optimized. We need to keep the APPLY can be decorrelated.
 				goto NoOptimize
