@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -92,7 +93,7 @@ func (p *SimpleTxnContextProvider) OnInitialize(ctx context.Context, tp sessiont
 		}
 
 		sessVars.TxnCtx.IsPessimistic = p.Pessimistic
-		if _, err := p.activeTxn(); err != nil {
+		if _, err := p.activateTxn(); err != nil {
 			return err
 		}
 
@@ -189,17 +190,27 @@ func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 
-// Advise is used to give advice to provider
-func (p *SimpleTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		p.Sctx.PrepareTSFuture(p.Ctx)
+func (p *SimpleTxnContextProvider) prepareTSFuture() error {
+	if p.Sctx.GetSessionVars().SnapshotTS != 0 || staleread.IsStmtStaleness(p.Sctx) || p.Sctx.GetPreparedTSFuture() != nil {
+		return nil
 	}
-	return nil
+
+	txn, err := p.Sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	if txn.Valid() {
+		return nil
+	}
+
+	txnScope := p.Sctx.GetSessionVars().CheckAndGetTxnScope()
+	future := sessiontxn.NewOracleFuture(p.Ctx, p.Sctx, txnScope)
+	return p.Sctx.PrepareTSFuture(p.Ctx, future, txnScope)
 }
 
-// activeTxn actives the txn
-func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
+// activateTxn actives the txn
+func (p *SimpleTxnContextProvider) activateTxn() (kv.Transaction, error) {
 	if p.isTxnActive {
 		return p.Sctx.Txn(true)
 	}
@@ -219,4 +230,14 @@ func (p *SimpleTxnContextProvider) activeTxn() (kv.Transaction, error) {
 
 	p.isTxnActive = true
 	return txn, nil
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *SimpleTxnContextProvider) AdviseWarmup() error {
+	return p.prepareTSFuture()
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *SimpleTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
 }

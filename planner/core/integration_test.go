@@ -177,6 +177,9 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
 	tk.MustExec("analyze table tbl")
 
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -3681,6 +3684,10 @@ func TestExtendedStatsSwitch(t *testing.T) {
 	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
 		"1.000000 1",
 	))
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	// Estimated index scan count is 4 using extended stats.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
 		"Limit 1.00 root  offset:0, count:1",
@@ -4550,6 +4557,9 @@ func TestLimitIndexLookUpKeepOrder(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
 
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4747,6 +4757,9 @@ func TestMultiColMaxOneRow(t *testing.T) {
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5520,6 +5533,8 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5558,6 +5573,9 @@ func TestIssue27083(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
+
+	// When paging is enabled, there would be a 'paging: true' in the explain result.
+	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -6665,4 +6683,56 @@ func TestIssue31609(t *testing.T) {
 		"    └─Sort_10 10000.00 root  Column#3",
 		"      └─MemTableScan_9 10000.00 root table:TABLES ",
 	))
+}
+
+func TestDecimalOverflow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table deci (a decimal(65,30),b decimal(65,0))")
+	tk.MustExec("insert into deci values (1234567890.123456789012345678901234567890,987654321098765432109876543210987654321098765432109876543210)")
+	tk.MustQuery("select a from deci union ALL select b from deci;").Sort().Check(testkit.Rows("1234567890.123456789012345678901234567890", "99999999999999999999999999999999999.999999999999999999999999999999"))
+}
+
+func TestIssue35083(t *testing.T) {
+	defer func() {
+		variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ProjectionPushDown = true
+	})
+	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a varchar(100), b int)")
+	tk.MustQuery("select @@tidb_opt_projection_push_down").Check(testkit.Rows("1"))
+	tk.MustQuery("explain format = 'brief' select cast(a as datetime) from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:Projection",
+		"└─Projection 10000.00 cop[tikv]  cast(test.t1.a, datetime BINARY)->Column#4",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+
+func TestIssue25813(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec("insert into t values('{\"id\": \"ish\"}');")
+	tk.MustQuery("select t2.a from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows("{\"id\": \"ish\"}"))
+
+	tk.MustQuery("explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows(
+		"Selection 8000.00 root  eq(json_extract(test.t.a, \"$.id\"), cast(\"ish\", json BINARY))",
+		"└─HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
+		"  ├─TableReader(Build) 8000.00 root  data:Selection",
+		"  │ └─Selection 8000.00 cop[tikv]  not(isnull(cast(test.t.a, var_string(4294967295))))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }

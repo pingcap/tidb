@@ -267,7 +267,7 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.Config.Concurrency == 0 {
-		cfg.Config.Concurrency = 32
+		cfg.Config.Concurrency = 16
 	}
 }
 
