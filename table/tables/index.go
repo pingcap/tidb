@@ -69,7 +69,7 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 	}
 	var newBackfillFlow bool = false
 	if len(newBF)>0 {
-		newBackfillFlow = true
+		newBackfillFlow = newBF[0]
 	}
 	index := &index{
 		idxInfo:  indexInfo,
