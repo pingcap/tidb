@@ -928,6 +928,14 @@ def go_deps():
         version = "v0.0.4",
     )
     go_repository(
+        name = "com_github_golangci_gofmt",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/golangci/gofmt",
+        sum = "h1:iR3fYXUjHCR97qWS8ch1y9zPNsgXThGwjKPrYfqMPks=",
+        version = "v0.0.0-20190930125516-244bba706f1a",
+    )
+
+    go_repository(
         name = "com_github_golangci_prealloc",
         build_file_proto_mode = "disable",
         importpath = "github.com/golangci/prealloc",
