@@ -62,19 +62,25 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 
+	snapshot, err := b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
 
-	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(p.TblInfo, snapshotTS)
-	}
-
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	e.Init(p, snapshotTS)
+	e.Init(p, snapshotTS, snapshot)
+
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.snapshot = cacheTableSnapshot{e.snapshot, b.getCacheTable(p.TblInfo, snapshotTS)}
+	}
 
 	if e.lock {
 		b.hasLock = true
@@ -112,18 +118,18 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats      *runtimeStatsWithSnapshot
-	cacheTable kv.MemBuffer
+	stats *runtimeStatsWithSnapshot
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, snapshotTS uint64) {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, snapshotTS uint64, snapshot kv.Snapshot) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
 	e.idxVals = p.IndexValues
 	e.snapshotTS = snapshotTS
+	e.snapshot = snapshot
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
@@ -152,23 +158,10 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	snapshotTS := e.snapshotTS
 	var err error
 	e.txn, err = e.ctx.Txn(false)
 	if err != nil {
 		return err
-	}
-	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		e.snapshot = e.txn.GetSnapshot()
-	} else {
-		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
-	}
-	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		e.snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
-	}
-	if e.cacheTable != nil {
-		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
 	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err

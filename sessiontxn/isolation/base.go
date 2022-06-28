@@ -255,3 +255,37 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
 }
+
+// GetReadSnapshot get snapshot with read ts
+func (p *baseTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
+	ts, err := p.GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+// GetForUpdateSnapshot get snapshot with for update ts
+func (p *baseTxnContextProvider) GetForUpdateSnapshot() (kv.Snapshot, error) {
+	ts, err := p.GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+		return txn.GetSnapshot(), nil
+	}
+
+	return p.sctx.GetSnapshotWithTS(snapshotTS), nil
+}

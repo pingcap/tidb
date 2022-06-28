@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -108,4 +109,29 @@ func (p *StalenessTxnContextProvider) AdviseWarmup() error {
 // AdviseOptimizeWithPlan providers optimization according to the plan
 func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
+}
+
+// GetReadSnapshot get snapshot with read ts
+func (p *StalenessTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
+	return p.getStalenessSnapshot()
+}
+
+// GetForUpdateSnapshot get snapshot with for update ts
+func (p *StalenessTxnContextProvider) GetForUpdateSnapshot() (kv.Snapshot, error) {
+	return p.getStalenessSnapshot()
+}
+
+func (p *StalenessTxnContextProvider) getStalenessSnapshot() (kv.Snapshot, error) {
+	snapshotTS := p.ts
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+		return txn.GetSnapshot(), nil
+	}
+
+	return p.sctx.GetSnapshotWithTS(snapshotTS), nil
 }

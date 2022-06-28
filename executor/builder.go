@@ -1575,6 +1575,14 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	return txnManager.GetStmtReadTS()
 }
 
+func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		return txnManager.GetForUpdateSnapshot()
+	}
+	return txnManager.GetReadSnapshot()
+}
+
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
 // and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
 // the current timestamp in RC isolation
@@ -4647,6 +4655,12 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 
+	snapshot, err := b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
@@ -4665,10 +4679,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		singlePart:       plan.SinglePart,
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
+		snapshot:         snapshot,
 	}
 
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
+		e.snapshot = cacheTableSnapshot{e.snapshot, b.getCacheTable(plan.TblInfo, snapshotTS)}
 	}
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {

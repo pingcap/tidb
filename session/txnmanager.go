@@ -17,6 +17,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -90,6 +91,20 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	})
 
 	return ts, nil
+}
+
+func (m *txnManager) GetReadSnapshot() (kv.Snapshot, error) {
+	if m.ctxProvider != nil {
+		return nil, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetReadSnapshot()
+}
+
+func (m *txnManager) GetForUpdateSnapshot() (kv.Snapshot, error) {
+	if m.ctxProvider != nil {
+		return nil, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetForUpdateSnapshot()
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {

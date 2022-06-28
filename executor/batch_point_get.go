@@ -78,9 +78,8 @@ type BatchPointGetExec struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot   kv.Snapshot
-	stats      *runtimeStatsWithSnapshot
-	cacheTable kv.MemBuffer
+	snapshot kv.Snapshot
+	stats    *runtimeStatsWithSnapshot
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -104,35 +103,21 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		return err
 	}
 	e.txn = txn
-	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == e.snapshotTS {
-		// We can safely reuse the transaction snapshot if snapshotTS is equal to forUpdateTS.
-		// The snapshot may contain cache that can reduce RPC call.
-		snapshot = txn.GetSnapshot()
-	} else {
-		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
-	}
-	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
-	}
-	if e.cacheTable != nil {
-		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
-	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
 	if replicaReadType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+		e.snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
-	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
-	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	e.snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
+	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {
@@ -141,26 +126,25 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	})
 
 	if replicaReadType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
-		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
 				Value: e.readReplicaScope,
 			},
 		})
 	}
-	setOptionForTopSQL(stmtCtx, snapshot)
-	var batchGetter kv.BatchGetter = snapshot
+	setOptionForTopSQL(stmtCtx, e.snapshot)
+	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
 		if e.lock {
-			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
 		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.ctx.GetSessionVars().EnablePointGetCache {
-			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, snapshot)
+			batchGetter = newCacheBatchGetter(e.ctx, e.tblInfo.ID, e.snapshot)
 		} else {
-			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot)
+			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
 		}
 	}
-	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
 }

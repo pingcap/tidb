@@ -241,3 +241,18 @@ func (p *SimpleTxnContextProvider) AdviseWarmup() error {
 func (p *SimpleTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
 }
+
+// GetReadSnapshot get snapshot with read ts
+// Node: As SimpleTxnContextProvider is not used anymore and will be removed, it's unnecessary
+// to implement this method for it.
+func (p *SimpleTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
+
+	return nil, nil
+}
+
+// GetForUpdateSnapshot get snapshot with for update ts
+// Node: As SimpleTxnContextProvider is not used anymore and will be removed, it's unnecessary
+// to implement this method for it.
+func (p *SimpleTxnContextProvider) GetForUpdateSnapshot() (kv.Snapshot, error) {
+	return nil, nil
+}
