@@ -619,7 +619,7 @@ const (
 func (n CompletionType) Restore(ctx *format.RestoreCtx) error {
 	switch n {
 	case CompletionTypeDefault:
-		break
+		return nil
 	case CompletionTypeChain:
 		ctx.WriteKeyWord(" AND CHAIN")
 	case CompletionTypeRelease:

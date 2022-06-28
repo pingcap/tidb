@@ -4706,7 +4706,6 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	}
 	switch {
 	case oldRandBits == newRandBits:
-		break
 	case oldRandBits < newRandBits:
 		addingAutoRandom := oldRandBits == 0
 		if addingAutoRandom {
@@ -6240,7 +6239,6 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 	case dbterror.ErrTooLongTableComment:
 		maxLen *= 2
 	case dbterror.ErrTooLongFieldComment, dbterror.ErrTooLongIndexComment, dbterror.ErrTooLongTablePartitionComment:
-		break
 	default:
 		// add more types of terror.Error if need
 	}
@@ -6304,7 +6302,6 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
 			case types.KindString, types.KindBytes:
-				break
 			default:
 				return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}

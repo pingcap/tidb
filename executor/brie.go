@@ -249,7 +249,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			return nil
 		}
 	default:
-		break
 	}
 
 	if tidbCfg.Store != "tikv" {

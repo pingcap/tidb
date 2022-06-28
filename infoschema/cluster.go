@@ -79,18 +79,17 @@ func isClusterTableByName(dbName, tableName string) bool {
 	dbName = strings.ToUpper(dbName)
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
-		break
+		tableName = strings.ToUpper(tableName)
+		for _, name := range memTableToClusterTables {
+			name = strings.ToUpper(name)
+			if name == tableName {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
-	tableName = strings.ToUpper(tableName)
-	for _, name := range memTableToClusterTables {
-		name = strings.ToUpper(name)
-		if name == tableName {
-			return true
-		}
-	}
-	return false
 }
 
 // AppendHostInfoToRows appends host info to the rows.
