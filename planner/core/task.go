@@ -1186,8 +1186,22 @@ func BuildFinalModeAggregation(
 				}
 			}
 
+<<<<<<< HEAD
 			finalAggFunc.HasDistinct = true
 			finalAggFunc.Mode = aggregation.CompleteMode
+=======
+			finalAggFunc.OrderByItems = byItems
+			finalAggFunc.HasDistinct = aggFunc.HasDistinct
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
+			if aggFunc.Mode == aggregation.CompleteMode {
+				finalAggFunc.Mode = aggregation.CompleteMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
+			}
+>>>>>>> d99b35822... *: only add default value for final aggregation to fix the aggregate push down (partition) union case (#35443)
 		} else {
 			if aggregation.NeedCount(finalAggFunc.Name) {
 				ft := types.NewFieldType(mysql.TypeLonglong)
@@ -1236,8 +1250,20 @@ func BuildFinalModeAggregation(
 				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
 			}
 
+<<<<<<< HEAD
 			finalAggFunc.Mode = aggregation.FinalMode
 			funcMap[aggFunc] = finalAggFunc
+=======
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
+			if aggFunc.Mode == aggregation.CompleteMode {
+				finalAggFunc.Mode = aggregation.FinalMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
+			}
+>>>>>>> d99b35822... *: only add default value for final aggregation to fix the aggregate push down (partition) union case (#35443)
 		}
 
 		finalAggFunc.Args = args
@@ -1248,7 +1274,81 @@ func BuildFinalModeAggregation(
 	return
 }
 
+<<<<<<< HEAD
 func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType) (partial, final PhysicalPlan) {
+=======
+// convertAvgForMPP converts avg(arg) to sum(arg)/(case when count(arg)=0 then 1 else count(arg) end), in detail:
+// 1.rewrite avg() in the final aggregation to count() and sum(), and reconstruct its schema.
+// 2.replace avg() with sum(arg)/(case when count(arg)=0 then 1 else count(arg) end) and reuse the original schema of the final aggregation.
+// If there is no avg, nothing is changed and return nil.
+func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
+	newSchema := expression.NewSchema()
+	newSchema.Keys = p.schema.Keys
+	newSchema.UniqueKeys = p.schema.UniqueKeys
+	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
+	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
+	// add agg functions schema
+	for i, aggFunc := range p.AggFuncs {
+		if aggFunc.Name == ast.AggFuncAvg {
+			// inset a count(column)
+			avgCount := aggFunc.Clone()
+			avgCount.Name = ast.AggFuncCount
+			err := avgCount.TypeInfer(p.ctx)
+			if err != nil { // must not happen
+				return nil
+			}
+			newAggFuncs = append(newAggFuncs, avgCount)
+			avgCountCol := &expression.Column{
+				UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  avgCount.RetTp,
+			}
+			newSchema.Append(avgCountCol)
+			// insert a sum(column)
+			avgSum := aggFunc.Clone()
+			avgSum.Name = ast.AggFuncSum
+			avgSum.TypeInfer4AvgSum(avgSum.RetTp)
+			newAggFuncs = append(newAggFuncs, avgSum)
+			avgSumCol := &expression.Column{
+				UniqueID: p.schema.Columns[i].UniqueID,
+				RetType:  avgSum.RetTp,
+			}
+			newSchema.Append(avgSumCol)
+			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
+			eq := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
+			caseWhen := expression.NewFunctionInternal(p.ctx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
+			divide := expression.NewFunctionInternal(p.ctx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
+			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
+			exprs = append(exprs, divide)
+		} else {
+			newAggFuncs = append(newAggFuncs, aggFunc)
+			newSchema.Append(p.schema.Columns[i])
+			exprs = append(exprs, p.schema.Columns[i])
+		}
+	}
+	// no avgs
+	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
+	if len(p.schema.Columns) == len(newSchema.Columns) && !p.IsFinalAgg() {
+		return nil
+	}
+	// add remaining columns to exprs
+	for i := len(p.AggFuncs); i < len(p.schema.Columns); i++ {
+		exprs = append(exprs, p.schema.Columns[i])
+	}
+	proj := PhysicalProjection{
+		Exprs:                exprs,
+		CalculateNoDelay:     false,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), p.stats, p.SelectBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
+	proj.SetSchema(p.schema)
+
+	p.AggFuncs = newAggFuncs
+	p.schema = newSchema
+
+	return proj
+}
+
+func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTask bool) (partial, final PhysicalPlan) {
+>>>>>>> d99b35822... *: only add default value for final aggregation to fix the aggregate push down (partition) union case (#35443)
 	// Check if this aggregation can push down.
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self

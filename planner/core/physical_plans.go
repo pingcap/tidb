@@ -500,8 +500,38 @@ type PhysicalUnionAll struct {
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
+<<<<<<< HEAD
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
+=======
+	AggFuncs         []*aggregation.AggFuncDesc
+	GroupByItems     []expression.Expression
+	MppRunMode       AggMppRunMode
+	MppPartitionCols []*property.MPPPartitionColumn
+}
+
+func (p *basePhysicalAgg) IsFinalAgg() bool {
+	if len(p.AggFuncs) > 0 {
+		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {
+	cloned := new(basePhysicalAgg)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	for _, aggDesc := range p.AggFuncs {
+		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
+	}
+	cloned.GroupByItems = cloneExprs(p.GroupByItems)
+	return cloned, nil
+>>>>>>> d99b35822... *: only add default value for final aggregation to fix the aggregate push down (partition) union case (#35443)
 }
 
 func (p *basePhysicalAgg) numDistinctFunc() (num int) {

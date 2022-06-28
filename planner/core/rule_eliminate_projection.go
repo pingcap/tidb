@@ -34,6 +34,30 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
+<<<<<<< HEAD
+=======
+	// This is due to the in-compatibility between TiFlash and TiDB:
+	// For TiDB, the output schema of final agg is all the aggregated functions and for
+	// TiFlash, the output schema of agg(TiFlash not aware of the aggregation mode) is
+	// aggregated functions + group by columns, so to make the things work, for final
+	// mode aggregation that need to be running in TiFlash, always add an extra Project
+	// the align the output schema. In the future, we can solve this in-compatibility by
+	// passing down the aggregation mode to TiFlash.
+	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
+			if physicalAgg.IsFinalAgg() {
+				return false
+			}
+		}
+	}
+	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
+			if physicalAgg.IsFinalAgg() {
+				return false
+			}
+		}
+	}
+>>>>>>> d99b35822... *: only add default value for final aggregation to fix the aggregate push down (partition) union case (#35443)
 	// If this projection is specially added for `DO`, we keep it.
 	if p.CalculateNoDelay {
 		return false
