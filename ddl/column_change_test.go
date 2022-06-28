@@ -417,7 +417,13 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	require.NoError(t, err)
 	require.Equal(t, historyJob.State, model.JobStateSynced)
 	if isAdd {
-		require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		if historyJob.Type == model.ActionMultiSchemaChange {
+			for _, sub := range historyJob.MultiSchemaInfo.SubJobs {
+				require.Equal(t, sub.SchemaState, model.StatePublic)
+			}
+		} else {
+			require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		}
 	} else {
 		require.Equal(t, historyJob.SchemaState, model.StateNone)
 	}
