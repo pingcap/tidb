@@ -758,6 +758,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statsReader, idx statistics.T
 		Info: index.Info, ErrorRate: index.ErrorRate, StatsVer: index.StatsVer, Flag: index.Flag,
 		PhysicalID:        idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
+	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
 	oldCache = h.statsCache.Load().(statsCache)
 	tbl, ok = oldCache.Get(idx.TableID)
