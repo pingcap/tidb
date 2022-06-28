@@ -82,6 +82,7 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
+	p.ctx = ctx
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	txnCtx.IsStaleness = true
 	txnCtx.InfoSchema = p.is
@@ -95,7 +96,7 @@ func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context) error {
 }
 
 // ActivateTxn activates the transaction.
-func (p *StalenessTxnContextProvider) ActivateTxn(_ *sessiontxn.EnterNewTxnType) (kv.Transaction, error) {
+func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -126,7 +127,8 @@ func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.Stmt
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry
-func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
+func (p *StalenessTxnContextProvider) OnStmtRetry(ctx context.Context) error {
+	p.ctx = ctx
 	return nil
 }
 

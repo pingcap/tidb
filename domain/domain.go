@@ -326,10 +326,10 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	if do.infoCache == nil {
-		// Return nil is for test purpose where domain is not well initialized for session context
-		return nil
-	}
+	//if do.infoCache == nil {
+	//	// Return nil is for test purpose where domain is not well initialized for session context
+	//	return nil
+	//}
 	return do.infoCache.GetLatest()
 }
 

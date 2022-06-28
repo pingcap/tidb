@@ -140,7 +140,7 @@ func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.AddStack(kv.ErrInvalidTxn)
 	}
-	return m.ctxProvider.ActivateTxn(nil)
+	return m.ctxProvider.ActivateTxn()
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry

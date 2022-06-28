@@ -52,6 +52,7 @@ type baseTxnContextProvider struct {
 	infoSchema    infoschema.InfoSchema
 	txn           kv.Transaction
 	isTxnPrepared bool
+	tp            *sessiontxn.EnterNewTxnType
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -80,6 +81,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
+	p.tp = &tp
 	p.ctx = ctx
 	// For normal `sessionctx.Context` the `GetDomainInfoSchema` should always return a non-nil value with type `infoschema.InfoSchema`
 	// However for some test cases we are using `mock.Context` which will return nil for this method,
@@ -104,7 +106,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		_, err = p.ActivateTxn(&tp)
+		_, err = p.ActivateTxn()
 	}
 
 	return err
@@ -118,7 +120,7 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	if _, err := p.ActivateTxn(nil); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -129,7 +131,7 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	if _, err := p.ActivateTxn(nil); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -160,14 +162,14 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
-	txn, err := p.ActivateTxn(nil)
+	txn, err := p.ActivateTxn()
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
 }
 
-func (p *baseTxnContextProvider) ActivateTxn(tp *sessiontxn.EnterNewTxnType) (kv.Transaction, error) {
+func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -189,7 +191,7 @@ func (p *baseTxnContextProvider) ActivateTxn(tp *sessiontxn.EnterNewTxnType) (kv
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 
-	if !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+	if *p.tp == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
 	}
 
@@ -212,7 +214,7 @@ func (p *baseTxnContextProvider) ActivateTxn(tp *sessiontxn.EnterNewTxnType) (kv
 	}
 
 	if p.onTxnActive != nil {
-		p.onTxnActive(txn, tp)
+		p.onTxnActive(txn, p.tp)
 	}
 
 	p.txn = txn
