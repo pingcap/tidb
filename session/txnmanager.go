@@ -17,11 +17,11 @@ package session
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -94,14 +94,14 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 }
 
 func (m *txnManager) GetReadSnapshot() (kv.Snapshot, error) {
-	if m.ctxProvider != nil {
+	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")
 	}
 	return m.ctxProvider.GetReadSnapshot()
 }
 
 func (m *txnManager) GetForUpdateSnapshot() (kv.Snapshot, error) {
-	if m.ctxProvider != nil {
+	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")
 	}
 	return m.ctxProvider.GetForUpdateSnapshot()
