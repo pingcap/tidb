@@ -118,7 +118,6 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 	resp = &coprocessor.Response{}
 	failpoint.Inject("mockCopCacheInUnistore", func(cacheVersion failpoint.Value) {
 		if req.IsCacheEnabled {
-			// fmt.Println("cacheVersion==", cacheVersion, "req cache version==", req.CacheIfMatchVersion)
 			if uint64(cacheVersion.(int)) == req.CacheIfMatchVersion {
 				failpoint.Return(&coprocessor.Response{IsCacheHit: true, CacheLastVersion: uint64(cacheVersion.(int))})
 			} else {

@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
-	// "encoding/hex"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -722,7 +721,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			cValue := worker.store.coprCache.Get(cKey)
 			copReq.IsCacheEnabled = true
 
-			// fmt.Println("ckey ==", hex.EncodeToString(cKey), "cvalue is==", cValue)
 			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
@@ -948,8 +946,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
 	resp.respTime = costTime
-	// fmt.Println("cache key=", hex.EncodeToString(cacheKey))
-	// fmt.Println("is cache hit ==", resp.pbResp.IsCacheHit)
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
@@ -969,17 +965,14 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			// When paging protocol is used, the response key range is part of the cache data.
 			resp.pbResp.Range = &coprocessor.KeyRange{
 				Start: start,
-				End: end,
+				End:   end,
 			}
 		}
 		resp.detail.CoprCacheHit = true
 	} else {
-		// fmt.Println("cache key=", hex.EncodeToString(cacheKey))
-		// fmt.Println("want to cache for it... ", resp.pbResp.CanBeCached, resp.pbResp.CacheLastVersion)
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
-				fmt.Println("check resp admission success --")
 				data := make([]byte, len(resp.pbResp.Data))
 				copy(data, resp.pbResp.Data)
 
@@ -990,7 +983,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 					RegionDataVersion: resp.pbResp.CacheLastVersion,
 				}
 				// When paging protocol is used, the response key range is part of the cache data.
-				if r := resp.pbResp.GetRange(); r != nil  {
+				if r := resp.pbResp.GetRange(); r != nil {
 					newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
 					newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
 				}

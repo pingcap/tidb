@@ -44,7 +44,7 @@ type coprCacheValue struct {
 
 	// Used in coprocessor paging protocol
 	PageStart []byte
-	PageEnd []byte
+	PageEnd   []byte
 }
 
 func (v *coprCacheValue) String() string {

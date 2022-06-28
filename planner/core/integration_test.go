@@ -5528,7 +5528,6 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 		Plan     []string
 		Warnings []string
 	}
-	fmt.Println("22222222222222222222222")
 	integrationSuiteData := core.GetIntegrationSuiteData()
 	integrationSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
@@ -5544,7 +5543,6 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 			output[i].Warnings = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
-		fmt.Println("!!! handle case ==", tt)
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warnings...))
 	}

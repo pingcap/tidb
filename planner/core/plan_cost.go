@@ -15,7 +15,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -147,14 +146,12 @@ func (p *PhysicalIndexLookUpReader) GetCost(costFlag uint64) (cost float64) {
 	idxCst := indexRows * sessVars.GetCPUFactor()
 	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
-	fmt.Println("expect cnt ==", p.expectedCnt, "threshold ==", paging.Threshold)
 	if ctx.GetSessionVars().EnablePaging && p.expectedCnt > 0 && p.expectedCnt <= paging.Threshold {
 		p.Paging = true
 		pagingCst := calcPagingCost(ctx, p.indexPlan, p.expectedCnt)
 		// prevent enlarging the cost because we take paging as a better plan,
 		// if the cost is enlarged, it'll be easier to go another plan.
 		idxCst = math.Min(idxCst, pagingCst)
-		fmt.Println("idxCst =", idxCst, " and paging cst =", pagingCst)
 	}
 	cost += idxCst
 	// Add cost of worker goroutines in index lookup.
