@@ -1008,6 +1008,15 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					physTblID := tblID
 					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
 						physTblID = row.GetInt64(physTblColIdx)
+						if physTblID == 0 {
+							// select * from t1 left join t2 on t1.c = t2.c for update
+							// The join right side might be added NULL in left join
+							// In that case, physTblID is 0, so skip adding the lock.
+							//
+							// Note, we can't distinguish whether it's the left join case,
+							// or a bug that TiKV return without correct physical ID column.
+							continue
+						}
 					}
 					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
