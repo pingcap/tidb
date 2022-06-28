@@ -6430,3 +6430,97 @@ func TestIssue33042(t *testing.T) {
 		),
 	)
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue29663(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("insert into t1 values(1, 1), (1,2),(2,1),(2,2)")
+	tk.MustExec("insert into t2 values(1, 3), (1,4),(2,5),(2,6)")
+
+	tk.MustQuery("explain select one.a from t1 one order by (select two.d from t2 two where two.c = one.b)").Check(testkit.Rows(
+		"Projection_16 10000.00 root  test.t1.a",
+		"└─Sort_17 10000.00 root  test.t2.d",
+		"  └─Apply_20 10000.00 root  CARTESIAN left outer join",
+		"    ├─TableReader_22(Build) 10000.00 root  data:TableFullScan_21",
+		"    │ └─TableFullScan_21 10000.00 cop[tikv] table:one keep order:false, stats:pseudo",
+		"    └─MaxOneRow_23(Probe) 1.00 root  ",
+		"      └─TableReader_26 2.00 root  data:Selection_25",
+		"        └─Selection_25 2.00 cop[tikv]  eq(test.t2.c, test.t1.b)",
+		"          └─TableFullScan_24 2000.00 cop[tikv] table:two keep order:false, stats:pseudo"))
+}
+
+func TestIssue31609(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("explain select rank() over (partition by table_name) from information_schema.tables").Check(testkit.Rows(
+		"Projection_7 10000.00 root  Column#27",
+		"└─Shuffle_11 10000.00 root  execution info: concurrency:5, data sources:[MemTableScan_9]",
+		"  └─Window_8 10000.00 root  rank()->Column#27 over(partition by Column#3)",
+		"    └─Sort_10 10000.00 root  Column#3",
+		"      └─MemTableScan_9 10000.00 root table:TABLES ",
+	))
+}
+
+func TestDecimalOverflow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table deci (a decimal(65,30),b decimal(65,0))")
+	tk.MustExec("insert into deci values (1234567890.123456789012345678901234567890,987654321098765432109876543210987654321098765432109876543210)")
+	tk.MustQuery("select a from deci union ALL select b from deci;").Sort().Check(testkit.Rows("1234567890.123456789012345678901234567890", "99999999999999999999999999999999999.999999999999999999999999999999"))
+}
+
+func TestIssue35083(t *testing.T) {
+	defer func() {
+		variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ProjectionPushDown = true
+	})
+	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a varchar(100), b int)")
+	tk.MustQuery("select @@tidb_opt_projection_push_down").Check(testkit.Rows("1"))
+	tk.MustQuery("explain format = 'brief' select cast(a as datetime) from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:Projection",
+		"└─Projection 10000.00 cop[tikv]  cast(test.t1.a, datetime BINARY)->Column#4",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+
+func TestIssue25813(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec("insert into t values('{\"id\": \"ish\"}');")
+	tk.MustQuery("select t2.a from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows("{\"id\": \"ish\"}"))
+
+	tk.MustQuery("explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows(
+		"Selection 8000.00 root  eq(json_extract(test.t.a, \"$.id\"), cast(\"ish\", json BINARY))",
+		"└─HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
+		"  ├─TableReader(Build) 8000.00 root  data:Selection",
+		"  │ └─Selection 8000.00 cop[tikv]  not(isnull(cast(test.t.a, var_string(4294967295))))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+>>>>>>> 1f40fc72a... expression: use cloned RetType at `evaluateExprWithNull` when it may be changed. (#35759)
