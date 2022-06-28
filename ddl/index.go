@@ -615,9 +615,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo,
 	elements []*meta.Element, rh *reorgHandler) (reorg bool, ver int64, err error) {
-	// If reorg task started already, now be here for restore previous execution.
-	// Also when index SubState is StateMergeSync or StateMerge, means the lightning
-	// backfill process finished, no need to do reorg task restore checking.
+	var restoreReorg bool = false
+	// This is used to restore reorg task if it interrupt during backfill state and TiDB owner not change or restart.
 	if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
 		// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consist.
 		if !canRestoreReorgTask(job, indexInfo.ID) {
@@ -626,14 +625,18 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 				return false, ver, errors.Trace(err)
 			}
 		}
-	} else if !isLightningEnabled(job.ID) && !needRestoreJob(job.ID) && indexInfo.SubState != model.StateNone {
+	} else if !isLightningEnabled(job.ID) && !needRestoreJob(job.ID) && indexInfo.SubState == model.StateBackFill {
+		// Be here, means the DDL Owner changed or restarted, the reorg state is re-entered.	
 		job.SnapshotVer = 0
+		restoreReorg = true
 		reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 	}
 
-	// Check and set up lightning Backend. Whether use lightning add index will depends on
-	// TiDBFastDDL sysvars is true or false at this time. Also if IsLightningEnabled mean
-	// restore lightning reorg task, no need to init the lightning environment another time.
+	// Check and set up lightning Backend. 
+	// Whether use lightning add index will depends on
+	// 1) TiDBFastDDL sysvars is true or false at this time and index's substate equal to stateNone.
+	// This means it start to build up lightning backfill environment. 
+	// 2) Restore lightning reorg task，here means DDL owner changed or restarted, need rebuild lightning environment.
 	if !isLightningEnabled(job.ID) {
 		// If it is a empty table, do not need start lightning backfiller.
 		if reorgInfo.StartKey == nil && reorgInfo.EndKey == nil {
@@ -641,7 +644,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 		// Check if the reorg task is re-entry task, If TiDB is restarted, then currently
 		// reorg task should be restart.
-		if IsAllowFastDDL(w) && indexInfo.SubState == model.StateNone {
+		if (IsAllowFastDDL(w) && indexInfo.SubState == model.StateNone) || restoreReorg {
 			err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
 			if err == nil {
 				setLightningEnabled(job.ID, true)
@@ -649,6 +652,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		}
 	}
 
+	// If enter this backfill flow，then need finished it。
 	if isLightningEnabled(job.ID) || indexInfo.SubState != model.StateNone {
 		switch indexInfo.SubState {
 		case model.StateNone:
@@ -1193,8 +1197,8 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo) *addIndexWorker {
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, newBF bool) *addIndexWorker {
+	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo, newBF)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, sessCtx)
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
@@ -1480,12 +1484,14 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			if idxRecord.skip {
 				continue
 			}
-
-			// We need to add this lock to make sure pessimistic transaction can realize this operation.
-			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-			if err != nil {
-				return errors.Trace(err)
+            
+			if !w.isNewBF {
+				// We need to add this lock to make sure pessimistic transaction can realize this operation.
+				// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
+				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 
 			// Create the index.
@@ -1871,7 +1877,7 @@ func (w *backFillIndexWorker) BackfillIncrementIndex() error {
 }
 
 func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask, taskCtx *backfillTaskContext) (errInTxn error) {
-	logutil.BgLogger().Info("backfill", zap.ByteString("startKey", taskRange.startKey), zap.ByteString("endKey", taskRange.endKey))
+	logutil.BgLogger().Info("Merge temp index", zap.ByteString("startKey", taskRange.startKey), zap.ByteString("endKey", taskRange.endKey))
 	oprStartTime := time.Now()
 	nextKey := taskRange.endKey
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
@@ -1957,7 +1963,7 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask, tas
 
 		return nil
 	})
-	logSlowOperations(time.Since(oprStartTime), "AddIndexBackfillDataInTxn", 3000)
+	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
 
 	return
 }

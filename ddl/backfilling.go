@@ -154,6 +154,8 @@ type backfillWorker struct {
 	table     table.Table
 	closed    bool
 	priority  int
+	// Mark if it use new backfill flow.
+	isNewBF   bool
 }
 
 func newBackfillWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo) *backfillWorker {
@@ -651,11 +653,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			workerCnt = int32(litWorkerCnt)
 			setNeedRestoreJob(job.ID, true)
 		} else {
-			// Be here, means Lightning environment can not be set up
-			// ToDo：set up original backfill to new flow in the future.
-			variable.FastDDL.Store(false)
 			logutil.BgLogger().Error("Lighting Create Engine failed.", zap.Error(err))
-			return errors.Trace(err)
 		}
     }
 	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
@@ -722,9 +720,14 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 						go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 					}
 				} else {
-					idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo)
+					var newBackFlow bool = false
+					if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
+						newBackFlow = true
+					}
+					idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo, newBackFlow)
 					idxWorker.priority = job.Priority
 					backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+					idxWorker.isNewBF = newBackFlow
 					go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 				}
 			case typeUpdateColumnWorker:

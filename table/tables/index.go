@@ -41,6 +41,8 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+	// Mark this is in backfill process.
+	Isbackfill             bool
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -55,7 +57,7 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, newBF... bool) table.Index {
 	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
 	var prefix kv.Key
 	if indexInfo.Global {
@@ -70,6 +72,7 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		tblInfo:  tblInfo,
 		prefix:   prefix,
 		phyTblID: physicalID,
+		Isbackfill: newBF[0],
 	}
 	return index
 }
@@ -109,7 +112,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 
 	var tempKey []byte
-	if c.idxInfo.State == model.StateWriteReorganization {
+	if c.idxInfo.State == model.StateWriteReorganization && !c.Isbackfill {
 		switch c.idxInfo.SubState {
 		case model.StateNone:
 			// do nothing.

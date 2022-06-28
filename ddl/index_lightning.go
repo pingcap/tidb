@@ -50,6 +50,7 @@ func IsAllowFastDDL(w *worker) bool {
 	}
 }
 
+// Check if PiTR is enable in cluster.
 func isPiTREnable(w *worker) bool {
 	var (
 		ctx sessionctx.Context
