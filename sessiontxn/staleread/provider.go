@@ -28,9 +28,11 @@ import (
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
 type StalenessTxnContextProvider struct {
+	ctx  context.Context
 	sctx sessionctx.Context
 	is   infoschema.InfoSchema
 	ts   uint64
+	txn  kv.Transaction
 }
 
 // NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider
@@ -87,13 +89,35 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
+func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context) error {
+	p.ctx = ctx
 	return nil
 }
 
 // ActivateTxn activates the transaction.
 func (p *StalenessTxnContextProvider) ActivateTxn(_ *sessiontxn.EnterNewTxnType) (kv.Transaction, error) {
-	return nil, nil
+	if p.txn != nil {
+		return p.txn, nil
+	}
+
+	err := p.OnInitialize(p.ctx, sessiontxn.EnterNewTxnDefault)
+	if err != nil {
+		return nil, err
+	}
+
+	txnFuture := p.sctx.GetPreparedTxnFuture()
+	if txnFuture == nil {
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
+	}
+
+	txn, err := txnFuture.Wait(p.ctx, p.sctx)
+	if err != nil {
+		return nil, err
+	}
+
+	p.txn = txn
+
+	return p.txn, nil
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
