@@ -67,12 +67,16 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		// Otherwise, start with physicalID.
 		prefix = tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID)
 	}
+	var newBackfillFlow bool = false
+	if len(newBF)>0 {
+		newBackfillFlow = true
+	}
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		prefix:   prefix,
 		phyTblID: physicalID,
-		Isbackfill: newBF[0],
+		Isbackfill: newBackfillFlow,
 	}
 	return index
 }
