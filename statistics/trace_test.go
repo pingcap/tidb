@@ -107,7 +107,7 @@ func TestTraceCEPartitionTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, d varchar(10), index idx(a, b))")
+	tk.MustExec("create table t(a int, b int, d varchar(10), index idx(a, b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN MAXVALUE);")
 	tk.MustExec(`insert into t values(1, 1, "aaa"),
 		(1, 1, "bbb"),
 		(1, 2, "ccc"),
