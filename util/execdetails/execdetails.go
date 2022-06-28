@@ -518,6 +518,8 @@ func (e *RootRuntimeStats) MergeGroupStats() (res []RuntimeStats) {
 	for _, rss := range e.groupRss {
 		if len(rss) == 0 {
 			continue
+		} else if len(rss) == 1 {
+			res = append(res, rss[0])
 		}
 		rs := rss[0].Clone()
 		for i := 1; i < len(rss); i++ {
@@ -539,9 +541,15 @@ func (e *RootRuntimeStats) MergeStats() (basic *BasicRuntimeStats, groups []Runt
 func (e *RootRuntimeStats) String() string {
 	basic, groups := e.MergeStats()
 	strs := make([]string, 0, len(groups)+1)
-	strs = append(strs, basic.String())
+	basicStr := basic.String()
+	if len(basicStr) > 0 {
+		strs = append(strs, basic.String())
+	}
 	for _, group := range groups {
-		strs = append(strs, group.String())
+		str := group.String()
+		if len(str) > 0 {
+			strs = append(strs, group.String())
+		}
 	}
 	return strings.Join(strs, ", ")
 }

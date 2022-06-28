@@ -506,6 +506,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		backoffSleep:       make(map[string]time.Duration, len(s.backoffSleep)),
 		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency: s.distSQLConcurrency,
+		CoprCacheHitNum:    s.CoprCacheHitNum,
 	}
 	newRs.copRespTime = append(newRs.copRespTime, s.copRespTime...)
 	newRs.procKeys = append(newRs.procKeys, s.procKeys...)
