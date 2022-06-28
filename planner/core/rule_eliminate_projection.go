@@ -46,14 +46,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
