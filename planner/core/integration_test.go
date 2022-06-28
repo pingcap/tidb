@@ -177,9 +177,6 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
 	tk.MustExec("analyze table tbl")
 
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
-
 	var input []string
 	var output []struct {
 		SQL  string
@@ -3685,9 +3682,6 @@ func TestExtendedStatsSwitch(t *testing.T) {
 		"1.000000 1",
 	))
 
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
-
 	// Estimated index scan count is 4 using extended stats.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
 		"Limit 1.00 root  offset:0, count:1",
@@ -4557,9 +4551,6 @@ func TestLimitIndexLookUpKeepOrder(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
 
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
-
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4757,9 +4748,6 @@ func TestMultiColMaxOneRow(t *testing.T) {
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5533,8 +5521,6 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5542,6 +5528,7 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 		Plan     []string
 		Warnings []string
 	}
+	fmt.Println("22222222222222222222222")
 	integrationSuiteData := core.GetIntegrationSuiteData()
 	integrationSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
@@ -5557,6 +5544,7 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 			output[i].Warnings = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
+		fmt.Println("!!! handle case ==", tt)
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warnings...))
 	}
@@ -5573,9 +5561,6 @@ func TestIssue27083(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
