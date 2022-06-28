@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -839,7 +840,6 @@ func RunStreamStatus(
 func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	console := glue.GetConsole(g)
 	em := color.New(color.Bold).SprintFunc()
-	done := color.New(color.FgGreen).SprintFunc()
 	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
 	formatTS := func(ts uint64) string {
 		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
@@ -873,7 +873,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return err
 		}
 	}
-
+	readMetaDone := console.StartTask("Reading Metadata... ")
 	metas := restore.StreamMetadataSet{
 		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
@@ -885,20 +885,17 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err := metas.LoadFrom(ctx, storage); err != nil {
 		return err
 	}
+	readMetaDone()
 
 	fileCount := 0
-	minTS := oracle.GoTimeToTS(time.Now())
 	shiftUntilTS := ShiftTS(cfg.Until)
 	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
-		if d.MaxTs < minTS {
-			minTS = d.MaxTs
-		}
 		fileCount++
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
 		em(fileCount),
-		em(formatTS(minTS)),
+		em(formatTS(cfg.Until)),
 	)
 	if !cfg.SkipPrompt && !console.PromptBool(warn("Sure? ")) {
 		return nil
@@ -906,23 +903,30 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	removed := metas.RemoveDataBefore(shiftUntilTS)
 
-	console.Print("Removing metadata... ")
+	removeMetaDone := console.StartTask("Removing metadata... ")
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
 			return err
 		}
 	}
-	console.Println(done("DONE"))
-	console.Print("Clearing data files... ")
+	removeMetaDone()
+	clearDataFileDone := console.StartTask("Clearing data files... ")
+	worker := utils.NewWorkerPool(128, "delete files")
+	wg := new(sync.WaitGroup)
 	for _, f := range removed {
 		if !cfg.DryRun {
-			if err := storage.DeleteFile(ctx, f.Path); err != nil {
-				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-				console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
-			}
+			wg.Add(1)
+			worker.Apply(func() {
+				defer wg.Done()
+				if err := storage.DeleteFile(ctx, f.Path); err != nil {
+					log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
+					console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
+				}
+			})
 		}
 	}
-	console.Println(done("DONE"))
+	wg.Wait()
+	clearDataFileDone()
 	return nil
 }
 
