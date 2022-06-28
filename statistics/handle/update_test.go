@@ -504,8 +504,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
 		c.Assert(ok, IsTrue)
 		c.Assert(hg.NDV, Equals, int64(3))
-		c.Assert(hg.Len(), Equals, 0)
-		c.Assert(hg.TopN.Num(), Equals, 3)
+		c.Assert(hg.Len(), Equals, 3)
 	})
 }
 
