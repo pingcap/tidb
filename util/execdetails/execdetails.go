@@ -520,6 +520,7 @@ func (e *RootRuntimeStats) MergeGroupStats() (res []RuntimeStats) {
 			continue
 		} else if len(rss) == 1 {
 			res = append(res, rss[0])
+			continue
 		}
 		rs := rss[0].Clone()
 		for i := 1; i < len(rss); i++ {
