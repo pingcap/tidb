@@ -796,7 +796,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
