@@ -684,6 +684,9 @@ func TestSettersandGetters(t *testing.T) {
 func TestSkipInitIsUsed(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		if sv.skipInit {
+			// skipInit only ever applied to session scope, so if anyone is setting it on
+			// a variable without session, that doesn't make sense.
+			require.True(t, sv.HasSessionScope(), fmt.Sprintf("skipInit has no effect on a variable without session scope: %s", sv.Name))
 			// Many of these variables might allow skipInit to be removed,
 			// they need to be checked first. The purpose of this test is to make
 			// sure we don't introduce any new variables with skipInit, which seems
@@ -724,19 +727,6 @@ func TestSkipInitIsUsed(t *testing.T) {
 				RandSeed1,
 				RandSeed2,
 				TiDBLastDDLInfo,
-				TiDBGeneralLog,
-				TiDBSlowLogThreshold,
-				TiDBRecordPlanInSlowLog,
-				TiDBEnableSlowLog,
-				TiDBCheckMb4ValueInUTF8,
-				TiDBPProfSQLCPU,
-				TiDBDDLSlowOprThreshold,
-				TiDBForcePriority,
-				TiDBMemoryUsageAlarmRatio,
-				TiDBEnableCollectExecutionInfo,
-				TiDBPersistAnalyzeOptions,
-				TiDBEnableColumnTracking,
-				TiDBStatsLoadPseudoTimeout,
 				SQLLogBin,
 				ForeignKeyChecks,
 				CollationDatabase,
