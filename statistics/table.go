@@ -351,42 +351,44 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
-type tableColumnID struct {
-	TableID  int64
-	ColumnID int64
+// TableItemID indicates column/index in neededStatsMap
+type TableItemID struct {
+	TableID int64
+	ID      int64
+	IsIndex bool
 }
 
-type neededColumnMap struct {
-	m    sync.RWMutex
-	cols map[tableColumnID]struct{}
+type neededStatsMap struct {
+	m     sync.RWMutex
+	items map[TableItemID]struct{}
 }
 
-func (n *neededColumnMap) AllCols() []tableColumnID {
+func (n *neededStatsMap) AllItems() []TableItemID {
 	n.m.RLock()
-	keys := make([]tableColumnID, 0, len(n.cols))
-	for key := range n.cols {
+	keys := make([]TableItemID, 0, len(n.items))
+	for key := range n.items {
 		keys = append(keys, key)
 	}
 	n.m.RUnlock()
 	return keys
 }
 
-func (n *neededColumnMap) insert(col tableColumnID) {
+func (n *neededStatsMap) insert(col TableItemID) {
 	n.m.Lock()
-	n.cols[col] = struct{}{}
+	n.items[col] = struct{}{}
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Delete(col tableColumnID) {
+func (n *neededStatsMap) Delete(col TableItemID) {
 	n.m.Lock()
-	delete(n.cols, col)
+	delete(n.items, col)
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Length() int {
+func (n *neededStatsMap) Length() int {
 	n.m.RLock()
 	defer n.m.RUnlock()
-	return len(n.cols)
+	return len(n.items)
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
@@ -898,8 +900,9 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			t.Indices[idx.ID] = &Index{
-				Info:      idx,
-				Histogram: *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
+				PhysicalID: fakePhysicalID,
+				Info:       idx,
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
 		}
 	}
 	return t
