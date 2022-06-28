@@ -280,7 +280,10 @@ func (p *PhysicalTableScan) AccessObject() AccessObject {
 
 // AccessObject implements dataAccesser interface.
 func (p *PhysicalMemTable) AccessObject() AccessObject {
-	return &ScanAccessObject{Table: p.Table.Name.O}
+	return &ScanAccessObject{
+		Database: p.DBName.O,
+		Table:    p.Table.Name.O,
+	}
 }
 
 // AccessObject implements dataAccesser interface.
