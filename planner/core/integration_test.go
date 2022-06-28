@@ -4601,6 +4601,31 @@ func TestDecorrelateInnerJoinInSubquery(t *testing.T) {
 	}
 }
 
+func TestDecorrelateLimitInSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test")
+	tk.MustExec("create table test(id int, value int)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestIndexMergeTableFilter(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

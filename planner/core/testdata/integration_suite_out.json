@@ -1539,6 +1539,37 @@
     ]
   },
   {
+    "Name": "TestDecorrelateLimitInSubquery",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─HashJoin 7992.00 root  semi join, equal:[eq(test.test.id, test.test.id)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─HashJoin 7992.00 root  semi join, equal:[eq(test.test.id, test.test.id)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMultiColMaxOneRow",
     "Cases": [
       {
