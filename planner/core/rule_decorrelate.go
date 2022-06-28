@@ -190,17 +190,17 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			appendRemoveProjTraceStep(apply, proj, opt)
 			return s.optimize(ctx, p, opt)
 		} else if li, ok := innerPlan.(*LogicalLimit); ok {
-			//If offset is not zero, subquery will become always true or always false. This scenario optimizer has internal optimizations.
-			//If apply is not SemiJoin, innerplan which is limit will expand the join result.
+			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
+			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
+			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
 			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
-				// TODO: Actually, it can be optimized. We need to keep the APPLY can be decorrelated.
 				goto NoOptimize
 			}
-			//If subquery has some filter condition, we will not optimize limit.
+			// If subquery has some filter condition, we will not optimize limit.
 			if len(apply.LeftConditions) > 0 || len(apply.RightConditions) > 0 || len(apply.OtherConditions) > 0 || len(apply.EqualConditions) > 0 {
-				// TODO: Actually, it can be optimized. We need to keep the APPLY can be decorrelated.
 				goto NoOptimize
 			}
+			// If offset is not zero, subquery will become always true or always false. This scenario optimizer has internal optimizations.
 			if li.Offset == 0 {
 				innerPlan = li.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
