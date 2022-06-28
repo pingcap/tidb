@@ -1483,7 +1483,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		}
 		return nil
 	}
-	// executing kill command
+
 	sm := e.ctx.GetSessionManager()
 	if sm == nil {
 		return nil

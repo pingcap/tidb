@@ -56,7 +56,6 @@ type BatchPointGetExec struct {
 	singlePart       bool
 	partTblID        int64
 	idxVals          [][]types.Datum
-	startTS          uint64
 	readReplicaScope string
 	isStaleness      bool
 	snapshotTS       uint64
@@ -97,13 +96,9 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-	e.snapshotTS = e.startTS
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	stmtCtx := sessVars.StmtCtx
-	if e.lock {
-		e.snapshotTS = txnCtx.GetForUpdateTS()
-	}
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
@@ -111,8 +106,8 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.txn = txn
 	var snapshot kv.Snapshot
 	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == e.snapshotTS {
-		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
+		// We can safely reuse the transaction snapshot if snapshotTS is equal to forUpdateTS.
+		// The snapshot may contain cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
@@ -540,13 +535,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 }
 
 // LockKeys locks the keys for pessimistic transaction.
-func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
-	txnCtx := seCtx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime, len(keys))
+func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
+	if err != nil {
+		return err
+	}
 	if txnCtx.IsPessimistic {
 		lctx.InitReturnValues(len(keys))
 	}
-	err := doLockKeys(ctx, seCtx, lctx, keys...)
+	err = doLockKeys(ctx, sctx, lctx, keys...)
 	if err != nil {
 		return err
 	}

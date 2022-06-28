@@ -143,6 +143,7 @@ go_test(
         "integration_test.go",
         "main_test.go",
         "modify_column_test.go",
+        "multi_schema_change_test.go",
         "options_test.go",
         "partition_test.go",
         "placement_policy_ddl_test.go",
