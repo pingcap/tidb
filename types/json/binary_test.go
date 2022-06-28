@@ -61,7 +61,16 @@ func TestBinaryJSONExtract(t *testing.T) {
 		{bj1, []string{"$.*[0]"}, mustParseBinaryFromString(t, `["world", 1, true, "d"]`), true, nil},
 		{bj1, []string{`$.a[*]."aa"`}, mustParseBinaryFromString(t, `["bb", "cc"]`), true, nil},
 		{bj1, []string{`$."\"hello\""`}, mustParseBinaryFromString(t, `"world"`), true, nil},
+<<<<<<< HEAD
 		{bj1, []string{`$**[1]`}, mustParseBinaryFromString(t, `"2"`), true, nil},
+=======
+		{bj1, []string{`$**[1]`}, mustParseBinaryFromString(t, `["2"]`), true, nil},
+		{bj3, []string{`$.properties.$type`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj4, []string{`$.properties.$type$type`}, mustParseBinaryFromString(t, `{"$a$a" : "TiDB"}`), true, nil},
+		{bj4, []string{`$.properties.$type$type.$a$a`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj5, []string{`$.properties.$type.$a.$b`}, mustParseBinaryFromString(t, `"TiDB"`), true, nil},
+		{bj5, []string{`$.properties.$type.$a.*[0]`}, mustParseBinaryFromString(t, `["TiDB"]`), true, nil},
+>>>>>>> ed5e63a7a... types: fix incompatible implementation of jsonpath extraction (#35320)
 
 		// test extract with multi path expressions.
 		{bj1, []string{"$.a", "$[5]"}, mustParseBinaryFromString(t, `[[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]]`), true, nil},
