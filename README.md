@@ -62,10 +62,6 @@ The [community repository](https://github.com/pingcap/community) hosts all infor
 
 Contributions are welcomed and greatly appreciated. All the contributors are welcomed to claim your reward by filing this [form](https://forms.pingcap.com/f/tidb-contribution-swag). See [Contribution to TiDB](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/introduction.html) for details on typical contribution workflows. For more contributing information, click on the contributor icon above.
 
-## Adopters
-
-View the current list of in-production TiDB adopters [here](https://docs.pingcap.com/tidb/stable/adopters).
-
 ## Case studies
 
 - [English](https://pingcap.com/case-studies)
