@@ -86,10 +86,9 @@ func isClusterTableByName(dbName, tableName string) bool {
 				return true
 			}
 		}
-		return false
 	default:
-		return false
 	}
+	return false
 }
 
 // AppendHostInfoToRows appends host info to the rows.
