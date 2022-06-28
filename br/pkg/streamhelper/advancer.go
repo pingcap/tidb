@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -34,117 +34,80 @@ type CheckpointAdvancer struct {
 
 	cfg config.Config
 
-	cache Checkpoints
+	cache CheckpointsCache
 
 	state          advancerState
-	fullScanTick   int
 	lastCheckpoint uint64
 }
 
-type advancerState int
+type advancerState interface{}
 
-const (
-	stateFullScan advancerState = iota
-	stateUpdateSmallTree
-)
+type fullScan struct {
+	fullScanTick int
+}
 
-type getCheckpointInRangeFunc func(ctx context.Context, start, end []byte) (uint64, []kv.KeyRange, error)
+type updateSmallTree struct {
+	consistencyCheckTick int
+}
 
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
 		env:   env,
 		cfg:   config.Default(),
 		cache: NewCheckpoints(),
+		state: &fullScan{},
 	}
 }
 
+func (c *CheckpointAdvancer) disableCache() {
+	c.cache = NoOPCheckpointCache{}
+	c.state = fullScan{}
+}
+
+func (c *CheckpointAdvancer) enableCache() {
+	c.cache = NewCheckpoints()
+	c.state = fullScan{}
+}
+
+// UpdateConfig updates the config for the advancer.
+// Note this should be called before starting the loop, because there isn't locks,
+// TODO: support updating config when advancing starts working. (Maybe by applying changes at begin of ticking)
 func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
+	needRefreshCache := newConf.AdvancingByCache != c.cfg.AdvancingByCache
 	c.cfg = newConf
+	if needRefreshCache {
+		if c.cfg.AdvancingByCache {
+			c.enableCache()
+		} else {
+			c.disableCache()
+		}
+	}
 }
 
 func (c *CheckpointAdvancer) UpdateConfigWith(f func(*config.Config)) {
-	f(&c.cfg)
-}
-
-// getCheckpointsOfStore calculates the checkpoint of some store: by requesting the regions provided.
-func (c *CheckpointAdvancer) getCheckpointsOfStore(ctx context.Context, store uint64, regions []RegionWithLeader) ([]*logbackup.RegionCheckpoint, error) {
-	defer c.recordTimeCost("get checkpoints of store", zap.Int("batch", len(regions)), zap.Uint64("store", store))()
-	cli, err := c.env.GetLogBackupClient(ctx, store)
-	if err != nil {
-		return nil, errors.Annotatef(err, "during getting log backup client for store %d", store)
-	}
-	req := logbackup.GetLastFlushTSOfRegionRequest{}
-	for _, r := range regions {
-		req.Regions = append(req.Regions, &logbackup.RegionIdentity{
-			Id:           r.Region.GetId(),
-			EpochVersion: r.Region.GetRegionEpoch().GetVersion(),
-		})
-	}
-	resp, err := cli.GetLastFlushTSOfRegion(ctx, &req)
-	if err != nil {
-		return nil, errors.Annotatef(err, "request = %v", req)
-	}
-	return resp.Checkpoints, nil
+	cfg := c.cfg
+	f(&cfg)
+	c.UpdateConfig(cfg)
 }
 
 func (c *CheckpointAdvancer) Config() config.Config {
 	return c.cfg
 }
 
-func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte) (uint64, []kv.KeyRange, error) {
+func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte, collector *clusterCollector) error {
 	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
-	cp := uint64(math.MaxUint64)
 	iter := IterateRegion(c.env, start, end)
-	rm := map[uint64]RegionWithLeader{}
-	failed := []*logbackup.RegionCheckpoint{}
 	for !iter.Done() {
 		rs, err := iter.Next(ctx)
 		if err != nil {
-			return 0, nil, err
+			return err
 		}
 		log.Debug("scan region", zap.Int("len", len(rs)))
-		partitioned := map[uint64][]RegionWithLeader{}
 		for _, r := range rs {
-			partitioned[r.Leader.GetStoreId()] = append(partitioned[r.Leader.GetStoreId()], r)
-		}
-		appendRegionMap(rs, rm)
-		for k, v := range partitioned {
-			if k == 0 {
-				log.Warn("there is regions without leader", zap.Int("len", len(v)))
-				for _, region := range v {
-					failed = append(failed, &logbackup.RegionCheckpoint{
-						Region: &logbackup.RegionIdentity{
-							Id:           region.Region.GetId(),
-							EpochVersion: region.Region.GetRegionEpoch().GetVersion(),
-						},
-						Checkpoint: 0,
-					})
-				}
-				continue
-			}
-
-			checkpoints, err := c.getCheckpointsOfStore(ctx, k, v)
-			if err != nil {
-				return 0, nil, err
-			}
-			for _, checkpoint := range checkpoints {
-				if checkpoint.Err != nil {
-					log.Debug("failed to get region checkpoint", zap.Stringer("err", checkpoint.Err))
-					failed = append(failed, checkpoint)
-				} else {
-					log.Debug("get checkpoint of region", zap.Stringer("region", checkpoint.Region), zap.Uint64("checkpoint", checkpoint.Checkpoint))
-					c.cache.InsertRegion(checkpoint.Checkpoint, rm[checkpoint.Region.Id])
-					if checkpoint.Checkpoint < cp {
-						cp = checkpoint.Checkpoint
-					}
-				}
-			}
+			collector.collectRegion(r)
 		}
 	}
-	return cp, CollectFailureRange(len(failed), func(i int) kv.KeyRange {
-		meta := rm[failed[i].Region.Id].Region
-		return kv.KeyRange{StartKey: meta.StartKey, EndKey: meta.EndKey}
-	}), nil
+	return nil
 }
 
 func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field) func() {
@@ -160,50 +123,33 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 
 func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst *RangesSharesTS) error {
 	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
-	ranges := CollectFailureRange(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
-	failures := make(chan kv.KeyRange, 1024)
+	ranges := CollpaseRanges(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
 	workers := utils.NewWorkerPool(4, "subranges")
 	eg, cx := errgroup.WithContext(ctx)
-	ts := uint64(math.MaxUint64)
+	collector := NewClusterCollector(ctx, c.env)
+	collector.setOnSuccessHook(c.cache.InsertRange)
 	for _, r := range ranges {
+		r := r
 		workers.ApplyOnErrorGroup(eg, func() error {
-			defer c.recordTimeCost("get checkpoints in range", zap.Uint64("checkpoint", rst.TS))()
-			rts, inconsistent, err := c.GetCheckpointInRange(cx, r.StartKey, r.EndKey)
-			if err != nil {
-				if err != context.Canceled {
-					c.cache.insertDirect(*rst)
-				}
-				return err
-			}
-			if rts < ts {
-				ts = rts
-			}
-			for _, i := range inconsistent {
-				failures <- i
-			}
-			return nil
+			defer c.recordTimeCost("get regions in range", zap.Uint64("checkpoint", rst.TS))()
+			return c.GetCheckpointInRange(cx, r.StartKey, r.EndKey, collector)
 		})
 	}
 	err := eg.Wait()
 	if err != nil {
+		c.cache.InsertRanges(*rst)
 		return err
 	}
-	fr := make([]kv.KeyRange, 0, len(failures))
-collect:
-	for {
-		select {
-		case f, ok := <-failures:
-			if !ok {
-				break
-			}
-			fr = append(fr, f)
-		default:
-			break collect
-		}
+
+	result, err := collector.Wait(ctx)
+	if err != nil {
+		c.cache.InsertRanges(*rst)
+		return err
 	}
-	if len(fr) != 0 || ts <= rst.TS {
+	fr := result.FailureSubranges
+	if len(fr) != 0 {
 		log.Info("failure regions collected", zap.Int("size", len(fr)))
-		c.cache.insertDirect(RangesSharesTS{
+		c.cache.InsertRanges(RangesSharesTS{
 			TS:     rst.TS,
 			Ranges: fr,
 		})
@@ -212,20 +158,22 @@ collect:
 }
 
 func (c *CheckpointAdvancer) UpdateGlobalCheckpointLight(ctx context.Context) (uint64, error) {
-	log.Debug("current tree", zap.Stringer("ct", &c.cache))
-	rsts := c.cache.PopRangesWithGapGT(3 * time.Minute)
+	log.Debug("current tree", zap.Stringer("ct", c.cache))
+	rsts := c.cache.PopRangesWithGapGT(config.DefaultTryAdvanceThreshold)
 	if len(rsts) == 0 {
 		return 0, nil
 	}
-	workers := utils.NewWorkerPool(4, "regions")
+	workers := utils.NewWorkerPool(config.DefaultMaxConcurrencyAdvance, "regions")
 	eg, cx := errgroup.WithContext(ctx)
 	for _, rst := range rsts {
+		rst := rst
 		workers.ApplyOnErrorGroup(eg, func() error { return c.tryAdvance(cx, rst) })
 	}
 	err := eg.Wait()
 	if err != nil {
 		return 0, err
 	}
+	log.Debug("new tree", zap.Stringer("cache", c.cache))
 	ts := c.cache.CheckpointTS()
 	return ts, nil
 }
@@ -241,14 +189,22 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 	cx, cancel := context.WithTimeout(ctx, c.cfg.MaxBackoffTime)
 	defer cancel()
 	for {
+		coll := NewClusterCollector(ctx, c.env)
+		coll.setOnSuccessHook(c.cache.InsertRange)
 		for _, u := range thisRun {
-			subCP, subUnformed, err := c.GetCheckpointInRange(cx, u.StartKey, u.EndKey)
+			err := c.GetCheckpointInRange(cx, u.StartKey, u.EndKey, coll)
 			if err != nil {
 				return 0, err
 			}
-			nextRun = append(nextRun, subUnformed...)
-			if cp > subCP {
-				cp = subCP
+			result, err := coll.Wait(ctx)
+			if err != nil {
+				return 0, err
+			}
+			log.Debug("full: a run finished", zap.Any("checkpoint", result))
+
+			nextRun = append(nextRun, result.FailureSubranges...)
+			if cp > result.Checkpoint {
+				cp = result.Checkpoint
 			}
 		}
 		if len(nextRun) == 0 {
@@ -261,13 +217,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 	}
 }
 
-func appendRegionMap(region []RegionWithLeader, rm map[uint64]RegionWithLeader) {
-	for _, r := range region {
-		rm[r.Region.GetId()] = r
-	}
-}
-
-func CollectFailureRange(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
+func CollpaseRanges(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
 	frs := make([]kv.KeyRange, 0, length)
 	for i := 0; i < length; i++ {
 		frs = append(frs, getRange(i))
@@ -283,7 +233,7 @@ func CollectFailureRange(length int, getRange func(int) kv.KeyRange) []kv.KeyRan
 		item := frs[i]
 		for {
 			i++
-			if i >= len(frs) || bytes.Compare(frs[i].StartKey, item.EndKey) >= 0 {
+			if i >= len(frs) || bytes.Compare(frs[i].StartKey, item.EndKey) > 0 {
 				break
 			}
 			if bytes.Compare(item.EndKey, frs[i].EndKey) < 0 || len(frs[i].EndKey) == 0 {
@@ -293,26 +243,6 @@ func CollectFailureRange(length int, getRange func(int) kv.KeyRange) []kv.KeyRan
 		result = append(result, item)
 	}
 	return result
-}
-
-func (c *CheckpointAdvancer) Loop(ctx context.Context) error {
-	timer := time.NewTicker(c.cfg.TickDuration)
-	c.StartTaskListener(ctx)
-	defer timer.Stop()
-	if err := c.OnTick(ctx); err != nil {
-		log.Warn("Ticking failed, would try again.", logutil.ShortError(err))
-	}
-	for {
-		select {
-		case <-timer.C:
-			if err := c.OnTick(ctx); err != nil {
-				log.Warn("Ticking failed, would try again.", logutil.ShortError(err))
-			}
-		case <-ctx.Done():
-			log.Info("CheckpointAdvancer loop exited.")
-			return nil
-		}
-	}
 }
 
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
@@ -397,7 +327,7 @@ func (c *CheckpointAdvancer) onTaskEvent(e TaskEvent) error {
 		c.task = e.Info
 	case EventDel:
 		c.task = nil
-		c.state = stateFullScan
+		c.state = &fullScan{}
 		c.cache.Clear()
 	case EventErr:
 		return e.Err
@@ -417,6 +347,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	}
 	log.Debug("uploading checkpoint for task",
 		zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
+		zap.Uint64("checkpoint", cp),
 		zap.String("task", c.task.Name),
 		zap.Stringer("take", time.Since(start)))
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, cp); err != nil {
@@ -439,14 +370,29 @@ func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	return
 }
 
+func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) {
+	if s.consistencyCheckTick > 0 {
+		s.consistencyCheckTick--
+		return
+	}
+	defer c.recordTimeCost("consistency check")()
+	err := c.cache.ConsistencyCheck()
+	if err != nil {
+		log.Error("consistency check failed! log backup may lose data!", logutil.ShortError(err))
+	} else {
+		log.Debug("consistency check passed.")
+	}
+	s.consistencyCheckTick = config.DefaultConsistencyCheckTick
+}
+
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 
-	switch c.state {
-	case stateFullScan:
-		if c.fullScanTick > 0 {
-			c.fullScanTick--
+	switch s := c.state.(type) {
+	case *fullScan:
+		if s.fullScanTick > 0 {
+			s.fullScanTick--
 			break
 		}
 		if c.task == nil {
@@ -454,19 +400,24 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 			return nil
 		}
 		defer func() {
-			c.fullScanTick = c.cfg.FullScanTick
+			s.fullScanTick = c.cfg.FullScanTick
 		}()
 		err := c.advanceCheckpointBy(ctx, func() (uint64, error) { return c.CalculateGlobalCheckpoint(ctx) })
 		if err != nil {
 			return err
 		}
 
-		c.state = stateUpdateSmallTree
-	case stateUpdateSmallTree:
+		if c.cfg.AdvancingByCache {
+			c.state = &updateSmallTree{}
+		}
+	case *updateSmallTree:
+		c.onConsistencyCheckTick(s)
 		err := c.advanceCheckpointBy(ctx, func() (uint64, error) { return c.UpdateGlobalCheckpointLight(ctx) })
 		if err != nil {
 			return err
 		}
+	default:
+		log.Error("Unknown state type, skipping tick", zap.Stringer("type", reflect.TypeOf(c.state)))
 	}
 	return nil
 }

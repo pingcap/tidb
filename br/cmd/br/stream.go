@@ -16,7 +16,7 @@ package main
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -170,7 +170,7 @@ func newStreamAdvancerCommand() *cobra.Command {
 		Hidden: true,
 	}
 	task.DefineStreamCommonFlags(command.Flags())
-	streamhelper.DefineFlagsForCheckpointAdvancerConfig(command.Flags())
+	advancercfg.DefineFlagsForCheckpointAdvancerConfig(command.Flags())
 	return command
 }
 

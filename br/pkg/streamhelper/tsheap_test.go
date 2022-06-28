@@ -1,18 +1,16 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
-
 package streamhelper_test
 
 import (
+	"math"
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInsert(t *testing.T) {
-
 	cases := []func(func(ts uint64, a, b string)){
 		func(insert func(ts uint64, a, b string)) {
 			insert(1, "", "01")
@@ -32,12 +30,11 @@ func TestInsert(t *testing.T) {
 	for _, c := range cases {
 		cps := streamhelper.NewCheckpoints()
 		expected := map[uint64]*streamhelper.RangesSharesTS{}
+		checkpoint := uint64(math.MaxUint64)
 		insert := func(ts uint64, a, b string) {
-			cps.InsertRegion(ts, streamhelper.RegionWithLeader{
-				Region: &metapb.Region{
-					StartKey: []byte(a),
-					EndKey:   []byte(b),
-				},
+			cps.InsertRange(ts, kv.KeyRange{
+				StartKey: []byte(a),
+				EndKey:   []byte(b),
 			})
 			i, ok := expected[ts]
 			if !ok {
@@ -45,8 +42,12 @@ func TestInsert(t *testing.T) {
 			} else {
 				i.Ranges = append(i.Ranges, kv.KeyRange{StartKey: []byte(a), EndKey: []byte(b)})
 			}
+			if ts < checkpoint {
+				checkpoint = ts
+			}
 		}
 		c(insert)
+		require.Equal(t, checkpoint, cps.CheckpointTS())
 		rngs := cps.PopRangesWithGapGT(0)
 		for _, rng := range rngs {
 			other := expected[rng.TS]
@@ -95,7 +96,7 @@ func TestMergeRanges(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		result := streamhelper.CollectFailureRange(len(c.parameter), func(i int) kv.KeyRange {
+		result := streamhelper.CollpaseRanges(len(c.parameter), func(i int) kv.KeyRange {
 			return c.parameter[i]
 		})
 		require.Equal(t, c.expected, result, "case = %d", i)

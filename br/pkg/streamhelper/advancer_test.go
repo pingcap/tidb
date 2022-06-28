@@ -18,12 +18,44 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 )
+
+type flushSimulator struct {
+	flushedEpoch uint64
+	enabled      bool
+}
+
+func (c flushSimulator) makeError(requestedEpoch uint64) *errorpb.Error {
+	if !c.enabled {
+		return nil
+	}
+	if c.flushedEpoch == 0 {
+		e := errorpb.Error{
+			Message: "not flushed",
+		}
+		return &e
+	}
+	if c.flushedEpoch != requestedEpoch {
+		e := errorpb.Error{
+			Message: "flushed epoch not match",
+		}
+		return &e
+	}
+	return nil
+}
+
+func (c flushSimulator) fork() flushSimulator {
+	return flushSimulator{
+		enabled: c.enabled,
+	}
+}
 
 type region struct {
 	rng        kv.KeyRange
@@ -31,6 +63,8 @@ type region struct {
 	epoch      uint64
 	id         uint64
 	checkpoint uint64
+
+	fsim flushSimulator
 }
 
 type fakeStore struct {
@@ -61,10 +95,16 @@ func (f *region) splitAt(newID uint64, k string) *region {
 		epoch:      f.epoch + 1,
 		id:         newID,
 		checkpoint: f.checkpoint,
+		fsim:       f.fsim.fork(),
 	}
 	f.rng.EndKey = []byte(k)
 	f.epoch += 1
+	f.fsim = f.fsim.fork()
 	return newRegion
+}
+
+func (f *region) flush() {
+	f.fsim.flushedEpoch = f.epoch
 }
 
 func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.GetLastFlushTSOfRegionRequest, opts ...grpc.CallOption) (*logbackup.GetLastFlushTSOfRegionResponse, error) {
@@ -73,10 +113,24 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 	}
 	for _, r := range in.Regions {
 		region, ok := f.regions[r.Id]
-		if !ok {
+		if !ok || region.leader != f.id {
 			resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
 				Err: &errorpb.Error{
 					Message: "not found",
+				},
+				Region: &logbackup.RegionIdentity{
+					Id:           region.id,
+					EpochVersion: region.epoch,
+				},
+			})
+			continue
+		}
+		if err := region.fsim.makeError(r.EpochVersion); err != nil {
+			resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
+				Err: err,
+				Region: &logbackup.RegionIdentity{
+					Id:           region.id,
+					EpochVersion: region.epoch,
 				},
 			})
 			continue
@@ -85,6 +139,10 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 			resp.Checkpoints = append(resp.Checkpoints, &logbackup.RegionCheckpoint{
 				Err: &errorpb.Error{
 					Message: "epoch not match",
+				},
+				Region: &logbackup.RegionIdentity{
+					Id:           region.id,
+					EpochVersion: region.epoch,
 				},
 			})
 			continue
@@ -238,12 +296,13 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 			if r.checkpoint < minCheckpoint {
 				minCheckpoint = r.checkpoint
 			}
+			r.fsim.flushedEpoch = 0
 		})
 	}
 	return minCheckpoint
 }
 
-func createFakeCluster(n int) *fakeCluster {
+func createFakeCluster(n int, simEnabled bool) *fakeCluster {
 	c := &fakeCluster{
 		stores:  map[uint64]*fakeStore{},
 		regions: []*region{},
@@ -261,6 +320,9 @@ func createFakeCluster(n int) *fakeCluster {
 		epoch:      0,
 		id:         c.idAlloc(),
 		checkpoint: 0,
+		fsim: flushSimulator{
+			enabled: simEnabled,
+		},
 	}
 	for i := 0; i < 3; i++ {
 		if i < len(stores) {
@@ -285,6 +347,20 @@ func (s *fakeStore) String() string {
 		fmt.Fprintf(buf, "%s ", r)
 	}
 	return buf.String()
+}
+
+func (f *fakeCluster) flushAll() {
+	for _, r := range f.regions {
+		r.flush()
+	}
+}
+
+func (s *fakeStore) flush() {
+	for _, r := range s.regions {
+		if r.leader == s.id {
+			r.flush()
+		}
+	}
 }
 
 func (f *fakeCluster) String() string {
@@ -339,7 +415,7 @@ func (t *testEnv) getCheckpoint() uint64 {
 }
 
 func TestBasic(t *testing.T) {
-	c := createFakeCluster(4)
+	c := createFakeCluster(4, false)
 	defer func() {
 		fmt.Println(c)
 	}()
@@ -348,14 +424,17 @@ func TestBasic(t *testing.T) {
 	minCheckpoint := c.advanceCheckpoints()
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
-	minCp, remain, err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{})
+	coll := streamhelper.NewClusterCollector(ctx, env)
+	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
 	require.NoError(t, err)
-	require.Len(t, remain, 0)
-	require.Equal(t, minCp, minCheckpoint)
+	r, err := coll.Wait(ctx)
+	require.NoError(t, err)
+	require.Len(t, r.FailureSubranges, 0)
+	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 }
 
 func TestTick(t *testing.T) {
-	c := createFakeCluster(4)
+	c := createFakeCluster(4, false)
 	defer func() {
 		fmt.Println(c)
 	}()
@@ -374,4 +453,39 @@ func TestTick(t *testing.T) {
 		require.NoError(t, adv.OnTick(ctx))
 		require.Equal(t, env.getCheckpoint(), cp)
 	}
+}
+
+func TestWithFailure(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	c := createFakeCluster(4, true)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	c.flushAll()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	adv.UpdateConfigWith(func(cac *config.Config) {
+		cac.FullScanTick = 0
+	})
+	require.NoError(t, adv.OnTick(ctx))
+
+	cp := c.advanceCheckpoints()
+	for _, v := range c.stores {
+		v.flush()
+		break
+	}
+	require.NoError(t, adv.OnTick(ctx))
+	require.Less(t, env.getCheckpoint(), cp, "%d %d", env.getCheckpoint(), cp)
+
+	for _, v := range c.stores {
+		v.flush()
+	}
+
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, env.getCheckpoint(), cp)
 }

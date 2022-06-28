@@ -42,14 +42,14 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key []byte, endKey []by
 	return rls, nil
 }
 
-type tidbEnv struct {
+type clusterEnv struct {
 	clis *utils.StoreManager
 	*TaskEventClient
 	PDRegionScanner
 }
 
 // GetLogBackupClient gets the log backup client.
-func (t tidbEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error) {
+func (t clusterEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error) {
 	var cli logbackup.LogBackupClient
 	err := t.clis.WithConn(ctx, storeID, func(cc *grpc.ClientConn) {
 		cli = logbackup.NewLogBackupClient(cc)
@@ -60,20 +60,22 @@ func (t tidbEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (logbac
 	return cli, nil
 }
 
+// CliEnv creates the Env for CLI usage.
 func CliEnv(cli *utils.StoreManager, etcdCli *clientv3.Client) Env {
-	return tidbEnv{
+	return clusterEnv{
 		clis:            cli,
 		TaskEventClient: &TaskEventClient{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner: PDRegionScanner{cli.PDClient()},
 	}
 }
 
+// TiDBEnv creates the Env by TiDB config.
 func TiDBEnv(pdCli pd.Client, etcdCli *clientv3.Client, conf *config.Config) (Env, error) {
 	tconf, err := conf.GetTiKVConfig().Security.ToTLSConfig()
 	if err != nil {
 		return nil, err
 	}
-	return tidbEnv{
+	return clusterEnv{
 		clis: utils.NewStoreManager(pdCli, keepalive.ClientParameters{
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,

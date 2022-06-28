@@ -797,7 +797,13 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	env := streamhelper.CliEnv(mgr.StoreManager, etcdCLI)
 	advancer := streamhelper.NewCheckpointAdvancer(env)
 	advancer.UpdateConfig(cfg.AdvancerCfg)
-	return advancer.Loop(ctx)
+	daemon := streamhelper.NewAdvancerDaemon(advancer, streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI))
+	loop, err := daemon.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	loop()
+	return nil
 }
 
 func checkConfigForStatus(cfg *StreamConfig) error {

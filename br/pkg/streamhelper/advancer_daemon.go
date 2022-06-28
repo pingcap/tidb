@@ -20,6 +20,8 @@ const (
 	ownerPath   = "/tidb/br-stream/owner"
 )
 
+// AdvancerDaemon is a "high-avalibility" version of advancer.
+// It involved the manager for electing a owner and doing things.
 type AdvancerDaemon struct {
 	adv     *CheckpointAdvancer
 	manager owner.Manager
