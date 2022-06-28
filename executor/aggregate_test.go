@@ -1596,3 +1596,16 @@ func TestRandomPanicAggConsume(t *testing.T) {
 		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
 }
+
+// https://github.com/pingcap/tidb/issues/27751
+func TestIssue27751(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table test.t(nname char(20));")
+	tk.MustExec("insert into test.t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');")
+	tk.MustExec("set @@group_concat_max_len=0;")
+	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
+}
