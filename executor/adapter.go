@@ -76,6 +76,11 @@ var (
 	totalQueryProcHistogramInternal = metrics.TotalQueryProcHistogram.WithLabelValues(metrics.LblInternal)
 	totalCopProcHistogramInternal   = metrics.TotalCopProcHistogram.WithLabelValues(metrics.LblInternal)
 	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
+
+	selectForUpdateFirstAttemptDuration = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("select-for-update", "first-attempt")
+	selectForUpdateRetryDuration        = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("select-for-update", "retry")
+	dmlFirstAttemptDuration             = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "first-attempt")
+	dmlRetryDuration                    = metrics.PessimisticDMLDurationByAttempt.WithLabelValues("dml", "retry")
 )
 
 // processinfoSetter is the interface use to set current running process info.
@@ -600,8 +605,18 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Execu
 		//logutil.Logger(ctx).Info("start aggressive locking", zap.Stringer("txn", txn), zap.String("sql", a.OriginText()), zap.Stack("stackTrace"))
 		txn.StartAggressiveLocking()
 	}
+	isFirstAttempt := true
 	for {
+		startTime := time.Now()
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
+
+		if isFirstAttempt {
+			selectForUpdateFirstAttemptDuration.Observe(time.Since(startTime).Seconds())
+			isFirstAttempt = false
+		} else {
+			selectForUpdateRetryDuration.Observe(time.Since(startTime).Seconds())
+		}
+
 		e, err = a.handlePessimisticLockError(ctx, err)
 		if err != nil {
 			tryCancelAggressiveLocking(ctx, txn)
@@ -692,24 +707,30 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 	isFirstAttempt := true
 	for {
-		if isFirstAttempt {
-			isFirstAttempt = false
-		} else {
+		if !isFirstAttempt {
 			tryRetryAggressiveLocking(ctx, txn)
 		}
 
-		startPointGetLocking := time.Now()
+		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
 			tryCancelAggressiveLocking(ctx, txn)
 			return err
 		}
+
+		if isFirstAttempt {
+			dmlFirstAttemptDuration.Observe(time.Since(startTime).Seconds())
+			isFirstAttempt = false
+		} else {
+			dmlRetryDuration.Observe(time.Since(startTime).Seconds())
+		}
+
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
 			if err != nil {
 				if ErrDeadlock.Equal(err) {
-					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
+					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startTime).Seconds())
 				}
 				tryCancelAggressiveLocking(ctx, txn)
 				return err

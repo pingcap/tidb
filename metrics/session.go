@@ -135,6 +135,15 @@ var (
 			Name:      "non_transactional_delete_count",
 			Help:      "Counter of non-transactional delete",
 		})
+
+	PessimisticDMLDurationByAttempt = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "transaction_pessimistic_dml_duration_by_attempt",
+			Help:      "Bucketed histogram of duration of pessimistic DMLs, distinguished by first attempt and retries",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
+		}, []string{LblType, LblPhase})
 )
 
 // Label constants.
@@ -165,4 +174,5 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblPhase       = "phase"
 )
