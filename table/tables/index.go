@@ -120,7 +120,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		switch c.idxInfo.SubState {
 		case model.StateNone:
 			// do nothing.
-		case model.StateBackFillSync, model.StateBackFill:
+		case model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, key)
 		case model.StateMergeSync, model.StateMerge:
@@ -294,7 +294,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		switch c.idxInfo.SubState {
 	    case model.StateNone:
 		    // Do nothing.
-		case model.StateBackFillSync, model.StateBackFill:
+		case model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
 			tempKey = append(tempKey, key...)
 			key = nil

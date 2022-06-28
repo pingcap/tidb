@@ -625,7 +625,7 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 				return false, ver, errors.Trace(err)
 			}
 		}
-	} else if !isLightningEnabled(job.ID) && !needRestoreJob(job.ID) && indexInfo.SubState == model.StateBackFill {
+	} else if !isLightningEnabled(job.ID) && !needRestoreJob(job.ID) && indexInfo.SubState == model.StateBackfill {
 		// Be here, means the DDL Owner changed or restarted, the reorg state is re-entered.	
 		job.SnapshotVer = 0
 		restoreReorg = true
@@ -657,21 +657,21 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		switch indexInfo.SubState {
 		case model.StateNone:
 			logutil.BgLogger().Info("Lightning backfill start state none")
-			indexInfo.SubState = model.StateBackFillSync
+			indexInfo.SubState = model.StateBackfillSync
 			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 			if err != nil {
 				return false, ver, errors.Trace(err)
 			}
 			return false, ver, nil
-		case model.StateBackFillSync:
+		case model.StateBackfillSync:
 			logutil.BgLogger().Info("Lightning backfill state backfill Sync")
-			indexInfo.SubState = model.StateBackFill
+			indexInfo.SubState = model.StateBackfill
 			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
 			if err != nil {
 				return false, ver, errors.Trace(err)
 			}
 			return false, ver, nil
-		case model.StateBackFill:
+		case model.StateBackfill:
 			logutil.BgLogger().Info("Lightning backfill state backfill")
 			return true, ver, nil
 		case model.StateMergeSync:
@@ -717,7 +717,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			return done, ver, err
 		}
 		// Only when SubState is in BackFill state, then need start to start new backfill task.
-		if indexInfo.SubState != model.StateBackFill || !doReorg {
+		if indexInfo.SubState != model.StateBackfill || !doReorg {
 			return doReorg, ver, err
 		}
 	}

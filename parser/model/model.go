@@ -50,15 +50,15 @@ const (
 	StateGlobalTxnOnly
 	// Below sub states are only used for add index lightning ways currently, other place should 
 	// if you want to use them, you have to use it carefullly.
-	// StateBackFillSync means we use lightning to do backfill and start to sync to all TiDB
-	StateBackFillSync
-	// StateBackFill2 means now all the user transaction will know that new backfill solution is
+	// StateBackfillSync means we use lightning to do backfill and start to sync to all TiDB
+	StateBackfillSync
+	// StateBackfill means now all the user transaction will know that new backfill solution is
 	// adapted and will write update to temp index to record delta part during backfill process.
-	StateBackFill
-	// StateMerge1 means backfill finished and start to sync to all TiDB to update both
+	StateBackfill
+	// StateMergeSync means backfill finished and start to sync to all TiDB to update both
 	// full copy index and delta part temp index.
 	StateMergeSync
-	// StateMerge2 means start merge delta part of index into full copy index.
+	// StateMerge means start merge delta part of index into full copy index.
 	StateMerge
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
@@ -82,9 +82,9 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
-	case StateBackFillSync:
+	case StateBackfillSync:
 		return "StateBackFillSync"
-	case StateBackFill:
+	case StateBackfill:
 		return "StateBackFill"
 	case StateMergeSync:
 		return "StateMergeSync"
