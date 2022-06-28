@@ -64,7 +64,7 @@ type wrapTxn struct {
 }
 
 func (txn *wrapTxn) Wait(_ context.Context, _ sessionctx.Context) (kv.Transaction, error) {
-	return txn.Transaction, nil
+	return txn, nil
 }
 
 func (txn *wrapTxn) Valid() bool {

@@ -63,23 +63,37 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
-			return err
-		}
-		p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-		if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-			return err
-		}
+		return p.enterNewStaleTxn(ctx)
 	case sessiontxn.EnterNewTxnWithReplaceProvider:
-		if p.is == nil {
-			is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
-			if err != nil {
-				return err
-			}
-			p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
-		}
+		return p.enterNewStaleTxnWithReplaceProvider(ctx)
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
+	}
+}
+
+func (p *StalenessTxnContextProvider) enterNewStaleTxn(ctx context.Context) error {
+	if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
+		return err
+	}
+	p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+		return err
+	}
+
+	p.ctx = ctx
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	txnCtx.IsStaleness = true
+	txnCtx.InfoSchema = p.is
+	return nil
+}
+
+func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider(ctx context.Context) error {
+	if p.is == nil {
+		is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
+		if err != nil {
+			return err
+		}
+		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
 	}
 
 	p.ctx = ctx
@@ -101,17 +115,12 @@ func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return p.txn, nil
 	}
 
-	err := p.OnInitialize(p.ctx, sessiontxn.EnterNewTxnDefault)
+	err := p.enterNewStaleTxn(p.ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	txnFuture := p.sctx.GetPreparedTxnFuture()
-	if txnFuture == nil {
-		return nil, errors.AddStack(kv.ErrInvalidTxn)
-	}
-
-	txn, err := txnFuture.Wait(p.ctx, p.sctx)
+	txn, err := p.sctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
