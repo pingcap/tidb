@@ -855,7 +855,7 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
 	req, err := http.NewRequest(method, urlVar, body)
 	if err != nil {
-		logutil.BgLogger().Warn("requestPDForOneHost new request",
+		logutil.BgLogger().Warn("requestPDForOneHost new request failed",
 			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -863,7 +863,7 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
-		logutil.BgLogger().Warn("requestPDForOneHost do request",
+		logutil.BgLogger().Warn("requestPDForOneHost do request failed",
 			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -872,7 +872,7 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("requestPDForOneHost close body",
+			logutil.BgLogger().Warn("requestPDForOneHost close body failed",
 				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
