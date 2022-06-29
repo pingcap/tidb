@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+    "strconv"    
 )
 
 // Portable analogs of some common call errors.
@@ -34,7 +35,7 @@ type SQLError struct {
 
 // Error prints errors, with a formatted string.
 func (e *SQLError) Error() string {
-	return fmt.Sprintf("ERROR %d (%s): %s", e.Code, e.State, e.Message)
+	return fmt.Sprintf("ERROR %d (%s): %s", e.Code, e.State, strconv.Quote(e.Message))
 }
 
 // NewErr generates a SQL error, with an error code and default format specifier defined in MySQLErrName.
