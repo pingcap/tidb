@@ -1568,6 +1568,20 @@
         ]
       },
       {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─Apply 10000.00 root  CARTESIAN semi join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 2.00 root  offset:1, count:2",
+          "    └─TableReader 3.00 root  data:Limit",
+          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
+          "        └─Selection 3.00 cop[tikv]  eq(test.test.id, test.test.id)",
+          "          └─TableFullScan 3000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3)",
         "Plan": [
           "Apply 10000.00 root  CARTESIAN semi join",
