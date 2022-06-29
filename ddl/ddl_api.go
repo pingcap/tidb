@@ -3027,9 +3027,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	if len(validSpecs) > 1 {
 		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns:
-			useMultiSchemaChange = true
-		case ast.AlterTableDropColumn:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
 			useMultiSchemaChange = true
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
 			err = d.DropIndexes(sctx, ident, validSpecs)

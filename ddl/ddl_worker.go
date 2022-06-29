@@ -432,9 +432,6 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	return errors.Trace(err)
 }
 
-// JobNeedGCForTest is only used for test.
-var JobNeedGCForTest = jobNeedGC
-
 func jobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
 		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
