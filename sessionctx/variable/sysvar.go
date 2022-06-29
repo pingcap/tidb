@@ -1571,6 +1571,10 @@ var defaultSysVars = []*SysVar{
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGeneralPlanCache, Value: BoolToOnOff(DefTiDBEnablePrepPlanCache), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableGeneralPlanCache = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableLegacyInstanceScope, Value: BoolToOnOff(DefEnableLegacyInstanceScope), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableLegacyInstanceScope = TiDBOptOn(val)
 		return nil

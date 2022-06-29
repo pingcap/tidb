@@ -26,9 +26,9 @@ func getStmtIDByRawSQL(tc *TiDBContext, rawSQL string) (stmtID uint32, existed b
 
 // GetStatement4GeneralSQL ...
 func GetStatement4GeneralSQL(tc *TiDBContext, sctx sessionctx.Context, originalSQL string) (stmt PreparedStatement, args []types.Datum, existed bool, err error) {
-	//if !sctx.GetSessionVars().EnableGeneralPlanCache {
-	//	return nil, nil, false, nil
-	//}
+	if !sctx.GetSessionVars().EnableGeneralPlanCache {
+		return nil, nil, false, nil
+	}
 
 	rawSQL, params, ok := plannercore.FastLexer(originalSQL)
 	if !ok {
