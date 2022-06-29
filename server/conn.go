@@ -1822,6 +1822,15 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
+
+	stmt, args, exists, err := GetStatement4GeneralSQL(cc.ctx.TiDBContext, cc.ctx, sql)
+	if err != nil {
+		// TODO: log the error
+	}
+	if exists {
+		return cc.handlePreparedStmt(ctx, stmt, args, false, true)
+	}
+
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
 		return err

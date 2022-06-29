@@ -680,6 +680,8 @@ const (
 
 	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
 	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
+
+	TiDBEnableGeneralPlanCache = "tidb_enable_general_plan_cache"
 )
 
 // TiDB vars that have only global scope
@@ -942,6 +944,7 @@ const (
 	DefTiDBEnableConcurrentDDL                   = true
 	DefTiDBSimplifiedMetrics                     = false
 	DefTiDBEnablePaging                          = true
+	DefTiDBEnableGeneralPlanCache                = true
 )
 
 // Process global variables.

@@ -1158,6 +1158,9 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// EnableGeneralPlanCache ...
+	EnableGeneralPlanCache bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
