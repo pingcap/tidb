@@ -31,7 +31,7 @@ func TestParseTSString(t *testing.T) {
 	localTSO := uint64((localTimestamp << 18) * 1000)
 	require.Equal(t, localTSO, ts)
 
-	ts, err = ParseTSString("2021-01-01 01:42:23", true)
+	_, err = ParseTSString("2021-01-01 01:42:23", true)
 	require.Error(t, err)
 	require.Regexp(t, "must set timezone*", err.Error())
 
