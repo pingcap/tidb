@@ -214,6 +214,7 @@
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*\\.pb\\.go$": "generated code",
+      "/cgo/": "no need to vet third party code for cgo",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
