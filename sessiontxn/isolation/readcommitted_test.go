@@ -57,7 +57,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	forUpdateStmt := stmts[0]
 
 	compareTS := se.GetSessionVars().TxnCtx.StartTS
-	// first ts should request from tso
+	// first ts should use the txn startTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err := provider.GetStmtReadTS()
@@ -65,7 +65,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.Equal(t, ts, compareTS)
 	rcCheckTS := ts
 
-	// second ts should reuse first ts
+	// second ts should reuse the txn startTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
 	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
@@ -166,7 +166,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, txnStartTS, ts)
 
-	// second ts should reuse first ts
+	// second ts should reuse the txn startTS
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
 	require.NoError(t, err)
