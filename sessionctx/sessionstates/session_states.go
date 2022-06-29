@@ -22,10 +22,13 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// SessionStateType is the type of session states.
+type SessionStateType int
+
 // These enums represents the types of session state handlers.
 const (
 	// StatePrepareStmt represents prepared statements.
-	StatePrepareStmt int = iota
+	StatePrepareStmt SessionStateType = iota
 )
 
 // PreparedStmtInfo contains the information about prepared statements, both text and binary protocols.

@@ -150,7 +150,7 @@ type Session interface {
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
 	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
-	SetSessionStatesHandler(stateType int, handler sessionctx.SessionStatesHandler)
+	SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler)
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
@@ -252,7 +252,7 @@ type session struct {
 	stmtStats *stmtstats.StatementStats
 
 	// Used to encode and decode each type of session states.
-	sessionStatesHandlers map[int]sessionctx.SessionStatesHandler
+	sessionStatesHandlers map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler
 
 	// Contains a list of sessions used to collect advisory locks.
 	advisoryLocks map[string]*advisoryLock
@@ -2773,7 +2773,7 @@ func (s *session) RefreshVars(ctx context.Context) error {
 }
 
 // SetSessionStatesHandler implements the Session.SetSessionStatesHandler interface.
-func (s *session) SetSessionStatesHandler(stateType int, handler sessionctx.SessionStatesHandler) {
+func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler) {
 	s.sessionStatesHandlers[stateType] = handler
 }
 
@@ -3029,7 +3029,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
-		sessionStatesHandlers: make(map[int]sessionctx.SessionStatesHandler),
+		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
@@ -3066,7 +3066,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		client:                store.GetClient(),
 		mppClient:             store.GetMPPClient(),
 		stmtStats:             stmtstats.CreateStatementStats(),
-		sessionStatesHandlers: make(map[int]sessionctx.SessionStatesHandler),
+		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
