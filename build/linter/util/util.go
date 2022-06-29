@@ -149,6 +149,7 @@ func FormatCode(code string) string {
 	return fmt.Sprintf("`%s`", code)
 }
 
+// MakeFakeLoaderPackageInfo creates a fake loader.PackageInfo for a given package.
 func MakeFakeLoaderPackageInfo(pass *analysis.Pass) *loader.PackageInfo {
 	var errs []error
 

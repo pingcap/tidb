@@ -213,6 +213,7 @@
   "unconvert": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
+      ".*\\.pb\\.go$": "generated code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
