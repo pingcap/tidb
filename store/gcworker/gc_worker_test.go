@@ -266,7 +266,7 @@ func TestGetLowResolveTS(t *testing.T) {
 	require.NoError(t, err)
 
 	lowResolveTime := oracle.GetTimeFromTS(lowResolveTS)
-	timeEqual(t, time.Now(), lowResolveTime.Add(gcLowResolveInterval), time.Second)
+	timeEqual(t, time.Now(), lowResolveTime.Add(gcLowResolveInterval), time.Millisecond*500)
 }
 
 func TestMinStartTS(t *testing.T) {
@@ -928,31 +928,86 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 		scanCntRef    = &scanCnt
 		resolveCnt    int
 		resolveCntRef = &resolveCnt
+
+		scanLockCnt                   int
+		resolveBeforeSafepointLockCnt int
+		resolveAfterSafepointLockCnt  int
+		safepointTS                   uint64 = 434245550444904450
+		lowResolveTS                  uint64 = 434245550449098752
 	)
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
-		*scanCntRef++
-		return []*txnlock.Lock{
-			{
-				Key: []byte{1},
-			},
-			{
-				Key: []byte{1},
-			},
-		}
+
+	allLocks := []*txnlock.Lock{
+		{
+			Key: []byte{1},
+			// TxnID < safepointTS
+			TxnID: 434245550444904449,
+			TTL:   5,
+		},
+		{
+			Key: []byte{2},
+			// safepointTS < TxnID < lowResolveTS , TxnID + TTL < lowResolveTS
+			TxnID: 434245550445166592,
+			TTL:   10,
+		},
+		{
+			Key: []byte{3},
+			// safepointTS < TxnID < lowResolveTS , TxnID + TTL > lowResolveTS
+			TxnID: 434245550445166593,
+			TTL:   20,
+		},
+		{
+			Key: []byte{4},
+			// TxnID > lowResolveTS
+			TxnID: 434245550449099752,
+			TTL:   20,
+		},
 	}
-	s.gcWorker.testingKnobs.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+		*scanCntRef++
+
+		locks := make([]*txnlock.Lock, 0)
+		for _, l := range allLocks {
+			if l.TxnID <= maxVersion {
+				locks = append(locks, l)
+				scanLockCnt++
+			}
+		}
+		return locks
+	}
+	s.gcWorker.testingKnobs.resolveLocks = func(
+		locks []*txnlock.Lock,
+		regionID tikv.RegionVerID,
+		safePoint uint64,
+		lowResolveTS uint64,
+	) (ok bool, err error) {
 		*resolveCntRef++
 		if *resolveCntRef == 1 {
 			s.gcWorker.tikvStore.GetRegionCache().InvalidateCachedRegion(regionID)
 			// mock the region cache miss error
 			return false, nil
 		}
+
+		for _, l := range locks {
+			if l.TxnID <= safePoint {
+				resolveBeforeSafepointLockCnt++
+				continue
+			}
+			expiredTS := oracle.ComposeTS(oracle.ExtractPhysical(l.TxnID)+int64(l.TTL), oracle.ExtractLogical(l.TxnID))
+			if expiredTS <= lowResolveTS {
+				resolveAfterSafepointLockCnt++
+			}
+		}
 		return true, nil
 	}
-	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, 3, []byte{0}, []byte{10})
+
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), safepointTS, lowResolveTS, []byte{0}, []byte{10})
 	require.NoError(t, err)
 	require.Equal(t, 2, resolveCnt)
 	require.Equal(t, 1, scanCnt)
+	require.Equal(t, 3, scanLockCnt)
+	require.Equal(t, 1, resolveBeforeSafepointLockCnt)
+	require.Equal(t, 1, resolveAfterSafepointLockCnt)
 }
 
 func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
@@ -978,7 +1033,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
 
 	// init a, b lock in region1 and o, p locks in region2
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
 		if regionID == s.initRegion.regionID {
 			return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
 		}
@@ -988,7 +1043,12 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		return []*txnlock.Lock{}
 	}
 
-	s.gcWorker.testingKnobs.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+	s.gcWorker.testingKnobs.resolveLocks = func(
+		locks []*txnlock.Lock,
+		regionID tikv.RegionVerID,
+		safePoint uint64,
+		lowResolveTS uint64,
+	) (ok bool, err error) {
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
@@ -1001,7 +1061,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 				[]*metapb.Region{regionMeta})
 			require.NoError(t, err)
 			// also let region1 contains all 4 locks
-			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
+			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
 				if regionID == s.initRegion.regionID {
 					locks := []*txnlock.Lock{
 						{Key: []byte("a")},
