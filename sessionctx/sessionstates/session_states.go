@@ -22,10 +22,13 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// These enums represents the types of session state handlers.
 const (
+	// StatePrepareStmt represents prepared statements.
 	StatePrepareStmt int = iota
 )
 
+// PreparedStmtInfo contains the information about prepared statements, both text and binary protocols.
 type PreparedStmtInfo struct {
 	Name       string `json:"name,omitempty"`
 	StmtText   string `json:"text"`
