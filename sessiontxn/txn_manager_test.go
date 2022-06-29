@@ -135,7 +135,7 @@ func TestEnterNewTxn(t *testing.T) {
 					Type: sessiontxn.EnterNewTxnBeforeStmt,
 				})
 				require.NoError(t, err)
-				require.NoError(t, mgr.OnStmtStart(context.TODO()))
+				require.NoError(t, mgr.OnStmtStart(context.TODO(), nil))
 				require.NoError(t, mgr.AdviseWarmup())
 			},
 			request: &sessiontxn.EnterNewTxnRequest{
