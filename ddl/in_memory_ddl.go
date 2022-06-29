@@ -36,19 +36,18 @@ import (
 )
 
 // inMemoryInfoSchema is a simple structure that stores DBInfo and TableInfo. It's not thread-safe.
-// DBInfo.Tables is used to drop its TableInfos when DROP DATABASE.
 type inMemoryInfoSchema struct {
 	lowerCaseTableNames int // same as variable lower_case_table_names
 
 	dbs    map[string]*model.DBInfo
-	tables map[string]*model.TableInfo
+	tables map[string]map[string]*model.TableInfo
 }
 
 func newInMemoryInfoSchema(lowerCaseTableNames int) *inMemoryInfoSchema {
 	return &inMemoryInfoSchema{
 		lowerCaseTableNames: lowerCaseTableNames,
 		dbs:                 map[string]*model.DBInfo{},
-		tables:              map[string]*model.TableInfo{},
+		tables:              map[string]map[string]*model.TableInfo{},
 	}
 }
 
@@ -67,30 +66,31 @@ func (i *inMemoryInfoSchema) SchemaByName(name model.CIStr) *model.DBInfo {
 func (i *inMemoryInfoSchema) putSchema(dbInfo *model.DBInfo) {
 	key := i.ciStr2Key(dbInfo.Name)
 	i.dbs[key] = dbInfo
+	if i.tables[key] == nil {
+		i.tables[key] = map[string]*model.TableInfo{}
+	}
 }
 
 func (i *inMemoryInfoSchema) deleteSchema(name model.CIStr) bool {
 	key := i.ciStr2Key(name)
-	dbInfo, ok := i.dbs[key]
+	_, ok := i.dbs[key]
 	if !ok {
 		return false
 	}
 	delete(i.dbs, key)
-	for _, tblInfo := range dbInfo.Tables {
-		delete(i.tables, i.ciStr2Key(tblInfo.Name))
-	}
+	delete(i.tables, key)
 	return true
 }
 
 func (i *inMemoryInfoSchema) TableByName(schema, table model.CIStr) (*model.TableInfo, error) {
 	schemaKey := i.ciStr2Key(schema)
-	_, ok := i.dbs[schemaKey]
+	tables, ok := i.tables[schemaKey]
 	if !ok {
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema)
 	}
 
 	tableKey := i.ciStr2Key(table)
-	tbl, ok := i.tables[tableKey]
+	tbl, ok := tables[tableKey]
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(schema, table)
 	}
@@ -99,52 +99,28 @@ func (i *inMemoryInfoSchema) TableByName(schema, table model.CIStr) (*model.Tabl
 
 func (i *inMemoryInfoSchema) putTable(schemaName model.CIStr, tblInfo *model.TableInfo) error {
 	schemaKey := i.ciStr2Key(schemaName)
-	dbInfo, ok := i.dbs[schemaKey]
+	tables, ok := i.tables[schemaKey]
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 	tableKey := i.ciStr2Key(tblInfo.Name)
-	_, ok = i.tables[tableKey]
-	if ok {
-		for idx, toCheck := range dbInfo.Tables {
-			toCheckKey := i.ciStr2Key(toCheck.Name)
-			if toCheckKey == tableKey {
-				dbInfo.Tables[idx] = tblInfo
-				break
-			}
-		}
-	} else {
-		dbInfo.Tables = append(dbInfo.Tables, tblInfo)
-	}
-
-	i.tables[tableKey] = tblInfo
+	tables[tableKey] = tblInfo
 	return nil
 }
 
 func (i *inMemoryInfoSchema) deleteTable(schema, table model.CIStr) error {
 	schemaKey := i.ciStr2Key(schema)
-	dbInfo, ok := i.dbs[schemaKey]
+	tables, ok := i.tables[schemaKey]
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema)
 	}
 
 	tableKey := i.ciStr2Key(table)
-	_, ok = i.tables[tableKey]
+	_, ok = tables[tableKey]
 	if !ok {
-		return nil
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema, table)
 	}
-	delete(i.tables, tableKey)
-
-	for idx, toCheck := range dbInfo.Tables {
-		toCheckKey := i.ciStr2Key(toCheck.Name)
-		if toCheckKey == tableKey {
-			last := dbInfo.Tables[len(dbInfo.Tables)-1]
-			dbInfo.Tables[idx] = last
-			dbInfo.Tables[len(dbInfo.Tables)-1] = nil
-			dbInfo.Tables = dbInfo.Tables[:len(dbInfo.Tables)-1]
-			return nil
-		}
-	}
+	delete(tables, tableKey)
 	return nil
 }
 
@@ -390,8 +366,7 @@ func (d InMemoryDDL) AlterTable(ctx context.Context, sctx sessionctx.Context, ta
 }
 
 func (d InMemoryDDL) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (d InMemoryDDL) RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error {
@@ -405,28 +380,27 @@ func (d InMemoryDDL) RenameTables(ctx sessionctx.Context, oldTableIdent, newTabl
 }
 
 func (d InMemoryDDL) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (d InMemoryDDL) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
@@ -445,18 +419,18 @@ func (d InMemoryDDL) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequen
 }
 
 func (d InMemoryDDL) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist OnExist) error {
@@ -465,76 +439,57 @@ func (d InMemoryDDL) BatchCreateTableWithInfo(ctx sessionctx.Context, schema mod
 }
 
 func (d InMemoryDDL) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) Start(ctxPool *pools.ResourcePool) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
+
 }
 
 func (d InMemoryDDL) GetLease() time.Duration {
-	//TODO implement me
-	panic("implement me")
+	return 0
 }
 
 func (d InMemoryDDL) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, nil
 }
 
 func (d InMemoryDDL) GetScope(status string) variable.ScopeFlag {
-	//TODO implement me
-	panic("implement me")
+	return 0
 }
 
 func (d InMemoryDDL) Stop() error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
-func (d InMemoryDDL) RegisterStatsHandle(handle *handle.Handle) {
-	//TODO implement me
-	panic("implement me")
-}
+func (d InMemoryDDL) RegisterStatsHandle(handle *handle.Handle) {}
 
 func (d InMemoryDDL) SchemaSyncer() util.SchemaSyncer {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (d InMemoryDDL) OwnerManager() owner.Manager {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
 func (d InMemoryDDL) GetID() string {
-	//TODO implement me
-	panic("implement me")
+	return "in-memory-ddl"
 }
 
 func (d InMemoryDDL) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
-	//TODO implement me
-	panic("implement me")
+	return nil, false, nil
 }
 
-func (d InMemoryDDL) SetBinlogClient(client *pumpcli.PumpsClient) {
-	//TODO implement me
-	panic("implement me")
-}
+func (d InMemoryDDL) SetBinlogClient(client *pumpcli.PumpsClient) {}
 
 func (d InMemoryDDL) GetHook() Callback {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
 
-func (d InMemoryDDL) SetHook(h Callback) {
-	//TODO implement me
-	panic("implement me")
-}
+func (d InMemoryDDL) SetHook(h Callback) {}
 
 func (d InMemoryDDL) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	//TODO implement me
-	panic("implement me")
+	return nil
 }
