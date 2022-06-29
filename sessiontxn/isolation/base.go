@@ -57,6 +57,8 @@ type baseTxnContextProvider struct {
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
+	p.ctx = ctx
+
 	if p.getStmtReadTSFunc == nil || p.getStmtForUpdateTSFunc == nil {
 		return errors.New("ts functions should not be nil")
 	}
@@ -82,7 +84,6 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.enterNewTxnType = tp
-	p.ctx = ctx
 	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{

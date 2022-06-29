@@ -61,18 +61,19 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
+	p.ctx = ctx
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		return p.activateStaleTxn(ctx)
+		return p.activateStaleTxn()
 	case sessiontxn.EnterNewTxnWithReplaceProvider:
-		return p.enterNewStaleTxnWithReplaceProvider(ctx)
+		return p.enterNewStaleTxnWithReplaceProvider()
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 }
 
-func (p *StalenessTxnContextProvider) activateStaleTxn(ctx context.Context) error {
-	if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
+func (p *StalenessTxnContextProvider) activateStaleTxn() error {
+	if err := p.sctx.NewStaleTxnWithStartTS(p.ctx, p.ts); err != nil {
 		return err
 	}
 	p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
@@ -80,14 +81,13 @@ func (p *StalenessTxnContextProvider) activateStaleTxn(ctx context.Context) erro
 		return err
 	}
 
-	p.ctx = ctx
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	txnCtx.IsStaleness = true
 	txnCtx.InfoSchema = p.is
 	return nil
 }
 
-func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider(ctx context.Context) error {
+func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() error {
 	if p.is == nil {
 		is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
 		if err != nil {
@@ -96,7 +96,6 @@ func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider(ctx co
 		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
 	}
 
-	p.ctx = ctx
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	txnCtx.IsStaleness = true
 	txnCtx.InfoSchema = p.is
@@ -115,7 +114,7 @@ func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return p.txn, nil
 	}
 
-	err := p.activateStaleTxn(p.ctx)
+	err := p.activateStaleTxn()
 	if err != nil {
 		return nil, err
 	}
