@@ -474,6 +474,14 @@ def go_deps():
         version = "v0.0.0-20171016134553-529a34b1c186",
     )
     go_repository(
+        name = "com_github_daixiang0_gci",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/daixiang0/gci",
+        sum = "h1:+EZ83znNs73C9ZBTM7xhNagMP6gJs5wlptiFiuce5BM=",
+        version = "v0.3.4",
+    )
+
+    go_repository(
         name = "com_github_danjacques_gofslock",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/danjacques/gofslock",
@@ -1250,6 +1258,14 @@ def go_deps():
         sum = "h1:5IcZpTvzydCQeHzK4Ef/D5rrSqwxob0t8PQPMybUNFM=",
         version = "v1.1.2",
     )
+    go_repository(
+        name = "com_github_hexops_gotextdiff",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/hexops/gotextdiff",
+        sum = "h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUqJM=",
+        version = "v1.0.3",
+    )
+
     go_repository(
         name = "com_github_hpcloud_tail",
         build_file_proto_mode = "disable_global",
