@@ -3524,8 +3524,8 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
-	if err = s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
+func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
 
@@ -3546,38 +3546,40 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 			continue
 		}
 		// Get all session variables because the default values may change between versions.
-		if val, keep, err := variable.GetSessionStatesSystemVar(s.sessionVars, sv.Name); err == nil && keep {
+		if val, keep, err := variable.GetSessionStatesSystemVar(s.sessionVars, sv.Name); err != nil {
+			return err
+		} else if keep {
 			sessionStates.SystemVars[sv.Name] = val
 		}
 	}
 
 	if handler, ok := s.sessionStatesHandlers[sessionstates.StatePrepareStmt]; ok {
-		if err = handler.EncodeSessionStates(ctx, s, sessionStates); err != nil {
-			return
+		if err := handler.EncodeSessionStates(ctx, s, sessionStates); err != nil {
+			return err
 		}
 	}
-	return
+	return nil
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
+func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	if handler, ok := s.sessionStatesHandlers[sessionstates.StatePrepareStmt]; ok {
-		if err = handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
-			return
+		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
+			return err
 		}
 	}
 
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
-		if err = variable.SetSessionSystemVar(s.sessionVars, name, val); err != nil {
+		if err := variable.SetSessionSystemVar(s.sessionVars, name, val); err != nil {
 			return err
 		}
 	}
 
 	// Decoding session vars / prepared statements may override stmt ctx, such as warnings,
 	// so we decode stmt ctx at last.
-	if err = s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
+	if err := s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
-	return err
+	return nil
 }
