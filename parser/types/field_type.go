@@ -203,6 +203,12 @@ func (ft *FieldType) GetElemIsBinaryLit(idx int) bool {
 	return ft.elemsIsBinaryLit[idx]
 }
 
+func (ft *FieldType) CleanElemIsBinaryLit() {
+	if ft != nil && ft.elemsIsBinaryLit != nil {
+		ft.elemsIsBinaryLit = nil
+	}
+}
+
 // Clone returns a copy of itself.
 func (ft *FieldType) Clone() *FieldType {
 	ret := *ft

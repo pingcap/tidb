@@ -836,6 +836,7 @@ func decodeEnumSetBinaryLiteralToUTF8(tp *types.FieldType, chs string) {
 		}
 		tp.SetElem(i, string(hack.String(s)))
 	}
+	tp.CleanElemIsBinaryLit()
 }
 
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
