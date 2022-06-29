@@ -1566,6 +1566,20 @@
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN semi join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─Selection(Probe) 2.40 root  eq(9, test.t.c)",
+          "  └─Limit 3.00 root  offset:0, count:3",
+          "    └─TableReader 3.00 root  data:Limit",
+          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
+          "        └─Selection 3.00 cop[tikv]  lt(test.t.c, test.t.c)",
+          "          └─TableFullScan 3.75 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
       }
     ]
   },

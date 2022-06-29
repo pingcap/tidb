@@ -4609,6 +4609,9 @@ func TestDecorrelateLimitInSubquery(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test")
 	tk.MustExec("create table test(id int, value int)")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	tk.MustExec("insert t values(10), (8), (7), (9), (11)")
 
 	var input []string
 	var output []struct {

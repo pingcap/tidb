@@ -400,7 +400,7 @@ func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *logicalOptimizeOp) {
 		return fmt.Sprintf("%v_%v removed from plan tree", limit.TP(), limit.ID())
 	}
 	reason := func() string {
-		return ""
+		return fmt.Sprintf("%v_%v in 'exists' subquery need to remove in order to keep plan optimal", limit.TP(), limit.ID())
 	}
 	opt.appendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
