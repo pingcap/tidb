@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -2384,7 +2383,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
-	var is infoschema.InfoSchema
 	var snapshotTS uint64
 	replicaReadScope := oracle.GlobalTxnScope
 
@@ -2396,7 +2394,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	txnManager := sessiontxn.GetTxnManager(s)
 	if staleReadProcessor.IsStaleness() {
 		snapshotTS = staleReadProcessor.GetStalenessReadTS()
-		is = staleReadProcessor.GetStalenessInfoSchema()
+		is := staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
 		err = txnManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
 			Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
@@ -2406,8 +2404,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
 
 	staleness := snapshotTS > 0
@@ -2426,10 +2422,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 
 	if err = s.onTxnManagerStmtStartOrRetry(ctx, execStmt); err != nil {
 		return nil, err
-	}
-
-	if p, isOK := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
-		p.InfoSchema = is
 	}
 
 	if ok {
@@ -3544,15 +3536,16 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
 func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
-	if err = s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
-		return err
-	}
-
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
 		if err = variable.SetSessionSystemVar(s.sessionVars, name, val); err != nil {
 			return err
 		}
+	}
+
+	// Decode stmt ctx after session vars because setting session vars may override stmt ctx, such as warnings.
+	if err = s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
+		return err
 	}
 	return err
 }

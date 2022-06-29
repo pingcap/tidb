@@ -82,21 +82,76 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	dbInfo := &model.DBInfo{Name: schema}
-	if charsetInfo != nil {
-		chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetInfo.Chs, Col: charsetInfo.Col})
+func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) (err error) {
+	var placementPolicyRef *model.PolicyRefInfo
+	sessionVars := ctx.GetSessionVars()
+
+	// If no charset and/or collation is specified use collation_server and character_set_server
+	charsetOpt := &ast.CharsetOpt{}
+	if sessionVars.GlobalVarsAccessor != nil {
+		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		dbInfo.Charset = chs
-		dbInfo.Collate = coll
-	} else {
-		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
+		charsetOpt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		if err != nil {
+			return err
+		}
 	}
 
+	explicitCharset := false
+	explicitCollation := false
+	if len(stmt.Options) != 0 {
+		for _, val := range stmt.Options {
+			switch val.Tp {
+			case ast.DatabaseOptionCharset:
+				charsetOpt.Chs = val.Value
+				explicitCharset = true
+			case ast.DatabaseOptionCollate:
+				charsetOpt.Col = val.Value
+				explicitCollation = true
+			case ast.DatabaseOptionPlacementPolicy:
+				placementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(val.Value),
+				}
+			}
+		}
+	}
+
+	if charsetOpt.Col != "" {
+		coll, err := collate.GetCollationByName(charsetOpt.Col)
+		if err != nil {
+			return err
+		}
+
+		// The collation is not valid for the specified character set.
+		// Try to remove any of them, but not if they are explicitly defined.
+		if coll.CharsetName != charsetOpt.Chs {
+			if explicitCollation && !explicitCharset {
+				// Use the explicitly set collation, not the implicit charset.
+				charsetOpt.Chs = ""
+			}
+			if !explicitCollation && explicitCharset {
+				// Use the explicitly set charset, not the (session) collation.
+				charsetOpt.Col = ""
+			}
+		}
+
+	}
+	dbInfo := &model.DBInfo{Name: stmt.Name}
+	chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetOpt.Chs, Col: charsetOpt.Col})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	dbInfo.Charset = chs
+	dbInfo.Collate = coll
 	dbInfo.PlacementPolicyRef = placementPolicyRef
-	return d.CreateSchemaWithInfo(ctx, dbInfo, OnExistError)
+
+	onExist := OnExistError
+	if stmt.IfNotExists {
+		onExist = OnExistIgnore
+	}
+	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
 func (d *ddl) CreateSchemaWithInfo(
@@ -147,6 +202,12 @@ func (d *ddl) CreateSchemaWithInfo(
 
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
+
+	if infoschema.ErrDatabaseExists.Equal(err) && onExist == OnExistIgnore {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+
 	return errors.Trace(err)
 }
 
@@ -158,7 +219,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 	}
 
 	// Check if need to change charset/collation.
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -181,7 +242,7 @@ func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.Al
 }
 
 func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, placementPolicyRef *model.PolicyRefInfo) (err error) {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -276,7 +337,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
-	dbName := model.NewCIStr(stmt.Name)
+	dbName := stmt.Name
 	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
@@ -520,11 +581,14 @@ func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) 
 	return nil
 }
 
-func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
+func (d *ddl) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) (err error) {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	old, ok := is.SchemaByName(schema)
+	old, ok := is.SchemaByName(stmt.Name)
 	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
+		if stmt.IfExists {
+			return nil
+		}
+		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
 	}
 	job := &model.Job{
 		SchemaID:    old.ID,
@@ -537,13 +601,19 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) {
+			if stmt.IfExists {
+				return nil
+			}
+			return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
+		}
 		return errors.Trace(err)
 	}
 	if !config.TableLockEnabled() {
 		return nil
 	}
 	// Clear table locks hold by the session.
-	tbs := is.SchemaTables(schema)
+	tbs := is.SchemaTables(stmt.Name)
 	lockTableIDs := make([]int64, 0)
 	for _, tb := range tbs {
 		if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
@@ -2903,8 +2973,21 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	return false
 }
 
+// resolveAlterTableAddColumns splits "add columns" to multiple spec. For example,
+// `ALTER TABLE ADD COLUMN (c1 INT, c2 INT)` is split into
+// `ALTER TABLE ADD COLUMN c1 INT, ADD COLUMN c2 INT`.
+func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
+	specs := make([]*ast.AlterTableSpec, len(spec.NewColumns))
+	for i, col := range spec.NewColumns {
+		t := *spec
+		t.NewColumns = []*ast.ColumnDef{col}
+		specs[i] = &t
+	}
+	return specs
+}
+
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occurred error.
+// returns valid specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlgorithmTypeDefault
@@ -2916,7 +2999,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
-		validSpecs = append(validSpecs, spec)
+		if spec.Tp == ast.AlterTableAddColumns && len(spec.NewColumns) > 1 {
+			validSpecs = append(validSpecs, resolveAlterTableAddColumns(spec)...)
+		} else {
+			validSpecs = append(validSpecs, spec)
+		}
 	}
 
 	// Verify whether the algorithm is supported.
@@ -2997,9 +3084,10 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	}
 
 	if len(validSpecs) > 1 {
+		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
 		case ast.AlterTableAddColumns:
-			err = d.AddColumns(sctx, ident, validSpecs)
+			useMultiSchemaChange = true
 		case ast.AlterTableDropColumn:
 			err = d.DropColumns(sctx, ident, validSpecs)
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
@@ -3010,7 +3098,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return nil
+		if !useMultiSchemaChange {
+			return nil
+		}
 	}
 
 	if len(validSpecs) > 1 {
@@ -3021,11 +3111,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
-			if len(spec.NewColumns) != 1 {
-				err = d.AddColumns(sctx, ident, []*ast.AlterTableSpec{spec})
-			} else {
-				err = d.AddColumn(sctx, ident, spec)
-			}
+			err = d.AddColumn(sctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
@@ -3476,6 +3562,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
+	err = checkAfterPositionExists(t.Meta(), spec.Position)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3484,15 +3574,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0},
+		Args:       []interface{}{col, spec.Position, 0, spec.IfNotExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	// column exists, but if_not_exists flags is true, so we ignore this error.
-	if infoschema.ErrColumnExists.Equal(err) && spec.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -4621,7 +4706,6 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	}
 	switch {
 	case oldRandBits == newRandBits:
-		break
 	case oldRandBits < newRandBits:
 		addingAutoRandom := oldRandBits == 0
 		if addingAutoRandom {
@@ -5241,71 +5325,172 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	return errors.Trace(err)
 }
 
-// DropTable will proceed even if some table in the list does not exists.
-func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
+// If one drop those tables by mistake, it's difficult to recover.
+// In the worst case, the whole TiDB cluster fails to bootstrap, so we prevent user from dropping them.
+var systemTables = map[string]struct{}{
+	"tidb":                 {},
+	"gc_delete_range":      {},
+	"gc_delete_range_done": {},
+}
+
+func isSystemTable(schema, table string) bool {
+	if schema != "mysql" {
+		return false
+	}
+	if _, ok := systemTables[table]; ok {
+		return true
+	}
+	return false
+}
+
+type objectType int
+
+const (
+	tableObject objectType = iota
+	viewObject
+	sequenceObject
+)
+
+// dropTableObject provides common logic to DROP TABLE/VIEW/SEQUENCE.
+func (d *ddl) dropTableObject(
+	ctx sessionctx.Context,
+	objects []*ast.TableName,
+	ifExists bool,
+	tableObjectType objectType,
+) error {
+	var (
+		notExistTables []string
+		sessVars       = ctx.GetSessionVars()
+		is             = d.GetInfoSchemaWithInterceptor(ctx)
+		dropExistErr   *terror.Error
+		jobType        model.ActionType
+	)
+
+	switch tableObjectType {
+	case tableObject:
+		dropExistErr = infoschema.ErrTableDropExists
+		jobType = model.ActionDropTable
+	case viewObject:
+		dropExistErr = infoschema.ErrTableDropExists
+		jobType = model.ActionDropView
+	case sequenceObject:
+		dropExistErr = infoschema.ErrSequenceDropExists
+		jobType = model.ActionDropSequence
 	}
 
-	if tb.Meta().IsView() {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
-	}
-	if tb.Meta().IsSequence() {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
-	}
-	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
-	}
+	for _, tn := range objects {
+		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
+		schema, ok := is.SchemaByName(tn.Schema)
+		if !ok {
+			// TODO: we should return special error for table not exist, checking "not exist" is not enough,
+			// because some other errors may contain this error string too.
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		}
+		tableInfo, err := is.TableByName(tn.Schema, tn.Name)
+		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		} else if err != nil {
+			return err
+		}
 
-	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     tb.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: schema.State,
-		TableName:   tb.Meta().Name.L,
-		Type:        model.ActionDropTable,
-		BinlogInfo:  &model.HistoryInfo{},
-	}
+		// prechecks before build DDL job
 
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	if err != nil {
-		return errors.Trace(err)
+		// Protect important system table from been dropped by a mistake.
+		// I can hardly find a case that a user really need to do this.
+		if isSystemTable(tn.Schema.L, tn.Name.L) {
+			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+		}
+		switch tableObjectType {
+		case tableObject:
+			if !tableInfo.Meta().IsBaseTable() {
+				notExistTables = append(notExistTables, fullti.String())
+				continue
+			}
+
+			tempTableType := tableInfo.Meta().TempTableType
+			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
+				logutil.BgLogger().Warn("admin check table before drop",
+					zap.String("database", fullti.Schema.O),
+					zap.String("table", fullti.Name.O),
+				)
+				exec := ctx.(sqlexec.RestrictedSQLExecutor)
+				_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				if err != nil {
+					return err
+				}
+			}
+
+			if tableInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+				return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
+			}
+		case viewObject:
+			if !tableInfo.Meta().IsView() {
+				return dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "VIEW")
+			}
+		case sequenceObject:
+			if !tableInfo.Meta().IsSequence() {
+				err = dbterror.ErrWrongObject.GenWithStackByArgs(fullti.Schema, fullti.Name, "SEQUENCE")
+				if ifExists {
+					ctx.GetSessionVars().StmtCtx.AppendNote(err)
+					continue
+				}
+				return err
+			}
+		}
+
+		job := &model.Job{
+			SchemaID:    schema.ID,
+			TableID:     tableInfo.Meta().ID,
+			SchemaName:  schema.Name.L,
+			SchemaState: schema.State,
+			TableName:   tableInfo.Meta().Name.L,
+			Type:        jobType,
+			BinlogInfo:  &model.HistoryInfo{},
+		}
+
+		err = d.DoDDLJob(ctx, job)
+		err = d.callHookOnChanged(job, err)
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			notExistTables = append(notExistTables, fullti.String())
+			continue
+		} else if err != nil {
+			return errors.Trace(err)
+		}
+
+		// unlock table after drop
+		if tableObjectType != tableObject {
+			continue
+		}
+		if !config.TableLockEnabled() {
+			continue
+		}
+		if ok, _ := ctx.CheckTableLocked(tableInfo.Meta().ID); ok {
+			ctx.ReleaseTableLockByTableIDs([]int64{tableInfo.Meta().ID})
+		}
+
 	}
-	if !config.TableLockEnabled() {
-		return nil
+	if len(notExistTables) > 0 && !ifExists {
+		return dropExistErr.GenWithStackByArgs(strings.Join(notExistTables, ","))
 	}
-	if ok, _ := ctx.CheckTableLocked(tb.Meta().ID); ok {
-		ctx.ReleaseTableLockByTableIDs([]int64{tb.Meta().ID})
+	// We need add warning when use if exists.
+	if len(notExistTables) > 0 && ifExists {
+		for _, table := range notExistTables {
+			sessVars.StmtCtx.AppendNote(dropExistErr.GenWithStackByArgs(table))
+		}
 	}
 	return nil
 }
 
+// DropTable will proceed even if some table in the list does not exists.
+func (d *ddl) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, tableObject)
+}
+
 // DropView will proceed even if some view in the list does not exists.
-func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !tb.Meta().IsView() {
-		return dbterror.ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "VIEW")
-	}
-
-	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     tb.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: tb.Meta().State,
-		TableName:   tb.Meta().Name.L,
-		Type:        model.ActionDropView,
-		BinlogInfo:  &model.HistoryInfo{},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
+func (d *ddl) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+	return d.dropTableObject(ctx, stmt.Tables, stmt.IfExists, viewObject)
 }
 
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
@@ -6155,7 +6340,6 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 	case dbterror.ErrTooLongTableComment:
 		maxLen *= 2
 	case dbterror.ErrTooLongFieldComment, dbterror.ErrTooLongIndexComment, dbterror.ErrTooLongTablePartitionComment:
-		break
 	default:
 		// add more types of terror.Error if need
 	}
@@ -6219,7 +6403,6 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
 			case types.KindString, types.KindBytes:
-				break
 			default:
 				return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
@@ -6591,34 +6774,8 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 	return errors.Trace(err)
 }
 
-func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {
-	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if !tbl.Meta().IsSequence() {
-		err = dbterror.ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "SEQUENCE")
-		if ifExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return err
-	}
-
-	job := &model.Job{
-		SchemaID:    schema.ID,
-		TableID:     tbl.Meta().ID,
-		SchemaName:  schema.Name.L,
-		SchemaState: tbl.Meta().State,
-		TableName:   tbl.Meta().Name.L,
-		Type:        model.ActionDropSequence,
-		BinlogInfo:  &model.HistoryInfo{},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
+func (d *ddl) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
+	return d.dropTableObject(ctx, stmt.Sequences, stmt.IfExists, sequenceObject)
 }
 
 func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, indexName model.CIStr, visibility ast.IndexVisibility) error {

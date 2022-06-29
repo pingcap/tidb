@@ -860,7 +860,9 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	pagingRange := resp.pbResp.Range
 	// only paging requests need to calculate the next ranges
 	if pagingRange == nil {
-		return nil, errors.New("lastRange in paging should not be nil")
+		// If the storage engine doesn't support paging protocol, it should have return all the region data.
+		// So we finish here.
+		return nil, nil
 	}
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
@@ -932,7 +934,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "write conflict") {
-			return nil, kv.ErrWriteConflict
+			return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 		}
 		return nil, errors.Trace(err)
 	}

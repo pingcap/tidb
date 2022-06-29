@@ -1208,9 +1208,13 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType, costF
 		return 0, err
 	}
 	p.planCost = childCost
-	// accumulate net cost: rows * row-size * net-factor
-	rowSize := getTblStats(p.children[0]).GetAvgRowSize(p.ctx, p.children[0].Schema().Columns, false, false)
-	p.planCost += getCardinality(p.children[0], costFlag) * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	// accumulate net cost
+	if p.ctx.GetSessionVars().CostModelVersion == modelVer1 {
+		p.planCost += getCardinality(p.children[0], costFlag) * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	} else { // to avoid regression, only consider row-size on model ver2
+		rowSize := getTblStats(p.children[0]).GetAvgRowSize(p.ctx, p.children[0].Schema().Columns, false, false)
+		p.planCost += getCardinality(p.children[0], costFlag) * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	}
 	p.planCostInit = true
 	return p.planCost, nil
 }
