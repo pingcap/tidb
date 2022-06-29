@@ -56,6 +56,7 @@ func (ad *AdvancerDaemon) Begin(ctx context.Context) (func(), error) {
 				log.Info("advancer loop exits", zap.String("id", ad.manager.ID()))
 				return
 			case <-tick.C:
+				log.Debug("deamon tick start", zap.Bool("is-owner", ad.manager.IsOwner()))
 				if ad.manager.IsOwner() {
 					metrics.AdvancerOwner.Set(1.0)
 					if err := ad.adv.OnTick(ctx); err != nil {

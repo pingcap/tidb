@@ -19,12 +19,12 @@ import (
 )
 
 var (
-	LastCheckpoint = prometheus.NewGauge(prometheus.GaugeOpts{
+	LastCheckpoint = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "log_backup",
 		Name:      "last_checkpoint",
 		Help:      "The last global checkpoint of log backup.",
-	})
+	}, []string{"task"})
 	AdvancerOwner = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace:   "tidb",
 		Subsystem:   "log_backup",
@@ -39,4 +39,11 @@ var (
 		Help:      "The time cost of each step during advancer ticking.",
 		Buckets:   prometheus.ExponentialBuckets(0.01, 3.0, 8),
 	}, []string{"step"})
+	GetCheckpointBatchSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "advancer_batch_size",
+		Help:      "The batch size of scanning region or get region checkpoint.",
+		Buckets:   prometheus.ExponentialBuckets(1, 2.0, 8),
+	}, []string{"type"})
 )

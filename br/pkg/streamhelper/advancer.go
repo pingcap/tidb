@@ -123,7 +123,7 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 
 func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst *RangesSharesTS) error {
 	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
-	ranges := CollpaseRanges(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
+	ranges := CollapseRanges(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
 	workers := utils.NewWorkerPool(4, "subranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
@@ -196,16 +196,16 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 			if err != nil {
 				return 0, err
 			}
-			result, err := coll.Wait(ctx)
-			if err != nil {
-				return 0, err
-			}
-			log.Debug("full: a run finished", zap.Any("checkpoint", result))
+		}
+		result, err := coll.Wait(ctx)
+		if err != nil {
+			return 0, err
+		}
+		log.Debug("full: a run finished", zap.Any("checkpoint", result))
 
-			nextRun = append(nextRun, result.FailureSubranges...)
-			if cp > result.Checkpoint {
-				cp = result.Checkpoint
-			}
+		nextRun = append(nextRun, result.FailureSubranges...)
+		if cp > result.Checkpoint {
+			cp = result.Checkpoint
 		}
 		if len(nextRun) == 0 {
 			return cp, nil
@@ -217,7 +217,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 	}
 }
 
-func CollpaseRanges(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
+func CollapseRanges(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
 	frs := make([]kv.KeyRange, 0, length)
 	for i := 0; i < length; i++ {
 		frs = append(frs, getRange(i))
@@ -233,10 +233,10 @@ func CollpaseRanges(length int, getRange func(int) kv.KeyRange) []kv.KeyRange {
 		item := frs[i]
 		for {
 			i++
-			if i >= len(frs) || bytes.Compare(frs[i].StartKey, item.EndKey) > 0 {
+			if i >= len(frs) || (len(item.EndKey) != 0 && bytes.Compare(frs[i].StartKey, item.EndKey) > 0) {
 				break
 			}
-			if bytes.Compare(item.EndKey, frs[i].EndKey) < 0 || len(frs[i].EndKey) == 0 {
+			if len(item.EndKey) != 0 && bytes.Compare(item.EndKey, frs[i].EndKey) < 0 || len(frs[i].EndKey) == 0 {
 				item.EndKey = frs[i].EndKey
 			}
 		}
@@ -354,7 +354,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
 	c.lastCheckpoint = cp
-	metrics.LastCheckpoint.Set(float64(c.lastCheckpoint))
+	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	return nil
 }
 
@@ -363,6 +363,7 @@ func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	defer func() {
 		e := recover()
 		if e != nil {
+			log.Error("panic during handing tick", zap.Stack("stack"), logutil.ShortError(err))
 			err = errors.Annotatef(berrors.ErrUnknown, "panic during handling tick: %s", e)
 		}
 	}()

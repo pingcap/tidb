@@ -10,6 +10,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
 )
 
@@ -19,6 +20,7 @@ const (
 
 type onSuccessHook = func(uint64, kv.KeyRange)
 
+// storeColector collectes the region checkpoints from some store.
 type storeCollector struct {
 	storeID   uint64
 	batchSize int
@@ -130,13 +132,13 @@ func (c *storeCollector) flush(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	metrics.GetCheckpointBatchSize.WithLabelValues("checkpoint").Observe(float64(len(c.currentRequest.GetRegions())))
 	c.currentRequest = logbackup.GetLastFlushTSOfRegionRequest{}
 	for _, checkpoint := range cps.Checkpoints {
 		if checkpoint.Err != nil {
 			log.Debug("failed to get region checkpoint", zap.Stringer("err", checkpoint.Err))
 			c.inconsistent = append(c.inconsistent, c.regionMap[checkpoint.Region.Id])
 		} else {
-			log.Debug("get checkpoint of region", zap.Stringer("region", checkpoint.Region), zap.Uint64("checkpoint", checkpoint.Checkpoint))
 			if c.onSuccess != nil {
 				c.onSuccess(checkpoint.Checkpoint, c.regionMap[checkpoint.Region.Id])
 			}
@@ -220,7 +222,7 @@ func (c *clusterCollector) Wait(ctx context.Context) (StoreCheckpoints, error) {
 			return StoreCheckpoints{}, errors.Annotatef(err, "store %d", id)
 		}
 		result.merge(r)
-		log.Info("get checkpoint", zap.Any("checkpoint", r), zap.Any("merged", result))
+		log.Debug("get checkpoint", zap.Any("checkpoint", r), zap.Any("merged", result))
 	}
 	return result, nil
 }

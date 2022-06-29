@@ -175,7 +175,7 @@ func (h *Checkpoints) ConsistencyCheck() error {
 	})
 	h.mu.Unlock()
 
-	r := CollpaseRanges(len(ranges), func(i int) kv.KeyRange { return ranges[i] })
+	r := CollapseRanges(len(ranges), func(i int) kv.KeyRange { return ranges[i] })
 	if len(r) != 1 || len(r[0].StartKey) != 0 || len(r[0].EndKey) != 0 {
 		return errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
 			"the region tree cannot cover the key space, collpased: %s", logutil.StringifyKeys(r))

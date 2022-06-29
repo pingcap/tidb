@@ -93,10 +93,18 @@ func TestMergeRanges(t *testing.T) {
 			parameter: []kv.KeyRange{r("", "01"), r("001", "")},
 			expected:  []kv.KeyRange{r("", "")},
 		},
+		{
+			parameter: []kv.KeyRange{r("", "01"), r("", ""), r("", "02")},
+			expected:  []kv.KeyRange{r("", "")},
+		},
+		{
+			parameter: []kv.KeyRange{r("", "01"), r("01", ""), r("", "02"), r("", "03"), r("01", "02")},
+			expected:  []kv.KeyRange{r("", "")},
+		},
 	}
 
 	for i, c := range cases {
-		result := streamhelper.CollpaseRanges(len(c.parameter), func(i int) kv.KeyRange {
+		result := streamhelper.CollapseRanges(len(c.parameter), func(i int) kv.KeyRange {
 			return c.parameter[i]
 		})
 		require.Equal(t, c.expected, result, "case = %d", i)
