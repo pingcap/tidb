@@ -840,42 +840,46 @@ func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res inte
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
-	req := new(http.Request)
 	for _, host := range pdHosts {
-		req, err = http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
-		if err != nil {
-			// Try to request from another PD node when some nodes may down.
-			if strings.Contains(err.Error(), "connection refused") {
-				continue
-			}
-			return errors.Trace(err)
+		err = requestPDForOneHost(host, apiName, method, uri, body, res)
+		if err == nil {
+			break
 		}
+		// Try to request from another PD node when some nodes may down.
 	}
+	return err
+}
+
+func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res interface{}) error {
+	urlVar := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), host, uri)
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
+	req, err := http.NewRequest(method, urlVar, body)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("requestPDForOneHost new request failed",
+			zap.String("url", urlVar), zap.Error(err))
+		return errors.Trace(err)
 	}
 	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("requestPDForOneHost do request failed",
+			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
 	metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
 	metrics.PDAPIRequestCounter.WithLabelValues(apiName, resp.Status).Inc()
-
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Warn("requestPDForOneHost close body failed",
+				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
-
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }
 
