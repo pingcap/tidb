@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
@@ -62,6 +63,18 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	}
 
 	innerChild := join.Children()[1]
+
+	// If there's right conditions:
+	//   - If it's semi join, then right condition should be pushed.
+	//   - If it's outer semi join, then it still should be pushed since the outer join should not remain any cond of the inner side.
+	// But the aggregation we added may block the predicate push down since we've not maintained the functional dependency to pass the equiv class to guide the push down.
+	// So we create a selection before we build the aggregation.
+	if len(join.RightConditions) > 0 {
+		sel := LogicalSelection{Conditions: make([]expression.Expression, len(join.RightConditions))}.Init(p.SCtx(), innerChild.SelectBlockOffset())
+		copy(sel.Conditions, join.RightConditions)
+		sel.SetChildren(innerChild)
+		innerChild = sel
+	}
 
 	subAgg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(join.EqualConditions)),
