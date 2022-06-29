@@ -44,6 +44,6 @@ var (
 		Subsystem: "log_backup",
 		Name:      "advancer_batch_size",
 		Help:      "The batch size of scanning region or get region checkpoint.",
-		Buckets:   prometheus.ExponentialBuckets(1, 2.0, 8),
+		Buckets:   prometheus.ExponentialBuckets(1, 2.0, 12),
 	}, []string{"type"})
 )

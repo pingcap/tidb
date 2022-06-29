@@ -121,17 +121,19 @@ func (t TaskEventClient) startListen(ctx context.Context, rev int64, ch chan<- T
 				}
 			case <-ctx.Done():
 				// drain the remain event from channel.
-				select {
-				case resp, ok := <-c:
-					if !ok {
+				for {
+					select {
+					case resp, ok := <-c:
+						if !ok {
+							return
+						}
+						if !handleResponse(resp) {
+							return
+						}
+					default:
 						return
 					}
-					if !handleResponse(resp) {
-						return
-					}
-				default:
 				}
-				return
 			}
 		}
 	}()

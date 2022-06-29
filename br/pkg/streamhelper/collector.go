@@ -20,7 +20,9 @@ const (
 
 type onSuccessHook = func(uint64, kv.KeyRange)
 
-// storeColector collectes the region checkpoints from some store.
+// storeCollector collects the region checkpoints from some store.
+// it receives requests from the input channel, batching the requests, and send them to the store.
+// because the server supports batching, the range of request regions can be discreted.
 type storeCollector struct {
 	storeID   uint64
 	batchSize int
