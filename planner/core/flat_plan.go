@@ -193,7 +193,7 @@ func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperato
 		Depth:          info.depth,
 		ReqType:        info.reqType,
 		TextTreeIndent: info.indent,
-		IsPhysicalPlan: info.isLastChild,
+		IsLastChild:    info.isLastChild,
 	}
 
 	if _, ok := p.(PhysicalPlan); ok {
