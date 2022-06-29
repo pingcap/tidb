@@ -79,22 +79,6 @@ func TestLeadingJoinHint(t *testing.T) {
 	tk.MustExec("create table t8(a int, b int, key(a));")
 	runJoinReorderTestData(t, tk, "TestLeadingJoinHint")
 
-	// test cases for outer join
-	tk.MustExec("select /*+ leading(t1, t3) */ * from t1 left join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-	tk.MustExec("select /*+ leading(t2) */ * from t1 left join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-	tk.MustExec("select /*+ leading(t2, t3) */ * from t1 left join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-	tk.MustExec("select /*+ leading(t1, t2, t3) */ * from t1 left join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-	tk.MustExec("select /*+ leading(t1, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-	tk.MustExec("select /*+ leading(t1, t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-	tk.MustExec("select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-
 	// test cases for multiple leading hints
 	tk.MustExec("select /*+ leading(t1) leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
@@ -165,13 +149,6 @@ func TestJoinOrderHint(t *testing.T) {
 	tk.MustExec("select /*+ leading(t2, t1) */ * from t1 t join t2 on t.a=t2.a join t3 on t2.b=t3.b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name",
 		"Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"))
-
-	// conflict between table names
-	tk.MustExec("select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
-
-	tk.MustExec("select /*+ leading(t1, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 leading hint is inapplicable when we have outer join"))
 
 	// table name in leading hint cross query block
 	// Todo: Can not handle this case yet. Because when we extract the join group, it will get the join group {t1, t2, t3}.
@@ -328,4 +305,23 @@ func TestJoinOrderHint4Subquery(t *testing.T) {
 	tk.MustExec("analyze table t3;")
 
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4Subquery")
+}
+
+func TestLeadingJoinHint4OuterJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6, t7, t8;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
+	tk.MustExec("create table t7(a int, b int, key(a));")
+	tk.MustExec("create table t8(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestLeadingJoinHint4OuterJoin")
 }

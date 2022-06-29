@@ -40,10 +40,10 @@ for backend in tidb local; do
       check_contains 'inc: 6'
       NEXT_AUTO_RAND_VAL=7
     else
-      check_contains 'inc: 6'
-      check_contains 'inc: 7'
-      check_contains 'inc: 8'
-      NEXT_AUTO_RAND_VAL=9
+      check_contains 'inc: 25'
+      check_contains 'inc: 26'
+      check_contains 'inc: 27'
+      NEXT_AUTO_RAND_VAL=28
     fi
 
     # tidb backend randomly generate the auto-random bit for each statement, so with 2 statements,
