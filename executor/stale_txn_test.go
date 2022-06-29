@@ -1448,5 +1448,5 @@ func TestIssue35686(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	// This query should not panic
-	tk.MustExec("select * from information_schema.ddl_jobs as of timestamp now()")
+	tk.MustQuery("select * from information_schema.ddl_jobs as of timestamp now()")
 }

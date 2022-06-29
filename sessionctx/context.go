@@ -176,7 +176,8 @@ type Context interface {
 	ReleaseAllAdvisoryLocks() int
 }
 
-// TxnFuture todo: add comments
+// TxnFuture is an interface where implementations have a kv.Transaction field and after
+// calling Wait of the TxnFuture, the kv.Transaction will become valid.
 type TxnFuture interface {
 	// Wait converts pending txn to valid
 	Wait(ctx context.Context, sctx Context) (kv.Transaction, error)
