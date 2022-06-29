@@ -904,7 +904,7 @@ func TestResolveLockRangeInfine(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/invalidCacheAndRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"))
 	}()
-	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, 3, []byte{0}, []byte{1})
 	require.Error(t, err)
 }
 
@@ -938,7 +938,7 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 		}
 		return true, nil
 	}
-	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{10})
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, 3, []byte{0}, []byte{10})
 	require.NoError(t, err)
 	require.Equal(t, 2, resolveCnt)
 	require.Equal(t, 1, scanCnt)
@@ -1014,7 +1014,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		return true, nil
 	}
 
-	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte(""), []byte("z"))
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, 3, []byte(""), []byte("z"))
 	require.NoError(t, err)
 	require.Len(t, resolvedLock, 4)
 	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
