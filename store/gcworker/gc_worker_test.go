@@ -258,6 +258,17 @@ func TestGetOracleTime(t *testing.T) {
 	timeEqual(t, t2, t1.Add(time.Second*10), time.Millisecond*10)
 }
 
+func TestGetLowResolveTS(t *testing.T) {
+	s, clean := createGCWorkerSuite(t)
+	defer clean()
+
+	lowResolveTS, err := s.gcWorker.getLowResolveTS()
+	require.NoError(t, err)
+
+	lowResolveTime := oracle.GetTimeFromTS(lowResolveTS)
+	timeEqual(t, time.Now(), lowResolveTime.Add(gcLowResolveInterval), time.Second)
+}
+
 func TestMinStartTS(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
