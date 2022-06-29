@@ -15,8 +15,9 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/types"
 	"strconv"
+
+	"github.com/pingcap/tidb/types"
 )
 
 func isNumber(c byte) bool {
@@ -92,7 +93,7 @@ func FastLexer(sql string) (string, []types.Datum, bool) {
 				isSchemaNameStatus = false
 			}
 		}
-		if isNumber(c) && !isSchemaNameStatus {
+		if (isNumber(c) || c == '-') && !isSchemaNameStatus {
 			isNumberStatus = true
 			constantParam = append(constantParam, c)
 		} else if isString(c) {
