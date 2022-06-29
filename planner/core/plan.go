@@ -324,6 +324,11 @@ type LogicalPlan interface {
 	ExtractFD() *fd.FDSet
 }
 
+type IRConstructor struct {
+	Name string
+	Body string
+}
+
 // PhysicalPlan is a tree of the physical operators.
 type PhysicalPlan interface {
 	Plan

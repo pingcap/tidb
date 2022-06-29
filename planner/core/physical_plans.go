@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"unsafe"
@@ -543,6 +544,27 @@ type PhysicalTableScan struct {
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
+}
+
+func (ts *PhysicalTableScan) ExportIR() (IRConstructor, error) {
+	name := fmt.Sprintf("GetPhysicalTableScan_%d", ts.ID())
+
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf("func %s(ctx sessionctx.Context, is infoschema.InfoSchema) (ts *PhysicalTableScan, err error) {\n", name))
+
+	tbName := ts.Table.Name.O
+	dbName := ts.DBName.O
+
+	buf.WriteString(fmt.Sprintf(`
+	tbName := model.NewCIStr("%s")
+	dbName := model.NewCIStr("%s")
+	tbInfo, err := is.TableByName(dbName, tbName)
+	if err != nil {
+		return
+	}
+`, dbName, tbName))
+
+	return IRConstructor{}, nil
 }
 
 // Clone implements PhysicalPlan interface.
