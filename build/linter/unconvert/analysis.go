@@ -25,10 +25,10 @@ import (
 	"golang.org/x/tools/go/loader"
 )
 
-type Unconvert struct{}
-
+// Name is the name of the analyzer.
 const Name = "unconvert"
 
+// Analyzer is the analyzer struct of unconvert.
 var Analyzer = &analysis.Analyzer{
 	Name: Name,
 	Doc:  "Remove unnecessary type conversions",
