@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -2388,7 +2387,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
-	var is infoschema.InfoSchema
 	var snapshotTS uint64
 	replicaReadScope := oracle.GlobalTxnScope
 
@@ -2400,7 +2398,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	txnManager := sessiontxn.GetTxnManager(s)
 	if staleReadProcessor.IsStaleness() {
 		snapshotTS = staleReadProcessor.GetStalenessReadTS()
-		is = staleReadProcessor.GetStalenessInfoSchema()
+		is := staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
 		err = txnManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
 			Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
@@ -2410,8 +2408,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
 
 	staleness := snapshotTS > 0
@@ -2425,10 +2421,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 
 	if err = s.onTxnManagerStmtStartOrRetry(ctx); err != nil {
 		return nil, err
-	}
-
-	if p, isOK := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); isOK {
-		p.InfoSchema = is
 	}
 
 	if ok {
