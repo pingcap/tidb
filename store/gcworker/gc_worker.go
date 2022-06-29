@@ -146,6 +146,9 @@ const (
 	gcDefaultConcurrency = 2
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
+
+	gcLowResolveInterval = time.Minute * 5
+
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = txnlock.ResolvedCacheSize / 2
 
@@ -1014,12 +1017,17 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) (bool, error) {
+	lowResolveTS, err := w.getLowResolveTS()
+	if err != nil {
+		return false, err
+	}
+
 	if !usePhysical {
-		return false, w.legacyResolveLocks(ctx, safePoint, concurrency)
+		return false, w.legacyResolveLocks(ctx, safePoint, lowResolveTS, concurrency)
 	}
 
 	// First try resolve locks with physical scan
-	err := w.resolveLocksPhysical(ctx, safePoint)
+	err = w.resolveLocksPhysical(ctx, safePoint)
 	if err == nil {
 		return true, nil
 	}
@@ -1029,10 +1037,10 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 		zap.Uint64("safePoint", safePoint),
 		zap.Error(err))
 
-	return false, w.legacyResolveLocks(ctx, safePoint, concurrency)
+	return false, w.legacyResolveLocks(ctx, safePoint, lowResolveTS, concurrency)
 }
 
-func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, concurrency int) error {
+func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, lowResolveTS uint64, concurrency int) error {
 	metrics.GCWorkerCounter.WithLabelValues("resolve_locks").Inc()
 	logutil.Logger(ctx).Info("[gc worker] start resolve locks",
 		zap.String("uuid", w.uuid),
@@ -1041,7 +1049,7 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 	startTime := time.Now()
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey)
+		return w.resolveLocksForRange(ctx, safePoint, lowResolveTS, r.StartKey, r.EndKey)
 	}
 
 	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
@@ -1063,12 +1071,22 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
+func (w *GCWorker) getLowResolveTS() (uint64, error) {
+	now, err := w.getOracleTime()
+	if err != nil {
+		return 0, err
+	}
+
+	logResolveTime := now.Add(-gcLowResolveInterval)
+	return oracle.GoTimeToTS(logResolveTime), nil
+}
+
+func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, lowResolveTS uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
 	req := tikvrpc.NewRequest(tikvrpc.CmdScanLock, &kvrpcpb.ScanLockRequest{
-		MaxVersion: safePoint,
+		MaxVersion: lowResolveTS,
 		Limit:      gcScanLockLimit,
 	})
 
@@ -1138,7 +1156,7 @@ retryScanAndResolve:
 			if w.testingKnobs.resolveLocks != nil {
 				ok, err1 = w.testingKnobs.resolveLocks(locks, locForResolve.Region)
 			} else {
-				ok, err1 = w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locks, locForResolve.Region)
+				ok, err1 = w.tikvStore.GetLockResolver().TryBatchResolveLocks(bo, locks, locForResolve.Region, safePoint, lowResolveTS)
 			}
 			if err1 != nil {
 				return stat, errors.Trace(err1)
@@ -1511,7 +1529,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*txnlo
 			}
 		}
 
-		ok, err := w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locksInRegion, loc.Region)
+		ok, err := w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locksInRegion, loc.Region, math.MaxUint64)
 		if err != nil {
 			return errors.Trace(err)
 		}

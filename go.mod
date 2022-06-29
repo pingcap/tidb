@@ -117,7 +117,7 @@ require (
 	github.com/benbjohnson/clock v1.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/cockroachdb/errors v1.8.1 // indirect
+	github.com/cockroachdb/errors v1.8.1
 	github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f // indirect
 	github.com/cockroachdb/redact v1.0.8 // indirect
 	github.com/cockroachdb/sentry-go v0.6.1-cockroachdb.2 // indirect
@@ -218,3 +218,5 @@ replace github.com/pingcap/tidb/parser => ./parser
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.2
+
+replace github.com/tikv/client-go/v2 => github.com/joccau/client-go/v2 v2.0.0-rc.0.20220605151620-6ef5835b20a6
