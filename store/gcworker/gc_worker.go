@@ -1078,7 +1078,7 @@ func (w *GCWorker) getLowResolveTS() (uint64, error) {
 	}
 
 	lowResolveTime := now.Add(-gcLowResolveInterval)
-	return oracle.GoTimeToTS(logResolveTime), nil
+	return oracle.GoTimeToTS(lowResolveTime), nil
 }
 
 func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, lowResolveTS uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
