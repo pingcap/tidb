@@ -5,6 +5,7 @@ package ddl
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -18,13 +19,13 @@ func TestInMemoryDDL(t *testing.T) {
 	p := parser.New()
 
 	testDDL := NewInMemoryDDL(2)
-	_, ok := testDDL.SchemaByName(model.NewCIStr("test"))
-	require.False(t, ok)
+	dbInfo := testDDL.SchemaByName(model.NewCIStr("test"))
+	require.Nil(t, dbInfo)
 
-	err := testDDL.CreateSchema(sctx, model.NewCIStr("test"), nil, nil)
+	err := testDDL.CreateSchema(sctx, &ast.CreateDatabaseStmt{Name: model.NewCIStr("test")})
 	require.NoError(t, err)
-	_, ok = testDDL.SchemaByName(model.NewCIStr("test"))
-	require.True(t, ok)
+	dbInfo = testDDL.SchemaByName(model.NewCIStr("test"))
+	require.Equal(t, "test", dbInfo.Name.L)
 
 	sql := "CREATE TABLE test.t1 (c INT PRIMARY KEY)"
 	createAST, err := p.ParseOneStmt(sql, "", "")
@@ -32,16 +33,18 @@ func TestInMemoryDDL(t *testing.T) {
 	err = testDDL.CreateTable(sctx, createAST.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 
-	tbl, ok := testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.True(t, ok)
+	tbl, err := testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
 	require.Len(t, tbl.Columns, 1)
 	require.Equal(t, "c", tbl.Columns[0].Name.O)
 
-	err = testDDL.DropTable(sctx, ast.Ident{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")})
+	err = testDDL.DropTable(sctx, &ast.DropTableStmt{
+		Tables: []*ast.TableName{{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")}},
+	})
 	require.NoError(t, err)
-	_, ok = testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.False(t, ok)
+	_, err = testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
-	err = testDDL.DropSchema(sctx, model.NewCIStr("test"))
+	err = testDDL.DropSchema(sctx, &ast.DropDatabaseStmt{Name: model.NewCIStr("test")})
 	require.NoError(t, err)
 }
