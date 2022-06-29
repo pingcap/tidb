@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -820,6 +821,23 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, co
 	return checkTooBigFieldLengthAndTryAutoConvert(tp, colName, sessVars)
 }
 
+func decodeEnumSetBinaryLiteralToUTF8(tp *types.FieldType, chs string) {
+	if tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
+		return
+	}
+	enc := charset.FindEncoding(chs)
+	for i, elem := range tp.GetElems() {
+		if !tp.GetElemIsBinaryLit(i) {
+			continue
+		}
+		s, err := enc.Transform(nil, hack.Slice(elem), charset.OpDecodeReplace)
+		if err != nil {
+			logutil.BgLogger().Warn("decode enum binary literal to utf-8 failed", zap.Error(err))
+		}
+		tp.SetElem(i, string(hack.String(s)))
+	}
+}
+
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
 // outPriKeyConstraint is the primary key constraint out of column definition. For example:
 // `create table t1 (id int , age int, primary key(id));`
@@ -852,6 +870,7 @@ func buildColumnAndConstraint(
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, colDef.Name.Name.O, chs, coll, ctx.GetSessionVars()); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	decodeEnumSetBinaryLiteralToUTF8(colDef.Tp, chs)
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -4521,6 +4540,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
 		return nil, errors.Trace(err)
 	}
+	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	// Check the column with foreign key, waiting for the default flen and decimal.
 	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {

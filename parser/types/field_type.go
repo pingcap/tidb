@@ -53,7 +53,8 @@ type FieldType struct {
 	// collate represent collate rules of the charset
 	collate string
 	// elems is the element list for enum and set type.
-	elems []string
+	elems            []string
+	elemsIsBinaryLit []bool
 }
 
 // NewFieldType returns a FieldType,
@@ -180,8 +181,26 @@ func (ft *FieldType) SetElem(idx int, element string) {
 	ft.elems[idx] = element
 }
 
+func (ft *FieldType) SetElemWithIsBinaryLit(idx int, element string, isBinaryLit bool) {
+	ft.elems[idx] = element
+	if isBinaryLit {
+		// Create the binary literal flags lazily.
+		if ft.elemsIsBinaryLit == nil {
+			ft.elemsIsBinaryLit = make([]bool, len(ft.elems))
+		}
+		ft.elemsIsBinaryLit[idx] = true
+	}
+}
+
 func (ft *FieldType) GetElem(idx int) string {
 	return ft.elems[idx]
+}
+
+func (ft *FieldType) GetElemIsBinaryLit(idx int) bool {
+	if len(ft.elemsIsBinaryLit) == 0 {
+		return false
+	}
+	return ft.elemsIsBinaryLit[idx]
 }
 
 // Clone returns a copy of itself.
