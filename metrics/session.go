@@ -142,7 +142,7 @@ var (
 			Subsystem: "session",
 			Name:      "transaction_pessimistic_dml_duration_by_attempt",
 			Help:      "Bucketed histogram of duration of pessimistic DMLs, distinguished by first attempt and retries",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblPhase})
 )
 
