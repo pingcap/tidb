@@ -109,9 +109,6 @@ type Context interface {
 	// only used to daemon session like `statsHandle` to detect global variable change.
 	RefreshVars(context.Context) error
 
-	// GetSnapshotWithTS returns a snapshot with start ts
-	GetSnapshotWithTS(ts uint64) kv.Snapshot
-
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 

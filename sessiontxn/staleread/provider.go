@@ -133,5 +133,5 @@ func (p *StalenessTxnContextProvider) getStalenessSnapshot() (kv.Snapshot, error
 		return txn.GetSnapshot(), nil
 	}
 
-	return p.sctx.GetSnapshotWithTS(snapshotTS), nil
+	return sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS), nil
 }

@@ -3228,13 +3228,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	return sessiontxn.NewTxn(ctx, s)
 }
 
-// GetSnapshotWithTS returns a snapshot with ts.
-func (s *session) GetSnapshotWithTS(ts uint64) kv.Snapshot {
-	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
-	snap.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return snap
-}
-
 // GetStore gets the store of session.
 func (s *session) GetStore() kv.Storage {
 	return s.store

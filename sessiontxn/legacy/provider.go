@@ -246,7 +246,6 @@ func (p *SimpleTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 // Node: As SimpleTxnContextProvider is not used anymore and will be removed, it's unnecessary
 // to implement this method for it.
 func (p *SimpleTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
-
 	return nil, nil
 }
 

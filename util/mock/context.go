@@ -240,11 +240,6 @@ func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	return c.NewTxn(ctx)
 }
 
-// GetSnapshotWithTS return a snapshot with ts
-func (c *Context) GetSnapshotWithTS(ts uint64) kv.Snapshot {
-	return c.Store.GetSnapshot(kv.Version{Ver: ts})
-}
-
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))

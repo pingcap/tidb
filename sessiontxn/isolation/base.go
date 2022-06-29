@@ -287,5 +287,5 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 		return txn.GetSnapshot(), nil
 	}
 
-	return p.sctx.GetSnapshotWithTS(snapshotTS), nil
+	return sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS), nil
 }
