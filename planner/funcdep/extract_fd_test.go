@@ -214,7 +214,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
-		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
@@ -312,7 +312,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	is := testGetIS(t, tk.Session())
 	for i, tt := range tests {
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
-		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)

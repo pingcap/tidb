@@ -53,6 +53,7 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//error",
