@@ -15,4 +15,5 @@ go_test(
     name = "testfork_test",
     srcs = ["fork_test.go"],
     embed = [":testfork"],
+    deps = ["@com_github_stretchr_testify//require"],
 )
