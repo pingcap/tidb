@@ -149,6 +149,8 @@ type Session interface {
 	// ExecutePreparedStmt executes a prepared statement.
 	ExecutePreparedStmt(ctx context.Context, stmtID uint32, param []types.Datum) (sqlexec.RecordSet, error)
 	DropPreparedStmt(stmtID uint32) error
+	// SetSessionStatesHandler sets SessionStatesHandler for type stateType.
+	SetSessionStatesHandler(stateType int, handler sessionctx.SessionStatesHandler)
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
@@ -248,6 +250,9 @@ type session struct {
 	// all the local data in each session, and finally report them to the remote
 	// regularly.
 	stmtStats *stmtstats.StatementStats
+
+	// Used to encode and decode each type of session states.
+	sessionStatesHandlers map[int]sessionctx.SessionStatesHandler
 
 	// Contains a list of sessions used to collect advisory locks.
 	advisoryLocks map[string]*advisoryLock
@@ -2767,6 +2772,11 @@ func (s *session) RefreshVars(ctx context.Context) error {
 	return nil
 }
 
+// SetSessionStatesHandler implements the Session.SetSessionStatesHandler interface.
+func (s *session) SetSessionStatesHandler(stateType int, handler sessionctx.SessionStatesHandler) {
+	s.sessionStatesHandlers[stateType] = handler
+}
+
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
 	se, err := CreateSession4TestWithOpt(store, nil)
@@ -3013,12 +3023,13 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		store:           store,
-		sessionVars:     variable.NewSessionVars(),
-		ddlOwnerManager: dom.DDL().OwnerManager(),
-		client:          store.GetClient(),
-		mppClient:       store.GetMPPClient(),
-		stmtStats:       stmtstats.CreateStatementStats(),
+		store:                 store,
+		sessionVars:           variable.NewSessionVars(),
+		ddlOwnerManager:       dom.DDL().OwnerManager(),
+		client:                store.GetClient(),
+		mppClient:             store.GetMPPClient(),
+		stmtStats:             stmtstats.CreateStatementStats(),
+		sessionStatesHandlers: make(map[int]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
@@ -3050,11 +3061,12 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
-		store:       store,
-		sessionVars: variable.NewSessionVars(),
-		client:      store.GetClient(),
-		mppClient:   store.GetMPPClient(),
-		stmtStats:   stmtstats.CreateStatementStats(),
+		store:                 store,
+		sessionVars:           variable.NewSessionVars(),
+		client:                store.GetClient(),
+		mppClient:             store.GetMPPClient(),
+		stmtStats:             stmtstats.CreateStatementStats(),
+		sessionStatesHandlers: make(map[int]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
@@ -3538,11 +3550,23 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 			sessionStates.SystemVars[sv.Name] = val
 		}
 	}
+
+	if handler, ok := s.sessionStatesHandlers[sessionstates.StatePrepareStmt]; ok {
+		if err = handler.EncodeSessionStates(ctx, s, sessionStates); err != nil {
+			return
+		}
+	}
 	return
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
 func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
+	if handler, ok := s.sessionStatesHandlers[sessionstates.StatePrepareStmt]; ok {
+		if err = handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
+			return
+		}
+	}
+
 	// Decode session variables.
 	for name, val := range sessionStates.SystemVars {
 		if err = variable.SetSessionSystemVar(s.sessionVars, name, val); err != nil {
@@ -3550,7 +3574,8 @@ func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 		}
 	}
 
-	// Decode stmt ctx after session vars because setting session vars may override stmt ctx, such as warnings.
+	// Decoding session vars / prepared statements may override stmt ctx, such as warnings,
+	// so we decode stmt ctx at last.
 	if err = s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
