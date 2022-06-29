@@ -310,6 +310,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
 	tk.MustExec("analyze table t_unistore_act_rows")
+	tk.MustExec("set @@tidb_merge_join_concurrency= 5;")
 
 	type testStruct struct {
 		sql      string
@@ -352,6 +353,14 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		{
 			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
 			expected: []string{"4", "4", "4", "4", "4"},
+		},
+		{
+			sql:      "select a, row_number() over (partition by b) from t_unistore_act_rows;",
+			expected: []string{"4", "4", "4", "4", "4", "4", "4"},
+		},
+		{
+			sql:      "select /*+ merge_join(t1, t2) */ * from t_unistore_act_rows t1 join t_unistore_act_rows t2 on t1.b = t2.b;",
+			expected: []string{"10", "10", "4", "4", "4", "4", "4", "4", "4", "4", "4", "4"},
 		},
 	}
 

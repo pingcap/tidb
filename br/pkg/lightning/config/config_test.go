@@ -517,7 +517,7 @@ func TestInvalidTOML(t *testing.T) {
 		delimiter = '\'
 		backslash-escape = true
 	`))
-	require.EqualError(t, err, "Near line 0 (last key parsed ''): bare keys cannot contain '['")
+	require.EqualError(t, err, "Near line 2 (last key parsed ''): expected '.' or '=', but got '[' instead")
 }
 
 func TestTOMLUnusedKeys(t *testing.T) {

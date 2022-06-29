@@ -35,13 +35,17 @@ var AssertTxnInfoSchemaKey stringutil.StringerStr = "assertTxnInfoSchemaKey"
 // Only for test
 var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSchemaAfterRetryKey"
 
-// HookBeforeFirstRunExecutorKey is the hook key for the executor first run
+// BreakPointBeforeExecutorFirstRun is the key for the stop point where session stops before executor's first run
 // Only for test
-var HookBeforeFirstRunExecutorKey stringutil.StringerStr = "testHookKeyBeforeFirstRunExecutor"
+var BreakPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
 
-// HookAfterOnStmtRetryWithLockErrorKey is the hook key for after OnStmtRetry with lock error
+// BreakPointOnStmtRetryAfterLockError s the key for the stop point where session stops after OnStmtRetry when lock error happens
 // Only for test
-var HookAfterOnStmtRetryWithLockErrorKey stringutil.StringerStr = "testHookKeyAfterOnStmtRetryWithLockError"
+var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
+
+// AssertLockErr is used to record the lock errors we encountered
+// Only for test
+var AssertLockErr stringutil.StringerStr = "assertLockError"
 
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
@@ -91,6 +95,20 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 
 	if actual != expected {
 		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
+	}
+}
+
+// AddAssertEntranceForLockError is used only for test
+func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
+	records, ok := sctx.Value(AssertLockErr).(map[string]int)
+	if !ok {
+		records = make(map[string]int)
+		sctx.SetValue(AssertLockErr, records)
+	}
+	if v, ok := records[name]; ok {
+		records[name] = v + 1
+	} else {
+		records[name] = 1
 	}
 }
 

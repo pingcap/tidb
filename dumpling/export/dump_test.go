@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/tidb/util/promutil"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
@@ -207,5 +208,20 @@ func TestAdjustTableCollation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expectedSQLs[i], newSQL)
 	}
+}
 
+func TestUnregisterMetrics(t *testing.T) {
+	ctx := context.Background()
+	conf := &Config{
+		SQL:          "not empty",
+		Where:        "not empty",
+		PromFactory:  promutil.NewDefaultFactory(),
+		PromRegistry: promutil.NewDefaultRegistry(),
+	}
+
+	_, err := NewDumper(ctx, conf)
+	require.Error(t, err)
+	_, err = NewDumper(ctx, conf)
+	// should not panic
+	require.Error(t, err)
 }
