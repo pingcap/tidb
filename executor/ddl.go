@@ -299,14 +299,11 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
-	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ident.Schema, ident.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.KeyType, model.NewCIStr(s.IndexName),
-		s.IndexPartSpecifications, s.IndexOption, s.IfNotExists)
-	return err
+	return domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, s)
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
@@ -362,26 +359,19 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 }
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
-	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
-	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
-		err = nil
-	}
-	return err
+	return domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, s)
 }
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
-	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
-	return err
+	return domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, s)
 }
 
 // executeRecoverTable represents a recover table executor.
