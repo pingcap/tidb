@@ -430,6 +430,125 @@ func TestSessionCtx(t *testing.T) {
 	}
 }
 
+func TestStatementCtx(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t1(id int auto_increment primary key, str char(1))")
+
+	tests := []struct {
+		setFunc   func(tk *testkit.TestKit) any
+		checkFunc func(tk *testkit.TestKit, param any)
+	}{
+		{
+			// check LastAffectedRows
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustQuery("show warnings")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select row_count()").Check(testkit.Rows("0"))
+				tk.MustQuery("select row_count()").Check(testkit.Rows("-1"))
+			},
+		},
+		{
+			// check LastAffectedRows
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustQuery("select 1")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select row_count()").Check(testkit.Rows("-1"))
+			},
+		},
+		{
+			// check LastAffectedRows
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("insert into test.t1(str) value('a'), ('b'), ('c')")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select row_count()").Check(testkit.Rows("3"))
+				tk.MustQuery("select row_count()").Check(testkit.Rows("-1"))
+			},
+		},
+		{
+			// check LastInsertID
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("0"))
+			},
+		},
+		{
+			// check LastInsertID
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("insert into test.t1(str) value('d')")
+				rows := tk.MustQuery("select @@last_insert_id").Rows()
+				require.NotEqual(t, "0", rows[0][0].(string))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("select @@last_insert_id").Check(param.([][]any))
+			},
+		},
+		{
+			// check Warning
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustQuery("select 1")
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+				tk.MustQuery("show errors").Check(testkit.Rows())
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show warnings").Check(testkit.Rows())
+				tk.MustQuery("show errors").Check(testkit.Rows())
+				tk.MustQuery("select @@warning_count, @@error_count").Check(testkit.Rows("0 0"))
+			},
+		},
+		{
+			// check Warning
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustGetErrCode("insert into test.t1(str) value('ef')", errno.ErrDataTooLong)
+				rows := tk.MustQuery("show warnings").Rows()
+				require.Equal(t, 1, len(rows))
+				tk.MustQuery("show errors").Check(rows)
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show warnings").Check(param.([][]any))
+				tk.MustQuery("show errors").Check(param.([][]any))
+				tk.MustQuery("select @@warning_count, @@error_count").Check(testkit.Rows("1 1"))
+			},
+		},
+		{
+			// check Warning
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("set sql_mode=''")
+				tk.MustExec("insert into test.t1(str) value('ef'), ('ef')")
+				rows := tk.MustQuery("show warnings").Rows()
+				require.Equal(t, 2, len(rows))
+				tk.MustQuery("show errors").Check(testkit.Rows())
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show warnings").Check(param.([][]any))
+				tk.MustQuery("show errors").Check(testkit.Rows())
+				tk.MustQuery("select @@warning_count, @@error_count").Check(testkit.Rows("2 0"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tk1 := testkit.NewTestKit(t, store)
+		var param any
+		if tt.setFunc != nil {
+			param = tt.setFunc(tk1)
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		showSessionStatesAndSet(t, tk1, tk2)
+		tt.checkFunc(tk2, param)
+	}
+}
+
 func showSessionStatesAndSet(t *testing.T, tk1, tk2 *testkit.TestKit) {
 	rows := tk1.MustQuery("show session_states").Rows()
 	require.Len(t, rows, 1)

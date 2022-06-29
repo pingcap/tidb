@@ -80,7 +80,7 @@ func (ch steppedTestKitMsgChan) recvMsgWithCheck(tp steppedTestkitMsgType) (*ste
 }
 
 type steppedTestKitCommandContext struct {
-	t                       *testing.T
+	t                       testing.TB
 	tk                      *TestKit
 	notifyBreakPointAndWait func(string)
 }
@@ -89,7 +89,7 @@ type steppedTestKitCommand func(ctx *steppedTestKitCommandContext) any
 
 // SteppedTestKit is the testkit that can run stepped command
 type SteppedTestKit struct {
-	t  *testing.T
+	t  testing.TB
 	tk *TestKit
 
 	// ch1 is used to send msg from foreground to background
@@ -105,7 +105,7 @@ type SteppedTestKit struct {
 }
 
 // NewSteppedTestKit creates a new SteppedTestKit
-func NewSteppedTestKit(t *testing.T, store kv.Storage) *SteppedTestKit {
+func NewSteppedTestKit(t testing.TB, store kv.Storage) *SteppedTestKit {
 	tk := &SteppedTestKit{
 		t:   t,
 		tk:  NewTestKit(t, store),

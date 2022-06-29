@@ -202,9 +202,7 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
 	h.SchemaVersion = schemaVer
 	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
-	for i, info := range tblInfos {
-		h.MultipleTableInfos[i] = info
-	}
+	copy(h.MultipleTableInfos, tblInfos)
 }
 
 // Clean cleans history information.
