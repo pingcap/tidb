@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -1377,33 +1378,29 @@ func (e *Explain) explainFlatPlanInRowFormat(flat *FlatPhysicalPlan) {
 		return
 	}
 	for _, flatOp := range flat.Main {
-		taskTp := ""
-		if flatOp.IsRoot {
-			taskTp = "root"
-		} else {
-			taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
-		}
-		e.prepareOperatorInfo(flatOp.Origin, taskTp, flatOp.TextTreeExplainID)
-		if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
-			if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
-			}
-		}
+		e.explainFlatOpInRowFormat(flatOp)
 	}
 	for _, cte := range flat.CTEs {
 		for _, flatOp := range cte {
-			taskTp := ""
-			if flatOp.IsRoot {
-				taskTp = "root"
-			} else {
-				taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
-			}
-			e.prepareOperatorInfo(flatOp.Origin, taskTp, flatOp.TextTreeExplainID)
-			if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
-				if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
-					e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
-				}
-			}
+			e.explainFlatOpInRowFormat(flatOp)
+		}
+	}
+}
+
+func (e *Explain) explainFlatOpInRowFormat(flatOp *FlatOperator) {
+	taskTp := ""
+	if flatOp.IsRoot {
+		taskTp = "root"
+	} else {
+		taskTp = flatOp.ReqType.Name() + "[" + flatOp.StoreType.Name() + "]"
+	}
+	textTreeExplainID := texttree.PrettyIdentifier(flatOp.Origin.ExplainID().String()+flatOp.DriverSide.String(),
+		flatOp.TextTreeIndent,
+		flatOp.IsLastChild)
+	e.prepareOperatorInfo(flatOp.Origin, taskTp, textTreeExplainID)
+	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[flatOp.Origin.ID()]; ok {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
 		}
 	}
 }
@@ -1541,6 +1538,11 @@ func BinaryPlanStrFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysical
 
 func binaryDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPlan) *tipb.ExplainData {
 	if len(flat.Main) == 0 {
+		return nil
+	}
+	// Please see comments in EncodeFlatPlan() for this case.
+	// We keep consistency with EncodeFlatPlan() here.
+	if flat.InExecute {
 		return nil
 	}
 	res := &tipb.ExplainData{}

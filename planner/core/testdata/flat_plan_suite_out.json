@@ -6,22 +6,24 @@
         "SQL": "select * from t",
         "Main": [
           {
-            "TextTreeExplainID": "TableReader_5",
             "Depth": 0,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "└─TableFullScan_4",
             "Depth": 1,
             "DriverSide": 0,
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": false
           }
         ],
         "CTEs": null
@@ -30,67 +32,74 @@
         "SQL": "select sum(t.a) from t join t2",
         "Main": [
           {
-            "TextTreeExplainID": "HashAgg_8",
             "Depth": 0,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "└─Projection_34",
             "Depth": 1,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "  └─HashJoin_10",
             "Depth": 2,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "    ├─IndexReader_17(Probe)",
             "Depth": 3,
             "DriverSide": 2,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "    │ └─IndexFullScan_16",
             "Depth": 4,
             "DriverSide": 0,
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ │ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "    └─TableReader_27(Build)",
             "Depth": 3,
             "DriverSide": 1,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "      └─TableFullScan_26",
             "Depth": 4,
             "DriverSide": 0,
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "      │ ",
+            "IsLastChild": false
           }
         ],
         "CTEs": null
@@ -99,31 +108,34 @@
         "SQL": "select a from t use index (f) where f > 100",
         "Main": [
           {
-            "TextTreeExplainID": "Projection_4",
             "Depth": 0,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "└─IndexReader_6",
             "Depth": 1,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "  └─IndexRangeScan_5",
             "Depth": 2,
             "DriverSide": 0,
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": false
           }
         ],
         "CTEs": null
@@ -132,40 +144,44 @@
         "SQL": "select a from t use index () where f > 100",
         "Main": [
           {
-            "TextTreeExplainID": "Projection_4",
             "Depth": 0,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "└─TableReader_7",
             "Depth": 1,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "  └─Selection_6",
             "Depth": 2,
             "DriverSide": 0,
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "    └─TableFullScan_5",
             "Depth": 3,
             "DriverSide": 0,
             "IsRoot": false,
             "StoreType": 0,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "    │ ",
+            "IsLastChild": false
           }
         ],
         "CTEs": null
@@ -174,126 +190,139 @@
         "SQL": "with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
         "Main": [
           {
-            "TextTreeExplainID": "HashJoin_28",
             "Depth": 0,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "├─Selection_30(Probe)",
             "Depth": 1,
             "DriverSide": 2,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "│ └─CTEFullScan_31",
             "Depth": 2,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ │ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "└─Selection_32(Build)",
             "Depth": 1,
             "DriverSide": 1,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "│ ",
+            "IsLastChild": false
           },
           {
-            "TextTreeExplainID": "  └─CTEFullScan_33",
             "Depth": 2,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "  │ ",
+            "IsLastChild": false
           }
         ],
         "CTEs": [
           [
             {
-              "TextTreeExplainID": "CTE_0",
               "Depth": 0,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "└─Selection_13(Seed Part)",
               "Depth": 1,
               "DriverSide": 3,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "  └─TableReader_16",
               "Depth": 2,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "  │ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "    └─TableFullScan_15",
               "Depth": 3,
               "DriverSide": 0,
               "IsRoot": false,
               "StoreType": 0,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "    │ ",
+              "IsLastChild": false
             }
           ],
           [
             {
-              "TextTreeExplainID": "CTE_1",
               "Depth": 0,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "└─Selection_18(Seed Part)",
               "Depth": 1,
               "DriverSide": 3,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "  └─IndexReader_23",
               "Depth": 2,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "  │ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "    └─IndexFullScan_22",
               "Depth": 3,
               "DriverSide": 0,
               "IsRoot": false,
               "StoreType": 0,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "    │ ",
+              "IsLastChild": false
             }
           ]
         ]
@@ -302,70 +331,77 @@
         "SQL": "WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;",
         "Main": [
           {
-            "TextTreeExplainID": "CTEFullScan_17",
             "Depth": 0,
             "DriverSide": 0,
             "IsRoot": true,
             "StoreType": 2,
             "ReqType": 0,
-            "IsPhysicalPlan": true
+            "IsPhysicalPlan": true,
+            "TextTreeIndent": "",
+            "IsLastChild": false
           }
         ],
         "CTEs": [
           [
             {
-              "TextTreeExplainID": "CTE_0",
               "Depth": 0,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "├─Projection_11(Seed Part)",
               "Depth": 1,
               "DriverSide": 3,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "│ └─TableDual_12",
               "Depth": 2,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ │ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "└─Projection_13(Recursive Part)",
               "Depth": 1,
               "DriverSide": 4,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "│ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "  └─Selection_14",
               "Depth": 2,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "  │ ",
+              "IsLastChild": false
             },
             {
-              "TextTreeExplainID": "    └─CTETable_15",
               "Depth": 3,
               "DriverSide": 0,
               "IsRoot": true,
               "StoreType": 2,
               "ReqType": 0,
-              "IsPhysicalPlan": true
+              "IsPhysicalPlan": true,
+              "TextTreeIndent": "    │ ",
+              "IsLastChild": false
             }
           ]
         ]

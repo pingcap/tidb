@@ -36,6 +36,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	// read comments of InExecute for details about the meaning of InExecute) because we are unable to get some
 	// necessary information when the execution of the plan is finished and some states in the session such as
 	// PreparedParams are cleaned.
+	// The behavior in BinaryPlanStrFromFlatPlan() is also the same.
 	if flat.InExecute {
 		return ""
 	}

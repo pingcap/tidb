@@ -87,13 +87,16 @@ type FlatOperator struct {
 	// If you call FlattenPhysicalPlan with buildSideFirst true, NeedReverseDriverSide will be useless.
 	NeedReverseDriverSide bool
 
-	TextTreeExplainID string
-	Depth             uint32
-	DriverSide        DriverSide
-	IsRoot            bool
-	StoreType         kv.StoreType
+	Depth      uint32
+	DriverSide DriverSide
+	IsRoot     bool
+	StoreType  kv.StoreType
 	// ReqType is only meaningful when IsRoot is false.
 	ReqType ReadReqType
+
+	// The below two fields are mainly for text tree formatting. See texttree.PrettyIdentifier().
+	TextTreeIndent string
+	IsLastChild    bool
 
 	IsPhysicalPlan bool
 }
@@ -176,21 +179,21 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 }
 
 func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
-	explainID := p.ExplainID().String()
 	// Some operators are not inited and given an ExplainID. So their explain IDs are "_0"
 	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
 	// Examples: Explain, Execute
-	if explainID == "_0" || explainID == "" {
+	if len(p.TP()) == 0 && p.ID() == 0 {
 		return nil
 	}
 	res := &FlatOperator{
-		Origin:            p,
-		TextTreeExplainID: texttree.PrettyIdentifier(explainID+info.driverSide.String(), info.indent, info.isLastChild),
-		DriverSide:        info.driverSide,
-		IsRoot:            info.isRoot,
-		StoreType:         info.storeType,
-		Depth:             info.depth,
-		ReqType:           info.reqType,
+		Origin:         p,
+		DriverSide:     info.driverSide,
+		IsRoot:         info.isRoot,
+		StoreType:      info.storeType,
+		Depth:          info.depth,
+		ReqType:        info.reqType,
+		TextTreeIndent: info.indent,
+		IsPhysicalPlan: info.isLastChild,
 	}
 
 	if _, ok := p.(PhysicalPlan); ok {
