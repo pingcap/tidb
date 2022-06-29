@@ -351,21 +351,14 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
-// TableItemID indicates column/index in neededStatsMap
-type TableItemID struct {
-	TableID int64
-	ID      int64
-	IsIndex bool
-}
-
 type neededStatsMap struct {
 	m     sync.RWMutex
-	items map[TableItemID]struct{}
+	items map[model.TableItemID]struct{}
 }
 
-func (n *neededStatsMap) AllItems() []TableItemID {
+func (n *neededStatsMap) AllItems() []model.TableItemID {
 	n.m.RLock()
-	keys := make([]TableItemID, 0, len(n.items))
+	keys := make([]model.TableItemID, 0, len(n.items))
 	for key := range n.items {
 		keys = append(keys, key)
 	}
@@ -373,13 +366,13 @@ func (n *neededStatsMap) AllItems() []TableItemID {
 	return keys
 }
 
-func (n *neededStatsMap) insert(col TableItemID) {
+func (n *neededStatsMap) insert(col model.TableItemID) {
 	n.m.Lock()
 	n.items[col] = struct{}{}
 	n.m.Unlock()
 }
 
-func (n *neededStatsMap) Delete(col TableItemID) {
+func (n *neededStatsMap) Delete(col model.TableItemID) {
 	n.m.Lock()
 	delete(n.items, col)
 	n.m.Unlock()

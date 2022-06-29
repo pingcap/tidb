@@ -660,7 +660,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 	return nil
 }
 
-func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col statistics.TableItemID, loadFMSketch bool) (err error) {
+func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
@@ -721,7 +721,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col statistics.
 	return nil
 }
 
-func (h *Handle) loadNeededIndexHistograms(reader *statsReader, idx statistics.TableItemID, loadFMSketch bool) (err error) {
+func (h *Handle) loadNeededIndexHistograms(reader *statsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load().(statsCache)
 	tbl, ok := oldCache.Get(idx.TableID)
 	if !ok {

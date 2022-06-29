@@ -1116,7 +1116,7 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 
 // HistogramNeededItems stores the columns/indices whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
-var HistogramNeededItems = neededStatsMap{items: map[TableItemID]struct{}{}}
+var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
 
 // IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
@@ -1136,7 +1136,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
 			if c.Info != nil {
-				HistogramNeededItems.insert(TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
+				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
 	}
@@ -1630,7 +1630,7 @@ func (idx *Index) checkStats() {
 	if idx.IsEssentialStatsLoaded() {
 		return
 	}
-	HistogramNeededItems.insert(TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
+	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
 }
 
 type countByRangeFunc = func(sessionctx.Context, int64, []*ranger.Range) (float64, error)
