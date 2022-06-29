@@ -103,6 +103,11 @@ func TestSystemVars(t *testing.T) {
 			expectedValue:   strconv.Itoa(variable.DefTiFlashMaxThreads),
 		},
 		{
+			// hidden variable
+			inSessionStates: false,
+			varName:         variable.TiDBTxnReadTS,
+		},
+		{
 			// none-scoped variable
 			inSessionStates: false,
 			varName:         variable.DataDir,
