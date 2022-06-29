@@ -50,7 +50,7 @@ func NewOptimisticTxnContextProvider(sctx sessionctx.Context, causalConsistencyO
 	return provider
 }
 
-// IsTxnRetryable (if returns true) means the transaction could retry.
+// isOptimisticTxnRetryable (if returns true) means the transaction could retry.
 // We only consider retry in this optimistic mode.
 // If the session is already in transaction, enable retry or internal SQL could retry.
 // If not, the transaction could always retry, because it should be auto committed transaction.
