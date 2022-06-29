@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
@@ -533,8 +534,21 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.sessionVars.SetInTxn(false)
 		s.ClearDiskFullOpt()
 	}()
+	// check if the transaction is read-only
 	if s.txn.IsReadOnly() {
 		return nil
+	}
+	// check if the cluster is read-only
+	if !s.sessionVars.InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+		// It is not internal SQL, and the cluster has one of RestrictedReadOnly or SuperReadOnly
+		// We need to privilege check again: a privilege check occurred during planning, but we need
+		// to prevent the case that a long running auto-commit statement is now trying to commit.
+		pm := privilege.GetPrivilegeManager(s)
+		roles := s.sessionVars.ActiveRoles
+		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+			s.RollbackTxn(ctx)
+			return plannercore.ErrSQLInReadOnlyMode
+		}
 	}
 	err := s.checkPlacementPolicyBeforeCommit()
 	if err != nil {
@@ -2055,17 +2069,20 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	sessVars := se.sessionVars
 
 	// Record diagnostic information for DML statements
-	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
-		defer func() {
-			sessVars.LastQueryInfo = variable.QueryInfo{
-				TxnScope:    sessVars.CheckAndGetTxnScope(),
-				StartTS:     sessVars.TxnCtx.StartTS,
-				ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
-			}
-			if err != nil {
-				sessVars.LastQueryInfo.ErrMsg = err.Error()
-			}
-		}()
+	if stmt, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
+		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
+		if showStmt, ok := stmt.(*ast.ShowStmt); !ok || showStmt.Tp != ast.ShowSessionStates {
+			defer func() {
+				sessVars.LastQueryInfo = sessionstates.QueryInfo{
+					TxnScope:    sessVars.CheckAndGetTxnScope(),
+					StartTS:     sessVars.TxnCtx.StartTS,
+					ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
+				}
+				if err != nil {
+					sessVars.LastQueryInfo.ErrMsg = err.Error()
+				}
+			}()
+		}
 	}
 
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
@@ -3496,10 +3513,45 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
 func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
-	return s.sessionVars.EncodeSessionStates(ctx, sessionStates)
+	if err = s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
+		return err
+	}
+
+	// Encode session variables. We put it here instead of SessionVars to avoid cycle import.
+	sessionStates.SystemVars = make(map[string]string)
+	for _, sv := range variable.GetSysVars() {
+		switch {
+		case sv.Hidden, sv.HasNoneScope(), sv.HasInstanceScope(), !sv.HasSessionScope():
+			// Hidden and none-scoped variables cannot be modified.
+			// Instance-scoped variables don't need to be encoded.
+			// Noop variables should also be migrated even if they are noop.
+			continue
+		case sv.ReadOnly:
+			// Skip read-only variables here. We encode them into SessionStates manually.
+			continue
+		case sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
+			// If they are shown, there will be a security issue.
+			continue
+		}
+		// Get all session variables because the default values may change between versions.
+		if val, keep, err := variable.GetSessionStatesSystemVar(s.sessionVars, sv.Name); err == nil && keep {
+			sessionStates.SystemVars[sv.Name] = val
+		}
+	}
+	return
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
 func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) (err error) {
-	return s.sessionVars.DecodeSessionStates(ctx, sessionStates)
+	if err = s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
+		return err
+	}
+
+	// Decode session variables.
+	for name, val := range sessionStates.SystemVars {
+		if err = variable.SetSessionSystemVar(s.sessionVars, name, val); err != nil {
+			return err
+		}
+	}
+	return err
 }
