@@ -1077,7 +1077,7 @@ func (w *GCWorker) getLowResolveTS() (uint64, error) {
 		return 0, err
 	}
 
-	logResolveTime := now.Add(-gcLowResolveInterval)
+	lowResolveTime := now.Add(-gcLowResolveInterval)
 	return oracle.GoTimeToTS(logResolveTime), nil
 }
 
