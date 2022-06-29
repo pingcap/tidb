@@ -200,7 +200,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			if len(apply.LeftConditions) > 0 || len(apply.RightConditions) > 0 || len(apply.OtherConditions) > 0 || len(apply.EqualConditions) > 0 {
 				goto NoOptimize
 			}
-			// limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the Exist subq.
+			// Limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the exist subquery.
 			if li.Offset == 0 {
 				innerPlan = li.children[0]
 				apply.SetChildren(outerPlan, innerPlan)
