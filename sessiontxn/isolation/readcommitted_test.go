@@ -154,9 +154,9 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	se := tk.Session()
 	ctx := context.Background()
 	provider := initializePessimisticRCProvider(t, tk)
+	txnStartTS := se.GetSessionVars().TxnCtx.StartTS
 
-	// first ts should request from tso
-	compareTS := getOracleTS(t, se)
+	// first ts should use the txn startTS
 	stmt, _, _, err := tk.Session().PrepareStmt("select * from t")
 	require.NoError(t, err)
 	rs, err := tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
@@ -164,8 +164,7 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.NoError(t, err)
 	ts, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Greater(t, ts, compareTS)
-	prevTS := ts
+	require.Equal(t, txnStartTS, ts)
 
 	// second ts should reuse first ts
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
@@ -173,10 +172,10 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Equal(t, prevTS, ts)
+	require.Equal(t, txnStartTS, ts)
 
 	tk2.MustExec("update t set v = v + 10 where id = 1")
-	compareTS = getOracleTS(t, se)
+	compareTS := getOracleTS(t, se)
 	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
