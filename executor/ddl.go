@@ -132,7 +132,10 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false
+		e.ctx.GetSessionVars().StmtCtx.DDLJobID = 0
+	}()
 
 	switch x := e.stmt.(type) {
 	case *ast.AlterDatabaseStmt:
