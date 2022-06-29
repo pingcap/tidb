@@ -39,21 +39,19 @@ type MDDatabaseMeta struct {
 }
 
 func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
-	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
-	if err != nil {
-		log.FromContext(ctx).Warn("failed to extract table schema",
-			zap.String("Path", m.SchemaFile.FileMeta.Path),
-			log.ShortError(err),
-		)
-		schema = nil
+	if m.SchemaFile.FileMeta.Path != "" {
+		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
+		if err != nil {
+			log.FromContext(ctx).Warn("failed to extract table schema",
+				zap.String("Path", m.SchemaFile.FileMeta.Path),
+				log.ShortError(err),
+			)
+		} else if schemaStr := strings.TrimSpace(string(schema)); schemaStr != "" {
+			return schemaStr
+		}
 	}
-	schemaStr := strings.TrimSpace(string(schema))
-	// set default if schema sql is empty
-	if len(schemaStr) == 0 {
-		schemaStr = "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
-	}
-
-	return schemaStr
+	// set default if schema sql is empty or failed to extract.
+	return "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
 }
 
 type MDTableMeta struct {
