@@ -916,7 +916,6 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 
 	switch {
 	case err == nil:
-		break
 	case utils.MessageIsRetryableStorageError(err.Error()), common.IsContextCanceledError(err):
 		// recoverable error, should not be recorded in checkpoint
 		// which will prevent lightning from automatically recovering
