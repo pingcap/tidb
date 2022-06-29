@@ -16,12 +16,15 @@ package stmtctx_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/stretchr/testify/require"
@@ -142,4 +145,44 @@ func TestWeakConsistencyRead(t *testing.T) {
 	execAndCheck("select * from t", testkit.Rows("1 1 2"), kv.SI)
 	execAndCheck("execute s", testkit.Rows("1 1 2"), kv.SI)
 	tk.MustExec("rollback")
+}
+
+func TestMarshalSQLWarn(t *testing.T) {
+	warns := []stmtctx.SQLWarn{
+		{
+			Level: stmtctx.WarnLevelError,
+			Err:   errors.New("any error"),
+		},
+		{
+			Level: stmtctx.WarnLevelError,
+			Err:   errors.Trace(errors.New("any error")),
+		},
+		{
+			Level: stmtctx.WarnLevelWarning,
+			Err:   variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown"),
+		},
+		{
+			Level: stmtctx.WarnLevelWarning,
+			Err:   errors.Trace(variable.ErrUnknownSystemVar.GenWithStackByArgs("unknown")),
+		},
+	}
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	// First query can trigger loading global variables, which produces warnings.
+	tk.MustQuery("select 1")
+	tk.Session().GetSessionVars().StmtCtx.SetWarnings(warns)
+	rows := tk.MustQuery("show warnings").Rows()
+	require.Equal(t, len(warns), len(rows))
+
+	// The unmarshalled result doesn't need to be exactly the same with the original one.
+	// We only need that the results of `show warnings` are the same.
+	bytes, err := json.Marshal(warns)
+	require.NoError(t, err)
+	var newWarns []stmtctx.SQLWarn
+	err = json.Unmarshal(bytes, &newWarns)
+	require.NoError(t, err)
+	tk.Session().GetSessionVars().StmtCtx.SetWarnings(newWarns)
+	tk.MustQuery("show warnings").Check(rows)
 }

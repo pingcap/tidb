@@ -96,6 +96,9 @@ func TestEnforceMPP(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("create index idx on t(a)")
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()

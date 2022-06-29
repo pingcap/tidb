@@ -1936,8 +1936,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 	}
 	pointPlans := make([]plannercore.Plan, len(stmts))
-	var idxKeys []kv.Key // nolint: prealloc
-	var rowKeys []kv.Key // nolint: prealloc
+	var idxKeys []kv.Key //nolint: prealloc
+	var rowKeys []kv.Key //nolint: prealloc
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		switch stmt.(type) {

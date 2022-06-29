@@ -100,11 +100,11 @@ type tidbBackend struct {
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
+func NewTiDBBackend(ctx context.Context, db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
 	switch onDuplicate {
 	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
 	default:
-		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
+		log.FromContext(ctx).Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
 	return backend.MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate, errorMgr: errorMgr})
@@ -354,12 +354,12 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 }
 
 // EncodeRowForRecord encodes a row to a string compatible with INSERT statements.
-func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum, columnPermutation []int) string {
+func EncodeRowForRecord(ctx context.Context, encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum, columnPermutation []int) string {
 	enc := tidbEncoder{
 		tbl:  encTable,
 		mode: sqlMode,
 	}
-	resRow, err := enc.Encode(log.L(), row, 0, columnPermutation, "", 0)
+	resRow, err := enc.Encode(log.FromContext(ctx), row, 0, columnPermutation, "", 0)
 	if err != nil {
 		// if encode can't succeed, fallback to record the raw input strings
 		// ignore the error since it can only happen if the datum type is unknown, this can't happen here.
@@ -394,12 +394,12 @@ func (be *tidbBackend) ShouldPostProcess() bool {
 }
 
 func (be *tidbBackend) CheckRequirements(ctx context.Context, _ *backend.CheckCtx) error {
-	log.L().Info("skipping check requirements for tidb backend")
+	log.FromContext(ctx).Info("skipping check requirements for tidb backend")
 	return nil
 }
 
-func (be *tidbBackend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	se := kv.NewSession(options)
+func (be *tidbBackend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	se := kv.NewSession(options, log.FromContext(ctx))
 	if options.SQLMode.HasStrictMode() {
 		se.GetSessionVars().SkipUTF8Check = false
 		se.GetSessionVars().SkipASCIICheck = false
@@ -554,7 +554,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 			_, err := be.db.ExecContext(ctx, stmt)
 			if err != nil {
 				if !common.IsContextCanceledError(err) {
-					log.L().Error("execute statement failed",
+					log.FromContext(ctx).Error("execute statement failed",
 						zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
 				}
 				// It's batch mode, just return the error.
@@ -566,7 +566,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 					continue
 				}
 				firstRow := stmtTask.rows[0]
-				err = be.errorMgr.RecordTypeError(ctx, log.L(), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
+				err = be.errorMgr.RecordTypeError(ctx, log.FromContext(ctx), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
 				if err == nil {
 					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 					break
@@ -587,7 +587,7 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName string) (tables []*model.TableInfo, err error) {
 	s := common.SQLWithRetry{
 		DB:     be.db,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 
 	err = s.Transact(ctx, "fetch table columns", func(c context.Context, tx *sql.Tx) error {
@@ -649,8 +649,8 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			})
 			curColOffset++
 		}
-		if rows.Err() != nil {
-			return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
 		}
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
@@ -777,8 +777,8 @@ func FetchTableAutoIDInfos(ctx context.Context, exec utils.QueryExecutor, tableN
 	if err := rows.Close(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if rows.Err() != nil {
-		return nil, errors.Trace(rows.Err())
+	if err := rows.Err(); err != nil {
+		return nil, errors.Trace(err)
 	}
 	return autoIDInfos, nil
 }

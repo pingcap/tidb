@@ -270,12 +270,6 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	return builder
 }
 
-// SetStreaming sets "Streaming" flag for "kv.Request".
-func (builder *RequestBuilder) SetStreaming(streaming bool) *RequestBuilder {
-	builder.Request.Streaming = streaming
-	return builder
-}
-
 // SetPaging sets "Paging" flag for "kv.Request".
 func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
 	builder.Request.Paging = paging

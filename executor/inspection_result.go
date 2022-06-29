@@ -727,6 +727,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.C
 		c.inspectThreshold3,
 		c.inspectForLeaderDrop,
 	}
+	//nolint: prealloc
 	var results []inspectionResult
 	for _, inspect := range inspects {
 		re := inspect(ctx, sctx, filter)

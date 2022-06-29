@@ -112,7 +112,7 @@ func ShowGrants(ctx context.Context, db QueryExecutor, user, host string) ([]str
 
 			grants = append(grants, grant)
 		}
-		if rows.Err() != nil {
+		if err := rows.Err(); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return grants, nil

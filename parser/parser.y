@@ -738,6 +738,7 @@ import (
 	run                        "RUN"
 	samples                    "SAMPLES"
 	sampleRate                 "SAMPLERATE"
+	sessionStates              "SESSION_STATES"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsMeta                  "STATS_META"
@@ -3654,7 +3655,7 @@ AlterDatabaseStmt:
 	"ALTER" DatabaseSym DBName DatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
-			Name:                 $3,
+			Name:                 model.NewCIStr($3),
 			AlterDefaultDatabase: false,
 			Options:              $4.([]*ast.DatabaseOption),
 		}
@@ -3662,7 +3663,7 @@ AlterDatabaseStmt:
 |	"ALTER" DatabaseSym DatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
-			Name:                 "",
+			Name:                 model.NewCIStr(""),
 			AlterDefaultDatabase: true,
 			Options:              $3.([]*ast.DatabaseOption),
 		}
@@ -3684,7 +3685,7 @@ CreateDatabaseStmt:
 	{
 		$$ = &ast.CreateDatabaseStmt{
 			IfNotExists: $3.(bool),
-			Name:        $4,
+			Name:        model.NewCIStr($4),
 			Options:     $5.([]*ast.DatabaseOption),
 		}
 	}
@@ -4462,7 +4463,7 @@ DatabaseSym:
 DropDatabaseStmt:
 	"DROP" DatabaseSym IfExists DBName
 	{
-		$$ = &ast.DropDatabaseStmt{IfExists: $3.(bool), Name: $4}
+		$$ = &ast.DropDatabaseStmt{IfExists: $3.(bool), Name: model.NewCIStr($4)}
 	}
 
 /******************************************************************
@@ -6179,6 +6180,7 @@ TiDBKeyword:
 |	"PUMP"
 |	"SAMPLES"
 |	"SAMPLERATE"
+|	"SESSION_STATES"
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_META"
@@ -6763,6 +6765,17 @@ BitExpr:
 				$1,
 				$4,
 				&ast.TimeUnitExpr{Unit: $5.(ast.TimeUnitType)},
+			},
+		}
+	}
+|	"INTERVAL" Expression TimeUnit '+' BitExpr %prec '+'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ADD"),
+			Args: []ast.ExprNode{
+				$5,
+				$2,
+				&ast.TimeUnitExpr{Unit: $3.(ast.TimeUnitType)},
 			},
 		}
 	}
@@ -9709,6 +9722,10 @@ SetStmt:
 	{
 		$$ = &ast.SetConfigStmt{Instance: $3, Name: $4, Value: $6}
 	}
+|	"SET" "SESSION_STATES" stringLit
+	{
+		$$ = &ast.SetSessionStatesStmt{SessionStates: $3}
+	}
 
 SetRoleStmt:
 	"SET" "ROLE" SetRoleOpt
@@ -10794,17 +10811,21 @@ ShowTargetFilterable:
 			Tp: ast.ShowPlugins,
 		}
 	}
+|	"SESSION_STATES"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowSessionStates}
+	}
 |	"STATS_EXTENDED"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsExtended}
 	}
 |	"STATS_META"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowStatsMeta}
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsMeta, Table: &ast.TableName{Name: model.NewCIStr("STATS_META"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
 |	"STATS_HISTOGRAMS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHistograms}
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHistograms, Table: &ast.TableName{Name: model.NewCIStr("STATS_HISTOGRAMS"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
 |	"STATS_TOPN"
 	{
@@ -10812,7 +10833,7 @@ ShowTargetFilterable:
 	}
 |	"STATS_BUCKETS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowStatsBuckets}
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsBuckets, Table: &ast.TableName{Name: model.NewCIStr("STATS_BUCKETS"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
 |	"STATS_HEALTHY"
 	{
