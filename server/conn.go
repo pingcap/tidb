@@ -1828,7 +1828,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		// TODO: log the error
 	}
 	if exists {
-		return cc.handlePreparedStmt(ctx, stmt, args, false)
+		return cc.handlePreparedStmt(ctx, stmt, args, false, true)
 	}
 
 	stmts, err := cc.ctx.Parse(ctx, sql)
