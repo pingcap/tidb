@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"sync/atomic"
@@ -683,16 +682,10 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			}
 			return false, ver, nil
 		case model.StateMerge:
-			logutil.BgLogger().Info("Lightning merge the increment part of adding index")
-			index := tables.NewIndex(tbl.(table.PhysicalTable).GetPhysicalID(), tbl.Meta(), indexInfo)
-			backFillWk := backFillIndexWorker{backfillWorker: newBackfillWorker(newContext(reorgInfo.d.store), 0, tbl.(table.PhysicalTable), reorgInfo), index: index}
-			err = backFillWk.BackfillIncrementIndex()
-			if err != nil {
-				return false, ver, err
-			}
+			logutil.BgLogger().Info("Lightning start merge the increment part of adding index")
 			return true, ver, nil
 		default:
-			return false, 0, errors.New("Lightning backfill: should not happened")
+			return false, 0, errors.New("Lightning goFast wrong sub states: should not happened")
 		}
 	}
 	return false, ver, nil
@@ -717,18 +710,28 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			return done, ver, err
 		}
 		// Only when SubState is in BackFill state, then need start to start new backfill task.
-		if indexInfo.SubState != model.StateBackfill || !doReorg {
+		if !doReorg {
 			return doReorg, ver, err
 		}
 	}
 
-	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
-			func() {
-				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
-			}, false)
-		return w.addTableIndex(tbl, indexInfo, reorgInfo)
-	})
+	if indexInfo.SubState == model.StateBackfill {
+		err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+				func() {
+					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+				}, false)
+			return w.addTableIndex(tbl, indexInfo, reorgInfo)
+		})
+	} else {
+		err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+			defer util.Recover(metrics.LabelDDL, "onMergeIndex",
+				func() {
+					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+				}, false)
+			return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
+		})
+	}
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -1788,182 +1791,4 @@ func findIndexesByColName(indexes []*model.IndexInfo, colName string) ([]*model.
 		}
 	}
 	return idxInfos, offsets
-}
-
-func (w *backFillIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxRecords []*temporaryIndexRecord) error {
-	idxInfo := w.index.Meta()
-	if !idxInfo.Unique {
-		// non-unique key need not to check, just overwrite it,
-		// because in most case, backfilling indices is not exists.
-		return nil
-	}
-
-	if len(w.idxKeyBufs) < w.batchCnt {
-		w.idxKeyBufs = make([][]byte, w.batchCnt)
-	}
-	w.batchCheckKeys = w.batchCheckKeys[:0]
-	w.distinctCheckFlags = w.distinctCheckFlags[:0]
-
-	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
-	for i, record := range idxRecords {
-		distinct := false
-		if !record.delete && tablecodec.IndexKVIsUnique(record.vals) {
-			distinct = true
-		}
-		// save the buffer to reduce memory allocations.
-		w.idxKeyBufs[i] = record.key
-
-		w.batchCheckKeys = append(w.batchCheckKeys, record.key)
-		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
-	}
-
-	batchVals, err := txn.BatchGet(context.Background(), w.batchCheckKeys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
-	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
-	// 3. non-unique-key is duplicate, skip it.
-	for i, key := range w.batchCheckKeys {
-		if val, found := batchVals[string(key)]; found {
-			if w.distinctCheckFlags[i] {
-				if !bytes.Equal(val, idxRecords[i].vals) {
-					return kv.ErrKeyExists
-				}
-			}
-			idxRecords[i].skip = true
-		} else if w.distinctCheckFlags[i] {
-			// The keys in w.batchCheckKeys also maybe duplicate,
-			// so we need to backfill the not found key into `batchVals` map.
-			batchVals[string(key)] = idxRecords[i].vals
-		}
-	}
-	// Constrains is already checked.
-	stmtCtx.BatchCheck = true
-	return nil
-}
-
-type backFillIndexWorker struct {
-	*backfillWorker
-
-	index table.Index
-
-	// The following attributes are used to reduce memory allocation.
-	idxKeyBufs         [][]byte
-	batchCheckKeys     []kv.Key
-	distinctCheckFlags []bool
-}
-
-func (w *backFillIndexWorker) BackfillIncrementIndex() error {
-	startKey, endKey := tablecodec.GetTableIndexKeyRange(w.table.Meta().ID, 0xffff|w.index.Meta().ID)
-
-	handleRange := reorgBackfillTask{physicalTableID: w.table.Meta().ID, startKey: startKey, endKey: endKey}
-	taskCtx := &backfillTaskContext{nextKey: startKey}
-	var err error
-	totoalAddCnt := 0
-	for kv.Key(endKey).Cmp(taskCtx.nextKey) > 0 {
-		err = w.BackfillDataInTxn(handleRange, taskCtx)
-		if err != nil {
-			return err
-		}
-		startKey = taskCtx.nextKey
-		totoalAddCnt += taskCtx.addedCount
-	}
-
-	logutil.BgLogger().Info("backfill", zap.Int("add", totoalAddCnt))
-
-	return nil
-}
-
-func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask, taskCtx *backfillTaskContext) (errInTxn error) {
-	logutil.BgLogger().Info("Merge temp index", zap.ByteString("startKey", taskRange.startKey), zap.ByteString("endKey", taskRange.endKey))
-	oprStartTime := time.Now()
-	nextKey := taskRange.endKey
-	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		taskCtx.addedCount = 0
-		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, w.priority)
-		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
-			txn.SetOption(kv.ResourceGroupTagger, tagger)
-		}
-
-		temporaryIndexRecords := make([]*temporaryIndexRecord, 0, w.batchCnt)
-
-		err := iterateSnapshotIndexes(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey, func(indexKey kv.Key, rawValue []byte) (more bool, err error) {
-			oprEndTime := time.Now()
-			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
-			oprStartTime = oprEndTime
-
-			taskDone := indexKey.Cmp(taskRange.endKey) > 0
-
-			if taskDone || taskCtx.addedCount >= w.batchCnt {
-				nextKey = indexKey
-				logutil.BgLogger().Info("return false")
-				return false, nil
-			}
-
-			isDelete := false
-			unique := false
-			if bytes.Equal(rawValue, []byte("delete")) {
-				isDelete = true
-			} else if bytes.Equal(rawValue, []byte("deleteu")) {
-				isDelete = true
-				unique = true
-			}
-			var convertedIndexKey []byte
-			convertedIndexKey = append(convertedIndexKey, indexKey...)
-			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
-			idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique}
-			if !isDelete {
-				idxRecord.vals = rawValue
-			}
-			temporaryIndexRecords = append(temporaryIndexRecords, idxRecord)
-
-			return true, nil
-		})
-
-		taskCtx.nextKey = nextKey
-
-		err = w.batchCheckTemporaryUniqueKey(txn, temporaryIndexRecords)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, idxRecord := range temporaryIndexRecords {
-			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			if idxRecord.skip {
-				continue
-			}
-
-			// We need to add this lock to make sure pessimistic transaction can realize this operation.
-			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if idxRecord.delete {
-				if idxRecord.unique {
-					err = txn.GetMemBuffer().DeleteWithFlags(idxRecord.key, kv.SetNeedLocked)
-				} else {
-					err = txn.GetMemBuffer().Delete(idxRecord.key)
-				}
-				logutil.BgLogger().Info("delete", zap.ByteString("key", idxRecord.key))
-			} else {
-				err = txn.GetMemBuffer().Set(idxRecord.key, idxRecord.vals)
-			}
-			if err != nil {
-				return err
-			}
-			taskCtx.addedCount++
-		}
-
-		return nil
-	})
-	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
-
-	return
 }

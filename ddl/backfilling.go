@@ -926,3 +926,224 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, t table.Tab
 
 	return it.Key(), nil
 }
+
+func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+	job := reorgInfo.Job
+	totalAddedCount := job.GetRowCount()
+
+	startKey, endKey := tablecodec.GetTableIndexKeyRange(t.GetPhysicalID(), tablecodec.TempIndexPrefix|indexInfo.ID)
+
+	if err := w.isReorgRunnable(reorgInfo.Job); err != nil {
+		return errors.Trace(err)
+	}
+	if startKey == nil && endKey == nil {
+		return nil
+	}
+
+	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
+		}
+	})
+
+	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
+	workerCnt := variable.GetDDLReorgWorkerCounter()
+
+	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
+	defer func() {
+		closeBackfillWorkers(backfillWorkers)
+	}()
+
+	for {
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// For dynamic adjust backfill worker number.
+		if err := loadDDLReorgVars(w); err != nil {
+			logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
+		}
+		workerCnt = variable.GetDDLReorgWorkerCounter()
+		// If only have 1 range, we can only start 1 worker.
+		if len(kvRanges) < int(workerCnt) {
+			workerCnt = int32(len(kvRanges))
+		}
+
+		// Enlarge the worker size.
+		for i := len(backfillWorkers); i < int(workerCnt); i++ {
+			sessCtx := newContext(reorgInfo.d.store)
+			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
+			// Simulate the sql mode environment in the worker sessionCtx.
+			sqlMode := reorgInfo.ReorgMeta.SQLMode
+			sessCtx.GetSessionVars().SQLMode = sqlMode
+			if err := setSessCtxLocation(sessCtx, reorgInfo); err != nil {
+				return errors.Trace(err)
+			}
+
+			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
+			sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
+			sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
+
+			idxWorker := newTempIndexWorker(sessCtx, w, i, t, indexInfo, reorgInfo)
+			idxWorker.priority = job.Priority
+			backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+			go idxWorker.backfillWorker.runMerge(reorgInfo.d, idxWorker, job)
+		}
+		// Shrink the worker size.
+		if len(backfillWorkers) > int(workerCnt) {
+			workers := backfillWorkers[workerCnt:]
+			backfillWorkers = backfillWorkers[:workerCnt]
+			closeBackfillWorkers(workers)
+		}
+
+		failpoint.Inject("checkMergeWorkerNum", func(val failpoint.Value) {
+			if val.(bool) {
+				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
+				if num != 0 {
+					if num > len(kvRanges) {
+						if len(backfillWorkers) != len(kvRanges) {
+							failpoint.Return(errors.Errorf("check merge worker num error, len kv ranges is: %v, check merge worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
+						}
+					} else if num != len(backfillWorkers) {
+						failpoint.Return(errors.Errorf("check merge worker num error, len kv ranges is: %v, check merge worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
+					}
+					var wg sync.WaitGroup
+					wg.Add(1)
+					TestCheckWorkerNumCh <- &wg
+					wg.Wait()
+				}
+			}
+		})
+
+		logutil.BgLogger().Info("[ddl] start merge workers to merge delta index changes",
+			zap.Int("workerCnt", len(backfillWorkers)),
+			zap.Int("regionCnt", len(kvRanges)),
+			zap.String("startHandle", tryDecodeToHandleString(startKey)),
+			zap.String("endHandle", tryDecodeToHandleString(endKey)))
+
+		remains, err := w.sendRangeTaskToWorkers(t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(remains) == 0 {
+			break
+		}
+		startKey = remains[0].StartKey
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (w *backfillWorker) runMerge(d *ddlCtx, bf backfiller, job *model.Job) {
+	logutil.BgLogger().Info("[ddl] merge worker start", zap.Int("workerID", w.id))
+	defer func() {
+		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
+	}()
+	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", nil, false)
+	for {
+		task, more := <-w.taskCh
+		if !more {
+			break
+		}
+		d.setDDLLabelForTopSQL(job)
+
+		logutil.BgLogger().Debug("[ddl] merge worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
+		failpoint.Inject("mockMergeRunErr", func() {
+			if w.id == 0 {
+				result := &backfillResult{addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
+				w.resultCh <- result
+				failpoint.Continue()
+			}
+		})
+
+		failpoint.Inject("mockHighLoadForMergeIndex", func() {
+			sqlPrefixes := []string{"alter"}
+			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
+		})
+
+		failpoint.Inject("mockMergeSlow", func() {
+			time.Sleep(30 * time.Millisecond)
+		})
+
+		// Dynamic change batch size.
+		w.batchCnt = int(variable.GetDDLReorgBatchSize())
+		result := w.handleMergeTask(d, task, bf)
+		w.resultCh <- result
+	}
+	logutil.BgLogger().Info("[ddl] merge worker exit", zap.Int("workerID", w.id))
+}
+
+// handleMergeTask backfills range [task.startHandle, task.endHandle) handle's index to table.
+func (w *backfillWorker) handleMergeTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {
+	handleRange := *task
+	result := &backfillResult{
+		err:        nil,
+		addedCount: 0,
+		nextKey:    handleRange.startKey,
+	}
+	lastLogCount := 0
+	lastLogTime := time.Now()
+	startTime := lastLogTime
+	rc := d.getReorgCtx(w.reorgInfo.Job)
+
+	for {
+		// Give job chance to be canceled, if we not check it here,
+		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
+		// Because reorgRecordTask may run a long time,
+		// we should check whether this ddl job is still runnable.
+		err := d.isReorgRunnable(w.reorgInfo.Job)
+		if err != nil {
+			result.err = err
+			return result
+		}
+
+		taskCtx, err := bf.BackfillDataInTxn(handleRange)
+		if err != nil {
+			result.err = err
+			return result
+		}
+
+		mergeBackfillCtxToResult(&taskCtx, result)
+
+		// Although `handleRange` is for data in one region, but back fill worker still split it into many
+		// small reorg batch size slices and reorg them in many different kv txn.
+		// If a task failed, it may contained some committed small kv txn which has already finished the
+		// small range reorganization.
+		// In the next round of reorganization, the target handle range may overlap with last committed
+		// small ranges. This will cause the `redo` action in reorganization.
+		// So for added count and warnings collection, it is recommended to collect the statistics in every
+		// successfully committed small ranges rather than fetching it in the total result.
+		rc.increaseRowCount(int64(taskCtx.addedCount))
+		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+
+		if num := result.scanCount - lastLogCount; num >= 30000 {
+			lastLogCount = result.scanCount
+			logutil.BgLogger().Info("[ddl] backfill worker back fill index",
+				zap.Int("workerID", w.id),
+				zap.Int("addedCount", result.addedCount),
+				zap.Int("scanCount", result.scanCount),
+				zap.String("nextHandle", tryDecodeToHandleString(taskCtx.nextKey)),
+				zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
+			lastLogTime = time.Now()
+		}
+
+		handleRange.startKey = taskCtx.nextKey
+		if taskCtx.done {
+			break
+		}
+	}
+	logutil.BgLogger().Info("[ddl] backfill worker finish task", zap.Int("workerID", w.id),
+		zap.String("task", task.String()),
+		zap.Int("addedCount", result.addedCount),
+		zap.Int("scanCount", result.scanCount),
+		zap.String("nextHandle", tryDecodeToHandleString(result.nextKey)),
+		zap.String("takeTime", time.Since(startTime).String()))
+	return result
+}

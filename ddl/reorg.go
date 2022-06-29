@@ -791,3 +791,97 @@ func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Ele
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	return r.m.GetDDLReorgHandle(job)
 }
+
+func (w *worker) runMergeJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+	job := reorgInfo.Job
+	d := reorgInfo.d
+	// This is for tests compatible, because most of the early tests try to build the reorg job manually
+	// without reorg meta info, which will cause nil pointer in here.
+	if job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{
+			SQLMode:       mysql.ModeNone,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+		}
+	}
+
+	rc := w.getReorgCtx(job)
+	if rc == nil {
+		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
+		// for the later entrances.
+		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+		if lease > 0 {
+			delayForAsyncCommit()
+		}
+		// This job is cancelling, we should return ErrCancelledDDLJob directly.
+		// Q: Is there any possibility that the job is cancelling and has no reorgCtx?
+		// A: Yes, consider the case that we cancel the job when backfilling the last batch of data, the cancel txn is commit first,
+		// and then the backfill workers send signal to the `doneCh` of the reorgCtx, and then the DDL worker will remove the reorgCtx and
+		// update the DDL job to `done`, but at the commit time, the DDL txn will raise a "write conflict" error and retry, and it happens.
+		if job.IsCancelling() {
+			return dbterror.ErrCancelledDDLJob
+		}
+		rc = w.newReorgCtx(reorgInfo)
+		w.wg.Add(1)
+		go func() {
+			defer w.wg.Done()
+			rc.doneCh <- f()
+		}()
+	}
+
+	waitTimeout := defaultWaitReorgTimeout
+	// if lease is 0, we are using a local storage,
+	// and we can wait the reorganization to be done here.
+	// if lease > 0, we don't need to wait here because
+	// we should update some job's progress context and try checking again,
+	// so we use a very little timeout here.
+	if lease > 0 {
+		waitTimeout = ReorgWaitTimeout
+	}
+
+	// ToDo: Bear init Lightning openengine if there is need to open multi openengine for index backfill.
+	// Init lightning job meta.
+
+	// wait reorganization job done or timeout
+	select {
+	case err := <-rc.doneCh:
+		// Since job is cancelled，we don't care about its partial counts.
+		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+			d.removeReorgCtx(job)
+			return dbterror.ErrCancelledDDLJob
+		}
+
+		// Update a job's warnings.
+		w.mergeWarningsIntoJob(job)
+
+		d.removeReorgCtx(job)
+		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
+		// since in the next round, the startKey is brand new which is stored by last time.
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+	case <-w.ctx.Done():
+		logutil.BgLogger().Info("[ddl] run merge job quit")
+		d.removeReorgCtx(job)
+		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
+		return dbterror.ErrWaitReorgTimeout
+	case <-time.After(waitTimeout):
+		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
+		// Update a job's warnings.
+		w.mergeWarningsIntoJob(job)
+
+		rc.resetWarnings()
+
+		logutil.BgLogger().Info("[ddl] run merge job wait timeout",
+			zap.Duration("waitTime", waitTimeout),
+			zap.ByteString("elementType", currentElement.TypeKey),
+			zap.Int64("elementID", currentElement.ID),
+			zap.Int64("totalmergedRowCount", rowCount),
+			zap.String("doneKey", tryDecodeToHandleString(doneKey)))
+		// If timeout, we will return, check the owner and retry to wait job done again.
+		return dbterror.ErrWaitReorgTimeout
+	}
+	return nil
+}
