@@ -36,7 +36,10 @@ var pessimisticRetryBreakPoints = []string{
 	sessiontxn.BreakPointBeforeExecutorRerunWhenLockError,
 }
 
-func TestPessimisticUpdateConflict(t *testing.T) {
+func TestPessimisticWriteConflict(t *testing.T) {
+	store, _, deferFunc := setupTxnContextTest(t)
+	defer deferFunc()
+
 	queries := []string{
 		"update t set v=v+1 where id=1",
 		"update t set v=v+1 where id=1 and v>0",
@@ -44,17 +47,6 @@ func TestPessimisticUpdateConflict(t *testing.T) {
 		"update t set v=v+1 where id in (1, 2, 3) and v>0",
 		"update t set v=v+1",
 		"update t set v=v+1 where v>0",
-	}
-
-	for _, query := range queries {
-		t.Run(query, func(t *testing.T) {
-			testPessimisticWriteConflict(t, query, 1)
-		})
-	}
-}
-
-func TestPessimisticSelectForUpdateConflict(t *testing.T) {
-	queries := []string{
 		"select * from t where id=1 for update",
 		"select * from t where id=1 and v>0 for update",
 		"select * from t where id=1 for update union select * from t where id=1 for update",
@@ -63,20 +55,9 @@ func TestPessimisticSelectForUpdateConflict(t *testing.T) {
 		"select * from t for update",
 		"select * from t where v > 0 for update",
 	}
-
-	for _, query := range queries {
-		t.Run(query, func(t *testing.T) {
-			testPessimisticWriteConflict(t, query, 0)
-		})
-	}
-}
-
-func testPessimisticWriteConflict(t *testing.T, query string, valueChange int) {
-	store, _, deferFunc := setupTxnContextTest(t)
-	defer deferFunc()
-
-	allBreakPoints := append([]string{}, pessimisticNormalBreakPoints...)
-	allBreakPoints = append(allBreakPoints, pessimisticRetryBreakPoints...)
+	var breakPoints []string
+	breakPoints = append(breakPoints, pessimisticNormalBreakPoints...)
+	breakPoints = append(breakPoints, pessimisticRetryBreakPoints...)
 
 	testfork.RunTest(t, func(t *testfork.T) {
 		var records []string
@@ -89,11 +70,13 @@ func testPessimisticWriteConflict(t *testing.T, query string, valueChange int) {
 			return sb.String()
 		}
 
+		query := testfork.Pick(t, queries)
 		isolation := testfork.PickEnum(t, ast.RepeatableRead, ast.ReadCommitted)
 		autocommit := testfork.PickEnum(t, 1, 0)
+		testRetryConflict := testfork.PickEnum(t, false, true)
 
 		tk := testkit.NewSteppedTestKit(t, store)
-		tk.SetBreakPoints(allBreakPoints...)
+		tk.SetBreakPoints(breakPoints...)
 		defer tk.MustExec("rollback")
 
 		tk.MustExec("use test")
@@ -111,37 +94,55 @@ func testPessimisticWriteConflict(t *testing.T, query string, valueChange int) {
 			tk.MustExec("begin")
 		}
 
+		expectedValue := 10
 		isSelectForUpdate := strings.HasPrefix(strings.ToLower(strings.TrimSpace(query)), "select")
-		expectedValue := 10 + valueChange
 		if isSelectForUpdate {
 			tk.SteppedMustQuery(query)
+		} else {
+			expectedValue += 1
+			tk.SteppedMustExec(query)
 		}
 
-		maxRetry := 2
-		for retry := 0; retry <= maxRetry; retry++ {
-			var path []string
-			if retry == 0 {
-				path = pessimisticNormalBreakPoints
-				records = append(records, fmt.Sprintf("START %s autocommit-%d '%s'", isolation, autocommit, query))
+		doInjectConflict := func(breakPoint string) {
+			expectedValue += 1
+			records = append(records, fmt.Sprintf("    -> %s tk2 +1 => %d", breakPoint, expectedValue))
+			tk2.MustExec("update t set v=v+1 where id=1")
+		}
+
+		// first run
+		records = append(records, fmt.Sprintf("START %s autocommit-%d '%s' testRetryConflict-%v", isolation, autocommit, query, testRetryConflict))
+		for _, breakPoint := range pessimisticNormalBreakPoints {
+			tk.ExpectStopOnBreakPoint(breakPoint)
+			injectConflict := false
+			if testRetryConflict {
+				// When testRetryConflict we only need to injectConflict once in first run
+				injectConflict = breakPoint == sessiontxn.BreakPointBeforeExecutorFirstRun
 			} else {
-				path = pessimisticRetryBreakPoints
-				records = append(records, fmt.Sprintf("retry%d", retry))
+				injectConflict = testfork.PickEnum(t, false, true)
 			}
 
-			for _, breakPoint := range path {
+			if injectConflict {
+				doInjectConflict(breakPoint)
+			}
+			tk.Continue()
+		}
+
+		// retry
+		if testRetryConflict {
+			for _, breakPoint := range pessimisticRetryBreakPoints {
 				tk.ExpectStopOnBreakPoint(breakPoint)
-				if retry < maxRetry && testfork.PickEnum(t, false, true) {
-					expectedValue += 1
-					records = append(records, fmt.Sprintf("    -> %s tk2 +1 => %d", breakPoint, expectedValue))
-					tk2.MustExec("update t set v=v+1 where id=1")
-				} else {
-					records = append(records, "    -> "+breakPoint)
+				if testfork.PickEnum(t, false, true) {
+					doInjectConflict(breakPoint)
 				}
 				tk.Continue()
 			}
+		}
 
-			if tk.IsIdle() {
-				break
+		// make sure the statement finished
+		if !tk.IsIdle() {
+			for _, breakPoint := range pessimisticRetryBreakPoints {
+				tk.ExpectStopOnBreakPoint(breakPoint)
+				tk.Continue()
 			}
 		}
 
