@@ -168,7 +168,7 @@ func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) 
 
 	p.latestOracleTSValid = false
 	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
-		zap.String("sql", sessVars.StmtCtx.OriginalSQL))
+		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
 	return sessiontxn.RetryReady()
 }
 
