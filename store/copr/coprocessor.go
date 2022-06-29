@@ -957,10 +957,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if worker.req.Paging {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
-				start = append([]byte{}, cacheValue.PageStart...)
+				start = make([]byte, len(cacheValue.PageStart))
+				copy(start, cacheValue.PageStart)
 			}
 			if cacheValue.PageEnd != nil {
-				end = append([]byte{}, cacheValue.PageEnd...)
+				end = make([]byte, len(cacheValue.PageEnd))
+				copy(end, cacheValue.PageEnd)
 			}
 			// When paging protocol is used, the response key range is part of the cache data.
 			resp.pbResp.Range = &coprocessor.KeyRange{
