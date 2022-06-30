@@ -35,10 +35,11 @@ type PessimisticRRTxnContextProvider struct {
 	baseTxnContextProvider
 
 	// Used for ForUpdateRead statement
-	forUpdateTS uint64
+	forUpdateTS       uint64
+	latestForUpdateTS uint64
 	// It may decide whether to update forUpdateTs when calling provider's getForUpdateTs
 	// See more details in the comments of optimizeWithPlan
-	followingOperatorIsPointGetForUpdate bool
+	optimizeForNotFetchingLatestTS bool
 }
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
@@ -69,11 +70,11 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	}
 
 	var txn kv.Transaction
-	if txn, err = p.activeTxn(); err != nil {
+	if txn, err = p.activateTxn(); err != nil {
 		return 0, err
 	}
 
-	if p.followingOperatorIsPointGetForUpdate {
+	if p.optimizeForNotFetchingLatestTS {
 		p.forUpdateTS = p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 		return p.forUpdateTS, nil
 	}
@@ -114,19 +115,20 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 	}
 
 	sctx.GetSessionVars().TxnCtx.SetForUpdateTS(version.Ver)
-	txn.SetOption(kv.SnapshotTS, sctx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	p.latestForUpdateTS = version.Ver
+	txn.SetOption(kv.SnapshotTS, version.Ver)
 
 	return nil
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
+func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	if err := p.baseTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
 
 	p.forUpdateTS = 0
-	p.followingOperatorIsPointGetForUpdate = false
+	p.optimizeForNotFetchingLatestTS = false
 
 	return nil
 }
@@ -137,15 +139,14 @@ func (p *PessimisticRRTxnContextProvider) OnStmtRetry(ctx context.Context) (err 
 		return err
 	}
 
-	txnCtxForUpdateTS := p.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	// If TxnCtx.forUpdateTS is updated in OnStmtErrorForNextAction, we assign the value to the provider
-	if txnCtxForUpdateTS > p.forUpdateTS {
-		p.forUpdateTS = txnCtxForUpdateTS
+	if p.latestForUpdateTS > p.forUpdateTS {
+		p.forUpdateTS = p.latestForUpdateTS
 	} else {
 		p.forUpdateTS = 0
 	}
 
-	p.followingOperatorIsPointGetForUpdate = false
+	p.optimizeForNotFetchingLatestTS = false
 
 	return nil
 }
@@ -165,6 +166,8 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 //     We expect that the data that the point get acquires has not been changed.
 // Benefit: Save the cost of acquiring ts from PD.
 // Drawbacks: If the data has been changed since the ts we used, we need to retry.
+// One exception is insert operation, when it has no select plan, we do not fetch the latest ts immediately. We only update ts
+// if write conflict is incurred.
 func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
@@ -179,24 +182,44 @@ func (p *PessimisticRRTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 		plan = execute.Plan
 	}
 
-	mayOptimizeForPointGet := false
-	if v, ok := plan.(*plannercore.PhysicalLock); ok {
-		if _, ok := v.Children()[0].(*plannercore.PointGetPlan); ok {
-			mayOptimizeForPointGet = true
-		}
-	} else if v, ok := plan.(*plannercore.Update); ok {
-		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			mayOptimizeForPointGet = true
-		}
-	} else if v, ok := plan.(*plannercore.Delete); ok {
-		if _, ok := v.SelectPlan.(*plannercore.PointGetPlan); ok {
-			mayOptimizeForPointGet = true
-		}
-	}
-
-	p.followingOperatorIsPointGetForUpdate = mayOptimizeForPointGet
+	p.optimizeForNotFetchingLatestTS = notNeedGetLatestTSFromPD(plan, false)
 
 	return nil
+}
+
+// notNeedGetLatestTSFromPD searches for optimization condition recursively
+// Note: For point get and batch point get (name it plan), if one of the ancestor node is update/delete/physicalLock,
+// we should check whether the plan.Lock is true or false. See comments in needNotToBeOptimized.
+// inLockOrWriteStmt = true means one of the ancestor node is update/delete/physicalLock.
+func notNeedGetLatestTSFromPD(plan plannercore.Plan, inLockOrWriteStmt bool) bool {
+	switch v := plan.(type) {
+	case *plannercore.PointGetPlan:
+		// We do not optimize the point get/ batch point get if plan.lock = false and inLockOrWriteStmt = true.
+		// Theoretically, the plan.lock should be true if the flag is true. But due to the bug describing in Issue35524,
+		// the plan.lock can be false in the case of inLockOrWriteStmt being true. In this case, optimization here can lead to different results
+		// which cannot be accepted as AdviseOptimizeWithPlan cannot change results.
+		return !inLockOrWriteStmt || v.Lock
+	case *plannercore.BatchPointGetPlan:
+		return !inLockOrWriteStmt || v.Lock
+	case plannercore.PhysicalPlan:
+		if len(v.Children()) == 0 {
+			return false
+		}
+		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
+		for _, p := range v.Children() {
+			if !notNeedGetLatestTSFromPD(p, isPhysicalLock || inLockOrWriteStmt) {
+				return false
+			}
+		}
+		return true
+	case *plannercore.Update:
+		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
+	case *plannercore.Delete:
+		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
+	case *plannercore.Insert:
+		return v.SelectPlan == nil
+	}
+	return false
 }
 
 func (p *PessimisticRRTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {

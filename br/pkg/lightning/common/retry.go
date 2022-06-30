@@ -20,6 +20,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"syscall"
 
 	"github.com/go-sql-driver/mysql"
@@ -29,6 +30,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+var regionNotFullyReplicatedRe = regexp.MustCompile(`region \d+ is not fully replicated`)
 
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
@@ -88,6 +91,9 @@ func isSingleRetryableError(err error) bool {
 		}
 		return false
 	default:
+		if regionNotFullyReplicatedRe.MatchString(err.Error()) {
+			return true
+		}
 		switch status.Code(err) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true

@@ -3470,7 +3470,7 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
 
-		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
 		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
