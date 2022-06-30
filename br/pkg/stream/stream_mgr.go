@@ -34,6 +34,8 @@ import (
 
 const (
 	streamBackupMetaPrefix = "v1/backupmeta"
+
+	metaDataWorkerPoolSize = 128
 )
 
 func GetStreamBackupMetaPrefix() string {
@@ -153,9 +155,10 @@ func BuildObserveMetaRange() *kv.KeyRange {
 func FastUnmarshalMetaData(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	fn func (path string, m *backuppb.Metadata) error,
+	fn func(path string, m *backuppb.Metadata) error,
 ) error {
-	pool := utils.NewWorkerPool(128, "metadata")
+	log.Info("use workers to speed up reading metadata files", zap.Int("workers", metaDataWorkerPoolSize))
+	pool := utils.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
 	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
