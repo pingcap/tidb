@@ -3198,7 +3198,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
-			err = d.RenameTable(sctx, ident, newIdent, isAlterTable)
+			err = d.renameTable(sctx, ident, newIdent, isAlterTable)
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -5549,7 +5549,28 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return nil
 }
 
-func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
+func (d *ddl) RenameTable(ctx sessionctx.Context, s *ast.RenameTableStmt) error {
+	isAlterTable := false
+	var err error
+	if len(s.TableToTables) == 1 {
+		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
+		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
+		err = d.renameTable(ctx, oldIdent, newIdent, isAlterTable)
+	} else {
+		oldIdents := make([]ast.Ident, 0, len(s.TableToTables))
+		newIdents := make([]ast.Ident, 0, len(s.TableToTables))
+		for _, tables := range s.TableToTables {
+			oldIdent := ast.Ident{Schema: tables.OldTable.Schema, Name: tables.OldTable.Name}
+			newIdent := ast.Ident{Schema: tables.NewTable.Schema, Name: tables.NewTable.Name}
+			oldIdents = append(oldIdents, oldIdent)
+			newIdents = append(newIdents, newIdent)
+		}
+		err = d.renameTables(ctx, oldIdents, newIdents, isAlterTable)
+	}
+	return err
+}
+
+func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	tables := make(map[string]int64)
 	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable, tables)
@@ -5582,7 +5603,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	return errors.Trace(err)
 }
 
-func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
+func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	oldTableNames := make([]*model.CIStr, 0, len(oldIdents))
 	tableNames := make([]*model.CIStr, 0, len(oldIdents))
