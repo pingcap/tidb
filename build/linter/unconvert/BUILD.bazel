@@ -1,12 +1,13 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "util",
-    srcs = ["util.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/util",
+    name = "unconvert",
+    srcs = ["analysis.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/unconvert",
     visibility = ["//visibility:public"],
     deps = [
-        "@co_honnef_go_tools//analysis/report",
+        "//build/linter/util",
+        "@com_github_golangci_unconvert//:unconvert",
         "@org_golang_x_tools//go/analysis",
         "@org_golang_x_tools//go/loader",
     ],

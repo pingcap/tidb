@@ -40,8 +40,6 @@ import (
 */
 func TestTableRegion(t *testing.T) {
 	cfg := newConfigWithSourceDir("./examples")
-	// specify ReadBlockSize because we need to sample files
-	cfg.Mydumper.ReadBlockSize = config.ReadBlockSize
 	loader, _ := NewMyDumpLoader(context.Background(), cfg)
 	dbMeta := loader.GetDatabases()[0]
 
@@ -383,91 +381,4 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 		require.Equal(t, offsets[i][1], regions[i].Chunk.EndOffset)
 		require.Equal(t, columns, regions[i].Chunk.Columns)
 	}
-}
-
-func TestSampleAndGetAvgRowSize(t *testing.T) {
-	// It's more difficult to estimate sizes of SQL files than csv files,
-	// because when reading the first row of them, parser may read other info (e.g. table name)
-	// so that make it hard to get good estimate, especially when files have few rows.
-	sqlFiles := []string{
-		// 1. long table name, values:
-		// 1.1 short and even len
-		"INSERT INTO `test_db_mock_long.test_table_very_long_name` VALUES (1),(2);",
-		// 1.2 short and not even
-		"INSERT INTO `test_db_mock_long.test_table_very_long_name` VALUES (123452123,1234123125),(2,1);",
-		"INSERT INTO `test_db_mock_long.test_table_very_long_name` VALUES (2,1),(123452123,1234123125);",
-		// 1.3 long and even
-		"INSERT INTO `test_db_mock_long.test_table_very_long_name` VALUES (123452123,1234123125),(1234123125,12341231251);",
-		// 1.4 long but not even
-		"INSERT INTO `test_db_mock_long.test_table_very_long_name` VALUES ('abcdefghidgjla','lkjadsfasfdkjl'),('1111111','1');",
-		// 2. short table name, values:
-		// 2.1 short and even len
-		"INSERT INTO `a` VALUES (1),(2);",
-		// 2.2 short and not even
-		"INSERT INTO `a` VALUES (123452123,1234123125),(2,1);",
-		"INSERT INTO `a` VALUES (2,1),(123452123,1234123125);",
-		// 2.3 long and even
-		"INSERT INTO `a` VALUES (123452123,1234123125),(1234123125,12341231251);",
-		// 2.4 long but not even
-		"INSERT INTO `a` VALUES ('abcdefghidgjla','lkjadsfasfdkjl'),('1111111','1');",
-	}
-
-	csvFiles := []string{
-		// even and short
-		"a,b,c\r\n1,2,3\r\n4,5,6\r\n",
-		// not even but short
-		"a,b,c\r\n1112,1234,1923\r\n1,2,3",
-		// even and long
-		"a,b,c\r\n14712312,123122,1231233\r\n4456364,34525,423426\r\n",
-		// not even but long
-		"a,b,c\r\nsadlk;fja;lskdfj;alksdfj,sdlk;fjaksld;fja;l,qpoiwuepqou\r\n0,0,0\r\n",
-	}
-	testFunc := func(files []string, fileType SourceType) {
-		for _, file := range files {
-			dir := t.TempDir()
-
-			var fileName string
-			if fileType == SourceTypeCSV {
-				fileName = "test.csv"
-			} else {
-				fileName = "test.sql"
-			}
-			filePath := filepath.Join(dir, fileName)
-
-			content := []byte(file)
-			err := os.WriteFile(filePath, content, 0o644)
-			require.Nil(t, err)
-			dataFileInfo, err := os.Stat(filePath)
-			require.Nil(t, err)
-			fileSize := dataFileInfo.Size()
-
-			cfg := newConfigWithSourceDir(dir)
-			loader, _ := NewMyDumpLoader(context.Background(), cfg)
-			ioWorkers := worker.NewPool(context.Background(), 1, "io")
-
-			// specify ReadBlockSize because we need to sample files
-			cfg.Mydumper.ReadBlockSize = config.ReadBlockSize
-			fileInfo := FileInfo{
-				FileMeta: SourceFileMeta{
-					Path:     fileName,
-					Type:     fileType,
-					FileSize: fileSize,
-				},
-			}
-			cfg.Mydumper.CSV = config.CSVConfig{
-				Separator:       ",",
-				Delimiter:       `"`,
-				Header:          true,
-				NotNull:         false,
-				Null:            `\N`,
-				BackslashEscape: true,
-				TrimLastSep:     false,
-			}
-			size, err := GetSampledAvgRowSize(&fileInfo, cfg, ioWorkers, loader.GetStore())
-			require.Nil(t, err)
-			require.GreaterOrEqual(t, fileSize/size, int64(2))
-		}
-	}
-	testFunc(sqlFiles, SourceTypeSQL)
-	testFunc(csvFiles, SourceTypeCSV)
 }

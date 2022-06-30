@@ -56,8 +56,6 @@ type TableRestore struct {
 	logger    log.Logger
 
 	ignoreColumns map[string]struct{}
-	rowIDLock     sync.Mutex
-	curMaxRowID   int64
 }
 
 func NewTableRestore(
@@ -150,9 +148,6 @@ func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowID
 		for _, chunk := range engine.Chunks {
 			chunk.Chunk.PrevRowIDMax += rowIDBase
 			chunk.Chunk.RowIDMax += rowIDBase
-			if chunk.Chunk.RowIDMax > tr.curMaxRowID {
-				tr.curMaxRowID = chunk.Chunk.RowIDMax
-			}
 		}
 	}
 }
@@ -510,7 +505,7 @@ func (tr *TableRestore) restoreEngine(
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo, tr)
+		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
 		if err != nil {
 			setError(err)
 			break
@@ -1052,32 +1047,4 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	}
 
 	return threshold
-}
-
-func (tr *TableRestore) allocateRowIDs(newRowCount int64, rc *Controller) (int64, int64, error) {
-	tr.rowIDLock.Lock()
-	defer tr.rowIDLock.Unlock()
-	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
-	// try to re-allocate from downstream
-	// if we are using parallel import, rowID should be reconciled globally.
-	// Otherwise, this function will simply return 0.
-	newRowIDBase, newRowIDMax, err := metaMgr.ReallocTableRowIDs(context.Background(), newRowCount)
-	if err != nil {
-		return 0, 0, err
-	}
-	// TODO: refinement: currently, when we're not using SSTMode + incremental,
-	// metadata of the table restore is not maintained globally.
-	// So we have to deviate this two disparate situations here and make
-	// code complexer.
-	var rowIDBase int64
-	if newRowIDMax != 0 {
-		// re-alloc from downstream
-		rowIDBase = newRowIDBase
-		tr.curMaxRowID = newRowIDMax
-	} else {
-		// single import mode: re-allocate rowID from memory
-		rowIDBase = tr.curMaxRowID + 1
-		tr.curMaxRowID += newRowCount
-	}
-	return rowIDBase, tr.curMaxRowID, nil
 }
