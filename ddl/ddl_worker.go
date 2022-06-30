@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -693,6 +694,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(time.Duration(rand.Intn(5)) * time.Second) // #nosec G404
+		}
+	})
 	txn, err := w.sess.txn()
 	if err != nil {
 		w.sess.rollback()

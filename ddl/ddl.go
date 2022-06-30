@@ -1419,7 +1419,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
 	if variable.EnableConcurrentDDL.Load() {
-		return getJobsBySQL(newSession(sess), "tidb_ddl_job", "1 order by job_id")
+		return getJobsBySQL(newSession(sess), JobTable, "1 order by job_id")
 	}
 
 	return getDDLJobs(t)
@@ -1542,7 +1542,7 @@ func (s *session) execute(ctx context.Context, query string, label string) ([]ch
 	defer func() {
 		metrics.DDLJobTableDuration.WithLabelValues(label + "-" + metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
-	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(ctx, query)
+	rs, err := s.Context.(sqlexec.SQLExecutor).ExecuteInternal(kv.WithInternalSourceType(ctx, kv.InternalTxnDDL), query)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1625,8 +1625,11 @@ func addHistoryDDLJob2Table(sess *session, job *model.Job, updateRawArgs bool) e
 		return err
 	}
 	_, err = sess.execute(context.Background(),
-		fmt.Sprintf("insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, schema_id, table_id, create_time) values (%d, %s, %s, %s, %d, %d, %v)",
-			job.ID, wrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName), job.SchemaID, job.TableID, strconv.Quote(model.TSConvert2Time(job.StartTS).String())),
+		fmt.Sprintf("insert ignore into mysql.tidb_ddl_history(job_id, job_meta, db_name, table_name, schema_ids, table_ids, create_time) values (%d, %s, %s, %s, %s, %s, %v)",
+			job.ID, wrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
+			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),
+			strconv.Quote(strconv.FormatInt(job.TableID, 10)),
+			strconv.Quote(model.TSConvert2Time(job.StartTS).String())),
 		"insert_history")
 	return errors.Trace(err)
 }
