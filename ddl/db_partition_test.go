@@ -3623,8 +3623,69 @@ func TestCreateIntervalPartition(t *testing.T) {
 
 	tk.MustExec("create database IntervalPartition")
 	defer tk.MustExec("drop database IntervalPartition")
+	tk.MustExec("set tidb_extension_non_mysql_compatible = default")
 	tk.MustExec("use IntervalPartition")
+	tk.MustExec("create table pt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) (partition first values less than (1000), partition last values less than (9000), partition `maxvalue` values less than (maxvalue))")
+	tk.MustExec("create table dpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) (partition first values less than ('2022-02-01'), partition second values less than ('2022-02-08'), PARTITION third VALUES LESS THAN ('2022-02-15'))")
 	tk.MustExec("create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) MAXVALUE PARTITION")
+	tk.MustQuery("SHOW CREATE TABLE ipt").Check(testkit.Rows(
+		"ipt CREATE TABLE `ipt` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `val` (`val`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `SYS_P_LT_1000000000` VALUES LESS THAN (1000000000),\n" +
+			" PARTITION `SYS_P_LT_2000000000` VALUES LESS THAN (2000000000),\n" +
+			" PARTITION `SYS_P_LT_3000000000` VALUES LESS THAN (3000000000),\n" +
+			" PARTITION `SYS_P_LT_4000000000` VALUES LESS THAN (4000000000),\n" +
+			" PARTITION `SYS_P_LT_5000000000` VALUES LESS THAN (5000000000),\n" +
+			" PARTITION `SYS_P_LT_6000000000` VALUES LESS THAN (6000000000),\n" +
+			" PARTITION `SYS_P_LT_7000000000` VALUES LESS THAN (7000000000),\n" +
+			" PARTITION `SYS_P_LT_8000000000` VALUES LESS THAN (8000000000),\n" +
+			" PARTITION `SYS_P_LT_9000000000` VALUES LESS THAN (9000000000),\n" +
+			" PARTITION `SYS_P_MAXVALUE` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery("select @@tidb_extension_non_mysql_compatible").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("select @@tidb_extension_non_mysql_compatible").Check(testkit.Rows("1"))
+	tk.MustQuery("SHOW CREATE TABLE ipt").Check(testkit.Rows(
+		"ipt CREATE TABLE `ipt` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) CLUSTERED,\n" +
+			"  KEY `val` (`val`)\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) MAXVALUE PARTITION"))
+	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
+	tk.MustExec("set tidb_extension_non_mysql_compatible = 0")
+	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
+		"idpt CREATE TABLE `idpt` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `SYS_P_LT_2022-02-01` VALUES LESS THAN ('2022-02-01'),\n" +
+			" PARTITION `SYS_P_LT_2022-02-08` VALUES LESS THAN ('2022-02-08'),\n" +
+			" PARTITION `SYS_P_LT_2022-02-15` VALUES LESS THAN ('2022-02-15'),\n" +
+			" PARTITION `SYS_P_LT_2022-02-22` VALUES LESS THAN ('2022-02-22'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-01` VALUES LESS THAN ('2022-03-01'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-08` VALUES LESS THAN ('2022-03-08'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-15` VALUES LESS THAN ('2022-03-15'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-22` VALUES LESS THAN ('2022-03-22'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-29` VALUES LESS THAN ('2022-03-29'),\n" +
+			" PARTITION `SYS_P_MAXVALUE` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
+		"idpt CREATE TABLE `idpt` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) NONCLUSTERED\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (1 WEEK) FIRST PARTITION LESS THAN (2022-02-01) LAST PARTITION LESS THAN (2022-03-29) NULL PARTITION MAXVALUE PARTITION"))
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {

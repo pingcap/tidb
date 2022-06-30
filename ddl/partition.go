@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/parser/opcode"
 	"strconv"
 	"strings"
 	"time"
@@ -485,6 +486,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	return nil
 }
 
+// generatePartitionDefinitionsFromInterval takes generates partition Definitions on the tbInfo from the Interval definition
+// So there are no tbInfo.Partition.Definitions created yet, so we only generate ast.PartitionDefinitions
 func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.PartitionOptions, tbInfo *model.TableInfo) error {
 	if s.Interval == nil {
 		return nil
@@ -493,6 +496,9 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.Par
 		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only allowed on RANGE partitioning")
 	}
+	if len(s.ColumnNames) > 1 {
+		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow RANGE COLUMNS with more than one column")
+	}
 	if len(s.Definitions) > 0 {
 		// Suggested syntax does not allow partition definitions for INTERVAL range partitioning
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow partition definitions")
@@ -500,31 +506,133 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.Par
 	if s.Interval.FirstRangeEnd == nil || s.Interval.LastRangeEnd == nil {
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
 	}
+	switch s.Interval.IntervalExpr.TimeUnit {
+	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitDayMinute, ast.TimeUnitSecond:
+	default:
+		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECONDS as time unit")
+	}
+	first := ast.PartitionDefinitionClauseLessThan{
+		Exprs: []ast.ExprNode{*s.Interval.FirstRangeEnd},
+	}
+	last := ast.PartitionDefinitionClauseLessThan{
+		Exprs: []ast.ExprNode{*s.Interval.LastRangeEnd},
+	}
 	if len(tbInfo.Partition.Columns) > 0 {
-		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, []ast.ExprNode{*s.Interval.FirstRangeEnd}); err != nil {
+		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, first.Exprs); err != nil {
 			return err
 		}
-		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, []ast.ExprNode{*s.Interval.LastRangeEnd}); err != nil {
+		if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, last.Exprs); err != nil {
 			return err
 		}
 	} else {
-		if err := checkPartitionValuesIsInt(ctx, "FIRST PARTITION", []ast.ExprNode{*s.Interval.FirstRangeEnd}, tbInfo); err != nil {
+		if err := checkPartitionValuesIsInt(ctx, "FIRST PARTITION", first.Exprs, tbInfo); err != nil {
 			return err
 		}
-		if err := checkPartitionValuesIsInt(ctx, "LAST PARTITION", []ast.ExprNode{*s.Interval.LastRangeEnd}, tbInfo); err != nil {
+		if err := checkPartitionValuesIsInt(ctx, "LAST PARTITION", last.Exprs, tbInfo); err != nil {
 			return err
 		}
 	}
-	intervalEnd := s.Interval.FirstRangeEnd
-	lastIntervalEnd := s.Interval.LastRangeEnd
-	partDefs := make([]*ast.PartitionDefinition)
-	lastVal, err := expression.EvalAstExpr(ctx, *lastIntervalEnd)
+	var firstVal, currVal types.Datum
+	var currExpr ast.ExprNode
+	lastVal, err := expression.EvalAstExpr(ctx, last.Exprs[0])
 	if err != nil {
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
+		return err
 	}
-	for intervalEnd <= lastIntervalEnd {
+	partDefs := make([]*ast.PartitionDefinition, 0, 1)
+	var partExpr ast.ExprNode
+	for i := 0; ; i++ {
+		if i == 0 {
+			// Only support RANGE or RANGE COLUMNS (single column) so there can only be one Expr
+			currExpr = first.Exprs[0]
+		} else {
+			currExpr = &ast.BinaryOperationExpr{
+				Op: opcode.Mul,
+				L:  ast.NewValueExpr(i, "", ""),
+				R:  s.Interval.IntervalExpr.Expr,
+			}
+			if s.Interval.IntervalExpr.TimeUnit == ast.TimeUnitInvalid {
+				currExpr = &ast.BinaryOperationExpr{
+					Op: opcode.Plus,
+					L:  first.Exprs[0],
+					R:  currExpr,
+				}
+			} else {
+				currExpr = &ast.FuncCallExpr{
+					FnName: model.NewCIStr("DATE_ADD"),
+					Args: []ast.ExprNode{
+						first.Exprs[0],
+						currExpr,
+						&ast.TimeUnitExpr{Unit: s.Interval.IntervalExpr.TimeUnit},
+					},
+				}
+			}
+		}
+		currVal, err = expression.EvalAstExpr(ctx, currExpr)
+		if err != nil {
+			return err
+		}
+		if i == 0 {
+			firstVal = currVal
+		}
+		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx, &lastVal, collate.GetBinaryCollator())
+		if err != nil {
+			return err
+		}
+		if cmp > 0 {
+			// TODO: Add string of currVal and lastVal to error message
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL table partitioning; LAST expr not matching FIRST + n INTERVALS")
+		}
+		valStr, err := currVal.ToString()
+		if err != nil {
+			return err
+		}
+		partName := "SYS_P_LT_" + valStr
+		if s.Interval.IntervalExpr.TimeUnit == ast.TimeUnitInvalid {
+			partExpr = currExpr
+		} else {
+			partExpr = ast.NewValueExpr(valStr, "", "")
+		}
+		partDefs = append(partDefs, &ast.PartitionDefinition{
+			Name: model.NewCIStr(partName),
+			Clause: &ast.PartitionDefinitionClauseLessThan{
+				Exprs: []ast.ExprNode{partExpr},
+			},
+		})
+		if cmp == 0 {
+			// Last partition!
+			break
+		}
+	}
+	if s.Interval.MaxValPart {
+		partDefs = append(partDefs, &ast.PartitionDefinition{
+			Name: model.NewCIStr("SYS_P_MAXVALUE"),
+			Clause: &ast.PartitionDefinitionClauseLessThan{
+				Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
+			},
+		})
+	}
+	s.Definitions = partDefs
+	if s.Interval.IntervalExpr.TimeUnit != ast.TimeUnitInvalid {
+		tbInfo.Partition.IntervalUnit = s.Interval.IntervalExpr.TimeUnit.String()
+	}
+	// TODO: Is there any other way?
+	var sb strings.Builder
+	err = s.Interval.IntervalExpr.Expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	if err != nil {
+		return err
+	}
+	tbInfo.Partition.IntervalExpr = sb.String()
+	tbInfo.Partition.IntervalFirst, err = firstVal.ToString()
+	if err != nil {
+		return err
+	}
+	tbInfo.Partition.IntervalLast, err = lastVal.ToString()
+	if err != nil {
+		return err
+	}
+	tbInfo.Partition.IntervalMaxPart = s.Interval.MaxValPart
+	tbInfo.Partition.IntervalNullPart = s.Interval.NullPart
 
-	}
 	return nil
 }
 

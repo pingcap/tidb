@@ -678,6 +678,10 @@ const (
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
 
+	// TiDBExtensionNonMySQLCompatible changes output for SHOW CREATE TABLE etc. for TiDB enhancements
+	// that are not compatible with MySQL, like INTERVAL table partitioning
+	TiDBExtensionNonMySQLCompatible = "tidb_extension_non_mysql_compatible"
+
 	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
 	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
 )
@@ -941,6 +945,7 @@ const (
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
 	DefTiDBEnableConcurrentDDL                   = true
 	DefTiDBSimplifiedMetrics                     = false
+	DefTiDBExtensionNonMySQLCompatible           = false
 )
 
 // Process global variables.
