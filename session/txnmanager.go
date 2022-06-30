@@ -47,6 +47,7 @@ func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 type txnManager struct {
 	sctx sessionctx.Context
 
+	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
 }
 
@@ -117,14 +118,21 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 
 func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
+	m.stmtNode = nil
+}
+
+func (m *txnManager) GetCurrentStmt() ast.StmtNode {
+	return m.stmtNode
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (m *txnManager) OnStmtStart(ctx context.Context) error {
+func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	m.stmtNode = node
+
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnStmtStart(ctx)
+	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error

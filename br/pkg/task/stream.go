@@ -189,7 +189,7 @@ func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.Until, err = ParseTSString(tsString); err != nil {
+	if cfg.Until, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.SkipPrompt, err = flags.GetBool(flagYes); err != nil {
@@ -213,7 +213,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -222,7 +222,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.EndTS, err = ParseTSString(tsString); err != nil {
+	if cfg.EndTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 

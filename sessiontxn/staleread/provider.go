@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -102,8 +103,8 @@ func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() erro
 	return nil
 }
 
-// OnStmtStart is the hook that should be called when a new statement started
-func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context) error {
+// OnStmtStart is the hook that should be called when a new statement starte
+func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
 	return nil
 }
