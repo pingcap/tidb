@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -137,6 +136,9 @@ func (txn *LazyTxn) resetTxnInfo(
 	currentSQLDigest string,
 	allSQLDigests []string,
 ) {
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
@@ -225,7 +227,7 @@ func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 		nil)
 }
 
-func (txn *LazyTxn) changeInvalidToPending(future *txnFuture) {
+func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
 }
@@ -271,6 +273,9 @@ func (txn *LazyTxn) changeToInvalid() {
 
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 }
 
@@ -376,6 +381,13 @@ func (txn *LazyTxn) Rollback() error {
 	return txn.Transaction.Rollback()
 }
 
+// RollbackMemDBToCheckpoint overrides the Transaction interface.
+func (txn *LazyTxn) RollbackMemDBToCheckpoint(savepoint *tikv.MemDBCheckpoint) {
+	txn.flushStmtBuf()
+	txn.Transaction.RollbackMemDBToCheckpoint(savepoint)
+	txn.cleanup()
+}
+
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	failpoint.Inject("beforeLockKeys", func() {})
@@ -427,6 +439,30 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 		keys = append(keys, k)
 	})
 	return keys, nil
+}
+
+// Wait converts pending txn to valid
+func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+	if !txn.validOrPending() {
+		return txn, errors.AddStack(kv.ErrInvalidTxn)
+	}
+	if txn.pending() {
+		defer func(begin time.Time) {
+			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)
+		}(time.Now())
+
+		// Transaction is lazy initialized.
+		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
+		// If Txn() is called later, wait for the future to get a valid txn.
+		if err := txn.changePendingToValid(ctx); err != nil {
+			logutil.BgLogger().Error("active transaction fail",
+				zap.Error(err))
+			txn.cleanup()
+			sctx.GetSessionVars().TxnCtx.StartTS = 0
+			return txn, err
+		}
+	}
+	return txn, nil
 }
 
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
@@ -498,27 +534,6 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
-}
-
-func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	oracleStore := s.store.GetOracle()
-	var tsFuture oracle.Future
-	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
-	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.CheckAndGetTxnScope()})
-	}
-	ret := &txnFuture{future: tsFuture, store: s.store, txnScope: s.sessionVars.CheckAndGetTxnScope()}
-	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
-		ret.future = txnFailFuture{}
-	})
-	return ret
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

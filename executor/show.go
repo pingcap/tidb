@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
@@ -96,6 +98,12 @@ type ShowExec struct {
 	IfNotExists bool // Used for `show create database if not exists`
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
+}
+
+type showTableRegionRowItem struct {
+	regionMeta
+	schedulingConstraints string
+	schedulingState       string
 }
 
 // Next implements the Executor Next interface.
@@ -218,7 +226,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus()
 	case ast.ShowRegions:
-		return e.fetchShowTableRegions()
+		return e.fetchShowTableRegions(ctx)
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
 	case ast.ShowBackups:
@@ -235,6 +243,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlacementForTable(ctx)
 	case ast.ShowPlacementForPartition:
 		return e.fetchShowPlacementForPartition(ctx)
+	case ast.ShowSessionStates:
+		return e.fetchShowSessionStates(ctx)
 	}
 	return nil
 }
@@ -402,10 +412,23 @@ func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	sort.Strings(dbs)
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
+
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
 	// let information_schema be the first database
 	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
 		if checker != nil && !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, d) {
+			continue
+		} else if fieldFilter != "" && strings.ToLower(d) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(strings.ToLower(d)) {
 			continue
 		}
 		e.appendRow([]interface{}{
@@ -465,24 +488,19 @@ func (e *ShowExec) fetchShowTables() error {
 	var (
 		tableTypes        = make(map[string]string)
 		fieldPatternsLike collate.WildcardPattern
-		FieldFilterEnable bool
 		fieldFilter       string
 	)
+
 	if e.Extractor != nil {
-		extractor := (e.Extractor).(*plannercore.ShowTablesTableExtractor)
-		if extractor.FieldPatterns != "" {
-			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
-			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
-		}
-		FieldFilterEnable = extractor.Field != ""
-		fieldFilter = extractor.Field
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	for _, v := range schemaTables {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
-		} else if FieldFilterEnable && v.Meta().Name.L != fieldFilter {
+		} else if fieldFilter != "" && v.Meta().Name.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Meta().Name.L) {
 			continue
@@ -544,10 +562,23 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
 
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	for _, row := range rows {
-		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
+		tableName := row.GetString(0)
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tableName, "", mysql.AllPrivMask) {
+			continue
+		} else if fieldFilter != "" && strings.ToLower(tableName) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(strings.ToLower(tableName)) {
 			continue
 		}
 		e.result.AppendRow(row)
@@ -563,17 +594,12 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	}
 	var (
 		fieldPatternsLike collate.WildcardPattern
-		FieldFilterEnable bool
 		fieldFilter       string
 	)
+
 	if e.Extractor != nil {
-		extractor := (e.Extractor).(*plannercore.ShowColumnsTableExtractor)
-		if extractor.FieldPatterns != "" {
-			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
-			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
-		}
-		FieldFilterEnable = extractor.Field != ""
-		fieldFilter = extractor.Field
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -594,7 +620,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return err
 	}
 	for _, col := range cols {
-		if FieldFilterEnable && col.Name.L != fieldFilter {
+		if fieldFilter != "" && col.Name.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
@@ -787,17 +813,12 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	)
 	var (
 		fieldPatternsLike collate.WildcardPattern
-		FieldFilterEnable bool
 		fieldFilter       string
 	)
+
 	if e.Extractor != nil {
-		extractor := (e.Extractor).(*plannercore.ShowVariablesExtractor)
-		if extractor.FieldPatterns != "" {
-			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
-			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
-		}
-		FieldFilterEnable = extractor.Field != ""
-		fieldFilter = extractor.Field
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 	if e.GlobalScope {
 		// Collect global scope variables,
@@ -806,7 +827,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
-				if FieldFilterEnable && v.Name != fieldFilter {
+				if v.IsNoop && !variable.EnableNoopVariables.Load() {
+					continue
+				}
+				if fieldFilter != "" && v.Name != fieldFilter {
 					continue
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
@@ -828,7 +852,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
-		if FieldFilterEnable && v.Name != fieldFilter {
+		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+			continue
+		}
+		if fieldFilter != "" && v.Name != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
@@ -1455,11 +1482,25 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 }
 
 func (e *ShowExec) fetchShowCollation() error {
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		fieldFilter       string
+	)
+	if e.Extractor != nil {
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+		fieldFilter = e.Extractor.Field()
+	}
+
 	collations := collate.GetSupportedCollations()
 	for _, v := range collations {
 		isDefault := ""
 		if v.IsDefault {
 			isDefault = "Yes"
+		}
+		if fieldFilter != "" && strings.ToLower(v.Name) != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
+			continue
 		}
 		e.appendRow([]interface{}{
 			v.Name,
@@ -1784,7 +1825,7 @@ func (e *ShowExec) appendRow(row []interface{}) {
 	}
 }
 
-func (e *ShowExec) fetchShowTableRegions() error {
+func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	store := e.ctx.GetStore()
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
@@ -1824,20 +1865,80 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
 	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
+		// show table * index * region
 		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
 		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
 	} else {
+		// show table * region
 		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
-
 	if err != nil {
 		return err
 	}
-	e.fillRegionsToChunk(regions)
+
+	regionRowItem, err := e.fetchSchedulingInfo(ctx, regions, tb.Meta())
+	if err != nil {
+		return err
+	}
+
+	e.fillRegionsToChunk(regionRowItem)
 	return nil
+}
+
+func (e *ShowExec) fetchSchedulingInfo(ctx context.Context, regions []regionMeta, tbInfo *model.TableInfo) ([]showTableRegionRowItem, error) {
+	scheduleState := make(map[int64]infosync.PlacementScheduleState)
+	schedulingConstraints := make(map[int64]*model.PlacementSettings)
+	regionRowItem := make([]showTableRegionRowItem, 0)
+	tblPlacement, err := e.getTablePlacement(tbInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	if tbInfo.GetPartitionInfo() != nil {
+		// partitioned table
+		for _, part := range tbInfo.GetPartitionInfo().Definitions {
+			_, err = fetchScheduleState(ctx, scheduleState, part.ID)
+			if err != nil {
+				return nil, err
+			}
+			placement, err := e.getPolicyPlacement(part.PlacementPolicyRef)
+			if err != nil {
+				return nil, err
+			}
+			if placement == nil {
+				schedulingConstraints[part.ID] = tblPlacement
+			} else {
+				schedulingConstraints[part.ID] = placement
+			}
+		}
+	} else {
+		// un-partitioned table or index
+		schedulingConstraints[tbInfo.ID] = tblPlacement
+		_, err = fetchScheduleState(ctx, scheduleState, tbInfo.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var constraintStr string
+	var scheduleStateStr string
+	for i := range regions {
+		if constraint, ok := schedulingConstraints[regions[i].physicalID]; ok && constraint != nil {
+			constraintStr = constraint.String()
+			scheduleStateStr = scheduleState[regions[i].physicalID].String()
+		} else {
+			constraintStr = ""
+			scheduleStateStr = ""
+		}
+		regionRowItem = append(regionRowItem, showTableRegionRowItem{
+			regionMeta:            regions[i],
+			schedulingConstraints: constraintStr,
+			schedulingState:       scheduleStateStr,
+		})
+	}
+	return regionRowItem, nil
 }
 
 func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore helper.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
@@ -1866,7 +1967,7 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
+func (e *ShowExec) fillRegionsToChunk(regions []showTableRegionRowItem) {
 	for i := range regions {
 		e.result.AppendUint64(0, regions[i].region.Id)
 		e.result.AppendString(1, regions[i].start)
@@ -1892,6 +1993,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 		e.result.AppendUint64(8, regions[i].readBytes)
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
+		e.result.AppendString(11, regions[i].schedulingConstraints)
+		e.result.AppendString(12, regions[i].schedulingState)
 	}
 }
 
@@ -1899,6 +2002,33 @@ func (e *ShowExec) fetchShowBuiltins() error {
 	for _, f := range expression.GetBuiltinList() {
 		e.appendRow([]interface{}{f})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
+	sessionStates := &sessionstates.SessionStates{}
+	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
+	if err != nil {
+		return err
+	}
+	stateBytes, err := gjson.Marshal(sessionStates)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stateJSON := json.BinaryJSON{}
+	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
+		return err
+	}
+	// This will be implemented in future PRs.
+	tokenBytes, err := gjson.Marshal("")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tokenJSON := json.BinaryJSON{}
+	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
+		return err
+	}
+	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
 

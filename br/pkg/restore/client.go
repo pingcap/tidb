@@ -2016,3 +2016,8 @@ func (rc *Client) SaveSchemas(
 	}
 	return nil
 }
+
+// MockClient create a fake client used to test.
+func MockClient(dbs map[string]*utils.Database) *Client {
+	return &Client{databases: dbs}
+}

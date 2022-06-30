@@ -1231,6 +1231,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["ddl:8245"]
+error = '''
+column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1376,6 +1381,11 @@ error = '''
 TiDB admin check table failed.
 '''
 
+["executor:8067"]
+error = '''
+Load data: unmatched columns
+'''
+
 ["executor:8114"]
 error = '''
 Unknown plan
@@ -1444,6 +1454,11 @@ data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%
 ["executor:8142"]
 error = '''
 modifying %s will require SET GLOBAL in a future version of TiDB
+'''
+
+["executor:8144"]
+error = '''
+setting %s has no effect in TiDB
 '''
 
 ["executor:8212"]
@@ -2064,6 +2079,11 @@ invalid as of timestamp: %s
 ["planner:8137"]
 error = '''
 Column '%s' in ANALYZE column option does not exist in table '%s'
+'''
+
+["planner:8145"]
+error = '''
+variable %s has no effect in TiDB
 '''
 
 ["planner:8242"]

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -71,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 )
 
@@ -166,6 +168,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForAttributes(sctx, is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
+		case infoschema.TableTrxSummary:
+			err = e.setDataForTrxSummary(sctx)
+		case infoschema.ClusterTableTrxSummary:
+			err = e.setDataForClusterTrxSummary(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2179,6 +2185,29 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
+func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	if !hasProcessPriv {
+		return nil
+	}
+	rows := txninfo.Recorder.DumpTrxSummary()
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
+	err := e.setDataForTrxSummary(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
 type stmtSummaryTableRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
@@ -2333,10 +2362,11 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 type dataLockWaitsTableRetriever struct {
 	dummyCloser
 	batchRetrieverHelper
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	lockWaits   []*deadlock.WaitForEntry
-	initialized bool
+	table          *model.TableInfo
+	columns        []*model.ColumnInfo
+	lockWaits      []*deadlock.WaitForEntry
+	resolvingLocks []txnlock.ResolvingLock
+	initialized    bool
 }
 
 func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -2352,12 +2382,14 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		r.initialized = true
 		var err error
 		r.lockWaits, err = sctx.GetStore().GetLockWaits()
+		tikvStore, _ := sctx.GetStore().(helper.Storage)
+		r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
 		if err != nil {
 			r.retrieved = true
 			return nil, err
 		}
 
-		r.batchRetrieverHelper.totalRows = len(r.lockWaits)
+		r.batchRetrieverHelper.totalRows = len(r.lockWaits) + len(r.resolvingLocks)
 		r.batchRetrieverHelper.batchSize = 1024
 	}
 
@@ -2388,6 +2420,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					digests[i] = hex.EncodeToString(digest)
 				}
 			}
+			// todo: support resourcegrouptag for resolvingLocks
 		}
 
 		// Fetch the SQL Texts of the digests above if necessary.
@@ -2407,7 +2440,15 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
-		for rowIdx, lockWait := range r.lockWaits[start:end] {
+		// data_lock_waits contains both lockWaits (pessimistic lock waiting)
+		// and resolving (optimistic lock "waiting") info
+		// first we'll return the lockWaits, and then resolving, so we need to
+		// do some index calculation here
+		lockWaitsStart := mathutil.Min(start, len(r.lockWaits))
+		resolvingStart := start - lockWaitsStart
+		lockWaitsEnd := mathutil.Min(end, len(r.lockWaits))
+		resolvingEnd := end - lockWaitsEnd
+		for rowIdx, lockWait := range r.lockWaits[lockWaitsStart:lockWaitsEnd] {
 			row := make([]types.Datum, 0, len(r.columns))
 
 			for _, col := range r.columns {
@@ -2426,7 +2467,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 							decodedKeyStr = string(decodedKeyBytes)
 						}
 					} else {
-						logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+						logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
 					}
 					row = append(row, types.NewDatum(decodedKeyStr))
 				case infoschema.DataLockWaitsColumnTrxID:
@@ -2454,7 +2495,45 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 			res = append(res, row)
 		}
+		for _, resolving := range r.resolvingLocks[resolvingStart:resolvingEnd] {
+			row := make([]types.Datum, 0, len(r.columns))
 
+			for _, col := range r.columns {
+				switch col.Name.O {
+				case infoschema.DataLockWaitsColumnKey:
+					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(resolving.Key))))
+				case infoschema.DataLockWaitsColumnKeyInfo:
+					infoSchema := domain.GetDomain(sctx).InfoSchema()
+					var decodedKeyStr interface{} = nil
+					decodedKey, err := keydecoder.DecodeKey(resolving.Key, infoSchema)
+					if err == nil {
+						decodedKeyBytes, err := json.Marshal(decodedKey)
+						if err != nil {
+							logutil.Logger(ctx).Warn("marshal decoded key info to JSON failed", zap.Error(err))
+						} else {
+							decodedKeyStr = string(decodedKeyBytes)
+						}
+					} else {
+						logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
+					}
+					row = append(row, types.NewDatum(decodedKeyStr))
+				case infoschema.DataLockWaitsColumnTrxID:
+					row = append(row, types.NewDatum(resolving.TxnID))
+				case infoschema.DataLockWaitsColumnCurrentHoldingTrxID:
+					row = append(row, types.NewDatum(resolving.LockTxnID))
+				case infoschema.DataLockWaitsColumnSQLDigest:
+					// todo: support resourcegrouptag for resolvingLocks
+					row = append(row, types.NewDatum(nil))
+				case infoschema.DataLockWaitsColumnSQLDigestText:
+					// todo: support resourcegrouptag for resolvingLocks
+					row = append(row, types.NewDatum(nil))
+				default:
+					row = append(row, types.NewDatum(nil))
+				}
+			}
+
+			res = append(res, row)
+		}
 		return nil
 	})
 
@@ -2590,7 +2669,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 								value = types.NewDatum(string(decodedKeyJSON))
 							}
 						} else {
-							logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+							logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
 						}
 					}
 					row = append(row, value)
@@ -2792,7 +2871,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
-	var columnNames []string // nolint: prealloc
+	var columnNames []string //nolint: prealloc
 	for _, c := range e.outputCols {
 		if c.Name.O == "TIFLASH_INSTANCE" {
 			continue

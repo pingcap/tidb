@@ -22,9 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -38,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -52,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -194,15 +190,9 @@ type Execute struct {
 	TxtProtoVars []expression.Expression // parsed variables under text protocol
 	BinProtoVars []types.Datum           // parsed variables under binary protocol
 	ExecID       uint32
-	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
-	SnapshotTS uint64
-	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
-	IsStaleness bool
-	// Deprecated: ReadReplicaScope now is only used for asserting after refactoring stale read, it will be removed later.
-	ReadReplicaScope string
-	Stmt             ast.StmtNode
-	StmtType         string
-	Plan             Plan
+	Stmt         ast.StmtNode
+	StmtType     string
+	Plan         Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -274,29 +264,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	// Just setting `e.SnapshotTS`, `e.ReadReplicaScope` and `e.IsStaleness` with the return value of `handleExecuteBuilderOption`
-	// for asserting the stale read context after refactoring is exactly the same with the previous logic.
-	snapshotTS, readReplicaScope, isStaleness, err := handleExecuteBuilderOption(sctx, preparedObj)
-	if err != nil {
-		return err
-	}
-	e.SnapshotTS = snapshotTS
-	e.ReadReplicaScope = readReplicaScope
-	e.IsStaleness = isStaleness
-
-	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
-		staleread.AssertStmtStaleness(sctx, isStaleness)
-		if isStaleness {
-			is2, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
-			if err != nil {
-				panic(err)
-			}
-
-			if is.SchemaMetaVersion() != is2.SchemaMetaVersion() {
-				panic(fmt.Sprintf("%d != %d", is.SchemaMetaVersion(), is2.SchemaMetaVersion()))
-			}
-		}
-	})
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -328,70 +295,12 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
+	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
 	e.Stmt = prepared.Stmt
 	return nil
-}
-
-// Deprecated: it will be removed later. Now it is only used for asserting
-func handleExecuteBuilderOption(sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
-	snapshotTS = 0
-	readReplicaScope = oracle.GlobalTxnScope
-	isStaleness = false
-	err = nil
-	vars := sctx.GetSessionVars()
-	readTS := vars.TxnReadTS.PeakTxnReadTS()
-	if readTS > 0 {
-		// It means we meet following case:
-		// 1. prepare p from 'select * from t as of timestamp now() - x seconds'
-		// 1. set transaction read only as of timestamp ts2
-		// 2. execute prepare p
-		// The execute statement would be refused due to timestamp conflict
-		if preparedObj.SnapshotTSEvaluator != nil {
-			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
-			return
-		}
-		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
-		isStaleness = true
-		readReplicaScope = config.GetTxnScopeFromConfig()
-		return
-	}
-	// It means we meet following case:
-	// 1. prepare p from 'select * from t as of timestamp ts1'
-	// 1. begin
-	// 2. execute prepare p
-	// The execute statement would be refused due to timestamp conflict
-	if preparedObj.SnapshotTSEvaluator != nil {
-		if vars.InTxn() {
-			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-			return
-		}
-		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
-		// which means its infoschema is specified by the SQL, not the current/latest infoschema
-		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
-		isStaleness = true
-		readReplicaScope = config.GetTxnScopeFromConfig()
-		return
-	}
-	// It means we meet following case:
-	// 1. prepare p from 'select * from t'
-	// 1. start transaction read only as of timestamp ts1
-	// 2. execute prepare p
-	if vars.InTxn() && vars.TxnCtx.IsStaleness {
-		isStaleness = true
-		snapshotTS = vars.TxnCtx.StartTS
-		readReplicaScope = vars.TxnCtx.TxnScope
-		return
-	}
-	return
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
@@ -451,9 +360,21 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
+
+	// In rc or for update read, we need the latest schema version to decide whether we need to
+	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
+	var latestSchemaVersion int64
+
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
+			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
+			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
+			// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
+			latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+		}
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText,
+			preparedStmt.StmtDB, prepared.SchemaVersion, latestSchemaVersion); err != nil {
 			return err
 		}
 	}
@@ -586,7 +507,8 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
+				prepared.SchemaVersion, latestSchemaVersion); err != nil {
 				return err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
@@ -1283,7 +1205,7 @@ func (e *Explain) prepareSchema() error {
 	switch {
 	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == types.ExplainFormatVerbose:
+	case format == types.ExplainFormatVerbose || format == types.ExplainFormatTrueCardCost:
 		if e.Analyze || e.RuntimeStatsColl != nil {
 			fieldNames = []string{"id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 		} else {
@@ -1317,8 +1239,20 @@ func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
 	}
+
+	if e.Analyze && strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
+		pp, ok := e.TargetPlan.(PhysicalPlan)
+		if ok {
+			if _, err := pp.GetPlanCost(property.RootTaskType, CostFlagRecalculate|CostFlagUseTrueCardinality); err != nil {
+				return err
+			}
+		} else {
+			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("'explain format=true_card_cost' cannot support this plan"))
+		}
+	}
+
 	switch strings.ToLower(e.Format) {
-	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1528,14 +1462,14 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	var row []string
 	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			row = append(row, estCost)
 		}
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
 		row = append(row, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo)
 	} else {
 		row = []string{id, estRows}
-		if strings.ToLower(e.Format) == types.ExplainFormatVerbose {
+		if strings.ToLower(e.Format) == types.ExplainFormatVerbose || strings.ToLower(e.Format) == types.ExplainFormatTrueCardCost {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)

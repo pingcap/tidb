@@ -66,24 +66,28 @@ desc format='brief' select max(a collate utf8mb4_bin) from tt;
 select max(a collate utf8mb4_bin) from tt;
 desc format='brief' select min(b) from tt;
 select min(b) from tt;
+--error 1235
 desc format='brief' select min(b collate utf8mb4_bin) from tt;
-# Fix me later.
-# select min(b collate utf8mb4_bin) from tt;
+--error 1235
+select min(b collate utf8mb4_bin) from tt;
 desc format='brief' select max(b) from tt;
 select max(b) from tt;
+--error 1235
 desc format='brief' select max(b collate utf8mb4_bin) from tt;
-# Fix me later.
-# select max(b collate utf8mb4_bin) from tt;
+--error 1235
+select max(b collate utf8mb4_bin) from tt;
 desc format='brief' select min(c) from tt;
 select min(c) from tt;
+--error 1235
 desc format='brief' select min(c collate utf8mb4_bin) from tt;
-# Fix me later.
-# select min(c collate utf8mb4_bin) from tt;
+--error 1235
+select min(c collate utf8mb4_bin) from tt;
 desc format='brief' select max(c) from tt;
 select max(c) from tt;
+--error 1235
 desc format='brief' select max(c collate utf8mb4_bin) from tt;
-# Fix me later.
-# select max(c collate utf8mb4_bin) from tt;
+--error 1235
+select max(c collate utf8mb4_bin) from tt;
 desc format='brief' select min(d) from tt;
 select min(d) from tt;
 --error 1253

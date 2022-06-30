@@ -37,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
@@ -97,16 +97,18 @@ type mockGCWorkerSuite struct {
 }
 
 func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
-	s = new(mockGCWorkerSuite)
+	return createGCWorkerSuiteWithStoreType(t, mockstore.EmbedUnistore)
+}
 
+func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreType) (s *mockGCWorkerSuite, clean func()) {
+	s = new(mockGCWorkerSuite)
 	hijackClient := func(client tikv.Client) tikv.Client {
 		s.client = &mockGCWorkerClient{Client: client}
 		client = s.client
 		return client
 	}
-
 	opts := []mockstore.MockTiKVStoreOption{
-		mockstore.WithStoreType(mockstore.MockTiKV),
+		mockstore.WithStoreType(storeType),
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
@@ -119,7 +121,13 @@ func createGCWorkerSuite(t *testing.T) (s *mockGCWorkerSuite, clean func()) {
 	}
 
 	s.oracle = &oracles.MockOracle{}
-	s.store, s.dom, clean = testkit.CreateMockStoreWithOracle(t, s.oracle, opts...)
+	store, err := mockstore.NewMockStore(opts...)
+	require.NoError(t, err)
+	store.GetOracle().Close()
+	store.(tikv.Storage).SetOracle(s.oracle)
+	dom, clean := bootstrap(t, store, 0)
+	s.store, s.dom = store, dom
+
 	s.tikvStore = s.store.(tikv.Storage)
 
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
@@ -943,7 +951,14 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 }
 
 func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
-	s, clean := createGCWorkerSuite(t)
+	// TODO: Update the test code.
+	// This test rely on the obsolete mock tikv, but mock tikv does not implement paging.
+	// So use this failpoint to force non-paging protocol.
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/DisablePaging", `return`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/DisablePaging"))
+	}()
+	s, clean := createGCWorkerSuiteWithStoreType(t, mockstore.MockTiKV)
 	defer clean()
 
 	var (
@@ -1682,7 +1697,7 @@ func TestGCPlacementRules(t *testing.T) {
 
 	// do gc
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
-	err = s.gcWorker.doGCPlacementRules(1, dr, gcPlacementRuleCache)
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
 	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
@@ -1694,7 +1709,7 @@ func TestGCPlacementRules(t *testing.T) {
 	require.True(t, got.IsEmpty())
 
 	// gc the same table id repeatedly
-	err = s.gcWorker.doGCPlacementRules(1, dr, gcPlacementRuleCache)
+	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
 	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
@@ -1764,4 +1779,20 @@ func TestGCWithPendingTxn(t *testing.T) {
 
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
+}
+
+func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain, func()) {
+	session.SetSchemaLease(lease)
+	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	dom.SetStatsUpdating(true)
+
+	clean := func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(t, err)
+	}
+	return dom, clean
 }

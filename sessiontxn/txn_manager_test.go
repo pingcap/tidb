@@ -71,6 +71,27 @@ func TestEnterNewTxn(t *testing.T) {
 			},
 		},
 		{
+			name: "EnterNewTxnDefault",
+			request: &sessiontxn.EnterNewTxnRequest{
+				Type: sessiontxn.EnterNewTxnDefault,
+			},
+			prepare: func(t *testing.T) {
+				tk.MustExec("set @@autocommit=0")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				txn := checkBasicActiveTxn(t, sctx)
+				checkInfoSchemaVersion(t, sctx, domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion())
+
+				sessVars := sctx.GetSessionVars()
+				require.False(t, txn.IsPessimistic())
+				require.False(t, sessVars.InTxn())
+				require.False(t, sessVars.TxnCtx.IsStaleness)
+
+				require.False(t, sctx.GetSessionVars().TxnCtx.CouldRetry)
+				require.True(t, txn.GetOption(kv.GuaranteeLinearizability).(bool))
+			},
+		},
+		{
 			name: "EnterNewTxnWithBeginStmt simple",
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnWithBeginStmt,
@@ -135,8 +156,8 @@ func TestEnterNewTxn(t *testing.T) {
 					Type: sessiontxn.EnterNewTxnBeforeStmt,
 				})
 				require.NoError(t, err)
-				require.NoError(t, mgr.OnStmtStart(context.TODO()))
-				tk.Session().PrepareTSFuture(context.TODO())
+				require.NoError(t, mgr.OnStmtStart(context.TODO(), nil))
+				require.NoError(t, mgr.AdviseWarmup())
 			},
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnWithBeginStmt,
@@ -270,7 +291,7 @@ func checkTxnBeforeStmt(t *testing.T, sctx sessionctx.Context) {
 }
 
 func checkStmtTxnAfterActive(t *testing.T, sctx sessionctx.Context) {
-	sctx.PrepareTSFuture(context.TODO())
+	require.NoError(t, sessiontxn.GetTxnManager(sctx).AdviseWarmup())
 	_, err := sctx.Txn(true)
 	require.NoError(t, err)
 	txn := checkBasicActiveTxn(t, sctx)

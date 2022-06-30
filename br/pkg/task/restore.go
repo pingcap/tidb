@@ -182,14 +182,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	tsString, err = flags.GetString(FlagStreamRestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -265,7 +265,7 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.Config.Concurrency == 0 {
-		cfg.Config.Concurrency = 32
+		cfg.Config.Concurrency = 16
 	}
 }
 
@@ -300,9 +300,9 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	schemasMap := make(map[string]struct{})
 	tablesMap := make(map[string]struct{})
 	for _, db := range schemas {
-		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
-			dbName = name
+		dbName := db.Info.Name.L
+		if dbCIStrName, ok := utils.GetSysDBCIStrName(db.Info.Name); utils.IsSysDB(dbCIStrName.O) && ok {
+			dbName = dbCIStrName.L
 		}
 		schemasMap[utils.EncloseName(dbName)] = struct{}{}
 		for _, table := range db.Tables {
@@ -310,19 +310,21 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 				// we may back up empty database.
 				continue
 			}
-			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.O)] = struct{}{}
+			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.L)] = struct{}{}
 		}
 	}
 	restoreSchemas := cfg.Schemas
 	restoreTables := cfg.Tables
 	for schema := range restoreSchemas {
-		if _, ok := schemasMap[schema]; !ok {
+		schemaLName := strings.ToLower(schema)
+		if _, ok := schemasMap[schemaLName]; !ok {
 			return errors.Annotatef(berrors.ErrUndefinedRestoreDbOrTable,
 				"[database: %v] has not been backup, please ensure you has input a correct database name", schema)
 		}
 	}
 	for table := range restoreTables {
-		if _, ok := tablesMap[table]; !ok {
+		tableLName := strings.ToLower(table)
+		if _, ok := tablesMap[tableLName]; !ok {
 			return errors.Annotatef(berrors.ErrUndefinedRestoreDbOrTable,
 				"[table: %v] has not been backup, please ensure you has input a correct table name", table)
 		}

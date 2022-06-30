@@ -36,7 +36,7 @@ func TestAuditLogNormal(t *testing.T) {
 	defer clean()
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
-	conn := server.CreateMockConn(t, store, sv)
+	conn := server.CreateMockConn(t, sv)
 	defer conn.Close()
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
@@ -485,11 +485,13 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "show stats_histograms",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_histograms",
 		},
 		{
 			sql:      "show stats_meta",
 			stmtType: "Show",
 			dbs:      "mysql",
+			tables:   "stats_meta",
 		},
 		{
 			sql:      "show status",

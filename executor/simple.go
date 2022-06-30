@@ -15,7 +15,9 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
@@ -135,6 +138,10 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
 		e.executeCommit(x)
+	case *ast.SavepointStmt:
+		err = e.executeSavepoint(x)
+	case *ast.ReleaseSavepointStmt:
+		err = e.executeReleaseSavepoint(x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
@@ -147,6 +154,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeRenameUser(x)
 	case *ast.SetPwdStmt:
 		err = e.executeSetPwd(ctx, x)
+	case *ast.SetSessionStatesStmt:
+		err = e.executeSetSessionStates(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
 	case *ast.BinlogStmt:
@@ -600,6 +609,35 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	})
 }
 
+// ErrSavepointNotSupportedWithBinlog export for testing.
+var ErrSavepointNotSupportedWithBinlog = errors.New("SAVEPOINT is not supported when binlog is enabled")
+
+func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	if !sessVars.InTxn() && sessVars.IsAutocommit() {
+		return nil
+	}
+	if sessVars.BinlogClient != nil {
+		return ErrSavepointNotSupportedWithBinlog
+	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	memDBCheckpoint := txn.GetMemDBCheckpoint()
+	txnCtx.AddSavepoint(s.Name, memDBCheckpoint)
+	return nil
+}
+
+func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
+	deleted := e.ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(s.Name)
+	if !deleted {
+		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
+	}
+	return nil
+}
+
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
 	for _, role := range s.Roles {
 		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
@@ -694,11 +732,23 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
-	sessVars.SetInTxn(false)
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
+	if s.SavepointName != "" {
+		if !txn.Valid() {
+			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+		}
+		savepointRecord := sessVars.TxnCtx.RollbackToSavepoint(s.SavepointName)
+		if savepointRecord == nil {
+			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+		}
+		txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
+		return nil
+	}
+
+	sessVars.SetInTxn(false)
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 		if sessVars.TxnCtx.IsPessimistic {
@@ -1248,6 +1298,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete privileges from mysql.columns_priv
+		sql.Reset()
+		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ColumnPrivTable, user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(context.TODO(), sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// delete relationship from mysql.role_edges
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE TO_HOST = %? and TO_USER = %?;`, mysql.SystemDB, mysql.RoleEdgeTable, user.Hostname, user.Username)
@@ -1629,6 +1687,16 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSessionStatesStmt) error {
+	var sessionStates sessionstates.SessionStates
+	decoder := json.NewDecoder(bytes.NewReader([]byte(s.SessionStates)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&sessionStates); err != nil {
+		return errors.Trace(err)
+	}
+	return e.ctx.DecodeSessionStates(ctx, e.ctx, &sessionStates)
 }
 
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {

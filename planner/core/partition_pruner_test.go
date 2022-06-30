@@ -361,6 +361,9 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk1.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	var input []struct {
 		SQL    string
 		Pruner string
@@ -699,6 +702,22 @@ func TestHashPartitionPruning(t *testing.T) {
 		"PARTITIONS 13;")
 	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")
 	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
+}
+
+func TestIssue32815(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)")
+	tk.MustExec("insert into t values (1, 1),(2, 2),(3, 3)")
+	tk.MustQuery("explain select * from t where a IN (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, partition:p1,P2 handle:[1 2], keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t where a IN (1, 2, 1)").Check(testkit.Rows(
+		"Batch_Point_Get_1 3.00 root table:t, partition:p1,P2 handle:[1 2 1], keep order:false, desc:false"))
 }
 
 func TestIssue32007(t *testing.T) {

@@ -29,6 +29,8 @@ var (
 	ExplainFormatVerbose = "verbose"
 	// ExplainFormatTraditional is the same as ExplainFormatROW.
 	ExplainFormatTraditional = "traditional"
+	// ExplainFormatTrueCardCost indicates the optimizer to use true cardinality to calculate the cost.
+	ExplainFormatTrueCardCost = "true_card_cost"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -39,5 +41,6 @@ var (
 		ExplainFormatROW,
 		ExplainFormatVerbose,
 		ExplainFormatTraditional,
+		ExplainFormatTrueCardCost,
 	}
 )

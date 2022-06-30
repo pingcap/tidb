@@ -61,6 +61,9 @@ func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
 }
 
+// JobNeedGCForTest is only used for test.
+var JobNeedGCForTest = jobNeedGC
+
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
 	return getRangeEndKey(NewJobContext(), store, priority, t, startHandle, endHandle)
@@ -117,10 +120,7 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 }
 
 func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	tran := meta.NewMeta(txn)
-	historyJob, err := tran.GetHistoryDDLJob(id)
+	historyJob, err := GetHistoryJobByID(ctx, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 
@@ -361,7 +361,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
 	for _, worker := range d.workers {
-		worker.close()
+		worker.Close()
 	}
 
 	job := &model.Job{
@@ -404,7 +404,7 @@ func TestNotifyDDLJob(t *testing.T) {
 	// Ensure that the notification is not handled by worker's "start".
 	d1.cancel()
 	for _, worker := range d1.workers {
-		worker.close()
+		worker.Close()
 	}
 	d1.ownerManager.RetireOwner()
 	d1.asyncNotifyWorker(job)
@@ -582,12 +582,6 @@ func TestReorg(t *testing.T) {
 
 			rowCount := int64(10)
 			handle := test.handle
-			f := func() error {
-				d.generalWorker().reorgCtx.setRowCount(rowCount)
-				d.generalWorker().reorgCtx.setNextKey(handle.Encoded())
-				time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
-				return nil
-			}
 			job := &model.Job{
 				ID:          1,
 				SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
@@ -601,18 +595,24 @@ func TestReorg(t *testing.T) {
 			rInfo := &reorgInfo{
 				Job:         job,
 				currElement: e,
+				d:           d.ddlCtx,
+			}
+			f := func() error {
+				d.getReorgCtx(job).setRowCount(rowCount)
+				d.getReorgCtx(job).setNextKey(handle.Encoded())
+				time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
+				return nil
 			}
 			mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: test.isCommonHandle, CommonHandleVersion: 1})
-			err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+			err = d.generalWorker().runReorgJob(newReorgHandler(m), rInfo, mockTbl.Meta(), d.lease, f)
 			require.Error(t, err)
 
 			// The longest to wait for 5 seconds to make sure the function of f is returned.
 			for i := 0; i < 1000; i++ {
 				time.Sleep(5 * time.Millisecond)
-				err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+				err = d.generalWorker().runReorgJob(newReorgHandler(m), rInfo, mockTbl.Meta(), d.lease, f)
 				if err == nil {
 					require.Equal(t, job.RowCount, rowCount)
-					require.Equal(t, d.generalWorker().reorgCtx.rowCount, int64(0))
 
 					// Test whether reorgInfo's Handle is update.
 					err = txn.Commit(context.Background())
@@ -621,12 +621,10 @@ func TestReorg(t *testing.T) {
 					require.NoError(t, err)
 
 					m = meta.NewMeta(txn)
-					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, nil)
+					info, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, newReorgHandler(m), job, mockTbl, nil)
 					require.NoError(t, err1)
 					require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
 					require.Equal(t, info.currElement, e)
-					_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
-					require.Nil(t, doneHandle)
 					break
 				}
 			}
@@ -652,7 +650,7 @@ func TestReorg(t *testing.T) {
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
 				var err1 error
-				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				_, err1 = getReorgInfo(NewJobContext(), d.ddlCtx, newReorgHandler(m), job, mockTbl, []*meta.Element{element})
 				require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err1))
 				require.Equal(t, job.SnapshotVer, uint64(0))
 				return nil
@@ -663,7 +661,7 @@ func TestReorg(t *testing.T) {
 			require.NoError(t, err)
 			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
-				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				info1, err1 := getReorgInfo(NewJobContext(), d.ddlCtx, newReorgHandler(m), job, mockTbl, []*meta.Element{element})
 				require.NoError(t, err1)
 				require.Equal(t, info1.currElement, info.currElement)
 				require.Equal(t, info1.StartKey, info.StartKey)
@@ -675,7 +673,7 @@ func TestReorg(t *testing.T) {
 
 			err = d.Stop()
 			require.NoError(t, err)
-			err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
+			err = d.generalWorker().runReorgJob(newReorgHandler(m), rInfo, mockTbl.Meta(), d.lease, func() error {
 				time.Sleep(4 * testLease)
 				return nil
 			})
@@ -757,7 +755,7 @@ func TestGetDDLJobs(t *testing.T) {
 		err = m.EnQueueDDLJob(jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := GetDDLJobs(txn)
+		currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
@@ -776,7 +774,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := GetDDLJobs(txn)
+	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -808,7 +806,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
 	enQueueDDLJobs(t, m, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := GetDDLJobs(txn)
+	currJobs, err := GetAllDDLJobs(meta.NewMeta(txn))
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 
@@ -948,7 +946,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 			SchemaID: 1,
 			Type:     model.ActionCreateTable,
 		}
-		err = m.AddHistoryDDLJob(jobs[i], true)
+		err = AddHistoryDDLJob(m, jobs[i], true)
 		require.NoError(t, err)
 
 		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
@@ -988,28 +986,6 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 
 	err = txn.Rollback()
 	require.NoError(t, err)
-}
-
-func TestIsJobRollbackable(t *testing.T) {
-	cases := []struct {
-		tp     model.ActionType
-		state  model.SchemaState
-		result bool
-	}{
-		{model.ActionDropIndex, model.StateNone, true},
-		{model.ActionDropIndex, model.StateDeleteOnly, false},
-		{model.ActionDropSchema, model.StateDeleteOnly, false},
-		{model.ActionDropColumn, model.StateDeleteOnly, false},
-		{model.ActionDropColumns, model.StateDeleteOnly, false},
-		{model.ActionDropIndexes, model.StateDeleteOnly, false},
-	}
-	job := &model.Job{}
-	for _, ca := range cases {
-		job.Type = ca.tp
-		job.SchemaState = ca.state
-		re := job.IsRollbackable()
-		require.Equal(t, ca.result, re)
-	}
 }
 
 func TestError(t *testing.T) {

@@ -656,10 +656,7 @@ func TestSettersandGetters(t *testing.T) {
 			// There are some historial exceptions where global variables are loaded into the session.
 			// Please don't add to this list, the behavior is not MySQL compatible.
 			switch sv.Name {
-			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
-				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
-				TiDBEnableTelemetry, TiDBEnablePointGetCache:
+			case TiDBRowFormatVersion:
 				continue
 			}
 			require.Nil(t, sv.SetSession)
@@ -673,6 +670,92 @@ func TestSettersandGetters(t *testing.T) {
 				continue
 			}
 			require.Nil(t, sv.GetGlobal)
+		}
+	}
+}
+
+// TestSkipInitIsUsed ensures that no new variables are added with skipInit: true.
+// This feature is deprecated, and if you need to run code to differentiate between init and "SET" (rare),
+// you can instead check if s.StmtCtx.StmtType == "Set".
+// The reason it is deprecated is that the behavior is typically wrong:
+// it means session settings won't inherit from global and don't apply until you first set
+// them in each session. This is a very weird behavior.
+// See: https://github.com/pingcap/tidb/issues/35051
+func TestSkipInitIsUsed(t *testing.T) {
+	for _, sv := range GetSysVars() {
+		if sv.skipInit {
+			// Many of these variables might allow skipInit to be removed,
+			// they need to be checked first. The purpose of this test is to make
+			// sure we don't introduce any new variables with skipInit, which seems
+			// to be a problem.
+			switch sv.Name {
+			case Timestamp,
+				WarningCount,
+				ErrorCount,
+				LastInsertID,
+				Identity,
+				TiDBTxnScope,
+				TiDBSnapshot,
+				TiDBOptDistinctAggPushDown,
+				TiDBOptWriteRowID,
+				TiDBChecksumTableConcurrency,
+				TiDBBatchInsert,
+				TiDBBatchDelete,
+				TiDBBatchCommit,
+				TiDBCurrentTS,
+				TiDBLastTxnInfo,
+				TiDBLastQueryInfo,
+				TiDBEnableChunkRPC,
+				TxnIsolationOneShot,
+				TiDBOptimizerSelectivityLevel,
+				TiDBOptimizerEnableOuterJoinReorder,
+				TiDBLogFileMaxDays,
+				TiDBConfig,
+				TiDBDDLReorgPriority,
+				TiDBSlowQueryFile,
+				TiDBWaitSplitRegionFinish,
+				TiDBWaitSplitRegionTimeout,
+				TiDBLowResolutionTSO,
+				TiDBAllowRemoveAutoInc,
+				TiDBMetricSchemaStep,
+				TiDBMetricSchemaRangeDuration,
+				TiDBFoundInPlanCache,
+				TiDBFoundInBinding,
+				RandSeed1,
+				RandSeed2,
+				TiDBLastDDLInfo,
+				TiDBGeneralLog,
+				TiDBSlowLogThreshold,
+				TiDBRecordPlanInSlowLog,
+				TiDBEnableSlowLog,
+				TiDBCheckMb4ValueInUTF8,
+				TiDBPProfSQLCPU,
+				TiDBDDLSlowOprThreshold,
+				TiDBForcePriority,
+				TiDBMemoryUsageAlarmRatio,
+				TiDBEnableCollectExecutionInfo,
+				TiDBPersistAnalyzeOptions,
+				TiDBEnableColumnTracking,
+				TiDBStatsLoadPseudoTimeout,
+				SQLLogBin,
+				ForeignKeyChecks,
+				CollationDatabase,
+				CharacterSetClient,
+				CharacterSetResults,
+				CollationConnection,
+				CharsetDatabase,
+				GroupConcatMaxLen,
+				CharacterSetConnection,
+				CharacterSetServer,
+				TiDBBuildStatsConcurrency,
+				TiDBOptTiFlashConcurrencyFactor,
+				TiDBOptSeekFactor,
+				TiDBOptJoinReorderThreshold,
+				TiDBStatsLoadSyncWait,
+				CharacterSetFilesystem:
+				continue
+			}
+			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
 		}
 	}
 }

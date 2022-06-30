@@ -16,6 +16,7 @@ package types
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"regexp"
@@ -25,9 +26,11 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
@@ -393,6 +396,10 @@ func (t Time) IsZero() bool {
 }
 
 // InvalidZero returns a boolean indicating whether the month or day is zero.
+// Several functions are strict when passed a DATE() function value as their argument and reject incomplete dates with a day part of zero:
+// CONVERT_TZ(), DATE_ADD(), DATE_SUB(), DAYOFYEAR(), TIMESTAMPDIFF(),
+// TO_DAYS(), TO_SECONDS(), WEEK(), WEEKDAY(), WEEKOFYEAR(), YEARWEEK().
+// Mysql Doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html
 func (t Time) InvalidZero() bool {
 	return t.Month() == 0 || t.Day() == 0
 }
@@ -539,6 +546,16 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 	}
 
 	return NewTime(nt, t.Type(), fsp), nil
+}
+
+// MarshalJSON implements Marshaler.MarshalJSON interface.
+func (t Time) MarshalJSON() ([]byte, error) {
+	return json.Marshal(t.coreTime)
+}
+
+// UnmarshalJSON implements Unmarshaler.UnmarshalJSON interface.
+func (t *Time) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &t.coreTime)
 }
 
 // GetFsp gets the fsp of a string.
@@ -1513,7 +1530,7 @@ func (d Duration) Compare(o Duration) int {
 // but parses str to Duration then compares.
 func (d Duration) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
-	o, err := ParseDuration(sc, str, MaxFsp)
+	o, _, err := ParseDuration(sc, str, MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -1663,18 +1680,19 @@ func matchFrac(str string, fsp int) (bool, int, string, error) {
 	return overflow, frac, rest, nil
 }
 
-func matchDuration(str string, fsp int) (Duration, error) {
+func matchDuration(str string, fsp int) (Duration, bool, error) {
 	fsp, err := CheckFsp(fsp)
 	if err != nil {
-		return ZeroDuration, errors.Trace(err)
+		return ZeroDuration, true, errors.Trace(err)
 	}
 
 	if len(str) == 0 {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	negative, rest := isNegativeDuration(str)
 	rest = parser.Space0(rest)
+	charsLen := len(rest)
 
 	hhmmss := [3]int{}
 
@@ -1686,13 +1704,13 @@ func matchDuration(str string, fsp int) (Duration, error) {
 	} else if hms, remain, err := matchHHMMSSCompact(rest); err == nil {
 		rest, hhmmss = remain, hms
 	} else {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	rest = parser.Space0(rest)
 	overflow, frac, rest, err := matchFrac(rest, fsp)
-	if err != nil || len(rest) > 0 {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	if err != nil || (len(rest) > 0 && charsLen >= 12) {
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if overflow {
@@ -1701,7 +1719,7 @@ func matchDuration(str string, fsp int) (Duration, error) {
 	}
 
 	if !checkHHMMSS(hhmmss) {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	if hhmmss[0] > TimeMaxHour {
@@ -1711,7 +1729,7 @@ func matchDuration(str string, fsp int) (Duration, error) {
 		} else {
 			t = MaxTime
 		}
-		return Duration{t, fsp}, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return Duration{t, fsp}, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	d := gotime.Duration(hhmmss[0]*3600+hhmmss[1]*60+hhmmss[2])*gotime.Second + gotime.Duration(frac)*gotime.Microsecond //nolint:durationcheck
@@ -1719,7 +1737,10 @@ func matchDuration(str string, fsp int) (Duration, error) {
 		d = -d
 	}
 	d, err = TruncateOverflowMySQLTime(d)
-	return Duration{d, fsp}, errors.Trace(err)
+	if err == nil && len(rest) > 0 {
+		return Duration{d, fsp}, false, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+	return Duration{d, fsp}, false, errors.Trace(err)
 }
 
 // canFallbackToDateTime return true
@@ -1759,29 +1780,30 @@ func canFallbackToDateTime(str string) bool {
 }
 
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
-// returns the duration type Time value.
+// returns the duration type Time value and bool to indicate whether the result is null.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, error) {
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, bool, error) {
 	rest := strings.TrimSpace(str)
-	d, err := matchDuration(rest, fsp)
+	d, isNull, err := matchDuration(rest, fsp)
 	if err == nil {
-		return d, nil
+		return d, isNull, nil
 	}
 	if !canFallbackToDateTime(rest) {
-		return d, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return d, isNull, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	datetime, err := ParseDatetime(sc, rest)
 	if err != nil {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	d, err = datetime.ConvertToDuration()
 	if err != nil {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	return d.RoundFrac(fsp, sc.TimeZone)
+	d, err = d.RoundFrac(fsp, sc.TimeZone)
+	return d, false, err
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
@@ -2538,13 +2560,36 @@ func ExtractDurationValue(unit string, format string) (Duration, error) {
 	}
 }
 
-// IsClockUnit returns true when unit is interval unit with hour, minute or second.
+// IsClockUnit returns true when unit is interval unit with hour, minute, second or microsecond.
 func IsClockUnit(unit string) bool {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND", "SECOND", "MINUTE", "HOUR",
-		"SECOND_MICROSECOND", "MINUTE_MICROSECOND", "MINUTE_SECOND",
-		"HOUR_MICROSECOND", "HOUR_SECOND", "HOUR_MINUTE",
-		"DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
+		"SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND",
+		"MINUTE_SECOND", "HOUR_SECOND", "DAY_SECOND",
+		"HOUR_MINUTE", "DAY_MINUTE",
+		"DAY_HOUR":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsDateUnit returns true when unit is interval unit with year, quarter, month, week or day.
+func IsDateUnit(unit string) bool {
+	switch strings.ToUpper(unit) {
+	case "DAY", "WEEK", "MONTH", "QUARTER", "YEAR",
+		"DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR",
+		"YEAR_MONTH":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsMicrosecondUnit returns true when unit is interval unit with microsecond.
+func IsMicrosecondUnit(unit string) bool {
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND", "SECOND_MICROSECOND", "MINUTE_MICROSECOND", "HOUR_MICROSECOND", "DAY_MICROSECOND":
 		return true
 	default:
 		return false
@@ -2571,6 +2616,68 @@ func IsDateFormat(format string) bool {
 // ParseTimeFromInt64 parses mysql time value from int64.
 func ParseTimeFromInt64(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	return parseDateTimeFromNum(sc, num)
+}
+
+// ParseTimeFromFloat64 parses mysql time value from float64.
+// It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being real.
+// For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
+func ParseTimeFromFloat64(sc *stmtctx.StatementContext, f float64) (Time, error) {
+	intPart := int64(f)
+	t, err := parseDateTimeFromNum(sc, intPart)
+	if err != nil {
+		return ZeroTime, err
+	}
+	if t.Type() == mysql.TypeDatetime {
+		// US part is only kept when the integral part is recognized as datetime.
+		fracPart := uint32((f - float64(intPart)) * 1000000.0)
+		ct := t.CoreTime()
+		ct.setMicrosecond(fracPart)
+		t.SetCoreTime(ct)
+	}
+	return t, err
+}
+
+// ParseTimeFromDecimal parses mysql time value from decimal.
+// It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being decimal.
+// For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
+func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time, err error) {
+	intPart, err := dec.ToInt()
+	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
+		return ZeroTime, err
+	}
+	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
+	t, err = parseDateTimeFromNum(sc, intPart)
+	if err != nil {
+		return ZeroTime, err
+	}
+	t.SetFsp(fsp)
+	if fsp == 0 || t.Type() == mysql.TypeDate {
+		// Shortcut for integer value or date value (fractional part omitted).
+		return t, err
+	}
+
+	intPartDec := new(MyDecimal).FromInt(intPart)
+	fracPartDec := new(MyDecimal)
+	err = DecimalSub(dec, intPartDec, fracPartDec)
+	if err != nil {
+		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
+	}
+	million := new(MyDecimal).FromInt(1000000)
+	msPartDec := new(MyDecimal)
+	err = DecimalMul(fracPartDec, million, msPartDec)
+	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
+		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
+	}
+	msPart, err := msPartDec.ToInt()
+	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
+		return ZeroTime, errors.Trace(dbterror.ClassTypes.NewStd(errno.ErrIncorrectDatetimeValue).GenWithStackByArgs(dec.ToString()))
+	}
+
+	ct := t.CoreTime()
+	ct.setMicrosecond(uint32(msPart))
+	t.SetCoreTime(ct)
+
+	return t, nil
 }
 
 // DateFormat returns a textual representation of the time value formatted

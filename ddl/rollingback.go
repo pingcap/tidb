@@ -115,7 +115,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		w.reorgCtx.notifyReorgCancel()
+		d.notifyReorgCancel(job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
 	}
@@ -204,7 +204,7 @@ func rollingbackAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, err := checkDropColumn(t, job)
+	_, colInfo, idxInfos, _, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -329,7 +329,7 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
-		w.reorgCtx.notifyReorgCancel()
+		d.notifyReorgCancel(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
 		// add index workers are not started, remove the indexInfo in tableInfo.
@@ -481,6 +481,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
+	case model.ActionMultiSchemaChange:
+		err = rollingBackMultiSchemaChange(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
