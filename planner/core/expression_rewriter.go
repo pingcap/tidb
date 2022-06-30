@@ -562,19 +562,18 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 			er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 		}
 		return v, true
-	} else {
-		if eNNR {
-			// means plan building phase under new name resolution framework, trying to use cached subq.
-			if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
-				np = item.p
-			}
+	}
+	if eNNR {
+		// means plan building phase under new name resolution framework, trying to use cached subq.
+		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
+			np = item.p
 		}
-		if np == nil {
-			np, err = er.buildSubquery(ctx, subq)
-			if err != nil {
-				er.err = err
-				return v, true
-			}
+	}
+	if np == nil {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
 		}
 	}
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
@@ -883,21 +882,21 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
 		}
 		return v, true
-	} else {
-		if eNNR {
-			// means plan building phase under new name resolution framework, trying to use cached subq.
-			if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
-				np = item.p
-			}
-		}
-		if np == nil {
-			np, err = er.buildSubquery(ctx, subq)
-			if err != nil {
-				er.err = err
-				return v, true
-			}
+	}
+	if eNNR {
+		// means plan building phase under new name resolution framework, trying to use cached subq.
+		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
+			np = item.p
 		}
 	}
+	if np == nil {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+	}
+
 	np = er.popExistsSubPlan(np)
 	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
@@ -985,21 +984,21 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
 		}
 		return v, true
-	} else {
-		if eNNR {
-			// means plan building phase under new name resolution framework, trying to use cached subq.
-			if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
-				np = item.p
-			}
-		}
-		if np == nil {
-			np, err = er.buildSubquery(ctx, subq)
-			if err != nil {
-				er.err = err
-				return v, true
-			}
+	}
+	if eNNR {
+		// means plan building phase under new name resolution framework, trying to use cached subq.
+		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
+			np = item.p
 		}
 	}
+	if np == nil {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+	}
+
 	lLen := expression.GetRowLen(lexpr)
 	if lLen != np.Schema().Len() {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
@@ -1118,22 +1117,22 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			return v, true
 		}
 		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
-	} else {
-		if eNNR {
-			// means plan building phase under new name resolution framework, trying to use cached subq.
-			item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]
-			if ok {
-				np = item.p
-			}
-		}
-		if np == nil {
-			np, err = er.buildSubquery(ctx, subq)
-			if err != nil {
-				er.err = err
-				return v, true
-			}
+	}
+	if eNNR {
+		// means plan building phase under new name resolution framework, trying to use cached subq.
+		item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]
+		if ok {
+			np = item.p
 		}
 	}
+	if np == nil {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+	}
+
 	np = er.b.buildMaxOneRow(np)
 	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)

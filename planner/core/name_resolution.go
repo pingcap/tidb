@@ -73,6 +73,7 @@ type preBuiltSubQueryCacheItem struct {
 	p LogicalPlan
 }
 
+// ScopeSchema is used to resolve column and register basic agg in analyzing phase.
 type ScopeSchema struct {
 	scopeSchema *expression.Schema
 	scopeNames  []*types.FieldName
@@ -115,6 +116,7 @@ type ScopeSchema struct {
 	inAgg bool
 }
 
+// GetCol is used to get column by unique id.
 func (s *ScopeSchema) GetCol(id int64) (*expression.Column, int) {
 	for i, one := range s.scopeSchema.Columns {
 		if one.UniqueID == id {
@@ -124,6 +126,7 @@ func (s *ScopeSchema) GetCol(id int64) (*expression.Column, int) {
 	return nil, -1
 }
 
+// ColSet returns columns' int unique id set.
 func (s *ScopeSchema) ColSet() *fd.FastIntSet {
 	var colSet fd.FastIntSet
 	if s.scopeSchema == nil {
@@ -135,6 +138,7 @@ func (s *ScopeSchema) ColSet() *fd.FastIntSet {
 	return &colSet
 }
 
+// ReservedColSet returns reserved columns' int unique id set.
 func (s *ScopeSchema) ReservedColSet() *fd.FastIntSet {
 	var colSet fd.FastIntSet
 	for _, c := range s.reservedCols {
@@ -143,6 +147,7 @@ func (s *ScopeSchema) ReservedColSet() *fd.FastIntSet {
 	return &colSet
 }
 
+// Add adds a scope column with a scope name.
 func (s *ScopeSchema) Add(schema *expression.Schema, names []*types.FieldName) {
 	if schema == nil || len(schema.Columns) == 0 {
 		return
