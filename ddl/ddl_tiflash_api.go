@@ -23,6 +23,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -223,6 +225,10 @@ var (
 	PollTiFlashBackoffCapacity int = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
 	PollTiFlashBackoffRate TiFlashTick = 1.5
+	// PollTiFlashUpdateInterval is the interval between every pollTiFlashPeerInfo call.
+	PollTiFlashPeerInfoInterval = 2 * time.Minute
+	// LastSyncTiFlashStoreTick indicates the time of the last call pollTiFlashPeerInfo
+	LastTimeSyncTiFlashStore = time.Now()
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -284,6 +290,48 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplica
 	} else {
 		logutil.BgLogger().Debug(fmt.Sprintf("Table %v has no partition\n", tblInfo.ID))
 		*tableList = append(*tableList, TiFlashReplicaStatus{tblInfo.ID, tblInfo.TiFlashReplica.Count, tblInfo.TiFlashReplica.LocationLabels, tblInfo.TiFlashReplica.Available, false, false})
+	}
+}
+
+func GetTiFlashReplicaMapInfo(tblInfo *model.TableInfo, tableMap *map[int64]TiFlashReplicaStatus) {
+	if tblInfo.TiFlashReplica == nil {
+		// reject tables that has no tiflash replica such like `INFORMATION_SCHEMA`
+		return
+	}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		for _, p := range pi.Definitions {
+			logutil.BgLogger().Debug(fmt.Sprintf("Table %v has partition %v\n", tblInfo.ID, p.ID))
+			(*tableMap)[p.ID] = TiFlashReplicaStatus{
+				p.ID,
+				tblInfo.TiFlashReplica.Count,
+				tblInfo.TiFlashReplica.LocationLabels,
+				tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+				false,
+				true,
+			}
+		}
+		// partitions that in adding mid-state
+		for _, p := range pi.AddingDefinitions {
+			logutil.BgLogger().Debug(fmt.Sprintf("Table %v has partition adding %v\n", tblInfo.ID, p.ID))
+			(*tableMap)[p.ID] = TiFlashReplicaStatus{
+				p.ID,
+				tblInfo.TiFlashReplica.Count,
+				tblInfo.TiFlashReplica.LocationLabels,
+				tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+				true,
+				true,
+			}
+		}
+	} else {
+		logutil.BgLogger().Debug(fmt.Sprintf("Table %v has no partition\n", tblInfo.ID))
+		(*tableMap)[tblInfo.ID] = TiFlashReplicaStatus{
+			tblInfo.ID,
+			tblInfo.TiFlashReplica.Count,
+			tblInfo.TiFlashReplica.LocationLabels,
+			tblInfo.TiFlashReplica.Available,
+			false,
+			false,
+		}
 	}
 }
 
@@ -463,6 +511,105 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	return allReplicaReady, nil
 }
 
+func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
+	allReplicaReady := true
+
+	// Start to process every table.
+	schema := d.GetInfoSchemaWithInterceptor(ctx)
+	if schema == nil {
+		return false, errors.New("Schema is nil")
+	}
+
+	var tableMap = make(map[int64]TiFlashReplicaStatus)
+	// Collect TiFlash Replica info, for every table.
+	for _, db := range schema.AllSchemas() {
+		tbls := schema.SchemaTables(db.Name)
+		for _, tbl := range tbls {
+			tblInfo := tbl.Meta()
+			GetTiFlashReplicaMapInfo(tblInfo, &tableMap)
+		}
+	}
+
+	tiflashStoreIds := make([]int64, len(pollTiFlashContext.TiFlashStores))
+	for i, store := range pollTiFlashContext.TiFlashStores {
+		// TBD: not sure it is peer id or store id
+		tiflashStoreIds[i] = store.Store.ID
+	}
+
+	sort.Slice(tiflashStoreIds, func(i, j int) bool { return tiflashStoreIds[i] < tiflashStoreIds[j] })
+
+	isTiflashPeer := func(tiflashPeerIds []int64, peerId int64) bool {
+		for _, tiflashPeerId := range tiflashPeerIds {
+			if tiflashPeerId == peerId {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	isTiflashAllPeerDown := func(tiflashPeerIds []int64, tiflashDownPeerIds []int64) bool {
+		return reflect.DeepEqual(tiflashPeerIds, tiflashDownPeerIds)
+	}
+
+	var invaildRegions helper.RegionsInfo
+
+	if err := infosync.GetTiFlashPDInvalidRegionsInfo(context.Background(), &invaildRegions); err != nil {
+		return false, errors.Trace(err)
+	}
+
+	// There are no down-peer/pending-peer
+	if invaildRegions.Count == 0 {
+		return true, nil
+	}
+	var invalidTableIDs []int64
+	for _, invaildRegion := range invaildRegions.Regions {
+		var invalidPeers []int64
+		for _, downPeer := range invaildRegion.DownPeers {
+			if isTiflashPeer(tiflashStoreIds, downPeer.Peer.ID) {
+				invalidPeers = append(invalidPeers, downPeer.Peer.ID)
+			}
+		}
+
+		for _, pendingPeer := range invaildRegion.PendingPeers {
+			if isTiflashPeer(tiflashStoreIds, pendingPeer.ID) {
+				invalidPeers = append(invalidPeers, pendingPeer.ID)
+			}
+		}
+
+		if len(invalidPeers) != 0 {
+			sort.Slice(invalidPeers, func(i, j int) bool { return invalidPeers[i] < invalidPeers[j] })
+			if isTiflashAllPeerDown(tiflashStoreIds, invalidPeers) {
+				invaildTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)
+				invalidTableIDs = append(invalidTableIDs, invaildTableID)
+			}
+		}
+	}
+
+	for _, invalidTableID := range invalidTableIDs {
+		tableInfo, exist := tableMap[invalidTableID]
+		if !exist {
+			logutil.BgLogger().Info("No exist table info in Tiflash", zap.Int64("tableId", invalidTableID))
+			continue
+		}
+
+		if !tableInfo.Available {
+			continue
+		}
+
+		// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
+		if err := d.UpdateTableReplicaInfo(ctx, invalidTableID, false); err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) && tableInfo.IsPartition {
+				logutil.BgLogger().Info("updating TiFlash replica status err, maybe false alarm by blocking add", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
+			} else {
+				logutil.BgLogger().Error("updating TiFlash replica status err", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
+			}
+		}
+	}
+
+	return allReplicaReady, nil
+}
+
 func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infoschema.InfoSchema, tikvHelper *helper.Helper, replicaInfos *[]TiFlashReplicaStatus) error {
 	store := tikvHelper.Store.(kv.Storage)
 
@@ -597,6 +744,16 @@ func (d *ddl) PollTiFlashRoutine() {
 						default:
 							logutil.BgLogger().Warn("pollTiFlashReplicaStatus returns error", zap.Error(err))
 						}
+					}
+
+					syncElapsed := time.Since(LastTimeSyncTiFlashStore)
+					if syncElapsed > PollTiFlashPeerInfoInterval {
+						_, err := d.pollTiFlashPeerInfo(sctx, pollTiflashContext)
+						if err != nil {
+							logutil.BgLogger().Warn("pollTiFlashPeerInfo returns error", zap.Error(err))
+						}
+
+						LastTimeSyncTiFlashStore = time.Now()
 					}
 				}
 				d.sessPool.put(sctx)

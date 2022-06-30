@@ -1023,6 +1023,15 @@ func GetTiFlashPDRegionRecordStats(ctx context.Context, tableID int64, stats *he
 	return is.tiflashPlacementManager.GetPDRegionRecordStats(ctx, tableID, stats)
 }
 
+// GetTiFlashPDInvalidRegionsInfo is a helper function calling `regions/check/down-peer|pending-peer`.
+func GetTiFlashPDInvalidRegionsInfo(ctx context.Context, regionInfo *helper.RegionsInfo) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.tiflashPlacementManager.GetPDInvalidRegionsInfo(ctx, regionInfo)
+}
+
 // GetTiFlashStoresStat gets the TiKV store information by accessing PD's api.
 func GetTiFlashStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	is, err := getGlobalInfoSyncer()

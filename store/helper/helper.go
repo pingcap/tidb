@@ -791,6 +791,20 @@ func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
 }
 
+// GetPendingRegionsInfo gets the pending regions information of current store by using PD's api.
+func (h *Helper) GetPendingRegionsInfo() (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GetRegions", "GET", pdapi.Regions+"/check/pending-peer/", nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetDownRegionsInfo gets the down regions information of current store by using PD's api.
+func (h *Helper) GetDownRegionsInfo() (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GetRegions", "GET", pdapi.Regions+"/check/down-peer/", nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
@@ -1136,39 +1150,6 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 		}
 	}()
 	return nil
-}
-
-// GetPDRegionRecordStats is a helper function calling `/stats/region`.
-func (h *Helper) GetPDRegionRecordStats(tableID int64, stats *PDRegionStats) error {
-	pdAddrs, err := h.GetPDAddr()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	startKey := tablecodec.GenTableRecordPrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
-
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
-		}
-	}()
-
-	dec := json.NewDecoder(resp.Body)
-
-	return dec.Decode(stats)
 }
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
