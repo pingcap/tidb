@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -353,6 +355,9 @@ func init() {
 	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
+	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {
+		return MockInfoSchema(tbList)
+	}
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
@@ -485,6 +490,11 @@ func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bo
 		delete(is.schemaMap, schema.L)
 	}
 	return true
+}
+
+// Count gets the count of the temporary tables.
+func (is *LocalTemporaryTables) Count() int {
+	return len(is.idx2table)
 }
 
 // SchemaByTable get a table's schema name

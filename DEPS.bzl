@@ -928,11 +928,26 @@ def go_deps():
         version = "v0.0.4",
     )
     go_repository(
+        name = "com_github_golangci_gofmt",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/golangci/gofmt",
+        sum = "h1:iR3fYXUjHCR97qWS8ch1y9zPNsgXThGwjKPrYfqMPks=",
+        version = "v0.0.0-20190930125516-244bba706f1a",
+    )
+
+    go_repository(
         name = "com_github_golangci_prealloc",
         build_file_proto_mode = "disable",
         importpath = "github.com/golangci/prealloc",
         sum = "h1:leSNB7iYzLYSSx3J/s5sVf4Drkc68W2wm4Ixh/mr0us=",
         version = "v0.0.0-20180630174525-215b22d4de21",
+    )
+    go_repository(
+        name = "com_github_golangci_unconvert",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/golangci/unconvert",
+        sum = "h1:zwtduBRr5SSWhqsYNgcuWO2kFlpdOZbP0+yRjmvPGys=",
+        version = "v0.0.0-20180507085042-28b1c447d1f4",
     )
 
     go_repository(
@@ -1557,6 +1572,14 @@ def go_deps():
         sum = "h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=",
         version = "v0.2.0",
     )
+    go_repository(
+        name = "com_github_kyoh86_exportloopref",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/kyoh86/exportloopref",
+        sum = "h1:5Ry/at+eFdkX9Vsdw3qU4YkvGtzuVfzT4X7S77LoN/M=",
+        version = "v0.1.8",
+    )
+
     go_repository(
         name = "com_github_labstack_echo_v4",
         build_file_proto_mode = "disable_global",

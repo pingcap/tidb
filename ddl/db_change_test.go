@@ -837,11 +837,11 @@ func runTestInSchemaState(
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	require.NoError(t, err)
 	cbFunc := func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
 			return
 		}
-		prevState = job.SchemaState
-		if job.SchemaState != state {
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != state {
 			return
 		}
 		for _, sqlWithErr := range sqlWithErrs {
@@ -875,6 +875,14 @@ func runTestInSchemaState(
 			rows.Check(testkit.Rows(expectQuery.rows...))
 		}
 	}
+}
+
+func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		subs := job.MultiSchemaInfo.SubJobs
+		return subs[len(subs)-1].SchemaState
+	}
+	return job.SchemaState
 }
 
 func TestShowIndex(t *testing.T) {
