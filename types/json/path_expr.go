@@ -15,7 +15,6 @@
 package json
 
 import (
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -297,5 +296,5 @@ func (pe PathExpression) String() string {
 }
 
 func init() {
-	peCache.cache = kvcache.NewSimpleLRUCache(1000, 0.1, math.MaxUint64)
+	peCache.cache = kvcache.NewSimpleLRUCache(1000, 0.1, 10485760 /* 10M */)
 }
