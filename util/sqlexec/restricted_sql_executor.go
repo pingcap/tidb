@@ -173,6 +173,9 @@ type Statement interface {
 
 	// RebuildPlan rebuilds the plan of the statement.
 	RebuildPlan(ctx context.Context) (schemaVersion int64, err error)
+
+	// GetStmtNode returns the stmtNode inside Statement
+	GetStmtNode() ast.StmtNode
 }
 
 // RecordSet is an abstract result set interface to help get data from Plan.

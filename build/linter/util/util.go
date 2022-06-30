@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/loader"
 	"honnef.co/go/tools/analysis/report"
 )
 
@@ -55,7 +56,7 @@ func parseDirective(s string) (cmd skipType, args []string) {
 		}
 		return skipNone, nil
 	}
-	s = strings.TrimPrefix(s, "//nolint: ")
+	s = strings.TrimPrefix(s, "//nolint:")
 	return skipLinter, []string{s}
 }
 
@@ -146,4 +147,23 @@ func FormatCode(code string) string {
 	}
 
 	return fmt.Sprintf("`%s`", code)
+}
+
+// MakeFakeLoaderPackageInfo creates a fake loader.PackageInfo for a given package.
+func MakeFakeLoaderPackageInfo(pass *analysis.Pass) *loader.PackageInfo {
+	var errs []error
+
+	typeInfo := pass.TypesInfo
+
+	return &loader.PackageInfo{
+		Pkg:                   pass.Pkg,
+		Importable:            true, // not used
+		TransitivelyErrorFree: true, // not used
+
+		// use compiled (preprocessed) go files AST;
+		// AST linters use not preprocessed go files AST
+		Files:  pass.Files,
+		Errors: errs,
+		Info:   *typeInfo,
+	}
 }

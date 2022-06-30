@@ -35,6 +35,7 @@ go_test(
         "//sessionctx",
         "//sessiontxn/staleread",
         "//testkit",
+        "//testkit/testfork",
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
