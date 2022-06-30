@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -820,6 +821,24 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, co
 	return checkTooBigFieldLengthAndTryAutoConvert(tp, colName, sessVars)
 }
 
+func decodeEnumSetBinaryLiteralToUTF8(tp *types.FieldType, chs string) {
+	if tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
+		return
+	}
+	enc := charset.FindEncoding(chs)
+	for i, elem := range tp.GetElems() {
+		if !tp.GetElemIsBinaryLit(i) {
+			continue
+		}
+		s, err := enc.Transform(nil, hack.Slice(elem), charset.OpDecodeReplace)
+		if err != nil {
+			logutil.BgLogger().Warn("decode enum binary literal to utf-8 failed", zap.Error(err))
+		}
+		tp.SetElem(i, string(hack.String(s)))
+	}
+	tp.CleanElemIsBinaryLit()
+}
+
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
 // outPriKeyConstraint is the primary key constraint out of column definition. For example:
 // `create table t1 (id int , age int, primary key(id));`
@@ -852,6 +871,7 @@ func buildColumnAndConstraint(
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, colDef.Name.Name.O, chs, coll, ctx.GetSessionVars()); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	decodeEnumSetBinaryLiteralToUTF8(colDef.Tp, chs)
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -3048,11 +3068,22 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 			return dbterror.ErrRunMultiSchemaChanges
 		}
 	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
+		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) && !allSupported(specs) {
 			return dbterror.ErrRunMultiSchemaChanges
 		}
 	}
 	return nil
+}
+
+func allSupported(specs []*ast.AlterTableSpec) bool {
+	for _, s := range specs {
+		switch s.Tp {
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
@@ -3088,10 +3119,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	if len(validSpecs) > 1 {
 		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
 			useMultiSchemaChange = true
-		case ast.AlterTableDropColumn:
-			err = d.DropColumns(sctx, ident, validSpecs)
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
 			err = d.DropIndexes(sctx, ident, validSpecs)
 		default:
@@ -4088,20 +4117,15 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
 		SchemaName:      schema.Name.L,
+		SchemaState:     model.StatePublic,
 		TableName:       t.Meta().Name.L,
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
 		MultiSchemaInfo: multiSchemaInfo,
-		SchemaState:     model.StatePublic,
-		Args:            []interface{}{colName},
+		Args:            []interface{}{colName, spec.IfExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	// column not exists, but if_exists flags is true, so we ignore this error.
-	if dbterror.ErrCantDropFieldOrKey.Equal(err) && spec.IfExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -4523,6 +4547,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
 		return nil, errors.Trace(err)
 	}
+	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	// Check the column with foreign key, waiting for the default flen and decimal.
 	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
