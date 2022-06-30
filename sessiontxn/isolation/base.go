@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -115,6 +116,18 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 		return is.(infoschema.InfoSchema)
 	}
 	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) GetTxnScope() string {
+	return p.sctx.GetSessionVars().TxnCtx.TxnScope
+}
+
+func (p *baseTxnContextProvider) GetReadReplicaScope() string {
+	sessVars := p.sctx.GetSessionVars()
+	if sessVars.GetReplicaRead().IsClosestRead() {
+		return config.GetTxnScopeFromConfig()
+	}
+	return sessVars.TxnCtx.TxnScope
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {

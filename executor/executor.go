@@ -68,7 +68,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -1298,7 +1297,7 @@ func init() {
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
-		e := newExecutorBuilder(sctx, is, nil, oracle.GlobalTxnScope)
+		e := newExecutorBuilder(sctx, is, nil)
 		exec := e.build(p)
 		if e.err != nil {
 			return nil, e.err

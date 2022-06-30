@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -292,7 +291,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -344,7 +343,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(plan)
 }
 
@@ -577,7 +576,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -1317,7 +1316,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		keyOff2IdxOff[i] = i
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1391,7 +1390,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err

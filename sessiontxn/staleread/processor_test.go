@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,20 +30,8 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/goleak"
 )
-
-func TestMain(m *testing.M) {
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-	}
-	testsetup.SetupForCommonTest()
-	goleak.VerifyTestMain(m, opts...)
-}
 
 type staleReadPoint struct {
 	tk *testkit.TestKit

@@ -94,6 +94,20 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	return ts, nil
 }
 
+func (m *txnManager) GetTxnScope() string {
+	if m.ctxProvider == nil {
+		return ""
+	}
+	return m.ctxProvider.GetTxnScope()
+}
+
+func (m *txnManager) GetReadReplicaScope() string {
+	if m.ctxProvider == nil {
+		return ""
+	}
+	return m.ctxProvider.GetReadReplicaScope()
+}
+
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 	return m.ctxProvider
 }

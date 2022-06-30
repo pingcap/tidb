@@ -93,6 +93,7 @@ type executorBuilder struct {
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
+	txnScope         string
 	readReplicaScope string
 	inUpdateStmt     bool
 	inDeleteStmt     bool
@@ -115,13 +116,15 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
+	txnManager := sessiontxn.GetTxnManager(ctx)
 	return &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
 		isStaleness:      staleread.IsStmtStaleness(ctx),
-		readReplicaScope: replicaReadScope,
+		txnScope:         txnManager.GetTxnScope(),
+		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
 }
 
@@ -139,9 +142,9 @@ type MockExecutorBuilder struct {
 }
 
 // NewMockExecutorBuilderForTest is ONLY used in test.
-func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *MockExecutorBuilder {
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti, replicaReadScope)}
+		executorBuilder: newExecutorBuilder(ctx, is, ti)}
 }
 
 // Build builds an executor tree according to `p`.
@@ -728,7 +731,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
-		assertTS, assertTxnScope := vs[0], vs[1]
+		assertTS, assertReadReplicaScope := vs[0], vs[1]
 		staleread.AssertStmtStaleness(b.ctx, true)
 		ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 		if err != nil {
@@ -736,7 +739,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		}
 
 		if strconv.FormatUint(ts, 10) != assertTS ||
-			assertTxnScope != b.readReplicaScope {
+			assertReadReplicaScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
 	})
@@ -3073,6 +3076,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
 		startTS:          startTS,
+		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		table:            tbl,
@@ -3353,6 +3357,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
 		startTS:          startTS,
+		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		physicalTableID:  physicalTableID,
@@ -4025,6 +4030,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetStartTS(startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
