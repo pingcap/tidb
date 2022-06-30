@@ -140,6 +140,17 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		}
 		physicalCnt := mathutil.Max(len(partitionIDs), 1)
 		return physicalCnt * len(indexIDs), nil
+	case model.ActionMultiSchemaChange:
+		totalExpectedCnt := 0
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			p := sub.ToProxyJob(job)
+			cnt, err := expectedDeleteRangeCnt(p)
+			if err != nil {
+				return 0, err
+			}
+			totalExpectedCnt += cnt
+		}
+		return totalExpectedCnt, nil
 	}
 	return 0, nil
 }
