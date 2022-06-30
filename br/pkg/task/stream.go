@@ -1252,38 +1252,29 @@ func getGlobalResolvedTS(
 	ctx context.Context,
 	s storage.ExternalStorage,
 ) (uint64, error) {
-	storeMap := make(map[int64]uint64)
-
-	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
-	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
-		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
-			m := &backuppb.Metadata{}
-			b, err := s.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = m.Unmarshal(b)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-				storeMap[m.StoreId] = m.ResolvedTs
-			}
+	storeMap := struct {
+		sync.Mutex
+		resolvedTSMap map[int64]uint64
+	}{}
+	storeMap.resolvedTSMap = make(map[int64]uint64)
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+		storeMap.Lock()
+		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
+			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs
 		}
+		storeMap.Unlock()
 		return nil
 	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	var globalCheckpointTS uint64 = 0
-	for _, resolveTS := range storeMap {
+	// TODO change the logic after checkpoint v3 implemented
+	for _, resolveTS := range storeMap.resolvedTSMap {
 		if resolveTS < globalCheckpointTS || globalCheckpointTS == 0 {
 			globalCheckpointTS = resolveTS
 		}
 	}
-
 	return globalCheckpointTS, nil
 }
 

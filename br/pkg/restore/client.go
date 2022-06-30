@@ -129,15 +129,15 @@ type Client struct {
 
 	supportPolicy bool
 
-	// startTS and restoreTs are used for kv file restore.
+	// startTS and restoreTS are used for kv file restore.
 	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
 	startTS   uint64
 	restoreTS uint64
 
-	// If the the commit-ts of txn-entry is belong [startTS, restoreTS],
-	// the start-ts of txn-entry may be smaller than startTS.
-	// We need maintain and restore more entries in default-cf
-	// (the start-ts in these entries is belong to [shiftStartTS, startTS]).
+	// If the commitTS of txn-entry belong to [startTS, restoreTS],
+	// the startTS of txn-entry may be smaller than startTS.
+	// We need maintain and restore more entries in default cf
+	// (the startTS in these entries belong to [shiftStartTS, startTS]).
 	shiftStartTS uint64
 
 	// currentTS is used for rewrite meta kv when restore stream.
@@ -1512,40 +1512,24 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-const (
-	streamBackupMetaPrefix = "v1/backupmeta"
-)
-
-func GetStreamBackupMetaPrefix() string {
-	return streamBackupMetaPrefix
-}
-
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
-	err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
-		if strings.Contains(path, streamBackupMetaPrefix) {
-			m := &backuppb.Metadata{}
-			b, err := rc.storage.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = m.Unmarshal(b)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// TODO find a way to filter some unnecessary meta files.
-			log.Debug("backup stream collect meta file", zap.String("file", path))
-			streamBackupMetaFiles = append(streamBackupMetaFiles, m)
-		}
+	streamBackupMetaFiles := struct {
+		sync.Mutex
+		metas []*backuppb.Metadata
+	}{}
+	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
+
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
+		streamBackupMetaFiles.Lock()
+		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		streamBackupMetaFiles.Unlock()
 		return nil
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	return streamBackupMetaFiles, nil
+	return streamBackupMetaFiles.metas, nil
 }
 
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
@@ -1848,7 +1832,7 @@ func (rc *Client) RestoreMetaKVFile(
 	sr *stream.SchemasReplace,
 ) error {
 	log.Info("restore meta kv events", zap.String("file", file.Path),
-		zap.String("cf", file.Cf), zap.Int64(("kv-count"), file.NumberOfEntries),
+		zap.String("cf", file.Cf), zap.Int64("kv-count", file.NumberOfEntries),
 		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
 
 	rc.rawKVClient.SetColumnFamily(file.GetCf())
