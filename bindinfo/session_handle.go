@@ -132,6 +132,7 @@ func (h *SessionHandle) DecodeSessionStates(ctx context.Context, sctx sessionctx
 		return err
 	}
 	for _, record := range records {
+		// Restore hints and ID because hints are hard to encode.
 		if err := record.prepareHints(sctx); err != nil {
 			return err
 		}

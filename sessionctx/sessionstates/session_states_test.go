@@ -1108,13 +1108,19 @@ func TestSQLBinding(t *testing.T) {
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec("create global binding for select * from test.t1 using select * from test.t1 use index(primary)")
 				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
-				rows := tk.MustQuery("show bindings").Rows()
-				require.Equal(t, 1, len(rows))
-				return rows
+				sessionRows := tk.MustQuery("show bindings").Rows()
+				require.Equal(t, 1, len(sessionRows))
+				globalRows := tk.MustQuery("show global bindings").Rows()
+				require.Equal(t, 1, len(globalRows))
+				return [][][]any{sessionRows, globalRows}
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("show bindings").Check(param.([][]any))
+				rows := param.([][][]any)
+				tk.MustQuery("show bindings").Check(rows[0])
+				tk.MustQuery("show global bindings").Check(rows[1])
 				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustExec("drop session binding for select * from test.t1")
+				require.True(t, tk.HasPlan("select * from test.t1", "TableFullScan"))
 			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("drop global binding for select * from test.t1")
@@ -1126,12 +1132,12 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
 				tk.MustExec("create session binding for select count(*) from test.t1 using select count(*) from test.t1 use index(primary)")
 				tk.MustExec("create session binding for select name from test.t1 using select name from test.t1 use index(primary)")
-				rows := tk.MustQuery("show bindings").Sort().Rows()
+				rows := tk.MustQuery("show bindings").Rows()
 				require.Equal(t, 3, len(rows))
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("show bindings").Sort().Check(param.([][]any))
+				tk.MustQuery("show bindings").Check(param.([][]any))
 				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
 			},
 		},
