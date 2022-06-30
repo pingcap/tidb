@@ -2,7 +2,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "privileges",
-    timeout = "short",
     srcs = [
         "cache.go",
         "errors.go",
@@ -36,6 +35,7 @@ go_library(
 
 go_test(
     name = "privileges_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "main_test.go",
