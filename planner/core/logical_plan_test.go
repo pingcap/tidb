@@ -911,6 +911,10 @@ func TestValidate(t *testing.T) {
 			sql: "select a+1 from t having t.a",
 			err: ErrUnknownColumn,
 		},
+		{
+			sql: "update T_StateNoneColumn set c = 1 where a = 1",
+			err: ErrUnknownColumn,
+		},
 	}
 
 	s := createPlannerSuite()
