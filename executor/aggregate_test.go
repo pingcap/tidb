@@ -1608,4 +1608,5 @@ func TestIssue27751(t *testing.T) {
 	tk.MustExec("insert into test.t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');")
 	tk.MustExec("set @@group_concat_max_len=0;")
 	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
+	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
 }
