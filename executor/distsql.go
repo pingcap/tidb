@@ -1136,7 +1136,6 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.TaskWait += tmp.TaskWait
 	e.TableRowScan += tmp.TableRowScan
 	e.TableTaskNum += tmp.TableTaskNum
-	e.Concurrency += tmp.Concurrency
 }
 
 // Tp implements the RuntimeStats interface.
