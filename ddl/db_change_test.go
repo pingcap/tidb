@@ -2084,3 +2084,42 @@ func TestParallelRenameTable(t *testing.T) {
 	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table tt to t")
 }
+
+func TestConcurrentSetDefaultValue(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a YEAR NULL DEFAULT '2029')")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	var wg sync.WaitGroup
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{Do: dom}
+	skip := false
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			if skip {
+				break
+			}
+			skip = true
+			wg.Add(1)
+			go func() {
+				tk1.MustExec("alter table t alter a SET DEFAULT '2098'")
+				wg.Done()
+			}()
+		}
+	}
+
+	d.SetHook(callback)
+	tk.MustExec("alter table t modify column a MEDIUMINT NULL DEFAULT '-8145111'")
+
+	wg.Wait()
+	tk.MustQuery("select column_type from information_schema.columns where table_name = 't' and table_schema = 'test';").Check(testkit.Rows("mediumint(9)"))
+}
