@@ -113,7 +113,6 @@ type PointGetExecutor struct {
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
-	snapshotTS       uint64
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
