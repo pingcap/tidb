@@ -18,9 +18,13 @@ go_test(
     deps = [
         "//errno",
         "//parser/mysql",
+        "//parser/terror",
+        "//server",
         "//sessionctx/variable",
         "//testkit",
+        "//types",
         "//util/sem",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )
