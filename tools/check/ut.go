@@ -814,7 +814,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 	}
 
 	// session.test -test.run TestClusteredPrefixColum
-	args = append(args, "-test.run", "^" + fn + "$")
+	args = append(args, "-test.run", "^"+fn+"$")
 	return exec.Command(exe, args...)
 }
 
