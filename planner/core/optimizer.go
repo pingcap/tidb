@@ -372,6 +372,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	return plan
 }
 
+// Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
 // TiFlashFineGrainedShuffleStreamCount:
 // == 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.

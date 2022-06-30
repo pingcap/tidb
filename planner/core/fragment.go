@@ -63,17 +63,14 @@ type mppTaskGenerator struct {
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) (frags []*Fragment, err error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
 		ctx:     ctx,
 		startTS: startTs,
 		is:      is,
 		cache:   make(map[int]tasksAndFrags),
 	}
-	if frags, err = g.generateMPPTasks(sender); err != nil {
-		return
-	}
-	return
+	return g.generateMPPTasks(sender)
 }
 
 func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragment, error) {
