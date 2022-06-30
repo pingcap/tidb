@@ -134,15 +134,6 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 			panic("should not happened")
 		}
 		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, indexIDs, cnt)
-	case model.ActionDropColumns:
-		var colNames []model.CIStr
-		var ifExists []bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
-			panic("should not happened")
-		}
-		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, indexIDs, cnt)
 	case model.ActionModifyColumn:
 		var indexIDs []int64
 		var partitionIDs []int64
