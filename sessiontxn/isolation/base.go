@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -43,15 +44,16 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction)
+	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
-	ctx           context.Context
-	infoSchema    infoschema.InfoSchema
-	txn           kv.Transaction
-	isTxnPrepared bool
+	ctx             context.Context
+	infoSchema      infoschema.InfoSchema
+	txn             kv.Transaction
+	isTxnPrepared   bool
+	enterNewTxnType sessiontxn.EnterNewTxnType
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -60,6 +62,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.New("ts functions should not be nil")
 	}
 
+	p.ctx = ctx
 	sessVars := p.sctx.GetSessionVars()
 	activeNow := true
 	switch tp {
@@ -80,11 +83,8 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
-	p.ctx = ctx
-	// For normal `sessionctx.Context` the `GetDomainInfoSchema` should always return a non-nil value with type `infoschema.InfoSchema`
-	// However for some test cases we are using `mock.Context` which will return nil for this method,
-	// so we use `p.infoSchema, _ = ...` to avoid panic in test cases
-	p.infoSchema, _ = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	p.enterNewTxnType = tp
+	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -102,9 +102,9 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if err != nil {
 		return err
 	}
-	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTSFuture() != nil
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		_, err = p.activateTxn()
+		_, err = p.ActivateTxn()
 	}
 
 	return err
@@ -118,7 +118,7 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	if _, err := p.activateTxn(); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -129,7 +129,7 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	if _, err := p.activateTxn(); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -160,14 +160,14 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
-	txn, err := p.activateTxn()
+	txn, err := p.ActivateTxn()
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
 }
 
-func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
+func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -176,7 +176,12 @@ func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	txn, err := p.sctx.Txn(true)
+	txnFuture := p.sctx.GetPreparedTxnFuture()
+	if txnFuture == nil {
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
+	}
+
+	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -184,12 +189,30 @@ func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 
+	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+		sessVars.SetInTxn(true)
+	}
+
+	txn.SetVars(sessVars.KVVars)
+
+	readReplicaType := sessVars.GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, readReplicaType)
+	}
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if sessVars.StmtCtx.WeakConsistency {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+	}
+
+	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
 	if p.onTxnActive != nil {
-		p.onTxnActive(txn)
+		p.onTxnActive(txn, p.enterNewTxnType)
 	}
 
 	p.txn = txn
