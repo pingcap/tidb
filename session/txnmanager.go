@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -46,6 +47,7 @@ func getTxnManager(sctx sessionctx.Context) sessiontxn.TxnManager {
 type txnManager struct {
 	sctx sessionctx.Context
 
+	stmtNode    ast.StmtNode
 	ctxProvider sessiontxn.TxnContextProvider
 }
 
@@ -116,14 +118,21 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 
 func (m *txnManager) OnTxnEnd() {
 	m.ctxProvider = nil
+	m.stmtNode = nil
+}
+
+func (m *txnManager) GetCurrentStmt() ast.StmtNode {
+	return m.stmtNode
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (m *txnManager) OnStmtStart(ctx context.Context) error {
+func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	m.stmtNode = node
+
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnStmtStart(ctx)
+	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -132,6 +141,14 @@ func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePo
 		return sessiontxn.NoIdea()
 	}
 	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
+}
+
+// ActivateTxn decides to activate txn according to the parameter `active`
+func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
+	if m.ctxProvider == nil {
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
+	}
+	return m.ctxProvider.ActivateTxn()
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry

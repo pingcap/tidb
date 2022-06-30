@@ -64,6 +64,7 @@ go_library(
 
 go_test(
     name = "variable_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "mock_globalaccessor_test.go",
