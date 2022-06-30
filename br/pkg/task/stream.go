@@ -1258,9 +1258,11 @@ func getGlobalResolvedTS(
 	}{}
 	storeMap.resolvedTSMap = make(map[int64]uint64)
 	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+		storeMap.Lock()
 		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
 			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs
 		}
+		storeMap.Unlock()
 		return nil
 	})
 	if err != nil {
