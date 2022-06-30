@@ -16,7 +16,6 @@ package staleread
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -152,25 +151,42 @@ func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) erro
 
 // GetReadSnapshot get snapshot with read ts
 func (p *StalenessTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
-	return p.getStalenessSnapshot()
-}
-
-// GetForUpdateSnapshot get snapshot with for update ts
-func (p *StalenessTxnContextProvider) GetForUpdateSnapshot() (kv.Snapshot, error) {
-	return p.getStalenessSnapshot()
-}
-
-func (p *StalenessTxnContextProvider) getStalenessSnapshot() (kv.Snapshot, error) {
-	snapshotTS := p.ts
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
 
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+	if txn.Valid() {
 		return txn.GetSnapshot(), nil
 	}
 
-	return sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS), nil
+	sessVars := p.sctx.GetSessionVars()
+	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, p.ts)
+
+	replicaReadType := sessVars.GetReplicaRead()
+	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	}
+	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+	snapshot.SetOption(kv.IsStalenessReadOnly, true)
+
+	return snapshot, nil
+}
+
+// GetForUpdateSnapshot get snapshot with for update ts
+func (p *StalenessTxnContextProvider) GetForUpdateSnapshot() (kv.Snapshot, error) {
+	return nil, errors.New("GetForUpdateSnapshot not supported for stalenessTxnProvider")
+}
+
+func (p *StalenessTxnContextProvider) getStalenessSnapshot() (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	if txn.Valid() {
+		return txn.GetSnapshot(), nil
+	}
+
+	return sessiontxn.GetSnapshotWithTS(p.sctx, p.ts), nil
 }

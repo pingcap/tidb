@@ -62,21 +62,21 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 
-	snapshot, err := b.getSnapshot()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
 
+	e.snapshot, err = b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	e.Init(p, snapshotTS, snapshot)
+	e.Init(p)
 
 	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
@@ -124,14 +124,12 @@ type PointGetExecutor struct {
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, snapshotTS uint64, snapshot kv.Snapshot) {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
 	e.idxVals = p.IndexValues
-	e.snapshotTS = snapshotTS
-	e.snapshot = snapshot
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
@@ -177,12 +175,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
-	}
-	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
 	if readReplicaType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{

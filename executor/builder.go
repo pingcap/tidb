@@ -18,6 +18,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"math"
 	"sort"
 	"strconv"
@@ -4608,32 +4611,57 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
+	e := &BatchPointGetExec{
+		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		tblInfo:      plan.TblInfo,
+		idxInfo:      plan.IndexInfo,
+		rowDecoder:   decoder,
+		keepOrder:    plan.KeepOrder,
+		desc:         plan.Desc,
+		lock:         plan.Lock,
+		waitTime:     plan.LockWaitTime,
+		partExpr:     plan.PartitionExpr,
+		partPos:      plan.PartitionColPos,
+		singlePart:   plan.SinglePart,
+		partTblID:    plan.PartTblID,
+		columns:      plan.Columns,
+	}
+
 	snapshot, err := b.getSnapshot()
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
-	e := &BatchPointGetExec{
-		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:          plan.TblInfo,
-		idxInfo:          plan.IndexInfo,
-		rowDecoder:       decoder,
-		snapshotTS:       snapshotTS,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
-		keepOrder:        plan.KeepOrder,
-		desc:             plan.Desc,
-		lock:             plan.Lock,
-		waitTime:         plan.LockWaitTime,
-		partExpr:         plan.PartitionExpr,
-		partPos:          plan.PartitionColPos,
-		singlePart:       plan.SinglePart,
-		partTblID:        plan.PartTblID,
-		columns:          plan.Columns,
-		snapshot:         snapshot,
+	sessVars := e.ctx.GetSessionVars()
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
+	replicaReadType := sessVars.GetReplicaRead()
+	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if replicaReadType.IsClosestRead() && assertScope != b.readReplicaScope {
+			panic("batch point get replica option fail")
+		}
+	})
+
+	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: b.readReplicaScope,
+			},
+		})
+	}
+	e.snapshot = snapshot
 
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {

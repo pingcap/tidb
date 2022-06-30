@@ -22,8 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -40,35 +38,31 @@ import (
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo          *model.TableInfo
-	idxInfo          *model.IndexInfo
-	handles          []kv.Handle
-	physIDs          []int64
-	partExpr         *tables.PartitionExpr
-	partPos          int
-	singlePart       bool
-	partTblID        int64
-	idxVals          [][]types.Datum
-	readReplicaScope string
-	isStaleness      bool
-	snapshotTS       uint64
-	txn              kv.Transaction
-	lock             bool
-	waitTime         int64
-	inited           uint32
-	values           [][]byte
-	index            int
-	rowDecoder       *rowcodec.ChunkDecoder
-	keepOrder        bool
-	desc             bool
-	batchGetter      kv.BatchGetter
+	tblInfo     *model.TableInfo
+	idxInfo     *model.IndexInfo
+	handles     []kv.Handle
+	physIDs     []int64
+	partExpr    *tables.PartitionExpr
+	partPos     int
+	singlePart  bool
+	partTblID   int64
+	idxVals     [][]types.Datum
+	txn         kv.Transaction
+	lock        bool
+	waitTime    int64
+	inited      uint32
+	values      [][]byte
+	index       int
+	rowDecoder  *rowcodec.ChunkDecoder
+	keepOrder   bool
+	desc        bool
+	batchGetter kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -103,36 +97,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		return err
 	}
 	e.txn = txn
-	if e.runtimeStats != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
-	}
-	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
-	if replicaReadType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		e.snapshot.SetOption(kv.ReplicaRead, replicaReadType)
-	}
-	e.snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
-	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
-		assertScope := val.(string)
-		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {
-			panic("batch point get replica option fail")
-		}
-	})
 
-	if replicaReadType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
-		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: e.readReplicaScope,
-			},
-		})
-	}
 	setOptionForTopSQL(stmtCtx, e.snapshot)
 	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
