@@ -409,7 +409,7 @@ func enableFineGrainedShuffle(streamCount int64, p PhysicalPlan) {
 	}
 }
 
-func isValidWindowForFineGrainedShuffle(p PhysicalPlan) ([]*basePhysicalPlan) {
+func isValidWindowForFineGrainedShuffle(p PhysicalPlan) []*basePhysicalPlan {
 	switch x := p.(type) {
 	case *PhysicalWindow:
 		plans := []*basePhysicalPlan{&x.basePhysicalPlan}

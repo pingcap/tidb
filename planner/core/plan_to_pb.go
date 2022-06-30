@@ -295,11 +295,11 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:             tipb.ExecType_TypeExchangeSender,
-		ExchangeSender: ecExec,
-		ExecutorId:     &executorID,
+		Tp:                            tipb.ExecType_TypeExchangeSender,
+		ExchangeSender:                ecExec,
+		ExecutorId:                    &executorID,
 		FineGrainedShuffleStreamCount: e.TiFlashFineGrainedShuffleStreamCount,
-		FineGrainedShuffleBatchSize: ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
 	}, nil
 }
 
@@ -329,11 +329,11 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.Sto
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:               tipb.ExecType_TypeExchangeReceiver,
-		ExchangeReceiver: ecExec,
-		ExecutorId:       &executorID,
+		Tp:                            tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver:              ecExec,
+		ExecutorId:                    &executorID,
 		FineGrainedShuffleStreamCount: e.TiFlashFineGrainedShuffleStreamCount,
-		FineGrainedShuffleBatchSize: ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
 	}, nil
 }
 

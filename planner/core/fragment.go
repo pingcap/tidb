@@ -46,7 +46,7 @@ type Fragment struct {
 
 	IsRoot bool
 
-	singleton                bool // indicates if this is a task running on a single node.
+	singleton bool // indicates if this is a task running on a single node.
 }
 
 type tasksAndFrags struct {
