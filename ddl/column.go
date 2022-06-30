@@ -1774,8 +1774,8 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 	// The newCol's offset may be the value of the old schema version, so we can't use newCol directly.
 	oldCol.DefaultValue = newCol.DefaultValue
 	oldCol.DefaultValueBit = newCol.DefaultValueBit
-	if newCol.GetDefaultValue() == nil {
-		oldCol.SetFlag(mysql.NoDefaultValueFlag)
+	if mysql.HasNoDefaultValueFlag(newCol.GetFlag()) {
+		oldCol.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
 		oldCol.DelFlag(mysql.NoDefaultValueFlag)
 	}
