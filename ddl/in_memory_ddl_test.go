@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInfoSchemaLowerCaseTableNames(t *testing.T) {
+func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 	t.Parallel()
 
 	dbName := model.NewCIStr("DBName")
@@ -67,7 +67,7 @@ func TestInfoSchemaLowerCaseTableNames(t *testing.T) {
 	require.Equal(t, tableName, got2.Name)
 }
 
-func TestInfoSchemaDeleteTables(t *testing.T) {
+func TestInfoStoreDeleteTables(t *testing.T) {
 	t.Parallel()
 
 	is := newInMemoryInfoSchema(0)
@@ -145,4 +145,57 @@ func TestInMemoryDDL(t *testing.T) {
 
 	err = testDDL.DropSchema(sctx, &ast.DropDatabaseStmt{Name: model.NewCIStr("test")})
 	require.NoError(t, err)
+}
+
+func TestInMemoryRenameTable(t *testing.T) {
+	t.Parallel()
+
+	sctx := mock.NewContext()
+	p := parser.New()
+
+	testDDL := NewInMemoryDDL(2)
+	err := testDDL.CreateSchema(sctx, &ast.CreateDatabaseStmt{Name: model.NewCIStr("test")})
+	require.NoError(t, err)
+
+	sql := "CREATE TABLE test.t1 (c INT PRIMARY KEY)"
+	createAST, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = testDDL.CreateTable(sctx, createAST.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+
+	sql = "RENAME TABLE test.t1 TO test.t2"
+	renameAST, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = testDDL.RenameTable(sctx, renameAST.(*ast.RenameTableStmt))
+	require.NoError(t, err)
+
+	tbl, err := testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	require.Equal(t, "t2", tbl.Name.L)
+
+	sql = "CREATE TABLE test.t3 (c INT PRIMARY KEY)"
+	createAST, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = testDDL.CreateTable(sctx, createAST.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+
+	sql = "RENAME TABLE test.t2 TO test.t1, test.t3 TO test.t2"
+	renameAST, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = testDDL.RenameTable(sctx, renameAST.(*ast.RenameTableStmt))
+	require.NoError(t, err)
+
+	// now have t1 and t2
+	tbl, err = testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	require.Equal(t, "t2", tbl.Name.L)
+	tbl, err = testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	require.Equal(t, "t1", tbl.Name.L)
+
+	sql = "RENAME TABLE test.t1 TO test.t3, test.t2 TO test.t3"
+	renameAST, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = testDDL.RenameTable(sctx, renameAST.(*ast.RenameTableStmt))
+	require.True(t, infoschema.ErrTableExists.Equal(err))
 }
