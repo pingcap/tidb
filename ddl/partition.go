@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/pingcap/tidb/parser/opcode"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -532,13 +533,39 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, s *ast.Par
 			return err
 		}
 	}
+	partDefs := make([]*ast.PartitionDefinition, 0, 1)
+	if s.Interval.NullPart {
+		var partExpr ast.ExprNode
+		if len(s.ColumnNames) == 0 || s.Interval.IntervalExpr.TimeUnit == ast.TimeUnitInvalid {
+			// Get int type from partition column, so we can get minimum value (signed/unsigned and range)
+			// First PoC try, just set LESS THAN MinInt64
+			// TODO: use collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
+			if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
+				partExpr = ast.NewValueExpr(0, "", "")
+			} else {
+				partExpr = ast.NewValueExpr(math.MinInt64, "", "")
+			}
+		} else {
+			// Get col type from partition column, so we can get minimum date?
+			// First PoC try, just set LESS THAN ZeroTime
+			// TODO: Check compatibility with MySQL:
+			// https://dev.mysql.com/doc/refman/8.0/en/datetime.html says range 1000-01-01 - 9999-12-31
+			// https://docs.pingcap.com/tidb/dev/data-type-date-and-time says The supported range is '0000-01-01' to '9999-12-31'
+			partExpr = ast.NewValueExpr("0000-01-01", "", "")
+		}
+		partDefs = append(partDefs, &ast.PartitionDefinition{
+			Name: model.NewCIStr("SYS_P_NULL"),
+			Clause: &ast.PartitionDefinitionClauseLessThan{
+				Exprs: []ast.ExprNode{partExpr},
+			},
+		})
+	}
 	var firstVal, currVal types.Datum
 	var currExpr ast.ExprNode
 	lastVal, err := expression.EvalAstExpr(ctx, last.Exprs[0])
 	if err != nil {
 		return err
 	}
-	partDefs := make([]*ast.PartitionDefinition, 0, 1)
 	var partExpr ast.ExprNode
 	for i := 0; ; i++ {
 		if i == 0 {

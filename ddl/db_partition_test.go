@@ -3616,7 +3616,7 @@ func TestDuplicatePartitionNames(t *testing.T) {
 		" PARTITION `p3` VALUES IN (3))"))
 }
 
-func TestCreateIntervalPartition(t *testing.T) {
+func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -3627,7 +3627,7 @@ func TestCreateIntervalPartition(t *testing.T) {
 	tk.MustExec("use IntervalPartition")
 	tk.MustExec("create table pt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) (partition first values less than (1000), partition last values less than (9000), partition `maxvalue` values less than (maxvalue))")
 	tk.MustExec("create table dpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) (partition first values less than ('2022-02-01'), partition second values less than ('2022-02-08'), PARTITION third VALUES LESS THAN ('2022-02-15'))")
-	tk.MustExec("create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) MAXVALUE PARTITION")
+	tk.MustExec("create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) NULL PARTITION MAXVALUE PARTITION")
 	tk.MustQuery("SHOW CREATE TABLE ipt").Check(testkit.Rows(
 		"ipt CREATE TABLE `ipt` (\n" +
 			"  `id` bigint(20) unsigned NOT NULL,\n" +
@@ -3636,7 +3636,8 @@ func TestCreateIntervalPartition(t *testing.T) {
 			"  KEY `val` (`val`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE (`id`)\n" +
-			"(PARTITION `SYS_P_LT_1000000000` VALUES LESS THAN (1000000000),\n" +
+			"(PARTITION `SYS_P_NULL` VALUES LESS THAN (0),\n" +
+			" PARTITION `SYS_P_LT_1000000000` VALUES LESS THAN (1000000000),\n" +
 			" PARTITION `SYS_P_LT_2000000000` VALUES LESS THAN (2000000000),\n" +
 			" PARTITION `SYS_P_LT_3000000000` VALUES LESS THAN (3000000000),\n" +
 			" PARTITION `SYS_P_LT_4000000000` VALUES LESS THAN (4000000000),\n" +
@@ -3656,7 +3657,7 @@ func TestCreateIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) CLUSTERED,\n" +
 			"  KEY `val` (`val`)\n" +
 			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`id`) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) MAXVALUE PARTITION"))
+			"PARTITION BY RANGE (`id`) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) NULL PARTITION MAXVALUE PARTITION"))
 	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
 	tk.MustExec("set tidb_extension_non_mysql_compatible = 0")
 	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
@@ -3667,7 +3668,8 @@ func TestCreateIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`id`)\n" +
-			"(PARTITION `SYS_P_LT_2022-02-01` VALUES LESS THAN ('2022-02-01'),\n" +
+			"(PARTITION `SYS_P_NULL` VALUES LESS THAN ('0000-01-01'),\n" +
+			" PARTITION `SYS_P_LT_2022-02-01` VALUES LESS THAN ('2022-02-01'),\n" +
 			" PARTITION `SYS_P_LT_2022-02-08` VALUES LESS THAN ('2022-02-08'),\n" +
 			" PARTITION `SYS_P_LT_2022-02-15` VALUES LESS THAN ('2022-02-15'),\n" +
 			" PARTITION `SYS_P_LT_2022-02-22` VALUES LESS THAN ('2022-02-22'),\n" +
@@ -3686,6 +3688,14 @@ func TestCreateIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) NONCLUSTERED\n" +
 			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (1 WEEK) FIRST PARTITION LESS THAN (2022-02-01) LAST PARTITION LESS THAN (2022-03-29) NULL PARTITION MAXVALUE PARTITION"))
+	// TODO:
+	// Test date ranges, like 2022-01-31 INTERVAL 1 MONTH (should fail for february!)
+	// test unsigned and different ranges for INT type
+	// test unsigned and different ranges for things like TO_DAYS()/TO_SECONDS()
+	// Test time zones with timestamp?
+	// Test other offsets, including when first and last have different offset vs INTERVAL
+	// Test out-of-range?
+	// Test non integer/Date column types in RANGE COLUMNS
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {
