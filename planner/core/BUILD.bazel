@@ -143,6 +143,7 @@ go_library(
 
 go_test(
     name = "core_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "cacheable_checker_test.go",
