@@ -353,15 +353,15 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
 
 	for h.currSize > h.limitSize {
 		debt := h.currSize - h.limitSize
-		heapTopRow := heap.Pop(h).(sortRow)
-		if uint64(heapTopRow.buffer.Len()) > debt {
+		heapPopRow := heap.Pop(h).(sortRow)
+		if uint64(heapPopRow.buffer.Len()) > debt {
 			h.currSize -= debt
-			heapTopRow.buffer.Truncate(heapTopRow.buffer.Len() - int(debt))
-			heap.Push(h, heapTopRow)
+			heapPopRow.buffer.Truncate(heapPopRow.buffer.Len() - int(debt))
+			heap.Push(h, heapPopRow)
 		} else {
-			h.currSize -= uint64(heapTopRow.buffer.Len()) + h.sepSize
-			memDelta -= int64(heapTopRow.buffer.Cap())
-			for _, dt := range heapTopRow.byItems {
+			h.currSize -= uint64(heapPopRow.buffer.Len()) + h.sepSize
+			memDelta -= int64(heapPopRow.buffer.Cap())
+			for _, dt := range heapPopRow.byItems {
 				memDelta -= GetDatumMemSize(dt)
 			}
 			h.isSepTruncated = true
