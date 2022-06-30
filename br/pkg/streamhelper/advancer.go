@@ -104,7 +104,11 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 		}
 		log.Debug("scan region", zap.Int("len", len(rs)))
 		for _, r := range rs {
-			collector.collectRegion(r)
+			err := collector.collectRegion(r)
+			if err != nil {
+				log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
+				return err
+			}
 		}
 	}
 	return nil
@@ -141,7 +145,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst *RangesSharesTS
 		return err
 	}
 
-	result, err := collector.Wait(ctx)
+	result, err := collector.Finish(ctx)
 	if err != nil {
 		c.cache.InsertRanges(*rst)
 		return err
@@ -197,7 +201,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 				return 0, err
 			}
 		}
-		result, err := coll.Wait(ctx)
+		result, err := coll.Finish(ctx)
 		if err != nil {
 			return 0, err
 		}

@@ -4,11 +4,15 @@ package streamhelper
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
@@ -29,11 +33,16 @@ type storeCollector struct {
 
 	service LogBackupService
 
-	input     chan RegionWithLeader
-	onSuccess onSuccessHook
+	input chan RegionWithLeader
+	// the oneshot error reporter.
+	// should only be used to report the sole call of "recvLoop".
+	errMessenger chan error
+	// whether the recv and send loop has exited.
+	doneMessenger chan struct{}
+	onSuccess     onSuccessHook
 
 	// concurrency safety:
-	// those fields should only be write on the goroutine running `blockOnRecvAndSend`.
+	// those fields should only be write on the goroutine running `recvLoop`.
 	// Once it exits, we can read those fields.
 	currentRequest logbackup.GetLastFlushTSOfRegionRequest
 	checkpoint     uint64
@@ -43,11 +52,32 @@ type storeCollector struct {
 
 func newStoreCollector(storeID uint64, srv LogBackupService) *storeCollector {
 	return &storeCollector{
-		storeID:   storeID,
-		batchSize: defaultBatchSize,
-		service:   srv,
-		input:     make(chan RegionWithLeader, defaultBatchSize),
-		regionMap: make(map[uint64]kv.KeyRange),
+		storeID:       storeID,
+		batchSize:     defaultBatchSize,
+		service:       srv,
+		input:         make(chan RegionWithLeader, defaultBatchSize),
+		errMessenger:  make(chan error, 1),
+		doneMessenger: make(chan struct{}),
+		regionMap:     make(map[uint64]kv.KeyRange),
+	}
+}
+
+func (c *storeCollector) reportErr(err error) {
+	if oldErr := c.Err(); oldErr != nil {
+		log.Warn("reporting error twice, ignoring", logutil.AShortError("old", err), logutil.AShortError("new", oldErr))
+		return
+	}
+	c.errMessenger <- err
+}
+
+func (c *storeCollector) Err() error {
+	select {
+	case err := <-c.errMessenger:
+		// reschedule the error so the next time it would be the same error.
+		c.errMessenger <- err
+		return err
+	default:
+		return nil
 	}
 }
 
@@ -55,7 +85,16 @@ func (c *storeCollector) setOnSuccessHook(hook onSuccessHook) {
 	c.onSuccess = hook
 }
 
-func (c *storeCollector) blockOnRecvAndSend(ctx context.Context) error {
+func (c *storeCollector) begin(ctx context.Context) {
+	err := c.recvLoop(ctx)
+	if err != nil {
+		log.Warn("collector loop meet error", logutil.ShortError(err))
+		c.reportErr(err)
+	}
+	close(c.doneMessenger)
+}
+
+func (c *storeCollector) recvLoop(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -105,16 +144,25 @@ func (s *StoreCheckpoints) merge(other StoreCheckpoints) {
 	s.FailureSubranges = append(s.FailureSubranges, other.FailureSubranges...)
 }
 
+func (s *StoreCheckpoints) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("StoreCheckpoints:")
+	if s.HasCheckpoint {
+		sb.WriteString(strconv.Itoa(int(s.Checkpoint)))
+	} else {
+		sb.WriteString("none")
+	}
+	fmt.Fprintf(sb, ":(remaining %d ranges)", len(s.FailureSubranges))
+	return sb.String()
+}
+
 func (c *storeCollector) spawn(ctx context.Context) func() (StoreCheckpoints, error) {
-	ch := make(chan error)
-	go func() {
-		ch <- c.blockOnRecvAndSend(ctx)
-	}()
+	go c.begin(ctx)
 	return func() (StoreCheckpoints, error) {
 		close(c.input)
-		err := <-ch
-		if err != nil {
-			return StoreCheckpoints{}, nil
+		<-c.doneMessenger
+		if err := c.Err(); err != nil {
+			return StoreCheckpoints{}, err
 		}
 		sc := StoreCheckpoints{
 			HasCheckpoint:    c.checkpoint != 0,
@@ -126,6 +174,7 @@ func (c *storeCollector) spawn(ctx context.Context) func() (StoreCheckpoints, er
 }
 
 func (c *storeCollector) flush(ctx context.Context) error {
+	log.Debug("sending batch", zap.Int("size", len(c.currentRequest.Regions)), zap.Uint64("store", c.storeID))
 	cli, err := c.service.GetLogBackupClient(ctx, c.storeID)
 	if err != nil {
 		return err
@@ -187,11 +236,11 @@ func (c *clusterCollector) setOnSuccessHook(hook onSuccessHook) {
 	c.onSuccess = hook
 }
 
-func (c *clusterCollector) collectRegion(r RegionWithLeader) {
+func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.masterCtx.Err() != nil {
-		return
+		return nil
 	}
 
 	if r.Leader.GetStoreId() == 0 {
@@ -212,10 +261,15 @@ func (c *clusterCollector) collectRegion(r RegionWithLeader) {
 	}
 
 	sc := c.collectors[leader].collector
+	if err := sc.Err(); err != nil {
+		c.cancel()
+		return err
+	}
 	sc.input <- r
+	return nil
 }
 
-func (c *clusterCollector) Wait(ctx context.Context) (StoreCheckpoints, error) {
+func (c *clusterCollector) Finish(ctx context.Context) (StoreCheckpoints, error) {
 	defer c.cancel()
 	result := StoreCheckpoints{FailureSubranges: c.noLeaders}
 	for id, coll := range c.collectors {
@@ -224,7 +278,7 @@ func (c *clusterCollector) Wait(ctx context.Context) (StoreCheckpoints, error) {
 			return StoreCheckpoints{}, errors.Annotatef(err, "store %d", id)
 		}
 		result.merge(r)
-		log.Debug("get checkpoint", zap.Any("checkpoint", r), zap.Any("merged", result))
+		log.Debug("get checkpoint", zap.Stringer("checkpoint", &r), zap.Stringer("merged", &result))
 	}
 	return result, nil
 }
