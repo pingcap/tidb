@@ -382,14 +382,147 @@ func (d InMemoryDDL) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (
 	return nil
 }
 
+func buildIndexColumnsSkipCheck(
+	ctx sessionctx.Context,
+	columns []*model.ColumnInfo,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+) ([]*model.IndexColumn, error) {
+	// Build offsets.
+	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
+	var col *model.ColumnInfo
+	// The sum of length of all index columns.
+	sumLength := 0
+	for _, ip := range indexPartSpecifications {
+		col = model.FindColumnInfo(columns, ip.Column.Name.L)
+		if col == nil {
+			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
+		}
+
+		indexColLen := ip.Length
+		indexColumnLength, err := getIndexColumnLength(col, ip.Length)
+		if err != nil {
+			return nil, err
+		}
+		sumLength += indexColumnLength
+
+		idxParts = append(idxParts, &model.IndexColumn{
+			Name:   col.Name,
+			Offset: col.Offset,
+			Length: indexColLen,
+		})
+	}
+
+	return idxParts, nil
+}
+
 func (d InMemoryDDL) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
-	//TODO implement me
-	panic("implement me")
+	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
+	return d.createIndex(ctx, ident, stmt.KeyType, model.NewCIStr(stmt.IndexName),
+		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
+}
+
+func (d InMemoryDDL) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+
+	unique := keyType == ast.IndexKeyTypeUnique
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return err
+	}
+	t := tables.MockTableFromMeta(tblInfo)
+
+	// Deal with anonymous index.
+	if len(indexName.L) == 0 {
+		colName := model.NewCIStr("expression_index")
+		if indexPartSpecifications[0].Column != nil {
+			colName = indexPartSpecifications[0].Column.Name
+		}
+		indexName = getAnonymousIndex(t, colName, model.NewCIStr(""))
+	}
+
+	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil {
+		if ifNotExists {
+			return nil
+		}
+		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+	}
+
+	// Skip build hidden column for expression index
+
+	indexInfo, err := buildIndexInfo(nil, tblInfo, indexName, indexPartSpecifications, model.StatePublic)
+	if err != nil {
+		return err
+	}
+	if indexOption != nil {
+		indexInfo.Comment = indexOption.Comment
+		if indexOption.Visibility == ast.IndexVisibilityInvisible {
+			indexInfo.Invisible = true
+		}
+		if indexOption.Tp == model.IndexTypeInvalid {
+			// Use btree as default index type.
+			indexInfo.Tp = model.IndexTypeBtree
+		} else {
+			indexInfo.Tp = indexOption.Tp
+		}
+	} else {
+		// Use btree as default index type.
+		indexInfo.Tp = model.IndexTypeBtree
+	}
+	indexInfo.Primary = false
+	indexInfo.Unique = unique
+	indexInfo.ID = allocateIndexID(tblInfo)
+	tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+
+	addIndexColumnFlag(tblInfo, indexInfo)
+	return nil
 }
 
 func (d InMemoryDDL) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
-	//TODO implement me
-	panic("implement me")
+	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
+	err := d.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists)
+	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
+		err = nil
+	}
+	return err
+}
+
+func (d InMemoryDDL) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
+	t := tables.MockTableFromMeta(tblInfo)
+
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
+
+	_, err = checkIsDropPrimaryKey(indexName, indexInfo, t)
+	if err != nil {
+		return err
+	}
+
+	if indexInfo == nil {
+		if ifExists {
+			return nil
+		}
+		return dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+	}
+
+	// Check for drop index on auto_increment column.
+	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
+	if err != nil {
+		return err
+	}
+
+	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L != indexInfo.Name.L {
+			newIndices = append(newIndices, idx)
+		}
+	}
+	tblInfo.Indices = newIndices
+	// Set column index flag.
+	dropIndexColumnFlag(tblInfo, indexInfo)
+	return nil
 }
 
 func (d InMemoryDDL) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
