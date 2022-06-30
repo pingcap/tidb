@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -49,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
@@ -88,14 +86,11 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx              sessionctx.Context
-	is               infoschema.InfoSchema
-	snapshotTS       uint64 // The ts for snapshot-read. A select statement without for update will use this ts
-	forUpdateTS      uint64 // The ts should be used by insert/update/delete/select-for-update statement
-	snapshotTSCached bool
-	err              error // err is set when there is error happened during Executor building process.
-	hasLock          bool
-	Ti               *TelemetryInfo
+	ctx     sessionctx.Context
+	is      infoschema.InfoSchema
+	err     error // err is set when there is error happened during Executor building process.
+	hasLock bool
+	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
 	readReplicaScope string
@@ -121,26 +116,13 @@ type CTEStorages struct {
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *executorBuilder {
-	b := &executorBuilder{
+	return &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
 		isStaleness:      staleread.IsStmtStaleness(ctx),
 		readReplicaScope: replicaReadScope,
 	}
-
-	txnManager := sessiontxn.GetTxnManager(ctx)
-	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
-		provider.GetReadTSFunc = b.getReadTS
-		provider.GetForUpdateTSFunc = func() (uint64, error) {
-			if b.forUpdateTS != 0 {
-				return b.forUpdateTS, nil
-			}
-			return b.getReadTS()
-		}
-	}
-
-	return b
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
@@ -657,11 +639,9 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		defer func() { b.inSelectLockStmt = false }()
 	}
 	b.hasLock = true
-	if b.err = b.updateForUpdateTSIfNeeded(v.Children()[0]); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
-	// Build 'select for update' using the 'for update' ts.
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -745,38 +725,6 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
-
-	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
-		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
-		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
-		if b.isStaleness != v.IsStaleness {
-			panic(fmt.Sprintf("%v != %v", b.isStaleness, v.IsStaleness))
-		}
-
-		if b.readReplicaScope != v.ReadReplicaScope {
-			panic(fmt.Sprintf("%s != %s", b.readReplicaScope, v.ReadReplicaScope))
-		}
-
-		if v.SnapshotTS != 0 {
-			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(v.SnapshotTS)
-			if err != nil {
-				panic(err)
-			}
-
-			if b.is.SchemaMetaVersion() != is.SchemaMetaVersion() {
-				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
-			}
-
-			ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
-			if err != nil {
-				panic(e)
-			}
-
-			if v.SnapshotTS != ts {
-				panic(fmt.Sprintf("%d != %d", ts, v.SnapshotTS))
-			}
-		}
-	})
 
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
@@ -865,14 +813,10 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	b.inInsertStmt = true
-	if v.SelectPlan != nil {
-		// Try to update the forUpdateTS for insert/replace into select statements.
-		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
-		if b.err = b.updateForUpdateTSIfNeeded(nil); b.err != nil {
-			return nil
-		}
+	if b.err = b.updateForUpdateTS(); b.err != nil {
+		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -1437,7 +1381,9 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		if v.IsFinalAgg() {
+			e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		}
 	}
 	for _, aggDesc := range v.AggFuncs {
 		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
@@ -1493,10 +1439,14 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		groupChecker: newVecGroupChecker(b.ctx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 	}
+
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		// Only do this for final agg, see issue #35295, #30923
+		if v.IsFinalAgg() {
+			e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
+		}
 	}
 	for i, aggDesc := range v.AggFuncs {
 		aggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
@@ -1576,44 +1526,6 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return txnManager.GetStmtForUpdateTS()
 	}
 	return txnManager.GetStmtReadTS()
-}
-
-// getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
-// and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
-// the current timestamp in RC isolation
-func (b *executorBuilder) getReadTS() (uint64, error) {
-	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
-		// after refactoring stale read will use its own context provider
-		staleread.AssertStmtStaleness(b.ctx, false)
-	})
-
-	if b.snapshotTSCached {
-		return b.snapshotTS, nil
-	}
-
-	if snapshotTS := b.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		b.snapshotTS = snapshotTS
-		b.snapshotTSCached = true
-		return snapshotTS, nil
-	}
-
-	if b.snapshotTS != 0 {
-		b.snapshotTSCached = true
-		// Return the cached value.
-		return b.snapshotTS, nil
-	}
-
-	txn, err := b.ctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-
-	b.snapshotTS = txn.StartTS()
-	if b.snapshotTS == 0 {
-		return 0, errors.Trace(ErrGetStartTS)
-	}
-	b.snapshotTSCached = true
-	return b.snapshotTS, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -2116,10 +2028,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 			}
 		}
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2173,10 +2085,11 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
-	if b.err = b.updateForUpdateTSIfNeeded(v.SelectPlan); b.err != nil {
+
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
-	b.forUpdateTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
 		return nil
@@ -2192,31 +2105,9 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	return deleteExec
 }
 
-// updateForUpdateTSIfNeeded updates the ForUpdateTS for a pessimistic transaction if needed.
-// PointGet executor will get conflict error if the ForUpdateTS is older than the latest commitTS,
-// so we don't need to update now for better latency.
-func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.PhysicalPlan) error {
-	txnCtx := b.ctx.GetSessionVars().TxnCtx
-	if !txnCtx.IsPessimistic {
-		return nil
-	}
-	if _, ok := selectPlan.(*plannercore.PointGetPlan); ok {
-		return nil
-	}
-	// Activate the invalid txn, use the txn startTS as newForUpdateTS
-	txn, err := b.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	if !txn.Valid() {
-		_, err := b.ctx.Txn(true)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	// GetStmtForUpdateTS will auto update the for update ts if necessary
-	_, err = sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
+func (b *executorBuilder) updateForUpdateTS() error {
+	// GetStmtForUpdateTS will auto update the for update ts if it is necessary
+	_, err := sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
 	return err
 }
 
@@ -4663,18 +4554,26 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 
-	startTS, err := b.getSnapshotTS()
+	if plan.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
+	}
+
+	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		tblInfo:          plan.TblInfo,
 		idxInfo:          plan.IndexInfo,
 		rowDecoder:       decoder,
-		startTS:          startTS,
+		snapshotTS:       snapshotTS,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		keepOrder:        plan.KeepOrder,
@@ -4687,9 +4586,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:        plan.PartTblID,
 		columns:          plan.Columns,
 	}
+
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, startTS)
+		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
 	}
+
 	if plan.TblInfo.TempTableType != model.TempTableNone {
 		// Temporary table should not do any lock operations
 		e.lock = false
@@ -4699,6 +4600,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.lock {
 		b.hasLock = true
 	}
+
 	var capacity int
 	if plan.IndexInfo != nil && !isCommonHandleRead(plan.TblInfo, plan.IndexInfo) {
 		e.idxVals = plan.IndexValues
