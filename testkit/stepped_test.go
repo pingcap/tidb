@@ -15,10 +15,11 @@
 package testkit
 
 import (
+	"testing"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestCancelBreakPoints(t *testing.T) {
