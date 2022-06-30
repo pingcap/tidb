@@ -112,6 +112,7 @@ go_library(
 
 go_test(
     name = "ddl_test",
+    timeout = "short",
     srcs = [
         "attributes_sql_test.go",
         "callback_test.go",
