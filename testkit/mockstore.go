@@ -17,20 +17,42 @@
 package testkit
 
 import (
+	"flag"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+// WithTiKV flag is only used for debugging locally with real tikv cluster.
+var WithTiKV = flag.String("with-tikv", "", "address of tikv cluster, if set, running test with real tikv cluster")
+
 // CreateMockStore return a new mock kv.Storage.
 func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
+	if *WithTiKV != "" {
+		var d driver.TiKVDriver
+		var err error
+		store, err = d.Open("tikv://" + *WithTiKV)
+		require.NoError(t, err)
+
+		var dom *domain.Domain
+		dom, err = session.BootstrapSession(store)
+		clean = func() {
+			dom.Close()
+			err := store.Close()
+			require.NoError(t, err)
+		}
+		require.NoError(t, err)
+		return
+	}
+
 	store, _, clean = CreateMockStoreAndDomain(t, opts...)
 	return
 }
