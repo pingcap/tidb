@@ -514,6 +514,10 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) (bool, error) {
 	allReplicaReady := true
 
+	if len(pollTiFlashContext.TiFlashStores) == 0 {
+		return true, nil
+	}
+
 	// Start to process every table.
 	schema := d.GetInfoSchemaWithInterceptor(ctx)
 	if schema == nil {
@@ -531,9 +535,10 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 	}
 
 	tiflashStoreIds := make([]int64, len(pollTiFlashContext.TiFlashStores))
+
 	for i, store := range pollTiFlashContext.TiFlashStores {
 		// TBD: not sure it is peer id or store id
-		tiflashStoreIds[i] = store.Store.ID
+		tiflashStoreIds[i-1] = store.Store.ID
 	}
 
 	sort.Slice(tiflashStoreIds, func(i, j int) bool { return tiflashStoreIds[i] < tiflashStoreIds[j] })
@@ -557,29 +562,30 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 	if err := infosync.GetTiFlashPDInvalidRegionsInfo(context.Background(), &invaildRegions); err != nil {
 		return false, errors.Trace(err)
 	}
-
 	// There are no down-peer/pending-peer
 	if invaildRegions.Count == 0 {
 		return true, nil
 	}
+
 	var invalidTableIDs []int64
 	for _, invaildRegion := range invaildRegions.Regions {
-		var invalidPeers []int64
+		var invalidPeerIDs []int64
 		for _, downPeer := range invaildRegion.DownPeers {
 			if isTiflashPeer(tiflashStoreIds, downPeer.Peer.ID) {
-				invalidPeers = append(invalidPeers, downPeer.Peer.ID)
+				invalidPeerIDs = append(invalidPeerIDs, downPeer.Peer.ID)
 			}
 		}
 
 		for _, pendingPeer := range invaildRegion.PendingPeers {
 			if isTiflashPeer(tiflashStoreIds, pendingPeer.ID) {
-				invalidPeers = append(invalidPeers, pendingPeer.ID)
+				invalidPeerIDs = append(invalidPeerIDs, pendingPeer.ID)
 			}
 		}
 
-		if len(invalidPeers) != 0 {
-			sort.Slice(invalidPeers, func(i, j int) bool { return invalidPeers[i] < invalidPeers[j] })
-			if isTiflashAllPeerDown(tiflashStoreIds, invalidPeers) {
+		if len(invalidPeerIDs) != 0 {
+			sort.Slice(invalidPeerIDs, func(i, j int) bool { return invalidPeerIDs[i] < invalidPeerIDs[j] })
+
+			if isTiflashAllPeerDown(tiflashStoreIds, invalidPeerIDs) {
 				invaildTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)
 				invalidTableIDs = append(invalidTableIDs, invaildTableID)
 			}

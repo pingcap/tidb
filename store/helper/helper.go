@@ -791,20 +791,6 @@ func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
 }
 
-// GetPendingRegionsInfo gets the pending regions information of current store by using PD's api.
-func (h *Helper) GetPendingRegionsInfo() (*RegionsInfo, error) {
-	var regionsInfo RegionsInfo
-	err := h.requestPD("GetRegions", "GET", pdapi.Regions+"/check/pending-peer/", nil, &regionsInfo)
-	return &regionsInfo, err
-}
-
-// GetDownRegionsInfo gets the down regions information of current store by using PD's api.
-func (h *Helper) GetDownRegionsInfo() (*RegionsInfo, error) {
-	var regionsInfo RegionsInfo
-	err := h.requestPD("GetRegions", "GET", pdapi.Regions+"/check/down-peer/", nil, &regionsInfo)
-	return &regionsInfo, err
-}
-
 // GetRegionsInfo gets the region information of current store by using PD's api.
 func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
 	var regionsInfo RegionsInfo
