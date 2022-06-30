@@ -367,15 +367,31 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
-	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
-	if streamCount > 0 {
-		setupFineGrainedShuffle(streamCount, plan)
-	}
+	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	return plan
 }
 
-func setupFineGrainedShuffle(streamCount uint32, plan PhysicalPlan) {
+// TiFlashFineGrainedShuffleStreamCount:
+// == 0: fine grained shuffle is disabled.
+// > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
+// < 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefTiFlashFineGrainedShuffleStreamCount.
+func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
+	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
+	if streamCount == 0 {
+		return
+	}
+	if streamCount < 0 {
+		if sctx.GetSessionVars().TiFlashMaxThreads > 0 {
+			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
+		} else {
+			streamCount = variable.DefTiFlashFineGrainedShuffleStreamCount
+		}
+	}
+	setupFineGrainedShuffle(streamCount, plan)
+}
+
+func setupFineGrainedShuffle(streamCount int64, plan PhysicalPlan) {
 	enableFineGrainedShuffle(streamCount, plan)
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		setupFineGrainedShuffle(streamCount, tableReader.tablePlan)
@@ -386,7 +402,7 @@ func setupFineGrainedShuffle(streamCount uint32, plan PhysicalPlan) {
 	}
 }
 
-func enableFineGrainedShuffle(streamCount uint32, p PhysicalPlan) {
+func enableFineGrainedShuffle(streamCount int64, p PhysicalPlan) {
 	plans := isValidWindowForFineGrainedShuffle(p)
 	for _, plan := range plans {
 		plan.TiFlashFineGrainedShuffleStreamCount = streamCount
