@@ -55,6 +55,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockRangePartitionTable(),
 		MockHashPartitionTable(),
 		MockListPartitionTable(),
+		MockStateNoneColumnTable(),
 	}
 	id := int64(0)
 	for _, tblInfo := range tblInfos {
