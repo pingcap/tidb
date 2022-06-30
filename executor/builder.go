@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
@@ -88,14 +87,11 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx              sessionctx.Context
-	is               infoschema.InfoSchema
-	snapshotTS       uint64 // The ts for snapshot-read. A select statement without for update will use this ts
-	forUpdateTS      uint64 // The ts should be used by insert/update/delete/select-for-update statement
-	snapshotTSCached bool
-	err              error // err is set when there is error happened during Executor building process.
-	hasLock          bool
-	Ti               *TelemetryInfo
+	ctx     sessionctx.Context
+	is      infoschema.InfoSchema
+	err     error // err is set when there is error happened during Executor building process.
+	hasLock bool
+	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
 	readReplicaScope string
@@ -121,26 +117,13 @@ type CTEStorages struct {
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *executorBuilder {
-	b := &executorBuilder{
+	return &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
 		isStaleness:      staleread.IsStmtStaleness(ctx),
 		readReplicaScope: replicaReadScope,
 	}
-
-	txnManager := sessiontxn.GetTxnManager(ctx)
-	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
-		provider.GetReadTSFunc = b.getReadTS
-		provider.GetForUpdateTSFunc = func() (uint64, error) {
-			if b.forUpdateTS != 0 {
-				return b.forUpdateTS, nil
-			}
-			return b.getReadTS()
-		}
-	}
-
-	return b
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
@@ -657,9 +640,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		defer func() { b.inSelectLockStmt = false }()
 	}
 	b.hasLock = true
-
-	// Build 'select for update' using the 'for update' ts.
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -865,8 +846,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	b.inInsertStmt = true
-
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -1589,44 +1569,6 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	return txnManager.GetReadSnapshot()
 }
 
-// getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
-// and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
-// the current timestamp in RC isolation
-func (b *executorBuilder) getReadTS() (uint64, error) {
-	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
-		// after refactoring stale read will use its own context provider
-		staleread.AssertStmtStaleness(b.ctx, false)
-	})
-
-	if b.snapshotTSCached {
-		return b.snapshotTS, nil
-	}
-
-	if snapshotTS := b.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		b.snapshotTS = snapshotTS
-		b.snapshotTSCached = true
-		return snapshotTS, nil
-	}
-
-	if b.snapshotTS != 0 {
-		b.snapshotTSCached = true
-		// Return the cached value.
-		return b.snapshotTS, nil
-	}
-
-	txn, err := b.ctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-
-	b.snapshotTS = txn.StartTS()
-	if b.snapshotTS == 0 {
-		return 0, errors.Trace(ErrGetStartTS)
-	}
-	b.snapshotTSCached = true
-	return b.snapshotTS, nil
-}
-
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
@@ -2127,8 +2069,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 			}
 		}
 	}
-
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -2186,7 +2127,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
 
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -2203,6 +2144,12 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblColPosInfos: v.TblColPosInfos,
 	}
 	return deleteExec
+}
+
+func (b *executorBuilder) updateForUpdateTS() error {
+	// GetStmtForUpdateTS will auto update the for update ts if it is necessary
+	_, err := sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
+	return err
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {

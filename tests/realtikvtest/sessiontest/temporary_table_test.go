@@ -321,7 +321,7 @@ func TestTemporaryTableInterceptor(t *testing.T) {
 	for _, initFunc := range initTxnFuncs {
 		require.NoError(t, initFunc())
 
-		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		txn, err := tk.Session().Txn(true)
 		require.NoError(t, err)
 

@@ -18,8 +18,10 @@ import (
 	"context"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -75,4 +77,17 @@ func GetSnapshotWithTS(s sessionctx.Context, ts uint64) kv.Snapshot {
 	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
 	snap.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(s))
 	return snap
+}
+
+// SetTxnAssertionLevel sets assertion level of a transactin. Note that assertion level should be set only once just
+// after creating a new transaction.
+func SetTxnAssertionLevel(txn kv.Transaction, assertionLevel variable.AssertionLevel) {
+	switch assertionLevel {
+	case variable.AssertionLevelOff:
+		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Off)
+	case variable.AssertionLevelFast:
+		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Fast)
+	case variable.AssertionLevelStrict:
+		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Strict)
+	}
 }

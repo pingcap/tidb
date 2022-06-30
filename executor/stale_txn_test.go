@@ -34,10 +34,8 @@ import (
 func enableStaleReadCommonFailPoint(t *testing.T) func() {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS", "return"))
 	return func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan"))
 	}
 }
@@ -1440,4 +1438,13 @@ func TestIssue31954(t *testing.T) {
 
 	tk.MustQuery("select (select v from t1 as of timestamp @a where id=1) as v").
 		Check(testkit.Rows("10"))
+}
+
+func TestIssue35686(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	// This query should not panic
+	tk.MustQuery("select * from information_schema.ddl_jobs as of timestamp now()")
 }
