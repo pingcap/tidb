@@ -88,9 +88,10 @@ type ScopeSchema struct {
 
 	// win group utility elements, windowFuncs are mapped to windowColumn, and windowMapper is used to fast locate the
 	// offset in windowFuncs/windowColumn when an address of *WindowFuncExpr is given.
-	windowFuncs  []*windowFuncs
-	windowColumn []*expression.Column
-	windowMapper map[*ast.WindowFuncExpr]int
+	// todo：change window function resolution as the newer one. 2022/06/30.
+	// windowFuncs  []*windowFuncs
+	// windowColumn []*expression.Column
+	// windowMapper map[*ast.WindowFuncExpr]int
 
 	// we should build the projection expr out and map them to a specific column in analyzing phase.
 	// otherwise, cases like: select (select 1) as a from dual order by a & select 1 as a, (select t.a) from t
@@ -526,6 +527,28 @@ func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, w
 	return nil
 }
 
+func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby *ast.GroupByClause) error {
+	originClause := b.curClause
+	b.curClause = groupByClause
+	defer func() {
+		b.curClause = originClause
+	}()
+	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+	if gby == nil {
+		return nil
+	}
+	// todo: consider the parameter.
+	for _, item := range gby.Items {
+		// ignore the np here, we won't want change the plan tree here.
+		expr, _, err := b.rewrite(ctx, item.Expr, P, nil, true)
+		if err != nil {
+			return err
+		}
+		b.curScope.groupByItems = append(b.curScope.groupByItems, expr)
+	}
+	return nil
+}
+
 func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, having *ast.HavingClause) error {
 	originClause := b.curClause
 	b.curClause = havingClause
@@ -649,7 +672,7 @@ func (b *PlanBuilder) buildReservedCols(p LogicalPlan, proj *LogicalProjection, 
 }
 
 // buildAggregation4NNR build the aggregation from the new name resolution scope.
-func (b *PlanBuilder) buildAggregation4NNR(ctx context.Context, p LogicalPlan, gbyItems []expression.Expression) (LogicalPlan, map[int]int, error) {
+func (b *PlanBuilder) buildAggregation4NNR(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
 	b.optFlag |= flagBuildKeyInfo
 	b.optFlag |= flagPushDownAgg
 	// We may apply aggregation eliminate optimization.
@@ -845,7 +868,7 @@ func (b *PlanBuilder) buildAggregation4NNR(ctx context.Context, p LogicalPlan, g
 	//		names = append(names, join.fullNames[i])
 	//	}
 	//}
-	hasGroupBy := len(gbyItems) > 0
+	hasGroupBy := len(b.curScope.groupByItems) > 0
 	for i, aggFunc := range plan4Agg.AggFuncs {
 		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
 		if err != nil {
@@ -855,7 +878,7 @@ func (b *PlanBuilder) buildAggregation4NNR(ctx context.Context, p LogicalPlan, g
 	}
 	plan4Agg.names = names
 	plan4Agg.SetChildren(p)
-	plan4Agg.GroupByItems = gbyItems
+	plan4Agg.GroupByItems = b.curScope.groupByItems
 	plan4Agg.SetSchema(schema4Agg)
 	return plan4Agg, aggIndexMap, nil
 }

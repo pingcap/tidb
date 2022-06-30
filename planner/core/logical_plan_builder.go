@@ -1265,6 +1265,7 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
@@ -1293,14 +1294,21 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			newNames = append(newNames, p.OutputNames()[i])
 			continue
 		} else if !considerWindow && isWindowFuncField {
-			expr := expression.NewZero()
-			proj.Exprs = append(proj.Exprs, expr)
-			col, name, err := b.buildProjectionField(ctx, p, field, expr)
-			if err != nil {
-				return nil, nil, 0, err
+			if !eNNR {
+				expr := expression.NewZero()
+				proj.Exprs = append(proj.Exprs, expr)
+				col, name, err := b.buildProjectionField(ctx, p, field, expr)
+				if err != nil {
+					return nil, nil, 0, err
+				}
+				schema.Append(col)
+				newNames = append(newNames, name)
+			} else {
+				// already occupied a position in current scope in analyzing projection phase.
+				proj.Exprs = append(proj.Exprs, b.curScope.projExpr[i])
+				schema.Append(b.curScope.projColumn[i])
+				newNames = append(newNames, b.curScope.projNames[i])
 			}
-			schema.Append(col)
-			newNames = append(newNames, name)
 			continue
 		}
 		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
@@ -1317,14 +1325,34 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 
 		p = np
-		proj.Exprs = append(proj.Exprs, newExpr)
+		if !eNNR {
+			proj.Exprs = append(proj.Exprs, newExpr)
 
-		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
-		if err != nil {
-			return nil, nil, 0, err
+			col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			schema.Append(col)
+			newNames = append(newNames, name)
+		} else {
+			if i >= len(b.curScope.projExpr) {
+				// only some appended col from resolveWindowFunc
+				proj.Exprs = append(proj.Exprs, newExpr)
+				col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
+				if err != nil {
+					return nil, nil, 0, err
+				}
+				schema.Append(col)
+				newNames = append(newNames, name)
+				continue
+			}
+			proj.Exprs = append(proj.Exprs, b.curScope.projExpr[i])
+			schema.Append(b.curScope.projColumn[i])
+			newNames = append(newNames, b.curScope.projNames[i])
 		}
-		schema.Append(col)
-		newNames = append(newNames, name)
+	}
+	if eNNR {
+		proj, schema, newNames = b.buildReservedCols(p, proj, schema, newNames)
 	}
 	proj.SetSchema(schema)
 	proj.names = newNames
@@ -3869,6 +3897,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err = b.analyzeSelectionList(ctx, p, sel.Where); err != nil {
 			return nil, err
 		}
+		if err = b.analyzeGroupByList(ctx, p, sel.GroupBy); err != nil {
+			return nil, err
+		}
 		if err = b.analyzeHavingList(ctx, p, sel.Having); err != nil {
 			return nil, err
 		}
@@ -3978,13 +4009,21 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if needBuildAgg {
-		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
-		if err != nil {
-			return nil, err
-		}
-		for agg, idx := range totalMap {
-			totalMap[agg] = aggIndexMap[idx]
+		if !eNNR {
+			var aggIndexMap map[int]int
+			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
+			if err != nil {
+				return nil, err
+			}
+			for agg, idx := range totalMap {
+				totalMap[agg] = aggIndexMap[idx]
+			}
+		} else {
+			// new name resolution use
+			p, err = b.buildAggregation4NNR(ctx, p)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

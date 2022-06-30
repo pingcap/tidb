@@ -370,6 +370,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.err = ErrInvalidGroupFuncUse
 		} else {
 			if !er.b.analyzingPhase {
+				// in building phase, try to find the aggregate and the allocated column in previous analyzing phase.
 				// case like: select (select count(a)) from t, the count(a) is built and appended to the outer scope.
 				// here in the inner sub-query's building phase (not analyzing), we should find it backward in the nearest outer scope.
 				_, col := er.b.findAggInScopeBackward(v)
@@ -378,6 +379,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 				}
 				er.ctxStackAppend(col, types.EmptyName)
 			} else {
+				// in analyzing phase, try to move and build every aggregate out and allocate them with a new scope column.
 				if !er.b.curScope.inAgg {
 					er.b.curScope.inAgg = true
 					defer func() {
