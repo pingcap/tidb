@@ -175,34 +175,6 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, columnInfos, _, _, _, _, err := checkAddColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if len(columnInfos) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-
-	colNames := make([]model.CIStr, len(columnInfos))
-	originalState := columnInfos[0].State
-	for i, columnInfo := range columnInfos {
-		columnInfos[i].State = model.StateDeleteOnly
-		colNames[i] = columnInfo.Name
-	}
-	ifExists := make([]bool, len(columnInfos))
-
-	job.SchemaState = model.StateDeleteOnly
-	job.Args = []interface{}{colNames, ifExists}
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfos[0].State)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.State = model.JobStateRollingback
-	return ver, dbterror.ErrCancelledDDLJob
-}
-
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, colInfo, idxInfos, _, err := checkDropColumn(t, job)
 	if err != nil {
@@ -444,8 +416,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(d, t, job)
-	case model.ActionAddColumns:
-		ver, err = rollingbackAddColumns(d, t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddIndex(w, d, t, job, false)
 	case model.ActionAddPrimaryKey:
@@ -454,8 +424,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddTablePartition(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
-	case model.ActionDropColumns:
-		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionDropIndexes:
