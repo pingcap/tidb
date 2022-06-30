@@ -58,19 +58,19 @@ func IsAllowFastDDL() bool {
 // Check if PiTR is enable in cluster.
 func isPiTREnable(w *worker) bool {
 	var (
-		ctx sessionctx.Context
+		ctx    sessionctx.Context
 		valStr string = "show config where name = 'log-backup.enable'"
-		err error
+		err    error
 		retVal bool = false
 	)
 	ctx, err = w.sessPool.get()
-	if err != nil  {
+	if err != nil {
 		return true
 	}
 	defer w.sessPool.put(ctx)
 	rows, fields, errSQL := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil, valStr)
 	if errSQL != nil {
-		return true 
+		return true
 	}
 	if len(rows) == 0 {
 		return false
@@ -137,8 +137,8 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexId int64
 			err = errors.Trace(err)
 			return err
 		}
-		// After import local data into TiKV, then the progress set to 100.
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+		// After import local data into TiKV, then the progress set to 85.
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(85)
 	}
 	return nil
 }
@@ -243,8 +243,18 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
+		err = w.batchCheckUniqueKey(txn, idxRecords)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for _, idxRecord := range idxRecords {
 			taskCtx.scanCount++
+			// The index is already exists, we skip it, no needs to backfill it.
+			// The following update, delete, insert on these rows, TiDB can handle it correctly.
+			if idxRecord.skip {
+				continue
+			}
 
 			// Create the index.
 			key, idxVal, _, err := w.index.Create4SST(w.sessCtx, txn, idxRecord.vals, idxRecord.handle, idxRecord.rsData, table.WithIgnoreAssertion)
@@ -334,14 +344,13 @@ func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t ta
 	// Add build openengine process.
 	return &backFillIndexWorker{
 		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
-		index: index,
+		index:          index,
 	}
 }
 
 func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	logutil.BgLogger().Info("Merge temp index", zap.ByteString("startKey", taskRange.startKey), zap.ByteString("endKey", taskRange.endKey))
 	oprStartTime := time.Now()
-	nextKey := taskRange.endKey
 	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -350,42 +359,10 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
-		temporaryIndexRecords := make([]*temporaryIndexRecord, 0, w.batchCnt)
-
-		err := iterateSnapshotIndexes(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey, func(indexKey kv.Key, rawValue []byte) (more bool, err error) {
-			oprEndTime := time.Now()
-			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
-			oprStartTime = oprEndTime
-
-			taskDone := indexKey.Cmp(taskRange.endKey) > 0
-
-			if taskDone || taskCtx.addedCount >= w.batchCnt {
-				nextKey = indexKey
-				logutil.BgLogger().Info("return false")
-				return false, nil
-			}
-
-			isDelete := false
-			unique := false
-			if bytes.Equal(rawValue, []byte("delete")) {
-				isDelete = true
-			} else if bytes.Equal(rawValue, []byte("deleteu")) {
-				isDelete = true
-				unique = true
-			}
-			var convertedIndexKey []byte
-			convertedIndexKey = append(convertedIndexKey, indexKey...)
-			tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
-			idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique}
-			if !isDelete {
-				idxRecord.vals = rawValue
-			}
-			temporaryIndexRecords = append(temporaryIndexRecords, idxRecord)
-
-			return true, nil
-		})
+		temporaryIndexRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRange)
 
 		taskCtx.nextKey = nextKey
+		taskCtx.done = taskDone
 
 		err = w.batchCheckTemporaryUniqueKey(txn, temporaryIndexRecords)
 		if err != nil {
@@ -426,7 +403,6 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
-
 	return
 }
 
@@ -443,7 +419,7 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 			if p == nil {
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
+			err = w.addPhysicalTempIndex(p, idx, reorgInfo)
 			if err != nil {
 				break
 			}
@@ -453,7 +429,7 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 			}
 		}
 	} else {
-		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
+		err = w.addPhysicalTempIndex(t.(table.PhysicalTable), idx, reorgInfo)
 	}
 	return errors.Trace(err)
 }
@@ -461,4 +437,57 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 func (w *worker) addPhysicalTempIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to merge temp index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	return w.writeTempIndexRecord(t, typeAddIndexWorker, indexInfo, nil, nil, reorgInfo)
+}
+
+func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
+	startTime := time.Now()
+	temporaryIndexRecords := make([]*temporaryIndexRecord, 0, w.batchCnt)
+	// taskDone means that the reorged handle is out of taskRange.endHandle.
+	taskDone := false
+	oprStartTime := startTime
+	err := iterateSnapshotIndexes(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey, func(indexKey kv.Key, rawValue []byte) (more bool, err error) {
+		oprEndTime := time.Now()
+		logSlowOperations(oprEndTime.Sub(oprStartTime), "iterate temporary index in merge process", 0)
+		oprStartTime = oprEndTime
+
+		taskDone := indexKey.Cmp(taskRange.endKey) > 0
+
+		if taskDone || len(temporaryIndexRecords) >= w.batchCnt {
+			logutil.BgLogger().Info("return false")
+			return false, nil
+		}
+
+		isDelete := false
+		unique := false
+		if bytes.Equal(rawValue, []byte("delete")) {
+			isDelete = true
+		} else if bytes.Equal(rawValue, []byte("deleteu")) {
+			isDelete = true
+			unique = true
+		}
+		var convertedIndexKey []byte
+		convertedIndexKey = append(convertedIndexKey, indexKey...)
+		tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
+		idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique}
+		if !isDelete {
+			idxRecord.vals = rawValue
+		}
+		temporaryIndexRecords = append(temporaryIndexRecords, idxRecord)
+
+		return true, nil
+	})
+
+	if len(temporaryIndexRecords) == 0 {
+		taskDone = true
+	}
+    var nextKey kv.Key
+	if taskDone {
+		nextKey = taskRange.endKey
+	} else {
+		nextKey = temporaryIndexRecords[w.batchCnt-1].key
+	}
+
+	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
+		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	return temporaryIndexRecords, nextKey.Next(), taskDone, errors.Trace(err)
 }

@@ -36,7 +36,7 @@ const (
 	_tb                      = 1024 * _gb
 	_pb                      = 1024 * _tb
 	flush_size               = 1 * _mb
-	minStorageQuota          = 100 * _gb
+	minStorageQuota          = 10 * _gb
 	importThreadhold float32 = 0.15
 )
 
@@ -166,7 +166,7 @@ func (l *LightningEnv) parseDiskQuota(val int) error {
 
 // Generate lightning local store dir in TiDB datadir.
 func genLightningDataDir(sortPath string) (string, error) {
-	sortPath = filepath.Join(sortPath, "/tmp_ddl")
+	sortPath = filepath.Join("/tmp", "/tmp_ddl")
 	shouldCreate := true
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
@@ -175,7 +175,12 @@ func genLightningDataDir(sortPath string) (string, error) {
 			return "/tmp/tmp_ddl", err
 		}
 	} else if info.IsDir() {
-		shouldCreate = false
+		// Currently remove all dir to clean garbage data.
+		err := os.RemoveAll(sortPath)
+		if err != nil {
+			log.L().Error(LERR_DELETE_DIR_FAILED, zap.String("Sort path:", sortPath),
+				zap.String("Error:", err.Error()))
+		}
 	}
 
 	if shouldCreate {
@@ -190,8 +195,10 @@ func genLightningDataDir(sortPath string) (string, error) {
 	return sortPath, nil
 }
 
-func (g *LightningEnv) NeedImportEngineData(availDisk uint64) bool {
-	if availDisk <= uint64(importThreadhold*float32(g.diskQuota)) {
+func (g *LightningEnv) NeedImportEngineData(usedStorage, availDisk uint64) bool {
+	// If Lihgting used 85% of diskQuota or there is less than 15% availDisk left then need ingest data to TiKV.
+	if usedStorage >= uint64((1-importThreadhold)*float32(g.diskQuota)) ||
+		availDisk <= uint64(importThreadhold*float32(g.diskQuota)) {
 		return true
 	}
 	return false

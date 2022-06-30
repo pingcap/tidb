@@ -417,15 +417,20 @@ func (m *LightningMemoryRoot) workerDegree(workerCnt int, engineKey string) int 
 	return workerCnt
 }
 
-func (m *LightningMemoryRoot) TotalDiskAvailable() uint64 {
+func (m *LightningMemoryRoot) TotalDiskAvailable() (uint64, uint64) {
+	var totalDiskUsed int64
+	for _, bc := range m.backendCache {
+		_, _, bcDiskUsed, _ := bc.Backend.CheckDiskQuota(GlobalLightningEnv.diskQuota)
+		totalDiskUsed += bcDiskUsed
+	}
     sz, err := lcom.GetStorageSize(GlobalLightningEnv.SortPath)
 	if err != nil {
 		log.L().Error(LERR_GET_STORAGE_QUOTA,
 			zap.String("OS error:", err.Error()),
 			zap.String("default disk quota", strconv.FormatInt(GlobalLightningEnv.diskQuota, 10)))
-		return uint64(GlobalLightningEnv.diskQuota)
+		return uint64(totalDiskUsed), uint64(GlobalLightningEnv.diskQuota)
 	}
-	return sz.Available
+	return uint64(totalDiskUsed), sz.Available
 }
 
 // defaultImportantVariables is used in ObtainImportantVariables to retrieve the system

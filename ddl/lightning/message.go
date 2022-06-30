@@ -19,6 +19,7 @@ const (
 	LERR_OUT_OF_MAX_MEM        string = "Lightning: Memory used up for Lightning add index"
 	LERR_UNKNOW_MEM_TYPE       string = "Lightning: Unknown struct mem required for Lightning add index"
 	LERR_CREATE_DIR_FAILED     string = "Lightning: Create lightning sort path error"
+	LERR_DELETE_DIR_FAILED     string = "Lightning: Delete lightning sort path error"
 	LERR_CREATE_BACKEND_FAILED string = "Lightning: Build lightning backend failed, will use kernel index reorg method to backfill the index"
 	LERR_GET_BACKEND_FAILED    string = "Lightning: Can not get cached backend"
 	LERR_CREATE_ENGINE_FAILED  string = "Lightning: Build lightning engine failed, will use kernel index reorg method to backfill the index"

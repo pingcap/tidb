@@ -930,8 +930,8 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, t table.Tab
 func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
-
-	startKey, endKey := tablecodec.GetTableIndexKeyRange(t.GetPhysicalID(), tablecodec.TempIndexPrefix|indexInfo.ID)
+    
+	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
 	if err := w.isReorgRunnable(reorgInfo.Job); err != nil {
 		return errors.Trace(err)
@@ -949,9 +949,9 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 
-	backfillWorkers := make([]*backfillWorker, 0, workerCnt)
+	mergeWorkers := make([]*backfillWorker, 0, workerCnt)
 	defer func() {
-		closeBackfillWorkers(backfillWorkers)
+		closeBackfillWorkers(mergeWorkers)
 	}()
 
 	for {
@@ -971,7 +971,7 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 		}
 
 		// Enlarge the worker size.
-		for i := len(backfillWorkers); i < int(workerCnt); i++ {
+		for i := len(mergeWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
 			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 			// Simulate the sql mode environment in the worker sessionCtx.
@@ -991,13 +991,13 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 
 			idxWorker := newTempIndexWorker(sessCtx, w, i, t, indexInfo, reorgInfo)
 			idxWorker.priority = job.Priority
-			backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+			mergeWorkers = append(mergeWorkers, idxWorker.backfillWorker)
 			go idxWorker.backfillWorker.runMerge(reorgInfo.d, idxWorker, job)
 		}
 		// Shrink the worker size.
-		if len(backfillWorkers) > int(workerCnt) {
-			workers := backfillWorkers[workerCnt:]
-			backfillWorkers = backfillWorkers[:workerCnt]
+		if len(mergeWorkers) > int(workerCnt) {
+			workers := mergeWorkers[workerCnt:]
+			mergeWorkers = mergeWorkers[:workerCnt]
 			closeBackfillWorkers(workers)
 		}
 
@@ -1006,11 +1006,11 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 				if num != 0 {
 					if num > len(kvRanges) {
-						if len(backfillWorkers) != len(kvRanges) {
-							failpoint.Return(errors.Errorf("check merge worker num error, len kv ranges is: %v, check merge worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
+						if len(mergeWorkers) != len(kvRanges) {
+							failpoint.Return(errors.Errorf("check merge worker num error, len kv ranges is: %v, check merge worker num is: %v, actual record num is: %v", len(kvRanges), num, len(mergeWorkers)))
 						}
-					} else if num != len(backfillWorkers) {
-						failpoint.Return(errors.Errorf("check merge worker num error, len kv ranges is: %v, check merge worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
+					} else if num != len(mergeWorkers) {
+						failpoint.Return(errors.Errorf("check merge worker num error, len kv ranges is: %v, check merge worker num is: %v, actual record num is: %v", len(kvRanges), num, len(mergeWorkers)))
 					}
 					var wg sync.WaitGroup
 					wg.Add(1)
@@ -1021,12 +1021,12 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 		})
 
 		logutil.BgLogger().Info("[ddl] start merge workers to merge delta index changes",
-			zap.Int("workerCnt", len(backfillWorkers)),
+			zap.Int("workerCnt", len(mergeWorkers)),
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("endHandle", tryDecodeToHandleString(endKey)))
 
-		remains, err := w.sendRangeTaskToWorkers(t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
+		remains, err := w.sendRangeTaskToMergeWorkers(t, mergeWorkers, reorgInfo, &totalAddedCount, kvRanges, t.GetPhysicalID())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1139,11 +1139,103 @@ func (w *backfillWorker) handleMergeTask(d *ddlCtx, task *reorgBackfillTask, bf 
 			break
 		}
 	}
-	logutil.BgLogger().Info("[ddl] backfill worker finish task", zap.Int("workerID", w.id),
+	logutil.BgLogger().Info("[ddl] merge worker finish task", zap.Int("workerID", w.id),
 		zap.String("task", task.String()),
 		zap.Int("addedCount", result.addedCount),
 		zap.Int("scanCount", result.scanCount),
 		zap.String("nextHandle", tryDecodeToHandleString(result.nextKey)),
 		zap.String("takeTime", time.Since(startTime).String()))
 	return result
+}
+
+// sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
+func (w *worker) sendRangeTaskToMergeWorkers(t table.Table, workers []*backfillWorker, reorgInfo *reorgInfo,
+	totalAddedCount *int64, kvRanges []kv.KeyRange, phyicID int64) ([]kv.KeyRange, error) {
+	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
+	physicalTableID := phyicID
+
+	// Build reorg tasks.
+	for _, keyRange := range kvRanges {
+		endKey := keyRange.EndKey
+		endK, err := getRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] send range task to workers, get reverse key failed", zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("[ddl] send range task to workers, change end key",
+				zap.String("end key", tryDecodeToHandleString(endKey)), zap.String("current end key", tryDecodeToHandleString(endK)))
+			endKey = endK
+		}
+
+		task := &reorgBackfillTask{
+			physicalTableID: physicalTableID,
+			startKey:        keyRange.StartKey,
+			endKey:          endKey}
+		batchTasks = append(batchTasks, task)
+
+		if len(batchTasks) >= len(workers) {
+			break
+		}
+	}
+
+	if len(batchTasks) == 0 {
+		return nil, nil
+	}
+
+	// Wait tasks finish.
+	err := w.handleMergeTasks(reorgInfo, totalAddedCount, workers, batchTasks)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(batchTasks) < len(kvRanges) {
+		// There are kvRanges not handled.
+		remains := kvRanges[len(batchTasks):]
+		return remains, nil
+	}
+
+	return nil, nil
+}
+
+// handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
+// there are taskCnt running workers.
+func (w *worker) handleMergeTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
+	for i, task := range batchTasks {
+		workers[i].taskCh <- task
+	}
+
+	startKey := batchTasks[0].startKey
+	taskCnt := len(batchTasks)
+	startTime := time.Now()
+	nextKey, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startKey)
+	elapsedTime := time.Since(startTime)
+	if err == nil {
+		err = w.isReorgRunnable(reorgInfo.Job)
+	}
+
+	if err != nil {
+		err := reorgInfo.UpdateReorgMeta(nextKey)
+		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
+		logutil.BgLogger().Warn("[ddl] merge worker handle batch tasks failed",
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.Int64("totalAddedCount", *totalAddedCount),
+			zap.String("startHandle", tryDecodeToHandleString(startKey)),
+			zap.String("nextHandle", tryDecodeToHandleString(nextKey)),
+			zap.Int64("batchAddedCount", taskAddedCount),
+			zap.String("taskFailedError", err.Error()),
+			zap.String("takeTime", elapsedTime.String()),
+			zap.NamedError("updateHandleError", err))
+		return errors.Trace(err)
+	}
+	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
+	w.getReorgCtx(reorgInfo.Job).setNextKey(nextKey)
+	logutil.BgLogger().Info("[ddl] Merge workers successfully processed batch",
+		zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+		zap.Int64("elementID", reorgInfo.currElement.ID),
+		zap.Int64("totalAddedCount", *totalAddedCount),
+		zap.String("startHandle", tryDecodeToHandleString(startKey)),
+		zap.String("nextHandle", tryDecodeToHandleString(nextKey)),
+		zap.Int64("batchAddedCount", taskAddedCount),
+		zap.String("takeTime", elapsedTime.String()))
+	return nil
 }

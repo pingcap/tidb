@@ -582,6 +582,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Set sub state to stateNone to stop double write, if used lightning build index.
 		var eid uint64 = 0
 		if indexInfo.SubState != model.StateNone {
+			// After merge data into TiKV, then the progress set to 100.
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
 			eid = codec.EncodeIntToCmpUint(tablecodec.TempIndexPrefix | indexInfo.ID)
 		}
 		indexInfo.SubState = model.StateNone
@@ -680,12 +682,19 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			if err != nil {
 				return false, ver, errors.Trace(err)
 			}
+			//Init reorg infor for merge task.
+			job.SnapshotVer = 0 
+			reorgInfo, err = getMergeReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, indexInfo.ID)
 			return false, ver, nil
 		case model.StateMerge:
+			if err != nil {
+				logutil.BgLogger().Info("Lightning start merge init merge reorg info err", zap.Error(err))
+				return false, ver, errors.Trace(err)
+			}
 			logutil.BgLogger().Info("Lightning start merge the increment part of adding index")
 			return true, ver, nil
 		default:
-			return false, 0, errors.New("Lightning goFast wrong sub states: should not happened")
+			return false, 0, errors.New("Lightning go fast path wrong sub states: should not happened")
 		}
 	}
 	return false, ver, nil
@@ -693,15 +702,19 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	var doReorg bool
+	var (
+		doReorg   bool
+		reorgInfo *reorgInfo
+	)
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	rh := newReorgHandler(t)
-	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+	reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
 	}
+
 
 	doReorg, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
 	if isLightningEnabled(reorgInfo.ID) || indexInfo.SubState != model.StateNone {
@@ -715,21 +728,21 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	if indexInfo.SubState == model.StateBackfill {
-		err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
-				func() {
-					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
-				}, false)
-			return w.addTableIndex(tbl, indexInfo, reorgInfo)
-		})
-	} else {
+	if indexInfo.SubState == model.StateMerge {
 		err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 			defer util.Recover(metrics.LabelDDL, "onMergeIndex",
 				func() {
 					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
 				}, false)
 			return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
+		})
+	} else {
+		err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+				func() {
+					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+				}, false)
+			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 	}
 	if err != nil {
@@ -1487,7 +1500,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			if idxRecord.skip {
 				continue
 			}
-            
+
 			if !w.isNewBF {
 				// We need to add this lock to make sure pessimistic transaction can realize this operation.
 				// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
