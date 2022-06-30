@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/table/temptable"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
@@ -94,7 +93,7 @@ func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() erro
 		if err != nil {
 			return err
 		}
-		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+		p.is = is
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
