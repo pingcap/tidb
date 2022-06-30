@@ -52,6 +52,8 @@ type TestDDLCallback struct {
 	onJobUpdated           func(*model.Job)
 	OnJobUpdatedExported   func(*model.Job)
 	onWatched              func(ctx context.Context)
+	OnGetJobBeforeExported func(string)
+	OnGetJobAfterExported  func(string, *model.Job)
 }
 
 // OnChanged mock the same behavior with the main DDL hook.
@@ -116,6 +118,24 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	}
 
 	tc.BaseCallback.OnWatched(ctx)
+}
+
+// OnGetJobBefore implements Callback.OnGetJobBefore interface.
+func (tc *TestDDLCallback) OnGetJobBefore(jobType string) {
+	if tc.OnGetJobBeforeExported != nil {
+		tc.OnGetJobBeforeExported(jobType)
+		return
+	}
+	tc.BaseCallback.OnGetJobBefore(jobType)
+}
+
+// OnGetJobAfter implements Callback.OnGetJobAfter interface.
+func (tc *TestDDLCallback) OnGetJobAfter(jobType string, job *model.Job) {
+	if tc.OnGetJobAfterExported != nil {
+		tc.OnGetJobAfterExported(jobType, job)
+		return
+	}
+	tc.BaseCallback.OnGetJobAfter(jobType, job)
 }
 
 func TestCallback(t *testing.T) {

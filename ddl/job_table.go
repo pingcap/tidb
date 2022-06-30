@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -68,7 +69,7 @@ func (dc *ddlCtx) resetRunningIDs() {
 }
 
 const (
-	getJobSQL = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id) and %s reorg and job_id not in (%s)"
+	getJobSQL = "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids) and %s reorg and job_id not in (%s) order by processing desc, job_id"
 )
 
 type jobType int
@@ -107,6 +108,9 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if row.GetInt64(1) == 1 {
+			return &runJob, nil
+		}
 		b, err := filter(&runJob)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -121,10 +125,11 @@ func (d *ddl) getJob(sess *session, tp jobType, filter func(*model.Job) (bool, e
 func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
 		if job.Type == model.ActionDropSchema {
-			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where schema_id = %d and job_id < %d limit 1", job.SchemaID, job.ID)
+			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where find_in_set(%s, schema_ids) != 0 and job_id < %d limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), job.ID)
 			return d.checkJobIsRunnable(sess, sql)
 		}
-		return true, nil
+		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where processing and find_in_set(t1.table_ids, t2.table_ids) != 0", job.ID)
+		return d.checkJobIsRunnable(sess, sql)
 	})
 }
 
@@ -135,7 +140,8 @@ func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
 
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
-		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where schema_id = %d and is_drop_schema and job_id < %d limit 1", job.SchemaID, job.ID)
+		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where (find_in_set(%s, schema_ids) != 0 and type = %d and job_id < %d) or (find_in_set(%s, table_ids) != 0 and processing) limit 1",
+			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), model.ActionDropSchema, job.ID, strconv.Quote(strconv.FormatInt(job.TableID, 10)))
 		return d.checkJobIsRunnable(sess, sql)
 	})
 }
@@ -196,6 +202,10 @@ func (d *ddl) runDDLJob(sess *session, pool *workerPool, getJob func(*session) (
 		return
 	}
 
+	d.mu.RLock()
+	d.mu.hook.OnGetJobBefore(pool.tp().String())
+	d.mu.RUnlock()
+
 	job, err := getJob(sess)
 	if job == nil || err != nil {
 		if err != nil {
@@ -204,7 +214,14 @@ func (d *ddl) runDDLJob(sess *session, pool *workerPool, getJob func(*session) (
 		pool.put(wk)
 		return
 	}
-
+	d.mu.RLock()
+	d.mu.hook.OnGetJobAfter(pool.tp().String(), job)
+	d.mu.RUnlock()
+	if err := d.markJobProcessing(sess, job); err != nil {
+		logutil.BgLogger().Info("[ddl] handle ddl job failed: mark job is processing meet error", zap.Error(err), zap.String("job", job.String()))
+		pool.put(wk)
+		return
+	}
 	d.doDDLJob(wk, pool, job)
 }
 
@@ -231,8 +248,18 @@ func (d *ddl) doDDLJob(wk *worker, pool *workerPool, job *model.Job) {
 	})
 }
 
+func (d *ddl) markJobProcessing(sess *session, job *model.Job) error {
+	if !job.NotStarted() {
+		return nil
+	}
+
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := sess.execute(context.Background(), fmt.Sprintf("update mysql.tidb_ddl_job set processing = 1 where job_id = %d", job.ID), "mark_job_processing")
+	return errors.Trace(err)
+}
+
 const (
-	addDDLJobSQL               = "insert into mysql.tidb_ddl_job(job_id, reorg, schema_id, table_id, job_meta, is_drop_schema) values"
+	addDDLJobSQL               = "insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values"
 	updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
 )
 
@@ -255,13 +282,48 @@ func addDDLJobs(sess *session, jobs []*model.Job, updateRawArgs bool) error {
 		if i != 0 {
 			sql.WriteString(",")
 		}
-		sql.WriteString(fmt.Sprintf("(%d, %t, %d, %d, %s, %t)", job.ID, job.MayNeedReorg(), job.SchemaID, job.TableID, wrapKey2String(b), job.Type == model.ActionDropSchema))
+		sql.WriteString(fmt.Sprintf("(%d, %t, %s, %s, %s, %d, %t)", job.ID, job.MayNeedReorg(), strconv.Quote(job2SchemaIDs(job)), strconv.Quote(job2TableIDs(job)), wrapKey2String(b), job.Type, false))
 	}
 	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	_, err := sess.execute(ctx, sql.String(), "insert_job")
 	logutil.BgLogger().Debug("[ddl] add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
 	return errors.Trace(err)
+}
+
+func job2SchemaIDs(job *model.Job) string {
+	return job2UniqueIDs(job, true)
+}
+
+func job2TableIDs(job *model.Job) string {
+	return job2UniqueIDs(job, false)
+}
+
+func job2UniqueIDs(job *model.Job, schema bool) string {
+	switch job.Type {
+	case model.ActionExchangeTablePartition, model.ActionRenameTables:
+		var ids []int64
+		if schema {
+			ids = job.CtxVars[0].([]int64)
+		} else {
+			ids = job.CtxVars[1].([]int64)
+		}
+		set := make(map[int64]struct{}, len(ids))
+		for _, id := range ids {
+			set[id] = struct{}{}
+		}
+
+		s := make([]string, 0, len(set))
+		for id := range set {
+			s = append(s, strconv.FormatInt(id, 10))
+		}
+		slices.Sort(s)
+		return strings.Join(s, ",")
+	}
+	if schema {
+		return strconv.FormatInt(job.SchemaID, 10)
+	}
+	return strconv.FormatInt(job.TableID, 10)
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
@@ -472,7 +534,7 @@ func (d *ddl) BackOffDDLs() error {
 		if !isConcurrentDDL || err != nil {
 			return errors.Trace(err)
 		}
-		jobs, err := getJobsBySQL(se, "tidb_ddl_job", "1 order by job_id")
+		jobs, err := getJobsBySQL(se, JobTable, "1 order by job_id")
 		if err != nil {
 			return errors.Trace(err)
 		}

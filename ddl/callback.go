@@ -55,6 +55,10 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
+	// OnGetJobBefore is called before getting job.
+	OnGetJobBefore(jobType string)
+	// OnGetJobAfter is called after getting job.
+	OnGetJobAfter(jobType string, job *model.Job)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -83,6 +87,16 @@ func (c *BaseCallback) OnJobUpdated(job *model.Job) {
 
 // OnWatched implements Callback.OnWatched interface.
 func (c *BaseCallback) OnWatched(ctx context.Context) {
+	// Nothing to do.
+}
+
+// OnGetJobBefore implements Callback.OnGetJobBefore interface.
+func (c *BaseCallback) OnGetJobBefore(jobType string) {
+	// Nothing to do.
+}
+
+// OnGetJobAfter implements Callback.OnGetJobAfter interface.
+func (c *BaseCallback) OnGetJobAfter(jobType string, job *model.Job) {
 	// Nothing to do.
 }
 

@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -149,7 +150,8 @@ func addDDLJobs(sess session.Session, txn kv.Transaction, job *model.Job) error 
 		if err != nil {
 			return err
 		}
-		_, err = sess.Execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_job values (%d, %t, %d, %d, %s, %t)", job.ID, job.MayNeedReorg(), job.SchemaID, job.TableID, wrapKey2String(b), job.Type == model.ActionDropSchema))
+		_, err = sess.Execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values (%d, %t, %s, %s, %s, %d, %t)",
+			job.ID, job.MayNeedReorg(), strconv.Quote(strconv.FormatInt(job.SchemaID, 10)), strconv.Quote(strconv.FormatInt(job.TableID, 10)), wrapKey2String(b), job.Type, false))
 		return err
 	}
 	m := meta.NewMeta(txn)
