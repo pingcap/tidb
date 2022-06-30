@@ -137,7 +137,6 @@ go_test(
     ],
     embed = [":server"],
     flaky = True,
-    race = "on",
     shard_count = 50,
     deps = [
         "//config",

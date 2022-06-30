@@ -6,6 +6,7 @@ go_test(
         "kv_test.go",
         "main_test.go",
     ],
+    race = "on",
     deps = [
         "//config",
         "//meta/autoid",
