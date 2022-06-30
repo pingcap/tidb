@@ -29,3 +29,4 @@ show create table t;
 drop table t;
 create table t( e enum(0xBAEC,0x6A59)) collate gbk_bin;
 show create table t;
+set @@sql_mode = '';
