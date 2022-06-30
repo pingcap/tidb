@@ -1602,7 +1602,7 @@ func TestIssue35295(t *testing.T) {
 ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 col1 int(10) NOT NULL DEFAULT '0' COMMENT 'test',
 money bigint(20) NOT NULL COMMENT 'test',
-logtime datetime NOT NULL COMMENT ' 记录时间 ',
+logtime datetime NOT NULL COMMENT '记录时间',
 PRIMARY KEY (ID,logtime)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=1 COMMENT='test'
 PARTITION BY RANGE COLUMNS(logtime) (
