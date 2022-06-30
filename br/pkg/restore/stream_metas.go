@@ -4,7 +4,6 @@ package restore
 
 import (
 	"context"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"strconv"
 	"sync"
 
@@ -12,6 +11,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 )
 
 type StreamMetadataSet struct {
