@@ -3728,3 +3728,29 @@ func TestBinaryReadOnly(t *testing.T) {
 	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
 	tk.MustExec("commit")
 }
+
+func TestIndexMergeRuntimeStats(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge = 1")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	rows := tk.MustQuery("explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;").Rows()
+	require.Len(t, rows, 4)
+	explain := fmt.Sprintf("%v", rows[0])
+	pattern := ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*"
+	require.Regexp(t, pattern, explain)
+	tableRangeExplain := fmt.Sprintf("%v", rows[1])
+	indexExplain := fmt.Sprintf("%v", rows[2])
+	tableExplain := fmt.Sprintf("%v", rows[3])
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableRangeExplain)
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", indexExplain)
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
+}
