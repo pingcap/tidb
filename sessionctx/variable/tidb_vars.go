@@ -946,7 +946,8 @@ const (
 	DefTiDBEnableConcurrentDDL                     = true
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
-	DefTiFlashFineGrainedShuffleStreamCount        = 8
+	DefTiFlashFineGrainedShuffleStreamCount        = -1
+	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
 )
 

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -386,13 +387,13 @@ func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
 		if sctx.GetSessionVars().TiFlashMaxThreads > 0 {
 			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
 		} else {
-			streamCount = variable.DefTiFlashFineGrainedShuffleStreamCount
+			streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
 		}
 	}
-	setupFineGrainedShuffle(streamCount, plan)
+	setupFineGrainedShuffle(uint64(streamCount), plan)
 }
 
-func setupFineGrainedShuffle(streamCount int64, plan PhysicalPlan) {
+func setupFineGrainedShuffle(streamCount uint64, plan PhysicalPlan) {
 	enableFineGrainedShuffle(streamCount, plan)
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
 		setupFineGrainedShuffle(streamCount, tableReader.tablePlan)
@@ -403,7 +404,7 @@ func setupFineGrainedShuffle(streamCount int64, plan PhysicalPlan) {
 	}
 }
 
-func enableFineGrainedShuffle(streamCount int64, p PhysicalPlan) {
+func enableFineGrainedShuffle(streamCount uint64, p PhysicalPlan) {
 	plans := isValidWindowForFineGrainedShuffle(p)
 	for _, plan := range plans {
 		plan.TiFlashFineGrainedShuffleStreamCount = streamCount
@@ -434,7 +435,10 @@ func isValidWindowForFineGrainedShuffle(p PhysicalPlan) []*basePhysicalPlan {
 			return plans
 		case *PhysicalExchangeReceiver:
 			plans := append(plans, &ch.basePhysicalPlan)
-			sender, _ := ch.Children()[0].(*PhysicalExchangeSender)
+			sender, isSender := ch.Children()[0].(*PhysicalExchangeSender)
+			if !isSender || sender.ExchangeType != tipb.ExchangeType_Hash {
+				return nil
+			}
 			plans = append(plans, &sender.basePhysicalPlan)
 			return plans
 		default:

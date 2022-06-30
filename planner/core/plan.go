@@ -428,7 +428,7 @@ type basePhysicalPlan struct {
 	planCostInit bool
 	planCost     float64
 
-	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
 // Cost implements PhysicalPlan interface.

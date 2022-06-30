@@ -928,5 +928,32 @@
       "explain format = 'brief' select count(*) from rp_t where a = 1 or a = 20",
       "explain format = 'brief' select count(*) from hp_t where a = 1 or a = 20"
     ]
+  },
+  {
+    "name": "TestTiFlashFineGrainedShuffle",
+    "cases": [
+      // 1. Can use fine grained shuffle.
+      "explain format = 'brief' select row_number() over w1 from t1 window w1 as (partition by c1 order by c1);",
+      // Test two window function.
+	  "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2);",
+	  // Limit + Order.
+	  "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2) order by 1, 2 limit 10;",
+	 // No partition by key in w2, so disabled. But w1 is still enabled.
+	 "explain format = 'brief' select row_number() over w1, row_number() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (order by c1);",
+	 // GroupBy key and window function partition key are not same.
+	 "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c2 order by c2);",
+	 "explain format = 'brief' select row_number() over w1, count(c1) from t1 group by c2 having c2 > 10 window w1 as (partition by c1 order by c2);",
+	// Join, same as GroupBy.
+	"explain format = 'brief' select row_number() over w1 from t1 a join t1 b on a.c1 = b.c2 window w1 as (partition by a.c1);",
+
+	 // 2. Cannot use fine grained shuffle.
+	 // No window function, so disabled.
+	 "explain format = 'brief' select * from t1;",
+	 // No partition key in window function, so disabled.
+	 "explain format = 'brief' select row_number() over w1 from t1 window w1 as (order by c1);",
+	 // GroupBy key is same with window function partition key, so they are in one fragment.
+	 // But fine grained shuffle doesn't support group by for now.
+	 "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c1 order by c2);"
+    ]
   }
 ]
