@@ -63,10 +63,13 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.ReadCommitted
 			},
+			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+				txn.SetOption(kv.Pessimistic, true)
+			},
 		},
 	}
 
-	provider.onTxnActive = func(txn kv.Transaction) {
+	provider.onTxnActive = func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 		txn.SetOption(kv.Pessimistic, true)
 		provider.latestOracleTS = txn.StartTS()
 		provider.latestOracleTSValid = true
@@ -161,7 +164,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	}
 
 	var txn kv.Transaction
-	if txn, err = p.activateTxn(); err != nil {
+	if txn, err = p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
