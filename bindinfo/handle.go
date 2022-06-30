@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -656,13 +657,15 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		status = Enabled
 	}
 	hint := Binding{
-		BindSQL:    row.GetString(1),
-		Status:     status,
-		CreateTime: row.GetTime(4),
-		UpdateTime: row.GetTime(5),
-		Charset:    row.GetString(6),
-		Collation:  row.GetString(7),
-		Source:     row.GetString(8),
+		BindingState: sessionstates.BindingState{
+			BindSQL:    row.GetString(1),
+			Status:     status,
+			CreateTime: row.GetTime(4),
+			UpdateTime: row.GetTime(5),
+			Charset:    row.GetString(6),
+			Collation:  row.GetString(7),
+			Source:     row.GetString(8),
+		},
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
@@ -877,11 +880,13 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
 		binding := Binding{
-			BindSQL:   bindSQL,
-			Status:    Enabled,
-			Charset:   charset,
-			Collation: collation,
-			Source:    Capture,
+			BindingState: sessionstates.BindingState{
+				BindSQL:   bindSQL,
+				Status:    Enabled,
+				Charset:   charset,
+				Collation: collation,
+				Source:    Capture,
+			},
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})

@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -102,6 +104,47 @@ func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord
 // GetAllBindRecord return all session bind info.
 func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
 	return h.ch.GetAllBindRecords()
+}
+
+func (h *SessionHandle) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+	bindRecords := h.ch.GetAllBindRecords()
+	if len(bindRecords) == 0 {
+		return nil
+	}
+	clonedBindRecords := make([]*sessionstates.BindRecordState, 0, len(bindRecords))
+	for _, bindRecord := range bindRecords {
+		clonedBindings := make([]sessionstates.BindingState, 0, len(bindRecord.Bindings))
+		for _, binding := range bindRecord.Bindings {
+			clonedBindings = append(clonedBindings, binding.BindingState)
+		}
+		clonedBindRecords = append(clonedBindRecords, &sessionstates.BindRecordState{
+			OriginalSQL: bindRecord.OriginalSQL,
+			Db:          bindRecord.Db,
+			Bindings:    clonedBindings,
+		})
+	}
+	sessionStates.Bindings = clonedBindRecords
+	return nil
+}
+
+func (h *SessionHandle) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+	for _, clonedBindRecords := range sessionStates.Bindings {
+		for _, clonedBinding := range clonedBindRecords.Bindings {
+			binding := Binding{
+				BindingState: clonedBinding,
+			}
+			record := &BindRecord{
+				OriginalSQL: clonedBindRecords.OriginalSQL,
+				Db:          clonedBindRecords.Db,
+				Bindings:    []Binding{binding},
+			}
+			if err := record.prepareHints(sctx); err != nil {
+				return err
+			}
+			h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record)
+		}
+	}
+	return nil
 }
 
 // Close closes the session handle.

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -68,9 +69,11 @@ func (e *SQLBindExec) dropSQLBind() error {
 	var bindInfo *bindinfo.Binding
 	if e.bindSQL != "" {
 		bindInfo = &bindinfo.Binding{
-			BindSQL:   e.bindSQL,
-			Charset:   e.charset,
-			Collation: e.collation,
+			BindingState: sessionstates.BindingState{
+				BindSQL:   e.bindSQL,
+				Charset:   e.charset,
+				Collation: e.collation,
+			},
 		}
 	}
 	if !e.isGlobal {
@@ -84,9 +87,11 @@ func (e *SQLBindExec) setBindingStatus() error {
 	var bindInfo *bindinfo.Binding
 	if e.bindSQL != "" {
 		bindInfo = &bindinfo.Binding{
-			BindSQL:   e.bindSQL,
-			Charset:   e.charset,
-			Collation: e.collation,
+			BindingState: sessionstates.BindingState{
+				BindSQL:   e.bindSQL,
+				Charset:   e.charset,
+				Collation: e.collation,
+			},
 		}
 	}
 	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
@@ -106,11 +111,13 @@ func (e *SQLBindExec) createSQLBind() error {
 	}()
 
 	bindInfo := bindinfo.Binding{
-		BindSQL:   e.bindSQL,
-		Charset:   e.charset,
-		Collation: e.collation,
-		Status:    bindinfo.Enabled,
-		Source:    bindinfo.Manual,
+		BindingState: sessionstates.BindingState{
+			BindSQL:   e.bindSQL,
+			Charset:   e.charset,
+			Collation: e.collation,
+			Status:    bindinfo.Enabled,
+			Source:    bindinfo.Manual,
+		},
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

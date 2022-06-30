@@ -993,6 +993,141 @@ func TestPreparedStatements(t *testing.T) {
 	}
 }
 
+func TestSQLBinding(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
+
+	tests := []struct {
+		setFunc    func(tk *testkit.TestKit) any
+		checkFunc  func(tk *testkit.TestKit, param any)
+		restoreErr int
+		cleanFunc  func(tk *testkit.TestKit)
+	}{
+		{
+			// no bindings
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show session bindings").Check(testkit.Rows())
+			},
+		},
+		{
+			// use binding and drop it
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
+				rows := tk.MustQuery("show session bindings").Rows()
+				require.Equal(t, 1, len(rows))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show session bindings").Check(param.([][]any))
+				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustExec("drop session binding for select * from test.t1")
+				tk.MustQuery("show session bindings").Check(testkit.Rows())
+			},
+		},
+		{
+			// use hint
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create session binding for select * from test.t1 using select /*+ use_index(test.t1, name) */ * from test.t1")
+				rows := tk.MustQuery("show session bindings").Rows()
+				require.Equal(t, 1, len(rows))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show session bindings").Check(param.([][]any))
+				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustExec("drop session binding for select * from test.t1")
+				tk.MustQuery("show session bindings").Check(testkit.Rows())
+			},
+		},
+		{
+			// drop binding
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
+				tk.MustExec("drop session binding for select * from test.t1")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show session bindings").Check(testkit.Rows())
+			},
+		},
+		{
+			// default db
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("use test")
+				tk.MustExec("create session binding for select * from t1 using select * from t1 use index(name)")
+				tk.MustExec("use mysql")
+				rows := tk.MustQuery("show session bindings").Rows()
+				require.Equal(t, 1, len(rows))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show session bindings").Check(param.([][]any))
+				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+			},
+		},
+		{
+			// drop table
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
+				return nil
+			},
+			restoreErr: errno.ErrNoSuchTable,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
+			},
+		},
+		{
+			// drop db
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create database test1")
+				tk.MustExec("use test1")
+				tk.MustExec("create table t1(id int primary key, name varchar(10), key(name))")
+				tk.MustExec("create session binding for select * from t1 using select /*+ use_index(t1, name) */ * from t1")
+				tk.MustExec("drop database test1")
+				return nil
+			},
+			restoreErr: errno.ErrNoSuchTable,
+		},
+		{
+			// alter the table
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
+				tk.MustExec("alter table test.t1 drop index name")
+				return nil
+			},
+			restoreErr: errno.ErrKeyDoesNotExist,
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.MustExec("alter table test.t1 add index name(name)")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		tk1 := testkit.NewTestKit(t, store)
+		var param any
+		if tt.setFunc != nil {
+			param = tt.setFunc(tk1)
+		}
+		rows := tk1.MustQuery("show session_states").Rows()
+		require.Len(t, rows, 1)
+		state := rows[0][0].(string)
+		state = strconv.Quote(state)
+		setSQL := fmt.Sprintf("set session_states %s", state)
+		tk2 := testkit.NewTestKit(t, store)
+		if tt.restoreErr != 0 {
+			tk2.MustGetErrCode(setSQL, tt.restoreErr)
+		} else {
+			tk2.MustExec(setSQL)
+			tt.checkFunc(tk2, param)
+		}
+		if tt.cleanFunc != nil {
+			tt.cleanFunc(tk1)
+		}
+	}
+}
+
 func showSessionStatesAndSet(t *testing.T, tk1, tk2 *testkit.TestKit) {
 	rows := tk1.MustQuery("show session_states").Rows()
 	require.Len(t, rows, 1)
