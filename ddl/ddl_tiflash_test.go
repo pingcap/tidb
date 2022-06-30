@@ -636,8 +636,6 @@ func TestTiFlashBackoffer(t *testing.T) {
 		require.Equal(t, ori, e.Threshold)
 		require.Equal(t, c+1, e.Counter)
 		require.Equal(t, oriTotal+1, total)
-
-		logutil.BgLogger().Info(fmt.Sprintf("Table %v mustNotGrow Counter: %v,total : %v \n", ID, e.Counter, total))
 	}
 	mustGrow := func(ID int64) {
 		e := mustGet(ID)
@@ -649,8 +647,6 @@ func TestTiFlashBackoffer(t *testing.T) {
 		require.Equal(t, e.Threshold, rate*ori)
 		require.Equal(t, 1, e.Counter)
 		require.Equal(t, oriTotal+1, total)
-
-		logutil.BgLogger().Info(fmt.Sprintf("Table %v mustNotGrow Counter: %v,total : %v \n", ID, e.Counter, total))
 	}
 	// Test grow
 	ok := backoff.Put(1)
