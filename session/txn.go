@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
@@ -166,6 +165,9 @@ func (txn *LazyTxn) resetTxnInfo(
 		metrics.TxnDurationHistogram.WithLabelValues(txninfo.StateLabel(lastState), hasLockLbl).Observe(time.Since(txn.mu.TxnInfo.LastStateChangeTime).Seconds())
 		metrics.TxnStatusGauge.WithLabelValues(txninfo.StateLabel(lastState)).Dec()
 	}
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.TxnInfo.StartTS = startTS
 	txn.mu.TxnInfo.State = state
@@ -256,7 +258,7 @@ func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 		nil)
 }
 
-func (txn *LazyTxn) changeInvalidToPending(future *txnFuture) {
+func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future
 }
@@ -304,6 +306,9 @@ func (txn *LazyTxn) changeToInvalid() {
 	lastState := txn.mu.TxnInfo.State
 	lastStateChangeTime := txn.mu.TxnInfo.LastStateChangeTime
 	hasLock := !txn.mu.TxnInfo.BlockStartTime.IsZero()
+	if txn.mu.TxnInfo.StartTS != 0 {
+		txninfo.Recorder.OnTrxEnd(&txn.mu.TxnInfo)
+	}
 	txn.mu.TxnInfo = txninfo.TxnInfo{}
 	txn.mu.Unlock()
 	if !lastStateChangeTime.IsZero() {
@@ -547,16 +552,6 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
-}
-
-func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	scope := s.sessionVars.CheckAndGetTxnScope()
-	future := sessiontxn.NewOracleFuture(ctx, s, scope)
-	ret := &txnFuture{future: future, store: s.store, txnScope: scope}
-	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
-		ret.future = txnFailFuture{}
-	})
-	return ret
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

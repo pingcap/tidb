@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -86,7 +87,7 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
+func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context, _ ast.StmtNode) error {
 	return nil
 }
 
@@ -97,11 +98,6 @@ func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.Stmt
 
 // OnStmtRetry is the hook that should be called when a statement retry
 func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
-	return nil
-}
-
-// Advise is used to give advice to provider
-func (p *StalenessTxnContextProvider) Advise(_ sessiontxn.AdviceType, _ []any) error {
 	return nil
 }
 

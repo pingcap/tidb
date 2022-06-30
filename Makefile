@@ -25,9 +25,6 @@ buildsucc:
 
 all: dev server benchkv
 
-parser:
-	@echo "remove this command later, when our CI script doesn't call it"
-
 dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
@@ -95,6 +92,9 @@ test_part_2: test_part_parser gotest gogenerate br_unit_test dumpling_unit_test
 test_part_parser: parser_yacc test_part_parser_dev
 
 test_part_parser_dev: parser_fmt parser_unit_test
+
+parser:
+	@cd parser && make parser
 
 parser_yacc:
 	@cd parser && mv parser.go parser.go.committed && make parser && diff -u parser.go.committed parser.go && rm parser.go.committed
@@ -325,14 +325,6 @@ build_for_br_integration_test:
 	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen br/tests/lightning_checkpoint_parquet/*.go \
 	) || (make failpoint-disable && exit 1)
-	@make failpoint-disable
-
-build_for_lightning_test:
-	@make failpoint-enable
-	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
-		-o $(LIGHTNING_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning
 	@make failpoint-disable
 
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
