@@ -1462,13 +1462,15 @@ func FastUnmarshalMetaData(
 	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
 		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
-			b, err := s.ReadFile(ectx, path)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			readPath := path
 			pool.ApplyOnErrorGroup(eg, func() error {
+				log.Info("read file in", zap.String("path", readPath))
+				b, err := s.ReadFile(ectx, readPath)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				m := &backuppb.Metadata{}
-				err := m.Unmarshal(b)
+				err = m.Unmarshal(b)
 				if err != nil {
 					return err
 				}
