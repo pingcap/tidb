@@ -3578,8 +3578,5 @@ func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 	// Decoding session vars / prepared statements may override stmt ctx, such as warnings,
 	// so we decode stmt ctx at last.
-	if err := s.sessionVars.DecodeSessionStates(ctx, sessionStates); err != nil {
-		return err
-	}
-	return nil
+	return s.sessionVars.DecodeSessionStates(ctx, sessionStates)
 }
