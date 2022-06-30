@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -343,28 +344,54 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
-		index, ok := -1, false
-		if er.aggrMap != nil {
-			index, ok = er.aggrMap[v]
-		}
-		if ok {
-			// index < 0 indicates this is a correlated aggregate belonging to outer query,
-			// for which a correlated column will be created later, so we append a null constant
-			// as a temporary result expression.
-			if index < 0 {
-				er.ctxStackAppend(expression.NewNull(), types.EmptyName)
-			} else {
-				// index >= 0 indicates this is a regular aggregate column
-				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+		eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+		if !eNNR {
+			index, ok := -1, false
+			if er.aggrMap != nil {
+				index, ok = er.aggrMap[v]
 			}
-			return inNode, true
+			if ok {
+				// index < 0 indicates this is a correlated aggregate belonging to outer query,
+				// for which a correlated column will be created later, so we append a null constant
+				// as a temporary result expression.
+				if index < 0 {
+					er.ctxStackAppend(expression.NewNull(), types.EmptyName)
+				} else {
+					// index >= 0 indicates this is a regular aggregate column
+					er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+				}
+				return inNode, true
+			}
+			// replace correlated aggregate in sub-query with its corresponding correlated column
+			if col, ok := er.b.correlatedAggMapper[v]; ok {
+				er.ctxStackAppend(col, types.EmptyName)
+				return inNode, true
+			}
+			er.err = ErrInvalidGroupFuncUse
+		} else {
+			if !er.b.analyzingPhase {
+				// case like: select (select count(a)) from t, the count(a) is built and appended to the outer scope.
+				// here in the inner sub-query's building phase (not analyzing), we should find it backward in the nearest outer scope.
+				_, col := er.b.findAggInScopeBackward(v)
+				if col == nil {
+					panic("should be here")
+				}
+				er.ctxStackAppend(col, types.EmptyName)
+			} else {
+				if !er.b.curScope.inAgg {
+					er.b.curScope.inAgg = true
+					defer func() {
+						er.b.curScope.inAgg = false
+					}()
+					er.err = er.buildAggregationDesc(er.ctx, er.p, v, false)
+				} else {
+					// when to refuse agg nested?
+					// In agg(agg(arg1) OP arg2), if one of the arg1 is in current scope, it's a ErrInvalidGroupFuncUse
+					// Otherwise, agg(arg1) can be seen as correlated column from outer scope, equal to: agg(corCol OP arg2)
+					er.err = er.buildAggregationDesc(er.ctx, er.p, v, true)
+				}
+			}
 		}
-		// replace correlated aggregate in sub-query with its corresponding correlated column
-		if col, ok := er.b.correlatedAggMapper[v]; ok {
-			er.ctxStackAppend(col, types.EmptyName)
-			return inNode, true
-		}
-		er.err = ErrInvalidGroupFuncUse
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {
@@ -516,10 +543,39 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		er.err = errors.Errorf("Unknown compare type %T", v.R)
 		return v, true
 	}
-	np, err := er.buildSubquery(ctx, subq)
-	if err != nil {
-		er.err = err
+	var (
+		np  LogicalPlan
+		err error
+	)
+	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR && er.b.analyzingPhase {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
+		if er.asScalar {
+			// append a zero expr here for the convenience of scalar check. (ignored outside)
+			// The parent expression only use the last column in schema, which represents whether the condition is matched.
+			er.ctxStack[len(er.ctxStack)-1] = expression.NewZero()
+			er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+		}
 		return v, true
+	} else {
+		if eNNR {
+			// means plan building phase under new name resolution framework, trying to use cached subq.
+			if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
+				np = item.p
+			}
+		}
+		if np == nil {
+			np, err = er.buildSubquery(ctx, subq)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
 	}
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
 	canMultiCol := (!v.All && v.Op == opcode.EQ) || (v.All && v.Op == opcode.NE)
@@ -810,10 +866,37 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.err = errors.Errorf("Unknown exists type %T", v.Sel)
 		return v, true
 	}
-	np, err := er.buildSubquery(ctx, subq)
-	if err != nil {
-		er.err = err
+	var (
+		np  LogicalPlan
+		err error
+	)
+	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR && er.b.analyzingPhase {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
+		if er.asScalar {
+			// append a zero expr here for the convenience of scalar check. (ignored outside)
+			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+		}
 		return v, true
+	} else {
+		if eNNR {
+			// means plan building phase under new name resolution framework, trying to use cached subq.
+			if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
+				np = item.p
+			}
+		}
+		if np == nil {
+			np, err = er.buildSubquery(ctx, subq)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
 	}
 	np = er.popExistsSubPlan(np)
 	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
@@ -884,10 +967,38 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		er.err = errors.Errorf("Unknown compare type %T", v.Sel)
 		return v, true
 	}
-	np, err := er.buildSubquery(ctx, subq)
-	if err != nil {
-		er.err = err
+	var (
+		np  LogicalPlan
+		err error
+	)
+	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR && er.b.analyzingPhase {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
+		er.ctxStackPop(1)
+		if asScalar {
+			// append a zero expr here for the convenience of scalar check. (ignored outside)
+			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+		}
 		return v, true
+	} else {
+		if eNNR {
+			// means plan building phase under new name resolution framework, trying to use cached subq.
+			if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
+				np = item.p
+			}
+		}
+		if np == nil {
+			np, err = er.buildSubquery(ctx, subq)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
 	}
 	lLen := expression.GetRowLen(lexpr)
 	if lLen != np.Schema().Len() {
@@ -985,10 +1096,43 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
 	ci := er.b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
-	np, err := er.buildSubquery(ctx, v)
-	if err != nil {
-		er.err = err
-		return v, true
+	subq := v
+	var (
+		np  LogicalPlan
+		err error
+	)
+	if strings.HasPrefix(er.b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select (select sum((select count(a)))) from t") {
+		fmt.Println(1)
+	}
+	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR && er.b.analyzingPhase {
+		np, err = er.buildSubquery(ctx, subq)
+		if err != nil {
+			er.err = err
+			return v, true
+		}
+		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
+		if er.b.curClause != fieldList {
+			// append a zero expr here for the convenience of scalar check. (ignored outside)
+			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			return v, true
+		}
+		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
+	} else {
+		if eNNR {
+			// means plan building phase under new name resolution framework, trying to use cached subq.
+			item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]
+			if ok {
+				np = item.p
+			}
+		}
+		if np == nil {
+			np, err = er.buildSubquery(ctx, subq)
+			if err != nil {
+				er.err = err
+				return v, true
+			}
+		}
 	}
 	np = er.b.buildMaxOneRow(np)
 	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {

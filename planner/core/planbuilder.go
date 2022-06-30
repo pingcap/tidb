@@ -432,8 +432,17 @@ type cteInfo struct {
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
-	ctx          sessionctx.Context
-	is           infoschema.InfoSchema
+	ctx sessionctx.Context
+	is  infoschema.InfoSchema
+
+	// following 3 fields is used for new name resolution framework.
+	// analyzingPhase indicates that current expr rewrite is for analyzing info collection, basically don't change the logical plan tree.
+	analyzingPhase bool
+	// outerScopes indicates all column that a select block can see in its level passed from outer.
+	outerScopes []*ScopeSchema
+	// curScope indicates all column that a select block can see in its level.
+	curScope *ScopeSchema
+
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo

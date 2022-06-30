@@ -137,6 +137,9 @@ const (
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
+	// TiDBOptimizerEnableNewNameResolution is used to enable the new name resolution framework.
+	TiDBOptimizerEnableNewNameResolution = "tidb_enable_new_name_resolution"
+
 	TiDBOptimizerEnableOuterJoinReorder = "tidb_enable_outer_join_reorder"
 
 	// TiDBTxnMode is used to control the transaction behavior.
@@ -821,6 +824,7 @@ const (
 	DefBroadcastJoinThresholdCount               = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel             = 0
 	DefTiDBOptimizerEnableNewOFGB                = false
+	DefTiDBOptimizerNewNameResolution            = false
 	DefTiDBEnableOuterJoinReorder                = true
 	DefTiDBAllowBatchCop                         = 1
 	DefTiDBAllowMPPExecution                     = true
