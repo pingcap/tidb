@@ -5,7 +5,6 @@ package restore_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"math/rand"
 	"path/filepath"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
