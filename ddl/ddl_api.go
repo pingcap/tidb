@@ -68,7 +68,6 @@ const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
 	changingIndexPrefix   = "_Idx$_"
-	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535
 	mediumBlobMaxLength   = 16777215
@@ -5572,8 +5571,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, s *ast.RenameTableStmt) error 
 
 func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	tables := make(map[string]int64)
-	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable, tables)
+	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable)
 	if err != nil {
 		return err
 	}
@@ -5616,9 +5614,8 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	var tableID int64
 	var err error
 
-	tables := make(map[string]int64)
 	for i := 0; i < len(oldIdents); i++ {
-		schemas, tableID, err = extractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
+		schemas, tableID, err = extractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable)
 		if err != nil {
 			return err
 		}
@@ -5651,31 +5648,32 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	return errors.Trace(err)
 }
 
-func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool, tables map[string]int64) ([]*model.DBInfo, int64, error) {
-	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
-	if !ok {
-		if isAlterTable {
-			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-		}
-		if tableExists(is, newIdent, tables) {
-			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-		}
+func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool) ([]*model.DBInfo, int64, error) {
+	oldTableNotExist := !is.TableExists(oldIdent.Schema, oldIdent.Name)
+	newTableExists := is.TableExists(newIdent.Schema, newIdent.Name)
+
+	// if isAlterTable, oldTableNotExist has higher priority. otherwise, newTableExists has higher priority.
+	if isAlterTable && oldTableNotExist {
 		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
-	if !tableExists(is, oldIdent, tables) {
-		if isAlterTable {
-			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-		}
-		if tableExists(is, newIdent, tables) {
-			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-		}
+	if newTableExists {
+		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+	if !isAlterTable && oldTableNotExist {
 		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
+
+	if is.TableExists(newIdent.Schema, newIdent.Name) {
+		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+
+	oldSchema, _ := is.SchemaByName(oldIdent.Schema)
+
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing
 		return nil, 0, nil
 	}
-	//View can be renamed only in the same schema. Compatible with mysql
+	//V iew can be renamed only in the same schema. Compatible with mysql
 	if is.TableIsView(oldIdent.Schema, oldIdent.Name) {
 		if oldIdent.Schema != newIdent.Schema {
 			return nil, 0, infoschema.ErrForbidSchemaChange.GenWithStackByArgs(oldIdent.Schema, newIdent.Schema)
@@ -5690,40 +5688,12 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			168,
 			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
 	}
-	if tableExists(is, newIdent, tables) {
-		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-	}
+
 	if err := checkTooLongTable(newIdent.Name); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-	oldTableID := getTableID(is, oldIdent, tables)
-	oldIdentKey := getIdentKey(oldIdent)
-	tables[oldIdentKey] = tableNotExist
-	newIdentKey := getIdentKey(newIdent)
-	tables[newIdentKey] = oldTableID
-	return []*model.DBInfo{oldSchema, newSchema}, oldTableID, nil
-}
-
-func tableExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) bool {
-	identKey := getIdentKey(ident)
-	tableID, ok := tables[identKey]
-	if (ok && tableID != tableNotExist) || (!ok && is.TableExists(ident.Schema, ident.Name)) {
-		return true
-	}
-	return false
-}
-
-func getTableID(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) int64 {
-	identKey := getIdentKey(ident)
-	tableID, ok := tables[identKey]
-	if !ok {
-		oldTbl, err := is.TableByName(ident.Schema, ident.Name)
-		if err != nil {
-			return tableNotExist
-		}
-		tableID = oldTbl.Meta().ID
-	}
-	return tableID
+	oldTbl, _ := is.TableByName(oldIdent.Schema, oldIdent.Name)
+	return []*model.DBInfo{oldSchema, newSchema}, oldTbl.Meta().ID, nil
 }
 
 func getIdentKey(ident ast.Ident) string {
