@@ -395,9 +395,9 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) ([]PhysicalP
 		}
 	case InnerJoin:
 		if useLeftToBuild {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-		} else if useRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
+		} else if useRightToBuild {
+			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 			joins = append(joins, p.getHashJoin(prop, 0, false))
