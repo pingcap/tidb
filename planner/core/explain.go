@@ -547,7 +547,11 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	return explainByItems(buffer, p.ByItems).String()
+	buffer = explainByItems(buffer, p.ByItems)
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -867,6 +871,9 @@ func (p *PhysicalWindow) ExplainInfo() string {
 		p.formatFrameBound(buffer, p.Frame.End)
 	}
 	buffer.WriteString(")")
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
 	return buffer.String()
 }
 
@@ -994,6 +1001,17 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 			fmt.Fprintf(buffer, "%v", task.ID)
 		}
 		fmt.Fprintf(buffer, "]")
+	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
+	return buffer.String()
+}
+
+func (p *PhysicalExchangeReceiver) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
 	}
 	return buffer.String()
 }

@@ -393,6 +393,7 @@ type baseLogicalPlan struct {
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
 	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
 	fdSet *fd.FDSet
+	enableFineGrainedShuffle bool
 }
 
 // ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
@@ -427,6 +428,8 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
+
+	TiFlashFineGrainedShuffleStreamCount uint32
 }
 
 // Cost implements PhysicalPlan interface.

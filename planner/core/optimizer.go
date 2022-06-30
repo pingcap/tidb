@@ -367,8 +367,65 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
+	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
+	if streamCount > 0 {
+		setupFineGrainedShuffle(streamCount, plan)
+	}
 	checkPlanCacheable(sctx, plan)
 	return plan
+}
+
+func setupFineGrainedShuffle(streamCount uint32, plan PhysicalPlan) {
+	enableFineGrainedShuffle(streamCount, plan)
+	if tableReader, ok := plan.(*PhysicalTableReader); ok {
+		setupFineGrainedShuffle(streamCount, tableReader.tablePlan)
+	} else {
+		for _, child := range plan.Children() {
+			setupFineGrainedShuffle(streamCount, child)
+		}
+	}
+}
+
+func enableFineGrainedShuffle(streamCount uint32, p PhysicalPlan) {
+	plans := isValidWindowForFineGrainedShuffle(p)
+	for _, plan := range plans {
+		plan.TiFlashFineGrainedShuffleStreamCount = streamCount
+	}
+}
+
+func isValidWindowForFineGrainedShuffle(p PhysicalPlan) ([]*basePhysicalPlan) {
+	switch x := p.(type) {
+	case *PhysicalWindow:
+		plans := []*basePhysicalPlan{&x.basePhysicalPlan}
+		if len(x.PartitionBy) <= 0 {
+			return nil
+		}
+		child := x.Children()[0]
+		if sort, ok := child.(*PhysicalSort); ok {
+			if !sort.IsPartialSort {
+				return nil
+			}
+			plans = append(plans, &sort.basePhysicalPlan)
+			child = sort.Children()[0]
+		}
+		switch ch := child.(type) {
+		case *PhysicalWindow:
+			plans := isValidWindowForFineGrainedShuffle(child)
+			if len(plans) > 0 {
+				plans = append(plans, plans...)
+			}
+			return plans
+		case *PhysicalExchangeReceiver:
+			plans := append(plans, &ch.basePhysicalPlan)
+			sender, _ := ch.Children()[0].(*PhysicalExchangeSender)
+			plans = append(plans, &sender.basePhysicalPlan)
+			return plans
+		default:
+			return nil
+		}
+	default:
+		return nil
+	}
 }
 
 // checkPlanCacheable used to check whether a plan can be cached. Plans that
