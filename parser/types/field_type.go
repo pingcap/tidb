@@ -55,6 +55,7 @@ type FieldType struct {
 	// elems is the element list for enum and set type.
 	elems            []string
 	elemsIsBinaryLit []bool
+	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
 // NewFieldType returns a FieldType,
@@ -531,13 +532,14 @@ func HasCharset(ft *FieldType) bool {
 
 // for json
 type jsonFieldType struct {
-	Tp      byte
-	Flag    uint
-	Flen    int
-	Decimal int
-	Charset string
-	Collate string
-	Elems   []string
+	Tp               byte
+	Flag             uint
+	Flen             int
+	Decimal          int
+	Charset          string
+	Collate          string
+	Elems            []string
+	ElemsIsBinaryLit []bool
 }
 
 func (ft *FieldType) UnmarshalJSON(data []byte) error {
@@ -551,6 +553,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.charset = r.Charset
 		ft.collate = r.Collate
 		ft.elems = r.Elems
+		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
 	}
 	return err
 }
@@ -564,5 +567,6 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Charset = ft.charset
 	r.Collate = ft.collate
 	r.Elems = ft.elems
+	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
 	return json.Marshal(r)
 }
