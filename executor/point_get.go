@@ -177,7 +177,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
-
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 

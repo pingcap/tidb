@@ -5034,7 +5034,6 @@ func setSnapshotOptions(b *executorBuilder, e Executor, snapshot kv.Snapshot) er
 			},
 		})
 	}
-	setOptionForTopSQL(sessVars.StmtCtx, snapshot)
 
 	return nil
 }
