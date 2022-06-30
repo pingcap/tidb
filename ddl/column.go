@@ -1778,6 +1778,12 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 		oldCol.AddFlag(mysql.NoDefaultValueFlag)
 	} else {
 		oldCol.DelFlag(mysql.NoDefaultValueFlag)
+		sctx := newContext(d.store)
+		err = checkDefaultValue(sctx, table.ToColumn(oldCol), true)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 	}
 
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)

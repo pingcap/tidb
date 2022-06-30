@@ -2104,6 +2104,12 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
+	setdefaultSQL := []string{
+		"alter table t alter a SET DEFAULT '2098'",
+		"alter table t alter a SET DEFAULT '1'",
+	}
+	setdefaultSQLOffset := 0
+
 	var wg sync.WaitGroup
 	d := dom.DDL()
 	originalCallback := d.GetHook()
@@ -2119,7 +2125,10 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 			skip = true
 			wg.Add(1)
 			go func() {
-				tk1.MustExec("alter table t alter a SET DEFAULT '2098'")
+				_, err := tk1.Exec(setdefaultSQL[setdefaultSQLOffset])
+				if setdefaultSQLOffset == 0 {
+					require.Nil(t, err)
+				}
 				wg.Done()
 			}()
 		}
@@ -2130,4 +2139,13 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 
 	wg.Wait()
 	tk.MustQuery("select column_type from information_schema.columns where table_name = 't' and table_schema = 'test';").Check(testkit.Rows("mediumint(9)"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int default 2)")
+	skip = false
+	setdefaultSQLOffset = 1
+	tk.MustExec("alter table t modify column a TIMESTAMP NULL DEFAULT '2017-08-06 10:47:11'")
+	wg.Wait()
+	tk.MustExec("show create table t")
+	tk.MustExec("insert into t value()")
 }
