@@ -74,8 +74,9 @@ type GCWorker struct {
 	cancel       context.CancelFunc
 	done         chan error
 	testingKnobs struct {
-		scanLocks    func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock
-		resolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safePoint, lowResolveTS uint64) (ok bool, err error)
+		scanLocks         func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock
+		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
+		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 	}
 }
 
@@ -147,7 +148,7 @@ const (
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
 
-	gcLowResolveInterval = time.Minute * 5
+	gcLowResolutionInterval = time.Minute * 5
 
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = txnlock.ResolvedCacheSize / 2
@@ -1017,13 +1018,13 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) (bool, error) {
-	lowResolveTS, err := w.getLowResolveTS()
+	lowResolutionTS, err := w.getLowResolutionTS()
 	if err != nil {
 		return false, err
 	}
 
 	if !usePhysical {
-		return false, w.legacyResolveLocks(ctx, safePoint, lowResolveTS, concurrency)
+		return false, w.legacyResolveLocks(ctx, safePoint, lowResolutionTS, concurrency)
 	}
 
 	// First try resolve locks with physical scan
@@ -1035,9 +1036,10 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	logutil.Logger(ctx).Error("[gc worker] resolve locks with physical scan failed, trying fallback to legacy resolve lock",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
+		zap.Uint64("low-resolution-ts", lowResolutionTS),
 		zap.Error(err))
 
-	return false, w.legacyResolveLocks(ctx, safePoint, lowResolveTS, concurrency)
+	return false, w.legacyResolveLocks(ctx, safePoint, lowResolutionTS, concurrency)
 }
 
 func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, lowResolveTS uint64, concurrency int) error {
@@ -1071,14 +1073,68 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, low
 	return nil
 }
 
-func (w *GCWorker) getLowResolveTS() (uint64, error) {
+func (w *GCWorker) getLowResolutionTS() (uint64, error) {
 	now, err := w.getOracleTime()
 	if err != nil {
 		return 0, err
 	}
 
-	lowResolveTime := now.Add(-gcLowResolveInterval)
-	return oracle.GoTimeToTS(lowResolveTime), nil
+	lowResolutionTime := now.Add(-gcLowResolutionInterval)
+	return oracle.GoTimeToTS(lowResolutionTime), nil
+}
+
+// batchResolveExpiredLocks tries to resolve expired locks with batch method.
+// Travesal the given locks and check that:
+// 1. If the tts of lock is equal with or smaller than safepointTS, it will
+// rollback the txn, no matter the lock is expired of not.
+// 2. If the tts of lock is larger than safepointTS, it will check status of the txn.
+// Resolve the lock if txn is expired, Or do nothing.
+func (w *GCWorker) batchResolveExpiredLocks(
+	bo *tikv.Backoffer,
+	locks []*txnlock.Lock,
+	loc tikv.RegionVerID,
+	safepoint uint64,
+	lowResolutionTS uint64,
+) (bool, error) {
+	if len(locks) == 0 {
+		return true, nil
+	}
+
+	locksBeforeSafePoint := make([]*txnlock.Lock, 0, len(locks))
+	locksAfterSafePoint := make([]*txnlock.Lock, 0, len(locks))
+	for _, l := range locks {
+		if l.TxnID <= safepoint {
+			locksBeforeSafePoint = append(locksBeforeSafePoint, l)
+		} else {
+			locksAfterSafePoint = append(locksAfterSafePoint, l)
+		}
+	}
+
+	logutil.BgLogger().Info("BatchResolveLegacyLocks",
+		zap.Uint64("safepoint", safepoint),
+		zap.Uint64("low-resolution-ts", lowResolutionTS),
+		zap.Int("before-safepoint-count", len(locksBeforeSafePoint)),
+		zap.Int("after-safepoint-count", len(locksAfterSafePoint)))
+
+	var (
+		ok  bool
+		err error
+	)
+	if w.testingKnobs.batchResolveLocks != nil {
+		ok, err = w.testingKnobs.batchResolveLocks(locksBeforeSafePoint, loc, safepoint)
+	} else {
+		ok, err = w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locksBeforeSafePoint, loc)
+	}
+	if err != nil || !ok {
+		return ok, err
+	}
+
+	if w.testingKnobs.resolveLocks != nil {
+		_, err = w.testingKnobs.resolveLocks(locksAfterSafePoint, lowResolutionTS)
+	} else {
+		_, err = w.tikvStore.GetLockResolver().ResolveLocks(bo, 0, locksAfterSafePoint)
+	}
+	return err == nil, errors.Trace(err)
 }
 
 func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, lowResolveTS uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
@@ -1149,15 +1205,7 @@ retryScanAndResolve:
 		}
 		locForResolve := loc
 		for {
-			var (
-				ok   bool
-				err1 error
-			)
-			if w.testingKnobs.resolveLocks != nil {
-				ok, err1 = w.testingKnobs.resolveLocks(locks, locForResolve.Region, safePoint, lowResolveTS)
-			} else {
-				ok, err1 = w.tikvStore.GetLockResolver().TryBatchResolveLocks(bo, locks, locForResolve.Region, safePoint, lowResolveTS)
-			}
+			ok, err1 := w.batchResolveExpiredLocks(bo, locks, locForResolve.Region, safePoint, lowResolveTS)
 			if err1 != nil {
 				return stat, errors.Trace(err1)
 			}
@@ -1529,7 +1577,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*txnlo
 			}
 		}
 
-		ok, err := w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locksInRegion, loc.Region, math.MaxUint64)
+		ok, err := w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locksInRegion, loc.Region)
 		if err != nil {
 			return errors.Trace(err)
 		}
