@@ -300,7 +300,7 @@ func (p *baseTxnContextProvider) GetForUpdateSnapshot() (kv.Snapshot, error) {
 	return p.getSnapshotByTS(ts)
 }
 
-// getSnapshotByTS get snapshot from store according to the snapshotTS and set the relevant
+// getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related
 // options before return
 func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot, error) {
 	txn, err := p.sctx.Txn(false)
@@ -320,7 +320,6 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
-	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
 
 	return snapshot, nil
 }

@@ -20,8 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -73,6 +71,19 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		b.err = err
 		return nil
 	}
+
+	err = setSnapshotOptions(b, e, e.snapshot)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
+		}
+	})
 
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -166,31 +177,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
-	if e.runtimeStats != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
-	}
-	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	if readReplicaType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
-		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: e.readReplicaScope,
-			},
-		})
-	}
-	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
-		assertScope := val.(string)
-		if readReplicaType.IsClosestRead() && assertScope != e.readReplicaScope {
-			panic("point get replica option fail")
-		}
-	})
-	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+
 	return nil
 }
 

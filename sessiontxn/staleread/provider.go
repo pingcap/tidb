@@ -149,7 +149,8 @@ func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) erro
 	return nil
 }
 
-// GetReadSnapshot get snapshot with read ts
+// GetReadSnapshot get snapshot with read ts and set the transaction related options
+// before return
 func (p *StalenessTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
@@ -167,7 +168,6 @@ func (p *StalenessTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
 	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
-	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
 	snapshot.SetOption(kv.IsStalenessReadOnly, true)
 
 	return snapshot, nil
