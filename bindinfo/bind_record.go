@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 )
@@ -58,11 +58,20 @@ const (
 
 // Binding stores the basic bind hint info.
 type Binding struct {
-	sessionstates.BindingState
+	BindSQL string
+	// Status represents the status of the binding. It can only be one of the following values:
+	// 1. deleted: BindRecord is deleted, can not be used anymore.
+	// 2. enabled, using: Binding is in the normal active mode.
+	Status     string
+	CreateTime types.Time
+	UpdateTime types.Time
+	Source     string
+	Charset    string
+	Collation  string
 	// Hint is the parsed hints, it is used to bind hints to stmt node.
-	Hint *hint.HintsSet
+	Hint *hint.HintsSet `json:"-"`
 	// ID is the string form of Hint. It would be non-empty only when the status is `Using` or `PendingVerify`.
-	ID string
+	ID string `json:"-"`
 }
 
 func (b *Binding) isSame(rb *Binding) bool {

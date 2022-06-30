@@ -55,27 +55,6 @@ type LastDDLInfo struct {
 	SeqNum uint64 `json:"seq_num"`
 }
 
-// BindRecordState represents the information of a SQL binding record.
-type BindRecordState struct {
-	OriginalSQL string         `json:"original_sql"`
-	Db          string         `json:"db,omitempty"`
-	Bindings    []BindingState `json:"bindings"`
-}
-
-// BindingState represents the information of a binding.
-type BindingState struct {
-	BindSQL string `json:"bind_sql"`
-	// Status represents the status of the binding. It can only be one of the following values:
-	// 1. deleted: BindRecord is deleted, can not be used anymore.
-	// 2. enabled, using: Binding is in the normal active mode.
-	Status     string     `json:"status"`
-	CreateTime types.Time `json:"create_time"`
-	UpdateTime types.Time `json:"update_time"`
-	Source     string     `json:"source"`
-	Charset    string     `json:"charset"`
-	Collation  string     `json:"collation"`
-}
-
 // SessionStates contains all the states in the session that should be migrated when the session
 // is migrated to another server. It is shown by `show session_states` and recovered by `set session_states`.
 type SessionStates struct {
@@ -97,5 +76,6 @@ type SessionStates struct {
 	LastAffectedRows     int64                        `json:"affected-rows,omitempty"`
 	LastInsertID         uint64                       `json:"last-insert-id,omitempty"`
 	Warnings             []stmtctx.SQLWarn            `json:"warnings,omitempty"`
-	Bindings             []*BindRecordState           `json:"bindings,omitempty"`
+	// Define it as string to avoid cycle import.
+	Bindings string `json:"bindings,omitempty"`
 }

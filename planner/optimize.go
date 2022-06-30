@@ -38,7 +38,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -472,13 +471,11 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	}
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	binding := bindinfo.Binding{
-		BindingState: sessionstates.BindingState{
-			BindSQL:   bindSQL,
-			Status:    bindinfo.PendingVerify,
-			Charset:   charset,
-			Collation: collation,
-			Source:    bindinfo.Evolve,
-		},
+		BindSQL:   bindSQL,
+		Status:    bindinfo.PendingVerify,
+		Charset:   charset,
+		Collation: collation,
+		Source:    bindinfo.Evolve,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

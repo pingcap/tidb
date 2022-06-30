@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -111,38 +113,27 @@ func (h *SessionHandle) EncodeSessionStates(ctx context.Context, sctx sessionctx
 	if len(bindRecords) == 0 {
 		return nil
 	}
-	clonedBindRecords := make([]*sessionstates.BindRecordState, 0, len(bindRecords))
-	for _, bindRecord := range bindRecords {
-		clonedBindings := make([]sessionstates.BindingState, 0, len(bindRecord.Bindings))
-		for _, binding := range bindRecord.Bindings {
-			clonedBindings = append(clonedBindings, binding.BindingState)
-		}
-		clonedBindRecords = append(clonedBindRecords, &sessionstates.BindRecordState{
-			OriginalSQL: bindRecord.OriginalSQL,
-			Db:          bindRecord.Db,
-			Bindings:    clonedBindings,
-		})
+	bytes, err := json.Marshal(bindRecords)
+	if err != nil {
+		return err
 	}
-	sessionStates.Bindings = clonedBindRecords
+	sessionStates.Bindings = string(hack.String(bytes))
 	return nil
 }
 
 func (h *SessionHandle) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
-	for _, clonedBindRecords := range sessionStates.Bindings {
-		for _, clonedBinding := range clonedBindRecords.Bindings {
-			binding := Binding{
-				BindingState: clonedBinding,
-			}
-			record := &BindRecord{
-				OriginalSQL: clonedBindRecords.OriginalSQL,
-				Db:          clonedBindRecords.Db,
-				Bindings:    []Binding{binding},
-			}
-			if err := record.prepareHints(sctx); err != nil {
-				return err
-			}
-			h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record)
+	if len(sessionStates.Bindings) == 0 {
+		return nil
+	}
+	var records []*BindRecord
+	if err := json.Unmarshal(hack.Slice(sessionStates.Bindings), &records); err != nil {
+		return err
+	}
+	for _, record := range records {
+		if err := record.prepareHints(sctx); err != nil {
+			return err
 		}
+		h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL).String(), record)
 	}
 	return nil
 }

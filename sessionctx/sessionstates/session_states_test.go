@@ -1071,6 +1071,7 @@ func TestSQLBinding(t *testing.T) {
 			// drop table
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
+				tk.MustExec("drop table test.t1")
 				return nil
 			},
 			restoreErr: errno.ErrNoSuchTable,
@@ -1100,6 +1101,23 @@ func TestSQLBinding(t *testing.T) {
 			restoreErr: errno.ErrKeyDoesNotExist,
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("alter table test.t1 add index name(name)")
+			},
+		},
+		{
+			// both global and session bindings
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create global binding for select * from test.t1 using select * from test.t1 use index(primary)")
+				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
+				rows := tk.MustQuery("show bindings").Rows()
+				require.Equal(t, 1, len(rows))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show bindings").Check(param.([][]any))
+				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+			},
+			cleanFunc: func(tk *testkit.TestKit) {
+				tk.MustExec("drop global binding for select * from test.t1")
 			},
 		},
 	}
