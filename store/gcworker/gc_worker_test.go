@@ -37,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
@@ -121,7 +121,13 @@ func createGCWorkerSuiteWithStoreType(t *testing.T, storeType mockstore.StoreTyp
 	}
 
 	s.oracle = &oracles.MockOracle{}
-	s.store, s.dom, clean = testkit.CreateMockStoreWithOracle(t, s.oracle, opts...)
+	store, err := mockstore.NewMockStore(opts...)
+	require.NoError(t, err)
+	store.GetOracle().Close()
+	store.(tikv.Storage).SetOracle(s.oracle)
+	dom, clean := bootstrap(t, store, 0)
+	s.store, s.dom = store, dom
+
 	s.tikvStore = s.store.(tikv.Storage)
 
 	gcWorker, err := NewGCWorker(s.store, s.pdClient)
@@ -1773,4 +1779,20 @@ func TestGCWithPendingTxn(t *testing.T) {
 
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
+}
+
+func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain, func()) {
+	session.SetSchemaLease(lease)
+	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	dom.SetStatsUpdating(true)
+
+	clean := func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(t, err)
+	}
+	return dom, clean
 }
