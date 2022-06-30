@@ -21,6 +21,7 @@ a	b	c
 ?	?	?
 中文?中文	asdf?fdsa	字符集?字符集
 @@	@@	@@
+set @@sql_mode = default;
 drop table t;
 create table t(f set(0xD2BB, 0xC8FD), e enum(0xBAEC,0x6A59));
 show create table t;
