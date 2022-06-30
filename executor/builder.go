@@ -4661,6 +4661,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			},
 		})
 	}
+	setOptionForTopSQL(sessVars.StmtCtx, snapshot)
+
 	e.snapshot = snapshot
 
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {

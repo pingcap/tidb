@@ -91,14 +91,12 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 func (e *BatchPointGetExec) Open(context.Context) error {
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
-	stmtCtx := sessVars.StmtCtx
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
 	e.txn = txn
 
-	setOptionForTopSQL(stmtCtx, e.snapshot)
 	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
