@@ -5052,9 +5052,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	b.inUpdateStmt = true
 	b.isForUpdateRead = true
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain update t1 inner join") {
-		fmt.Println(1)
-	}
 
 	if update.With != nil {
 		l := len(b.outerCTEs)
