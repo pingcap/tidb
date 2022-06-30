@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -73,7 +74,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
-	err = provider.OnStmtStart(context.TODO())
+	err = provider.OnStmtStart(context.TODO(), nil)
 	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
 	// which leads GetStmtForUpdateTS to acquire the latest ts.
 	compareTS2 = getOracleTS(t, se)
@@ -110,7 +111,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
-	err = provider.OnStmtStart(context.TODO())
+	err = provider.OnStmtStart(context.TODO(), nil)
 	require.NoError(t, err)
 	// Unlike StmtRetry which uses forUpdateTS got in OnStmtErrorForNextAction, OnStmtStart will reset provider's forUpdateTS,
 	// which leads GetStmtForUpdateTS to acquire the latest ts.
@@ -152,7 +153,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	compareTS := getOracleTS(t, se)
 	// The read ts should be less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, compareTS, CurrentTS)
@@ -160,7 +161,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 
 	// The read ts should also be less than the compareTS in a new statement (after calling OnStmtStart)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
@@ -174,14 +175,14 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 
 	// The for update read ts should be larger than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	forUpdateTS, err := provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Greater(t, forUpdateTS, compareTS)
 
 	// But the read ts is still less than the compareTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	CurrentTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, CurrentTS, prevTS)
@@ -227,7 +228,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 	assertAfterActive := activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -240,7 +241,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 	assertAfterActive = activePessimisticRRAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -302,12 +303,12 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	}
 
 	// information schema and ts should equal to snapshot when tidb_snapshot is set
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseSnapshot()
 
 	// information schema and ts will restore when set tidb_snapshot to empty
 	tk.MustExec("set @@tidb_snapshot=''")
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseTxn()
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
@@ -328,7 +329,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "REPEATABLE-READ")
 			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider = assert.CheckAndGetProvider(t)
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
 			assertAfterUseSnapshot.Check(t)
 		}()
@@ -344,67 +345,96 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	tk.MustExec("insert into t values (1,1), (2,2)")
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk, true)
-	forUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
+	lastFetchedForUpdateTS := se.GetSessionVars().TxnCtx.GetForUpdateTS()
 	txnManager := sessiontxn.GetTxnManager(se)
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
-	stmt, err := parser.New().ParseOneStmt("delete from t where id = 1", "", "")
-	require.NoError(t, err)
-	compareTs := getOracleTS(t, se)
-	compiler := executor.Compiler{Ctx: se}
-	execStmt, err := compiler.Compile(context.TODO(), stmt)
-	require.NoError(t, err)
-	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
-	require.NoError(t, err)
-	ts, err := provider.GetStmtForUpdateTS()
-	require.NoError(t, err)
-	require.Greater(t, compareTs, ts)
-	require.Equal(t, ts, forUpdateTS)
+	type testStruct struct {
+		sql            string
+		shouldOptimize bool
+	}
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
-	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
-	require.NoError(t, err)
-	compiler = executor.Compiler{Ctx: se}
-	execStmt, err = compiler.Compile(context.TODO(), stmt)
-	require.NoError(t, err)
-	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
-	require.NoError(t, err)
-	ts, err = provider.GetStmtForUpdateTS()
-	require.NoError(t, err)
-	require.Equal(t, ts, forUpdateTS)
+	cases := []testStruct{
+		{
+			"delete from t where id = 1",
+			true,
+		},
+		{
+			"update t set v = v + 10 where id = 1",
+			true,
+		},
+		{
+			"select * from (select * from t where id = 1 for update) as t1 for update",
+			true,
+		},
+		{
+			"select * from t where id = 1 for update",
+			true,
+		},
+		{
+			"select * from t where id = 1 or id = 2 for update",
+			true,
+		},
+		{
+			"select * from t for update",
+			false,
+		},
+	}
 
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
-	stmt, err = parser.New().ParseOneStmt("select * from (select * from t where id = 1 for update) as t1 for update", "", "")
-	require.NoError(t, err)
-	compiler = executor.Compiler{Ctx: se}
-	execStmt, err = compiler.Compile(context.TODO(), stmt)
-	require.NoError(t, err)
-	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
-	require.NoError(t, err)
-	ts, err = provider.GetStmtForUpdateTS()
-	require.NoError(t, err)
-	require.Equal(t, ts, forUpdateTS)
+	var stmt ast.StmtNode
+	var err error
+	var execStmt *executor.ExecStmt
+	var compiler executor.Compiler
+	var ts, compareTS uint64
+	var action sessiontxn.StmtErrorAction
 
-	// Now, test for one that does not use the optimization
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
-	stmt, err = parser.New().ParseOneStmt("select * from t for update", "", "")
-	compareTs = getOracleTS(t, se)
-	require.NoError(t, err)
-	compiler = executor.Compiler{Ctx: se}
-	execStmt, err = compiler.Compile(context.TODO(), stmt)
-	require.NoError(t, err)
-	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
-	require.NoError(t, err)
-	ts, err = provider.GetStmtForUpdateTS()
-	require.NoError(t, err)
-	require.Greater(t, ts, compareTs)
+	for _, c := range cases {
+		compareTS = getOracleTS(t, se)
+
+		require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))
+		stmt, err = parser.New().ParseOneStmt(c.sql, "", "")
+		require.NoError(t, err)
+
+		err = provider.OnStmtStart(context.TODO(), nil)
+		require.NoError(t, err)
+
+		compiler = executor.Compiler{Ctx: se}
+		execStmt, err = compiler.Compile(context.TODO(), stmt)
+		require.NoError(t, err)
+
+		err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
+		require.NoError(t, err)
+
+		ts, err = provider.GetStmtForUpdateTS()
+		require.NoError(t, err)
+
+		if c.shouldOptimize {
+			require.Greater(t, compareTS, ts)
+			require.Equal(t, ts, lastFetchedForUpdateTS)
+		} else {
+			require.Greater(t, ts, compareTS)
+		}
+
+		// retry
+		if c.shouldOptimize {
+			action, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, kv.ErrWriteConflict)
+			require.NoError(t, err)
+			require.Equal(t, sessiontxn.StmtActionRetryReady, action)
+			err = provider.OnStmtRetry(context.TODO())
+			require.NoError(t, err)
+			ts, err = provider.GetStmtForUpdateTS()
+			require.NoError(t, err)
+			require.Greater(t, ts, compareTS)
+
+			lastFetchedForUpdateTS = ts
+		}
+	}
 
 	// Test use startTS after optimize when autocommit=0
 	activeAssert := activePessimisticRRAssert(t, tk.Session(), true)
 	provider = initializeRepeatableReadProvider(t, tk, false)
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("update t set v = v + 10 where id = 1", "", "")
 	require.NoError(t, err)
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), stmt))
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
 	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
@@ -415,19 +445,191 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	require.Equal(t, tk.Session().GetSessionVars().TxnCtx.StartTS, ts)
 
 	// Test still fetch for update ts after optimize when autocommit=0
-	compareTs = getOracleTS(t, se)
+	compareTS = getOracleTS(t, se)
 	activeAssert = activePessimisticRRAssert(t, tk.Session(), true)
 	provider = initializeRepeatableReadProvider(t, tk, false)
-	require.NoError(t, txnManager.OnStmtStart(context.TODO()))
 	stmt, err = parser.New().ParseOneStmt("select * from t", "", "")
 	require.NoError(t, err)
+	require.NoError(t, txnManager.OnStmtStart(context.TODO(), stmt))
 	execStmt, err = compiler.Compile(context.TODO(), stmt)
 	require.NoError(t, err)
 	err = txnManager.AdviseOptimizeWithPlan(execStmt.Plan)
 	require.NoError(t, err)
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
-	require.Greater(t, ts, compareTs)
+	require.Greater(t, ts, compareTS)
+}
+
+var errorsInInsert = []string{
+	"errWriteConflict",
+	"errDuplicateKey",
+}
+
+func TestConflictErrorInInsertInRR(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 2)")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	_, err := tk.Exec("insert into t values (1, 1), (2, 2)")
+	require.Error(t, err)
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	for _, name := range errorsInInsert {
+		require.Equal(t, records[name], 1)
+	}
+
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustQuery("select * from t where id = 1 for update").Check(testkit.Rows("1 11"))
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
+	tk.MustExec("commit")
+
+	// batch point get
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustQuery("select * from t where id = 1 or id = 2 for update").Check(testkit.Rows("1 21", "2 2"))
+	records, ok = se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
+	tk.MustExec("commit")
+
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+// Delete should get the latest ts and thus does not incur write conflict
+func TestConflictErrorInDeleteInRR(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (3, 1)")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("delete from t where v = 1")
+	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.False(t, ok)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 2"))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin pessimistic")
+	// However, if sub select in delete is point get, we will incur one write conflict
+	tk2.MustExec("update t set id = 1 where id = 2")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("delete from t where id = 1")
+
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
+	tk.MustQuery("select * from t for update").Check(testkit.Rows())
+
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+func TestConflictErrorInUpdateInRR(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustExec("update t set v = v + 10")
+	_, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.False(t, ok)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 21", "2 22"))
+	tk.MustExec("commit")
+
+	tk.MustExec("begin pessimistic")
+	// However, if the sub select plan is point get, we should incur one write conflict
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	tk.MustExec("update t set v = v + 10 where id = 1")
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
+	tk.MustQuery("select * from t for update").Check(testkit.Rows("1 41", "2 22"))
+
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
+}
+
+func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertPessimisticLockErr", "return"))
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	se.SetValue(sessiontxn.AssertLockErr, nil)
+	tk.MustQuery("select * from t where id=1 and v > 1 for update").Check(testkit.Rows("1 11"))
+	records, ok := se.Value(sessiontxn.AssertLockErr).(map[string]int)
+	require.True(t, ok)
+	require.Equal(t, records["errWriteConflict"], 1)
+
+	tk.MustExec("rollback")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
 func activePessimisticRRAssert(t *testing.T, sctx sessionctx.Context,

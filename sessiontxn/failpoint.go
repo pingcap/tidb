@@ -43,6 +43,10 @@ var BreakPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
 // Only for test
 var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 
+// AssertLockErr is used to record the lock errors we encountered
+// Only for test
+var AssertLockErr stringutil.StringerStr = "assertLockError"
+
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
 	records, ok := sctx.Value(AssertRecordsKey).(map[string]interface{})
@@ -91,6 +95,20 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 
 	if actual != expected {
 		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
+	}
+}
+
+// AddAssertEntranceForLockError is used only for test
+func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
+	records, ok := sctx.Value(AssertLockErr).(map[string]int)
+	if !ok {
+		records = make(map[string]int)
+		sctx.SetValue(AssertLockErr, records)
+	}
+	if v, ok := records[name]; ok {
+		records[name] = v + 1
+	} else {
+		records[name] = 1
 	}
 }
 
