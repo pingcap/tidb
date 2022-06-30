@@ -137,7 +137,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupTS, err = ParseTSString(backupTS)
+	cfg.BackupTS, err = ParseTSString(backupTS, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -528,7 +528,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 }
 
 // ParseTSString port from tidb setSnapshotTS.
-func ParseTSString(ts string) (uint64, error) {
+func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if len(ts) == 0 {
 		return 0, nil
 	}
@@ -539,6 +539,12 @@ func ParseTSString(ts string) (uint64, error) {
 	loc := time.Local
 	sc := &stmtctx.StatementContext{
 		TimeZone: loc,
+	}
+	if tzCheck {
+		tzIdx, _, _, _, _ := types.GetTimezone(ts)
+		if tzIdx < 0 {
+			return 0, errors.Errorf("must set timezone when using datetime format ts")
+		}
 	}
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
