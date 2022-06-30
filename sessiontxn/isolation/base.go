@@ -57,12 +57,11 @@ type baseTxnContextProvider struct {
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
-	p.ctx = ctx
-
 	if p.getStmtReadTSFunc == nil || p.getStmtForUpdateTSFunc == nil {
 		return errors.New("ts functions should not be nil")
 	}
 
+	p.ctx = ctx
 	sessVars := p.sctx.GetSessionVars()
 	activeNow := true
 	switch tp {
