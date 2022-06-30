@@ -350,17 +350,17 @@ func (d InMemoryDDL) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (
 	return nil
 }
 
-func (d InMemoryDDL) CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr, columnNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+func (d InMemoryDDL) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (d InMemoryDDL) DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr, ifExists bool) error {
+func (d InMemoryDDL) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (d InMemoryDDL) AlterTable(ctx context.Context, sctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error {
+func (d InMemoryDDL) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
@@ -369,12 +369,11 @@ func (d InMemoryDDL) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident)
 	return nil
 }
 
-func (d InMemoryDDL) RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error {
-	//TODO implement me
-	panic("implement me")
+func (d InMemoryDDL) checkRenameTablePair() error {
+
 }
 
-func (d InMemoryDDL) RenameTables(ctx sessionctx.Context, oldTableIdent, newTableIdent []ast.Ident, isAlterTable bool) error {
+func (d InMemoryDDL) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
