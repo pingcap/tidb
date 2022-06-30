@@ -28,13 +28,19 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 		sync.Mutex
 		metas map[string]*backuppb.Metadata
 	}{}
-	ms.writeback = map[string]*backuppb.Metadata{}
-	return stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+	ms.writeback = make(map[string]*backuppb.Metadata)
+	metadataMap.metas = make(map[string]*backuppb.Metadata)
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
 		metadataMap.Lock()
 		metadataMap.metas[path] = m
 		metadataMap.Unlock()
 		return nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ms.metadata = metadataMap.metas
+	return nil
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
