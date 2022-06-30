@@ -5663,17 +5663,13 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 
-	if is.TableExists(newIdent.Schema, newIdent.Name) {
-		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-	}
-
 	oldSchema, _ := is.SchemaByName(oldIdent.Schema)
 
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing
 		return nil, 0, nil
 	}
-	//V iew can be renamed only in the same schema. Compatible with mysql
+	// View can be renamed only in the same schema. Compatible with mysql
 	if is.TableIsView(oldIdent.Schema, oldIdent.Name) {
 		if oldIdent.Schema != newIdent.Schema {
 			return nil, 0, infoschema.ErrForbidSchemaChange.GenWithStackByArgs(oldIdent.Schema, newIdent.Schema)
@@ -5694,10 +5690,6 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 	}
 	oldTbl, _ := is.TableByName(oldIdent.Schema, oldIdent.Name)
 	return []*model.DBInfo{oldSchema, newSchema}, oldTbl.Meta().ID, nil
-}
-
-func getIdentKey(ident ast.Ident) string {
-	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
 func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
