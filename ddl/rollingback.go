@@ -207,38 +207,6 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, nil
 }
 
-func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfos, _, idxInfos, err := checkDropColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	for _, indexInfo := range idxInfos {
-		switch indexInfo.State {
-		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
-			// We can not rollback now, so just continue to drop index.
-			// In function isJobRollbackable will let job rollback when state is StateNone.
-			// When there is no index related to the drop columns job it is OK, but when there has indices, we should
-			// make sure the job is not rollback.
-			job.State = model.JobStateRunning
-			return ver, nil
-		case model.StatePublic:
-		default:
-			return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-		}
-	}
-
-	// StatePublic means when the job is not running yet.
-	if colInfos[0].State == model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-	// In the state of drop columns `write only -> delete only -> reorganization`,
-	// We can not rollback now, so just continue to drop columns.
-	job.State = model.JobStateRunning
-	return ver, nil
-}
-
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	_, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
