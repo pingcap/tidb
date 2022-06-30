@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"net/http"
 	"sort"
 	"strings"
@@ -1252,38 +1253,24 @@ func getGlobalResolvedTS(
 	ctx context.Context,
 	s storage.ExternalStorage,
 ) (uint64, error) {
-	storeMap := make(map[int64]uint64)
-
-	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
-	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
-		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
-			m := &backuppb.Metadata{}
-			b, err := s.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = m.Unmarshal(b)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-				storeMap[m.StoreId] = m.ResolvedTs
-			}
+	storeMap := sync.Map{}
+	err := FastUnmarshalMetaData(ctx, s, func(m *backuppb.Metadata) error {
+		if resolveTS, exist := storeMap.Load(m.StoreId); !exist || resolveTS.(uint64) < m.ResolvedTs {
+			storeMap.Store(m.StoreId, m.ResolvedTs)
 		}
 		return nil
 	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	var globalCheckpointTS uint64 = 0
-	for _, resolveTS := range storeMap {
+	storeMap.Range(func(key, value any) bool {
+		resolveTS := value.(uint64)
 		if resolveTS < globalCheckpointTS || globalCheckpointTS == 0 {
 			globalCheckpointTS = resolveTS
 		}
-	}
-
+		return true
+	})
 	return globalCheckpointTS, nil
 }
 
@@ -1461,6 +1448,39 @@ func ShiftTS(startTS uint64) uint64 {
 	} else {
 		return oracle.ComposeTS(shiftPhysical, logical)
 	}
+}
+
+// FastUnmarshalMetaData used a 128 worker pool to speed up
+// read metadata content from external_storage.
+func FastUnmarshalMetaData(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	fn func (*backuppb.Metadata) error,
+) error {
+	pool := utils.NewWorkerPool(128, "metadata")
+	eg, ectx := errgroup.WithContext(ctx)
+	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
+	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
+		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
+			b, err := s.ReadFile(ectx, path)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			pool.ApplyOnErrorGroup(eg, func() error {
+				m := &backuppb.Metadata{}
+				err := m.Unmarshal(b)
+				if err != nil {
+					return err
+				}
+				return fn(m)
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return eg.Wait()
 }
 
 func buildPauseSafePointName(taskName string) string {
