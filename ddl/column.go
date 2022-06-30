@@ -573,9 +573,21 @@ func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.Colu
 }
 
 func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, colInfo, idxInfos, err := checkDropColumn(t, job)
+	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(t, job)
 	if err != nil {
+		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
+			// Convert the "not exists" error to a warning.
+			job.Warning = toTError(err)
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			return ver, nil
+		}
 		return ver, errors.Trace(err)
+	}
+	if job.MultiSchemaInfo != nil && !job.IsRollingback() && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		job.SchemaState = colInfo.State
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, false)
 	}
 
 	originalState := colInfo.State
@@ -619,6 +631,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfo.State)
@@ -641,33 +654,34 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	return ver, errors.Trace(err)
 }
 
-func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, error) {
+func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 
 	var colName model.CIStr
+	var ifExists bool
 	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
 	var indexIds []int64
-	err = job.DecodeArgs(&colName, &indexIds)
+	err = job.DecodeArgs(&colName, &ifExists, &indexIds)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		return nil, nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 	if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
-	return tblInfo, colInfo, idxInfos, nil
+	return tblInfo, colInfo, idxInfos, false, nil
 }
 
 func onSetDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

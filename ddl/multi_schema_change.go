@@ -183,6 +183,9 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
 		}
+	case model.ActionDropColumn:
+		colName := job.Args[0].(model.CIStr)
+		info.DropColumns = append(info.DropColumns, colName)
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
