@@ -22,6 +22,23 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// SessionStateType is the type of session states.
+type SessionStateType int
+
+// These enums represents the types of session state handlers.
+const (
+	// StatePrepareStmt represents prepared statements.
+	StatePrepareStmt SessionStateType = iota
+)
+
+// PreparedStmtInfo contains the information about prepared statements, both text and binary protocols.
+type PreparedStmtInfo struct {
+	Name       string `json:"name,omitempty"`
+	StmtText   string `json:"text"`
+	StmtDB     string `json:"db,omitempty"`
+	ParamTypes []byte `json:"types,omitempty"`
+}
+
 // QueryInfo represents the information of last executed query. It's used to expose information for test purpose.
 type QueryInfo struct {
 	TxnScope    string `json:"txn_scope"`
@@ -42,6 +59,7 @@ type SessionStates struct {
 	UserVars             map[string]*types.Datum      `json:"user-var-values,omitempty"`
 	UserVarTypes         map[string]*ptypes.FieldType `json:"user-var-types,omitempty"`
 	SystemVars           map[string]string            `json:"sys-vars,omitempty"`
+	PreparedStmts        map[uint32]*PreparedStmtInfo `json:"prepared-stmts,omitempty"`
 	PreparedStmtID       uint32                       `json:"prepared-stmt-id,omitempty"`
 	Status               uint16                       `json:"status,omitempty"`
 	CurrentDB            string                       `json:"current-db,omitempty"`

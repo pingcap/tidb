@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -140,6 +141,14 @@ func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePo
 		return sessiontxn.NoIdea()
 	}
 	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
+}
+
+// ActivateTxn decides to activate txn according to the parameter `active`
+func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
+	if m.ctxProvider == nil {
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
+	}
+	return m.ctxProvider.ActivateTxn()
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry
