@@ -1383,3 +1383,12 @@ func TestIssue31954(t *testing.T) {
 	tk.MustQuery("select (select v from t1 as of timestamp @a where id=1) as v").
 		Check(testkit.Rows("10"))
 }
+
+func TestIssue35686(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	// This query should not panic
+	tk.MustQuery("select * from information_schema.ddl_jobs as of timestamp now()")
+}

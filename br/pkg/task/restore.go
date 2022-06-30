@@ -182,14 +182,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	tsString, err = flags.GetString(FlagStreamRestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
