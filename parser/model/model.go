@@ -590,7 +590,7 @@ func (t TiFlashMode) String() string {
 	case TiFlashModeFast:
 		return "FAST"
 	}
-	return "NORMAL"
+	return ""
 }
 
 // TiFlashReplicaInfo means the flash replica info.
