@@ -21,7 +21,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -40,6 +43,138 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
 )
+
+type Issue33699CheckType struct {
+	name              string
+	defVal            string
+	setVal            string
+	isSessionVariable bool
+}
+
+func (c *Issue33699CheckType) toSetSessionVar() string {
+	if c.isSessionVariable {
+		return fmt.Sprintf("set session %s=%s", c.name, c.setVal)
+	}
+	return fmt.Sprintf("set @%s=%s", c.name, c.setVal)
+}
+
+func (c *Issue33699CheckType) toGetSessionVar() string {
+	if c.isSessionVariable {
+		return fmt.Sprintf("select @@session.%s", c.name)
+	}
+	return fmt.Sprintf("select @%s", c.name)
+}
+
+func TestIssue33699(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	var outBuffer bytes.Buffer
+	tidbdrv := NewTiDBDriver(store)
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+	cfg.Status.ReportStatus = false
+	server, err := NewServer(cfg, tidbdrv)
+	require.NoError(t, err)
+	defer server.Close()
+
+	cc := &clientConn{
+		connectionID: 1,
+		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
+		server:       server,
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(&outBuffer),
+		},
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	ctx := &TiDBContext{Session: tk.Session()}
+	cc.setCtx(ctx)
+
+	// change user.
+	doChangeUser := func() {
+		userData := append([]byte("root"), 0x0, 0x0)
+		userData = append(userData, []byte("test")...)
+		userData = append(userData, 0x0)
+		changeUserReq := dispatchInput{
+			com: mysql.ComChangeUser,
+			in:  userData,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		}
+		inBytes := append([]byte{changeUserReq.com}, changeUserReq.in...)
+		err = cc.dispatch(context.Background(), inBytes)
+		require.Equal(t, changeUserReq.err, err)
+		if err == nil {
+			err = cc.flush(context.TODO())
+			require.NoError(t, err)
+			require.Equal(t, changeUserReq.out, outBuffer.Bytes())
+		} else {
+			_ = cc.flush(context.TODO())
+		}
+		outBuffer.Reset()
+	}
+	// check variable.
+	checks := []Issue33699CheckType{
+		{ // self define.
+			"a",
+			"<nil>",
+			"1",
+			false,
+		},
+		{ // session variable
+			"net_read_timeout",
+			"30",
+			"1234",
+			true,
+		},
+		{
+			"net_write_timeout",
+			"60",
+			"1234",
+			true,
+		},
+	}
+
+	// default;
+	for _, ck := range checks {
+		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.defVal))
+	}
+	// set;
+	for _, ck := range checks {
+		tk.MustExec(ck.toSetSessionVar())
+	}
+	// check after set.
+	for _, ck := range checks {
+		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.setVal))
+	}
+	// check for issue-33892: maybe trigger panic when ChangeUser before fix.
+	var stop uint32
+	go func(stop *uint32) {
+		for {
+			if atomic.LoadUint32(stop) == 1 {
+				break
+			}
+			cc.getCtx().ShowProcess()
+		}
+	}(&stop)
+	time.Sleep(time.Millisecond)
+	doChangeUser()
+	atomic.StoreUint32(&stop, 1)
+	time.Sleep(time.Millisecond)
+	require.NotEqual(t, ctx, cc.getCtx())
+	require.NotEqual(t, ctx.Session, cc.ctx.Session)
+	// new session,so values is defaults;
+	tk.SetSession(cc.ctx.Session) // set new session.
+	for _, ck := range checks {
+		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.defVal))
+	}
+}
 
 func TestMalformHandshakeHeader(t *testing.T) {
 	data := []byte{0x00}
@@ -493,9 +628,9 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		peerHost:   "localhost",
 		alloc:      arena.NewAllocator(512),
 		chunkAlloc: chunk.NewAllocator(),
-		ctx:        tc,
 		capability: capability,
 	}
+	cc.setCtx(tc)
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
@@ -526,8 +661,8 @@ func TestGetSessionVarsWaitTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		ctx: tc,
 	}
+	cc.setCtx(tc)
 	require.Equal(t, uint64(variable.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
 }
 
@@ -566,14 +701,15 @@ func TestConnExecutionTimeout(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		ctx:        tc,
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
 	}
+	cc.setCtx(tc)
 	srv := &Server{
 		clients: map[uint64]*clientConn{
 			connID: cc,
 		},
+		dom: dom,
 	}
 	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
@@ -627,7 +763,8 @@ func TestShutDown(t *testing.T) {
 	cc := &clientConn{}
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	cc.ctx = &TiDBContext{Session: se}
+	tc := &TiDBContext{Session: se}
+	cc.setCtx(tc)
 	// set killed flag
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
@@ -650,8 +787,8 @@ func TestShutdownOrNotify(t *testing.T) {
 			capability: defaultCapability,
 		},
 		status: connStatusWaitShutdown,
-		ctx:    tc,
 	}
+	cc.setCtx(tc)
 	require.False(t, cc.ShutdownOrNotify())
 	cc.status = connStatusReading
 	require.True(t, cc.ShutdownOrNotify())
@@ -677,7 +814,7 @@ func TestPrefetchPointKeys(t *testing.T) {
 		},
 	}
 	tk := testkit.NewTestKit(t, store)
-	cc.ctx = &TiDBContext{Session: tk.Session()}
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("use test")
@@ -740,7 +877,7 @@ func TestTiFlashFallback(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
@@ -858,7 +995,7 @@ func TestShowErrors(t *testing.T) {
 	}
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
-	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	err := cc.handleQuery(ctx, "create database if not exists test;")
 	require.NoError(t, err)
@@ -890,8 +1027,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		tk.MustExec("DROP USER unativepassword")
 	}()
 
-	// 5.5, 5.6 or 5.7 client trying to authenticate with mysql_native_password, w/o password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	// 5.7 or newer client trying to authenticate with mysql_native_password
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
@@ -910,8 +1046,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, resp.Auth, []byte(mysql.AuthNativePassword))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
@@ -1122,7 +1256,7 @@ func TestAuthPlugin2(t *testing.T) {
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
-	cc.ctx = tc
+	cc.setCtx(tc)
 
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1135,4 +1269,63 @@ func TestAuthPlugin2(t *testing.T) {
 	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
 
+}
+
+func TestMaxAllowedPacket(t *testing.T) {
+	// Test cases from issue 31422: https://github.com/pingcap/tidb/issues/31422
+	// The string "SELECT length('') as len;" has 25 chars,
+	// so if the string inside '' has a length of 999, the total query reaches the max allowed packet size.
+
+	const maxAllowedPacket = 1024
+	var (
+		inBuffer  bytes.Buffer
+		readBytes []byte
+	)
+
+	// The length of total payload is (25 + 999 = 1024).
+	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
+	_, err := inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc := newBufferedReadConn(&bytesConn{inBuffer})
+	pkt := newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	readBytes, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)), string(readBytes))
+	require.Equal(t, uint8(1), pkt.sequence)
+
+	// The length of total payload is (25 + 1000 = 1025).
+	inBuffer.Reset()
+	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
+	_, err = inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	pkt = newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	_, err = pkt.readPacket()
+	require.Error(t, err)
+
+	// The length of total payload is (25 + 488 = 513).
+	// Two separate packets would NOT exceed the limitation of maxAllowedPacket.
+	inBuffer.Reset()
+	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)))...)
+	_, err = inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	pkt = newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	readBytes, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)), string(readBytes))
+	require.Equal(t, uint8(1), pkt.sequence)
+	inBuffer.Reset()
+	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)))...)
+	_, err = inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	pkt.setBufferedReadConn(brc)
+	readBytes, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)), string(readBytes))
+	require.Equal(t, uint8(2), pkt.sequence)
 }

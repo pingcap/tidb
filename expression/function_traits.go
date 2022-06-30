@@ -49,6 +49,7 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.NextVal:   {},
 	ast.LastVal:   {},
 	ast.SetVal:    {},
+	ast.AnyValue:  {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -225,13 +226,9 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.AnyValue:    {},
 }
 
-// some functions like "get_lock" and "release_lock" currently do NOT have
-// right implementations, but may have noop ones(like with any inputs, always return 1)
+// some functions do NOT have right implementations, but may have noop ones(like with any inputs, always return 1)
 // if apps really need these "funcs" to run, we offer sys var(tidb_enable_noop_functions) to enable noop usage
-var noopFuncs = map[string]struct{}{
-	ast.GetLock:     {},
-	ast.ReleaseLock: {},
-}
+var noopFuncs = map[string]struct{}{}
 
 // booleanFunctions stores boolean functions
 var booleanFunctions = map[string]struct{}{

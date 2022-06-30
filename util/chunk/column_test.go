@@ -559,7 +559,7 @@ func TestPreAllocInt64(t *testing.T) {
 
 func TestPreAllocUint64(t *testing.T) {
 	tll := types.NewFieldType(mysql.TypeLonglong)
-	tll.Flag |= mysql.UnsignedFlag
+	tll.AddFlag(mysql.UnsignedFlag)
 	col := NewColumn(tll, 128)
 	col.ResizeUint64(256, true)
 	u64s := col.Uint64s()

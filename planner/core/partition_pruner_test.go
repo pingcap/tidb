@@ -169,7 +169,11 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 				partitions = append(partitions, strings.Split(parts, ",")...)
 			}
 		}
-		return strings.Join(partitions, ",")
+		out := strings.Join(partitions, ",")
+		if out == "pNull,pAAAA,pCCC,pShrimpsandwich,paaa,pSushi,pMax" {
+			out = "all"
+		}
+		return out
 	}
 	checkColumnStringPruningTests := func(tests []testStruct) {
 		modes := []string{"dynamic", "static"}
@@ -177,7 +181,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 			tk.MustExec(`set @@tidb_partition_prune_mode = '` + mode + `'`)
 			for _, test := range tests {
 				explainResult := tk.MustQuery("explain format = 'brief' " + test.sql)
-				partitions := strings.ToLower(extractPartitions(explainResult))
+				partitions := extractPartitions(explainResult)
 				require.Equal(t, test.partitions, partitions, "Mode: %s sql: %s", mode, test.sql)
 				tk.MustQuery(test.sql).Sort().Check(testkit.Rows(test.rows...))
 			}
@@ -193,20 +197,21 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		`partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa")`)
 	tests := []testStruct{
-		// Lower case partition names due to issue#32719
-		{sql: `select * from t where a IS NULL`, partitions: "pnull", rows: []string{"<nil>"}},
-		{sql: `select * from t where a = 'AA'`, partitions: "paaaa", rows: []string{"AA"}},
-		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found! #32749
+		{sql: `select * from t where a IS NULL`, partitions: "pNull", rows: []string{"<nil>"}},
+		{sql: `select * from t where a = 'AA'`, partitions: "pAAAA", rows: []string{"AA"}},
+		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "all", rows: []string{"AA", "aa"}},
 		{sql: `select * from t where a = 'aa'`, partitions: "paaa", rows: []string{"aa"}},
-		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "paaaa", rows: []string{"AA"}}, // Notice that the it not uses _bin collation for partition => 'aa' not found! #32749
-		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA"}},
-		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
+		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "all", rows: []string{"AA", "aa"}},
+		{sql: `select * from t where a collate utf8mb4_general_ci = 'aa'`, partitions: "all", rows: []string{"AA", "aa"}},
+		{sql: `select * from t where a = 'AAA'`, partitions: "pAAAA", rows: []string{"AAA"}},
+		{sql: `select * from t where a = 'AB'`, partitions: "pCCC", rows: []string{}},
 		{sql: `select * from t where a = 'aB'`, partitions: "paaa", rows: []string{}},
-		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
-		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
-		{sql: `select * from t where a in ('AAA', 'aa')`, partitions: "paaaa,paaa", rows: []string{"AAA", "aa"}},
-		{sql: `select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa')`, partitions: "paaaa,paaa", rows: []string{"AA", "AAA", "aa"}}, // aaa missing due to #32749
-		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci)`, partitions: "paaaa", rows: []string{"AA", "AAA"}},            // aa, aaa missing due to #32749
+		{sql: `select * from t where a = '🍣'`, partitions: "pSushi", rows: []string{}},
+		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pShrimpsandwich,pSushi,pMax", rows: []string{"Räkmacka", "🍣 is life"}},
+		{sql: `select * from t where a in ('AAA', 'aa')`, partitions: "pAAAA,paaa", rows: []string{"AAA", "aa"}},
+		{sql: `select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa')`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci)`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa')`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
 	}
 	checkColumnStringPruningTests(tests)
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)
@@ -225,19 +230,18 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 	tk.MustExec(`insert into t values (NULL), ("a"), ("Räkmacka"), ("🍣 is life"), ("🍺 after work?"), ("🍺🍺🍺🍺🍺 for oktoberfest"),("AA"),("aa"),("AAA"),("aaa")`)
 
 	tests = []testStruct{
-		// Lower case partition names due to issue#32719
-		{sql: `select * from t where a IS NULL`, partitions: "pnull", rows: []string{"<nil>"}},
+		{sql: `select * from t where a IS NULL`, partitions: "pNull", rows: []string{"<nil>"}},
 		{sql: `select * from t where a = 'AA'`, partitions: "paaa", rows: []string{"AA", "aa"}},
 		{sql: `select * from t where a = 'AA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{"AA"}},
-		{sql: `select * from t where a = 'AAA'`, partitions: "paaaa", rows: []string{"AAA", "aaa"}},
-		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "paaa", rows: []string{}}, // Notice that the it uses _bin collation for partition => not found! #32749
-		{sql: `select * from t where a = 'AB'`, partitions: "pccc", rows: []string{}},
-		{sql: `select * from t where a = 'aB'`, partitions: "pccc", rows: []string{}},
-		{sql: `select * from t where a = '🍣'`, partitions: "psushi", rows: []string{}},
-		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pshrimpsandwich,psushi,pmax", rows: []string{"Räkmacka", "🍣 is life"}},
-		{sql: `select * from t where a in ('AA', 'aaa')`, partitions: "paaa,paaaa", rows: []string{"AA", "AAA", "aa", "aaa"}},
-		{sql: `select * from t where a in ('AAA' collate utf8mb4_bin, 'aa')`, partitions: "paaa", rows: []string{"aa"}},          // AAA missing due to #32749, why is AA missing?
-		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_bin)`, partitions: "paaaa,psushi", rows: []string{"AAA"}}, // aa, aaa missing due to #32749 also all missing paaa
+		{sql: `select * from t where a = 'AAA'`, partitions: "pAAAA", rows: []string{"AAA", "aaa"}},
+		{sql: `select * from t where a = 'AAA' collate utf8mb4_bin`, partitions: "pAAAA", rows: []string{"AAA"}},
+		{sql: `select * from t where a = 'AB'`, partitions: "pCCC", rows: []string{}},
+		{sql: `select * from t where a = 'aB'`, partitions: "pCCC", rows: []string{}},
+		{sql: `select * from t where a = '🍣'`, partitions: "pSushi", rows: []string{}},
+		{sql: `select * from t where a in ('🍣 is life', "Räkmacka", "🍺🍺🍺🍺  after work?")`, partitions: "pShrimpsandwich,pSushi,pMax", rows: []string{"Räkmacka", "🍣 is life"}},
+		{sql: `select * from t where a in ('AA', 'aaa')`, partitions: "paaa,pAAAA", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a in ('AAA' collate utf8mb4_bin, 'aa')`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
+		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_bin)`, partitions: "paaa,pAAAA", rows: []string{"AAA", "aa"}},
 	}
 
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_bin`)
@@ -356,6 +360,9 @@ func TestListColumnsPartitionPruner(t *testing.T) {
 	tk2.MustExec("create table t2 (id int, a int, b int)")
 	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
 	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk1.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	var input []struct {
 		SQL    string
@@ -697,6 +704,22 @@ func TestHashPartitionPruning(t *testing.T) {
 	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }
 
+func TestIssue32815(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)")
+	tk.MustExec("insert into t values (1, 1),(2, 2),(3, 3)")
+	tk.MustQuery("explain select * from t where a IN (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_1 2.00 root table:t, partition:p1,P2 handle:[1 2], keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t where a IN (1, 2, 1)").Check(testkit.Rows(
+		"Batch_Point_Get_1 3.00 root table:t, partition:p1,P2 handle:[1 2 1], keep order:false, desc:false"))
+}
+
 func TestIssue32007(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -717,4 +740,23 @@ func TestIssue32007(t *testing.T) {
 	tk.MustQuery("select * from t3 where t3.a <> ALL (select t1.a from t1 partition (p0)) order by t3.a").Sort().Check(testkit.Rows("10 10", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "17 17", "18 18", "19 19", "20 20", "21 21", "22 22", "23 23", "5 5", "6 6", "7 7", "8 8", "9 9"))
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustQuery("select * from t3 where t3.a <> ALL (select t1.a from t1 partition (p0)) order by t3.a").Sort().Check(testkit.Rows("10 10", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "17 17", "18 18", "19 19", "20 20", "21 21", "22 22", "23 23", "5 5", "6 6", "7 7", "8 8", "9 9"))
+}
+
+func TestIssue33231(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue33231")
+	tk.MustExec("use issue33231")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key (c_int, c_str) clustered, key(c_int) ) partition by hash (c_int) partitions 4;")
+	tk.MustExec("create table t2 like t1;")
+	tk.MustExec("insert into t1 values(6, 'beautiful curran');")
+	tk.MustExec("insert into t1 values(7, 'epic kalam');")
+	tk.MustExec("insert into t1 values(7, 'affectionate curie');")
+	tk.MustExec("insert into t2 values(6, 'vigorous rhodes');")
+	tk.MustExec("insert into t2 values(7, 'sweet aryabhata');")
+	tk.MustQuery("select /*+ INL_JOIN(t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_str <= t2.c_str and t2.c_int in (6, 7, 6);").
+		Sort().
+		Check(testkit.Rows("6 beautiful curran 6 vigorous rhodes", "7 affectionate curie 7 sweet aryabhata", "7 epic kalam 7 sweet aryabhata"))
 }

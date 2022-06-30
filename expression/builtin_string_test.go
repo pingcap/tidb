@@ -176,7 +176,7 @@ func TestConcat(t *testing.T) {
 		{
 			[]interface{}{nil},
 			true, false, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 0, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
 			[]interface{}{"a", "b",
@@ -189,17 +189,17 @@ func TestConcat(t *testing.T) {
 					Fsp:      types.DefaultFsp},
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(40).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
 			[]interface{}{"a", "b", nil, "c"},
 			true, false, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: 3, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(3).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
 			[]interface{}{errors.New("must error")},
 			false, true, "",
-			&types.FieldType{Tp: mysql.TypeVarString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 	}
 	fcName := ast.Concat
@@ -223,10 +223,13 @@ func TestConcat(t *testing.T) {
 func TestConcatSig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeVarchar},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
@@ -340,11 +343,13 @@ func TestConcatWS(t *testing.T) {
 func TestConcatWSSig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeVarchar},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
@@ -507,7 +512,7 @@ func TestRepeat(t *testing.T) {
 	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	require.True(t, v.IsNull())
+	require.False(t, v.IsNull())
 
 	args = []interface{}{"a", uint64(16777216)}
 	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
@@ -541,10 +546,12 @@ func TestRepeat(t *testing.T) {
 func TestRepeatSig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeLonglong},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeLonglong),
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 		&Column{Index: 1, RetType: colTypes[1]},
@@ -796,7 +803,7 @@ func TestReplace(t *testing.T) {
 	for i, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Replace, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		require.Equalf(t, c.flen, f.GetType().Flen, "test %v", i)
+		require.Equalf(t, c.flen, f.GetType().GetFlen(), "test %v", i)
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
@@ -883,11 +890,11 @@ func TestConvert(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, f)
 		retType := f.getRetTp()
-		require.Equal(t, strings.ToLower(v.cs), retType.Charset)
+		require.Equal(t, strings.ToLower(v.cs), retType.GetCharset())
 		collate, err := charset.GetDefaultCollation(strings.ToLower(v.cs))
 		require.NoError(t, err)
-		require.Equal(t, collate, retType.Collate)
-		require.Equal(t, v.hasBinaryFlag, mysql.HasBinaryFlag(retType.Flag))
+		require.Equal(t, collate, retType.GetCollate())
+		require.Equal(t, v.hasBinaryFlag, mysql.HasBinaryFlag(retType.GetFlag()))
 
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
@@ -917,7 +924,7 @@ func TestConvert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, f)
 	wrongFunction := f.(*builtinConvertSig)
-	wrongFunction.tp.Charset = "wrongcharset"
+	wrongFunction.tp.SetCharset("wrongcharset")
 	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
 	require.Error(t, err)
 	require.Equal(t, "[expression:1115]Unknown character set: 'wrongcharset'", err.Error())
@@ -1019,9 +1026,11 @@ func TestSpace(t *testing.T) {
 func TestSpaceSig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeLonglong},
+		types.NewFieldType(mysql.TypeLonglong),
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
 	}
@@ -1480,11 +1489,11 @@ func TestCharLength(t *testing.T) {
 		fc := funcs[ast.CharLength]
 		arg := datumsToConstants(types.MakeDatums(v.input))
 		tp := arg[0].GetType()
-		tp.Tp = mysql.TypeVarString
-		tp.Charset = charset.CharsetBin
-		tp.Collate = charset.CollationBin
-		tp.Flen = types.UnspecifiedLength
-		tp.Flag = mysql.BinaryFlag
+		tp.SetType(mysql.TypeVarString)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetFlen(types.UnspecifiedLength)
+		tp.SetFlag(mysql.BinaryFlag)
 		f, err := fc.getFunction(ctx, arg)
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1631,11 +1640,13 @@ func TestRpad(t *testing.T) {
 func TestRpadSig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeVarchar},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(1000)
 
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
@@ -1673,12 +1684,14 @@ func TestRpadSig(t *testing.T) {
 func TestInsertBinarySig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeVarchar},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
 	}
-	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 3}
+	resultType := &types.FieldType{}
+	resultType.SetType(mysql.TypeVarchar)
+	resultType.SetFlen(3)
 
 	args := []Expression{
 		&Column{Index: 0, RetType: colTypes[0]},
@@ -2090,7 +2103,7 @@ func TestFromBase64(t *testing.T) {
 func TestFromBase64Sig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
+		types.NewFieldType(mysql.TypeVarchar),
 	}
 
 	tests := []struct {
@@ -2120,7 +2133,9 @@ func TestFromBase64Sig(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: mysql.MaxBlobWidth}
+		resultType := &types.FieldType{}
+		resultType.SetType(mysql.TypeVarchar)
+		resultType.SetFlen(mysql.MaxBlobWidth)
 		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
 		fromBase64 := &builtinFromBase64Sig{base, test.maxAllowPacket}
 
@@ -2442,7 +2457,7 @@ func TestToBase64(t *testing.T) {
 func TestToBase64Sig(t *testing.T) {
 	ctx := createContext(t)
 	colTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
+		types.NewFieldType(mysql.TypeVarchar),
 	}
 
 	tests := []struct {
@@ -2484,7 +2499,9 @@ func TestToBase64Sig(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
+		resultType := &types.FieldType{}
+		resultType.SetType(mysql.TypeVarchar)
+		resultType.SetFlen(base64NeededEncodedLength(len(test.args)))
 		base := baseBuiltinFunc{args: args, ctx: ctx, tp: resultType}
 		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
 

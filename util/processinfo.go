@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -88,6 +88,11 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	}
 }
 
+func (pi *ProcessInfo) String() string {
+	rows := pi.ToRowForShow(false)
+	return fmt.Sprintf("{id:%v, user:%v, host:%v, db:%v, command:%v, time:%v, state:%v, info:%v}", rows...)
+}
+
 func (pi *ProcessInfo) txnStartTs(tz *time.Location) (txnStart string) {
 	if pi.CurTxnStartTS > 0 {
 		physicalTime := oracle.GetTimeFromTS(pi.CurTxnStartTS)
@@ -148,7 +153,8 @@ var mapServerStatus2Str = map[uint16]string{
 // Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
 func serverStatus2Str(state uint16) string {
 	// l collect server status strings.
-	var l []string // nolint: prealloc
+	//nolint: prealloc
+	var l []string
 	// check each defined server status, if match, append to collector.
 	for _, s := range ascServerStatus {
 		if state&s == 0 {
@@ -169,6 +175,12 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// Put the internal session pointer to the map in the SessionManager
+	StoreInternalSession(se interface{})
+	// Delete the internal session pointer from the map in the SessionManager
+	DeleteInternalSession(se interface{})
+	// Get all startTS of every transactions running in the current internal sessions
+	GetInternalSessionStartTSList() []uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -269,6 +281,7 @@ const (
 
 // GetAutoAnalyzeProcID returns processID for auto analyze
 // TODO support IDs for concurrent auto-analyze
-func GetAutoAnalyzeProcID() uint64 {
-	return reservedConnAnalyze
+func GetAutoAnalyzeProcID(serverIDGetter func() uint64) uint64 {
+	globalConnID := NewGlobalConnIDWithGetter(serverIDGetter, true)
+	return globalConnID.makeID(reservedConnAnalyze)
 }

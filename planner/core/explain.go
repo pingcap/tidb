@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -289,6 +290,9 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
 		buffer.WriteString(", stats:pseudo")
 	}
+	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		buffer.WriteString(", PartitionTableScan:true")
+	}
 	return buffer.String()
 }
 
@@ -308,7 +312,7 @@ func (p *PhysicalTableScan) isFullScan() bool {
 	var unsignedIntHandle bool
 	if p.Table.PKIsHandle {
 		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 		}
 	}
 	for _, ran := range p.Ranges {
@@ -461,12 +465,6 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 		str.WriteString(", count:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
-	}
-	if p.Paging {
-		if p.PushedLimit != nil {
-			str.WriteString(", ")
-		}
-		str.WriteString("paging:true")
 	}
 	return str.String()
 }

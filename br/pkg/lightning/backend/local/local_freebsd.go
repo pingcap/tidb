@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build freebsd
-// +build freebsd
 
 package local
 

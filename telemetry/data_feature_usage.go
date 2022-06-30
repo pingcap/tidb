@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,40 +29,99 @@ import (
 	"github.com/tikv/client-go/v2/metrics"
 )
 
+// emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.
+var emptyClusterIndexUsage = ClusterIndexUsage{}
+
 type featureUsage struct {
 	// transaction usage information
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
-	TemporaryTable bool               `json:"temporaryTable"`
-	CTE            *m.CTEUsageCounter `json:"cte"`
-	CachedTable    bool               `json:"cachedTable"`
-	AutoCapture    bool               `json:"autoCapture"`
+	ClusterIndex          *ClusterIndexUsage             `json:"clusterIndex"`
+	NewClusterIndex       *NewClusterIndexUsage          `json:"newClusterIndex"`
+	TemporaryTable        bool                           `json:"temporaryTable"`
+	CTE                   *m.CTEUsageCounter             `json:"cte"`
+	CachedTable           bool                           `json:"cachedTable"`
+	AutoCapture           bool                           `json:"autoCapture"`
+	PlacementPolicyUsage  *placementPolicyUsage          `json:"placementPolicy"`
+	NonTransactionalUsage *m.NonTransactionalStmtCounter `json:"nonTransactional"`
+	GlobalKill            bool                           `json:"globalKill"`
+}
+
+type placementPolicyUsage struct {
+	NumPlacementPolicies uint64 `json:"numPlacementPolicies"`
+	NumDBWithPolicies    uint64 `json:"numDBWithPolicies"`
+	NumTableWithPolicies uint64 `json:"numTableWithPolicies"`
+	// The number of partitions that policies are explicitly specified.
+	NumPartitionWithExplicitPolicies uint64 `json:"numPartitionWithExplicitPolicies"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
-	clusterIdxUsage, err := getClusterIndexUsageInfo(ctx)
+	var usage featureUsage
+	var err error
+	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
 
 	// transaction related feature
-	txnUsage := getTxnUsageInfo(ctx)
+	usage.Txn = getTxnUsageInfo(ctx)
 
-	// Avoid the circle dependency.
-	temporaryTable := ctx.(TemporaryOrCacheTableFeatureChecker).TemporaryTableExists()
+	usage.CTE = getCTEUsageInfo()
 
-	cteUsage := getCTEUsageInfo()
+	usage.AutoCapture = getAutoCaptureUsageInfo(ctx)
 
-	cachedTable := ctx.(TemporaryOrCacheTableFeatureChecker).CachedTableExists()
+	collectFeatureUsageFromInfoschema(ctx, &usage)
 
-	enableAutoCapture := getAutoCaptureUsageInfo(ctx)
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable, enableAutoCapture}, nil
+	usage.NonTransactionalUsage = getNonTransactionalUsage()
+
+	usage.GlobalKill = getGlobalKillUsageInfo()
+
+	return &usage, nil
 }
 
-// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
+// collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table and placement policies.
+func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsage) {
+	if usage.PlacementPolicyUsage == nil {
+		usage.PlacementPolicyUsage = &placementPolicyUsage{}
+	}
+	is := GetDomainInfoSchema(ctx)
+	for _, dbInfo := range is.AllSchemas() {
+		if dbInfo.PlacementPolicyRef != nil {
+			usage.PlacementPolicyUsage.NumDBWithPolicies++
+		}
+
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TempTableType != model.TempTableNone {
+				usage.TemporaryTable = true
+			}
+			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+				usage.CachedTable = true
+			}
+			if tbInfo.Meta().PlacementPolicyRef != nil {
+				usage.PlacementPolicyUsage.NumTableWithPolicies++
+			}
+			partitions := tbInfo.Meta().GetPartitionInfo()
+			if partitions == nil {
+				continue
+			}
+			for _, partitionInfo := range partitions.Definitions {
+				if partitionInfo.PlacementPolicyRef != nil {
+					usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies++
+				}
+			}
+		}
+	}
+
+	usage.PlacementPolicyUsage.NumPlacementPolicies += uint64(len(is.AllPlacementPolicies()))
+}
+
+// GetDomainInfoSchema is used by the telemetry package to get the latest schema information
+// while avoiding circle dependency with domain package.
+var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
+
+// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables, deprecated.
 type ClusterIndexUsage map[string]TableClusteredInfo
 
 // TableClusteredInfo records the usage info of clusterindex of each table
@@ -73,20 +133,26 @@ type TableClusteredInfo struct {
 	// NA means this field is no meaningful information
 }
 
+// NewClusterIndexUsage records the clustered index usage info of all the tables.
+type NewClusterIndexUsage struct {
+	// The number of user's tables with clustered index enabled.
+	NumClusteredTables uint64 `json:"numClusteredTables"`
+	// The number of user's tables.
+	NumTotalTables uint64 `json:"numTotalTables"`
+}
+
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
-	usage := make(ClusterIndexUsage)
+func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
+	var newUsage NewClusterIndexUsage
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
 	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `
-		SELECT left(sha2(TABLE_NAME, 256), 6) table_name_hash, TIDB_PK_TYPE, TABLE_SCHEMA, TABLE_NAME
+		SELECT TIDB_PK_TYPE
 		FROM information_schema.tables
-		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')
-		ORDER BY table_name_hash
-		limit 10000`)
+		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defer func() {
@@ -104,58 +170,37 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 
 	err = ctx.RefreshTxnCtx(context.TODO())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	infoSchema := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 
 	// check ClusterIndex information for each table
-	// row: 0 = table_name_hash, 1 = TIDB_PK_TYPE, 2 = TABLE_SCHEMA (db), 3 = TABLE_NAME
-
+	// row: 0 = TIDB_PK_TYPE
 	for _, row := range rows {
-		if row.Len() < 4 {
+		if row.Len() < 1 {
 			continue
 		}
-		tblClusteredInfo := TableClusteredInfo{false, "NA"}
-		if row.GetString(1) == "CLUSTERED" {
-			tblClusteredInfo.IsClustered = true
-			table, err := infoSchema.TableByName(model.NewCIStr(row.GetString(2)), model.NewCIStr(row.GetString(3)))
-			if err != nil {
-				continue
-			}
-			tableInfo := table.Meta()
-			if tableInfo.PKIsHandle {
-				tblClusteredInfo.ClusterPKType = "INT"
-			} else if tableInfo.IsCommonHandle {
-				tblClusteredInfo.ClusterPKType = "NON_INT"
-			} else {
-				// if both CLUSTERED IS TURE and CLUSTERPKTYPE IS NA met, this else is hit
-				// it means the status of INFORMATION_SCHEMA.tables if not consistent with session.Context
-				// WE SHOULD treat this issue SERIOUSLY
-			}
+		if row.GetString(0) == "CLUSTERED" {
+			newUsage.NumClusteredTables++
 		}
-		usage[row.GetString(0)] = tblClusteredInfo
 	}
-
-	return &usage, nil
-}
-
-// TemporaryOrCacheTableFeatureChecker is defined to avoid package circle dependency.
-// The session struct implements this interface.
-type TemporaryOrCacheTableFeatureChecker interface {
-	TemporaryTableExists() bool
-	CachedTableExists() bool
+	newUsage.NumTotalTables = uint64(len(rows))
+	return &newUsage, &emptyClusterIndexUsage, nil
 }
 
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed  bool                     `json:"asyncCommitUsed"`
-	OnePCUsed        bool                     `json:"onePCUsed"`
-	TxnCommitCounter metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
+	OnePCUsed           bool                     `json:"onePCUsed"`
+	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
+	AssertionLevel      string                   `json:"assertionLevel"`
+	RcCheckTS           bool                     `json:"rcCheckTS"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
+var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -169,7 +214,19 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff}
+	mutationCheckerUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableMutationChecker); err == nil {
+		mutationCheckerUsed = val == variable.On
+	}
+	assertionUsed := ""
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
+		assertionUsed = val
+	}
+	rcCheckTSUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+		rcCheckTSUsed = val == variable.On
+	}
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed}
 }
 
 func postReportTxnUsage() {
@@ -194,4 +251,18 @@ func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
 		return val == variable.On
 	}
 	return false
+}
+
+func getNonTransactionalUsage() *m.NonTransactionalStmtCounter {
+	curr := m.GetNonTransactionalStmtCounter()
+	diff := curr.Sub(initialNonTransactionalCounter)
+	return &diff
+}
+
+func postReportNonTransactionalCounter() {
+	initialNonTransactionalCounter = m.GetNonTransactionalStmtCounter()
+}
+
+func getGlobalKillUsageInfo() bool {
+	return config.GetGlobalConfig().EnableGlobalKill
 }

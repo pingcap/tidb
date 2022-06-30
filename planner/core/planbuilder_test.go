@@ -71,7 +71,7 @@ func TestShow(t *testing.T) {
 		node.Tp = tp
 		schema, _ := buildShowSchema(node, false, false)
 		for _, col := range schema.Columns {
-			require.Greater(t, col.RetType.Flen, 0)
+			require.Greater(t, col.RetType.GetFlen(), 0)
 		}
 	}
 }
@@ -286,6 +286,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
+
+	// maxOneRow
+	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow = maxOneRow.Init(ctx, stats, 0)
+	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
 	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}

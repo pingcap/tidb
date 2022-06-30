@@ -620,10 +620,10 @@ func TestOpenAsBufio(t *testing.T) {
 	s.s3.EXPECT().
 		GetObjectWithContext(ctx, gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
-			require.Equal(t, "bytes=0-", aws.StringValue(input.Range))
+			require.Equal(t, (*string)(nil), input.Range)
 			return &s3.GetObjectOutput{
-				Body:         io.NopCloser(bytes.NewReader([]byte("plain text\ncontent"))),
-				ContentRange: aws.String("bytes 0-17/18"),
+				Body:          io.NopCloser(bytes.NewReader([]byte("plain text\ncontent"))),
+				ContentLength: aws.Int64(18),
 			}, nil
 		})
 
@@ -669,8 +669,8 @@ func TestOpenReadSlowly(t *testing.T) {
 	s.s3.EXPECT().
 		GetObjectWithContext(ctx, gomock.Any()).
 		Return(&s3.GetObjectOutput{
-			Body:         &alphabetReader{character: 'A'},
-			ContentRange: aws.String("bytes 0-25/26"),
+			Body:          &alphabetReader{character: 'A'},
+			ContentLength: aws.Int64(26),
 		}, nil)
 
 	reader, err := s.storage.Open(ctx, "alphabets")
@@ -725,6 +725,10 @@ func TestOpenSeek(t *testing.T) {
 	require.Equal(t, 100, n)
 	require.Equal(t, someRandomBytes[998000:998100], slice)
 
+	// jumping to a negative position would cause error.
+	_, err = reader.Seek(-8000, io.SeekStart)
+	require.Error(t, err)
+
 	// jumping backward should be fine, but would perform a new GetObject request.
 	offset, err = reader.Seek(-8000, io.SeekCurrent)
 	require.NoError(t, err)
@@ -769,11 +773,24 @@ func (s *s3Suite) expectedCalls(ctx context.Context, t *testing.T, data []byte, 
 		thisCall := s.s3.EXPECT().
 			GetObjectWithContext(ctx, gomock.Any()).
 			DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
-				require.Equal(t, fmt.Sprintf("bytes=%d-", thisOffset), aws.StringValue(input.Range))
-				return &s3.GetObjectOutput{
-					Body:         newReader(data, thisOffset),
-					ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", thisOffset, len(data)-1, len(data))),
-				}, nil
+				if thisOffset > 0 {
+					require.Equal(t, fmt.Sprintf("bytes=%d-", thisOffset), aws.StringValue(input.Range))
+				} else {
+					require.Equal(t, (*string)(nil), input.Range)
+				}
+				var response *s3.GetObjectOutput
+				if thisOffset > 0 {
+					response = &s3.GetObjectOutput{
+						Body:         newReader(data, thisOffset),
+						ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", thisOffset, len(data)-1, len(data))),
+					}
+				} else {
+					response = &s3.GetObjectOutput{
+						Body:          newReader(data, thisOffset),
+						ContentLength: aws.Int64(int64(len(data))),
+					}
+				}
+				return response, nil
 			})
 		if lastCall != nil {
 			thisCall = thisCall.After(lastCall)
@@ -946,7 +963,7 @@ func TestWalkDir(t *testing.T) {
 			}, nil
 		}).
 		After(thirdCall)
-	s.s3.EXPECT().
+	fifthCall := s.s3.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
@@ -957,6 +974,20 @@ func TestWalkDir(t *testing.T) {
 			}, nil
 		}).
 		After(fourthCall)
+	s.s3.EXPECT().
+		ListObjectsWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/sp/1", aws.StringValue(input.Prefix))
+			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, int64(3), aws.Int64Value(input.MaxKeys))
+			require.Equal(t, "", aws.StringValue(input.Delimiter))
+			return &s3.ListObjectsOutput{
+				IsTruncated: aws.Bool(false),
+				Contents:    contents[2:],
+			}, nil
+		}).
+		After(fifthCall)
 
 	// Ensure we receive the items in order.
 	i := 0
@@ -978,6 +1009,21 @@ func TestWalkDir(t *testing.T) {
 	err = s.storage.WalkDir(
 		ctx,
 		&WalkOption{ListCount: 4},
+		func(path string, size int64) error {
+			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
+			require.Equal(t, *contents[i].Size, size, "index = %d", i)
+			i++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, contents, i)
+
+	// Ensure we receive the items in order with prefix.
+	i = 2
+	err = s.storage.WalkDir(
+		ctx,
+		&WalkOption{SubDir: "sp", ObjPrefix: "1", ListCount: 3},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)

@@ -148,11 +148,20 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
-		// Restore across major version isn't allowed.
+		// Restore across one major version allowed.
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v4.0.0-rc.1"}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBackup(semver.New("5.0.0-rc")))
+		require.NoError(t, err)
+	}
+
+	{
+		// Restore across two major versions isn't allowed.
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: "v4.0.0-rc.1"}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBackup(semver.New("6.0.0")))
 		require.Error(t, err)
 	}
 

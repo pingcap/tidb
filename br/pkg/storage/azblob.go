@@ -53,6 +53,13 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
 }
 
+func hiddenAzblobFlags(flags *pflag.FlagSet) {
+	_ = flags.MarkHidden(azblobEndpointOption)
+	_ = flags.MarkHidden(azblobAccessTierOption)
+	_ = flags.MarkHidden(azblobAccountName)
+	_ = flags.MarkHidden(azblobAccountKey)
+}
+
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	options.Endpoint, err = flags.GetString(azblobEndpointOption)
@@ -262,10 +269,11 @@ func (s *AzureBlobStorage) withPrefix(name string) string {
 
 func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
-	_, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{AccessTier: &s.accessTier})
+	resp, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{AccessTier: &s.accessTier})
 	if err != nil {
 		return errors.Annotatef(err, "Failed to write azure blob file, file info: bucket(container)='%s', key='%s'", s.options.Bucket, s.withPrefix(name))
 	}
+	defer resp.Body.Close()
 	return nil
 }
 
@@ -322,7 +330,9 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-
+	if len(opt.ObjPrefix) != 0 {
+		return errors.New("azure storage not support ObjPrefix for now")
+	}
 	prefix := path.Join(s.options.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"

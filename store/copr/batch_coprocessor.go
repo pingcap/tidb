@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
@@ -49,7 +48,10 @@ type batchCopTask struct {
 	cmdType   tikvrpc.CmdType
 	ctx       *tikv.RPCContext
 
-	regionInfos []RegionInfo
+	regionInfos []RegionInfo // region info for single physical table
+	// PartitionTableRegions indicates region infos for each partition table, used by scanning partitions in batch.
+	// Thus, one of `regionInfos` and `PartitionTableRegions` must be nil.
+	PartitionTableRegions []*coprocessor.TableRegions
 }
 
 type batchCopResponse struct {
@@ -523,24 +525,47 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	return ret
 }
 
-func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
+func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
+	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+}
+
+func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
+	batchTasks, err := buildBatchCopTasksCore(bo, store, rangesForEachPhysicalTable, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+	if err != nil {
+		return nil, err
+	}
+	// generate tableRegions for batchCopTasks
+	convertRegionInfosToPartitionTableRegions(batchTasks, partitionIDs)
+	return batchTasks, nil
+}
+
+// When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.
+// At this time, `len(rangesForEachPhysicalTable) == len(partitionIDs)` and `rangesForEachPhysicalTable[i]` is for partition `partitionIDs[i]`.
+// Otherwise, `rangesForEachPhysicalTable[0]` indicates the range for the single physical table.
+func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
-	rangesLen := ranges.Len()
+	rangesLen := 0
+
 	for {
-		locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		var tasks []*copTask
-		for _, lo := range locations {
-			tasks = append(tasks, &copTask{
-				region:    lo.Location.Region,
-				ranges:    lo.Ranges,
-				cmdType:   cmdType,
-				storeType: storeType,
-			})
+		rangesLen = 0
+		for i, ranges := range rangesForEachPhysicalTable {
+			rangesLen += ranges.Len()
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, lo := range locations {
+				tasks = append(tasks, &copTask{
+					region:         lo.Location.Region,
+					ranges:         lo.Ranges,
+					cmdType:        cmdType,
+					storeType:      storeType,
+					partitionIndex: int64(i),
+				})
+			}
 		}
 
 		var batchTasks []*batchCopTask
@@ -565,13 +590,13 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 			}
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores})
+				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex})
 			} else {
 				batchTask := &batchCopTask{
 					storeAddr:   rpcCtx.Addr,
 					cmdType:     cmdType,
 					ctx:         rpcCtx,
-					regionInfos: []RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores}},
+					regionInfos: []RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex}},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
@@ -580,7 +605,7 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 			// As mentioned above, nil rpcCtx is always attributed to failed stores.
 			// It's equal to long poll the store but get no response. Here we'd better use
 			// TiFlash error to trigger the TiKV fallback mechanism.
-			err = bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
+			err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -609,7 +634,7 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 		}
 
 		if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
-			logutil.BgLogger().Warn("buildBatchCopTasks takes too much time",
+			logutil.BgLogger().Warn("buildBatchCopTasksCore takes too much time",
 				zap.Duration("elapsed", elapsed),
 				zap.Duration("balanceElapsed", balanceElapsed),
 				zap.Int("range len", rangesLen),
@@ -620,14 +645,56 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges
 	}
 }
 
+func convertRegionInfosToPartitionTableRegions(batchTasks []*batchCopTask, partitionIDs []int64) {
+	for _, copTask := range batchTasks {
+		tableRegions := make([]*coprocessor.TableRegions, len(partitionIDs))
+		// init coprocessor.TableRegions
+		for j, pid := range partitionIDs {
+			tableRegions[j] = &coprocessor.TableRegions{
+				PhysicalTableId: pid,
+			}
+		}
+		// fill region infos
+		for _, ri := range copTask.regionInfos {
+			tableRegions[ri.PartitionIndex].Regions = append(tableRegions[ri.PartitionIndex].Regions,
+				ri.toCoprocessorRegionInfo())
+		}
+		count := 0
+		// clear empty table region
+		for j := 0; j < len(tableRegions); j++ {
+			if len(tableRegions[j].Regions) != 0 {
+				tableRegions[count] = tableRegions[j]
+				count++
+			}
+		}
+		copTask.PartitionTableRegions = tableRegions[:count]
+		copTask.regionInfos = nil
+	}
+}
+
 func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.Variables, option *kv.ClientSendOption) kv.Response {
 	if req.KeepOrder || req.Desc {
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, ranges, req.StoreType, nil, 0, false, 0)
+
+	var tasks []*batchCopTask
+	var err error
+	if req.PartitionIDAndRanges != nil {
+		// For Partition Table Scan
+		keyRanges := make([]*KeyRanges, 0, len(req.PartitionIDAndRanges))
+		partitionIDs := make([]int64, 0, len(req.PartitionIDAndRanges))
+		for _, pi := range req.PartitionIDAndRanges {
+			keyRanges = append(keyRanges, NewKeyRanges(pi.KeyRanges))
+			partitionIDs = append(partitionIDs, pi.ID)
+		}
+		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store.kvStore, keyRanges, req.StoreType, nil, 0, false, 0, partitionIDs)
+	} else {
+		ranges := NewKeyRanges(req.KeyRanges)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store.kvStore, ranges, req.StoreType, nil, 0, false, 0)
+	}
+
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -765,13 +832,34 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 
 // Merge all ranges and request again.
 func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
-	var ranges []kv.KeyRange
-	for _, ri := range batchTask.regionInfos {
-		ri.Ranges.Do(func(ran *kv.KeyRange) {
-			ranges = append(ranges, *ran)
-		})
+	if batchTask.regionInfos != nil {
+		var ranges []kv.KeyRange
+		for _, ri := range batchTask.regionInfos {
+			ri.Ranges.Do(func(ran *kv.KeyRange) {
+				ranges = append(ranges, *ran)
+			})
+		}
+		ret, err := buildBatchCopTasksForNonPartitionedTable(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0)
+		return ret, err
 	}
-	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0, false, 0)
+	// Retry Partition Table Scan
+	keyRanges := make([]*KeyRanges, 0, len(batchTask.PartitionTableRegions))
+	pid := make([]int64, 0, len(batchTask.PartitionTableRegions))
+	for _, trs := range batchTask.PartitionTableRegions {
+		pid = append(pid, trs.PhysicalTableId)
+		ranges := make([]kv.KeyRange, 0, len(trs.Regions))
+		for _, ri := range trs.Regions {
+			for _, ran := range ri.Ranges {
+				ranges = append(ranges, kv.KeyRange{
+					StartKey: ran.Start,
+					EndKey:   ran.End,
+				})
+			}
+		}
+		keyRanges = append(keyRanges, NewKeyRanges(ranges))
+	}
+	ret, err := buildBatchCopTasksForPartitionedTable(bo, b.store, keyRanges, b.req.StoreType, nil, 0, false, 0, pid)
+	return ret, err
 }
 
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
@@ -780,22 +868,16 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.enableCollectExecutionInfo)
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
 	for _, ri := range task.regionInfos {
-		regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-			RegionId: ri.Region.GetID(),
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: ri.Region.GetConfVer(),
-				Version: ri.Region.GetVer(),
-			},
-			Ranges: ri.Ranges.ToPBRanges(),
-		})
+		regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 	}
 
 	copReq := coprocessor.BatchRequest{
-		Tp:        b.req.Tp,
-		StartTs:   b.req.StartTs,
-		Data:      b.req.Data,
-		SchemaVer: b.req.SchemaVar,
-		Regions:   regionInfos,
+		Tp:           b.req.Tp,
+		StartTs:      b.req.StartTs,
+		Data:         b.req.Data,
+		SchemaVer:    b.req.SchemaVar,
+		Regions:      regionInfos,
+		TableRegions: task.PartitionTableRegions,
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{

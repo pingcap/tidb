@@ -447,14 +447,14 @@ StreamAgg	4.80	root		group by:upper(test.t.b), funcs:max(upper(test.t.b))->Colum
   └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
 desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
 id	estRows	task	access object	operator info
-HashAgg	6.00	root		group by:Column#11, funcs:count(Column#10)->Column#7
-└─Projection	6.00	root		upper(test.t.b)->Column#10, upper(test.t.b)->Column#11
+HashAgg	6.00	root		group by:Column#9, funcs:count(Column#8)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
 id	estRows	task	access object	operator info
-HashAgg	6.00	root		group by:Column#11, funcs:max(Column#10)->Column#7
-└─Projection	6.00	root		upper(test.t.b)->Column#10, upper(test.t.b)->Column#11
+HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 drop table if exists t;
@@ -617,3 +617,20 @@ select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
 x
 unruffled chaplygin
 drop table t1,t2;
+drop table if exists t1, t2;
+create table t1 (c_int int, c_decimal decimal(12, 6), primary key (c_int) nonclustered,key((c_int + 1))) ;
+create table t2 like t1;
+explain format = 'brief' select /*+ agg_to_cop() */ * from t1 where c_decimal in (select c_decimal from t2 where t2.c_int + 1 = 8 + 1);
+id	estRows	task	access object	operator info
+HashJoin	9.99	root		inner join, equal:[eq(test.t2.c_decimal, test.t1.c_decimal)]
+├─HashAgg(Build)	7.99	root		group by:test.t2.c_decimal, funcs:firstrow(test.t2.c_decimal)->test.t2.c_decimal
+│ └─IndexLookUp	7.99	root		
+│   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:expression_index(`c_int` + 1)	range:[9,9], keep order:false, stats:pseudo
+│   └─HashAgg(Probe)	7.99	cop[tikv]		group by:test.t2.c_decimal, 
+│     └─Selection	9.99	cop[tikv]		not(isnull(test.t2.c_decimal))
+│       └─TableRowIDScan	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(test.t1.c_decimal))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table t1;
+drop table t2;

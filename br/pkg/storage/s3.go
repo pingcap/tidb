@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
+	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
@@ -52,6 +54,8 @@ const (
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
 	hardcodedS3ChunkSize = 5 * 1024 * 1024
+	// to check the cloud type by endpoint tag.
+	domainAliyun = "aliyuncs.com"
 )
 
 var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
@@ -241,7 +245,34 @@ func NewS3Storage( // revive:disable-line:flag-parameter
 	})
 }
 
-func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storage, error) {
+// auto access without ak / sk.
+func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
+	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
+		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
+	}
+	endpoint := qs.Endpoint
+	// if endpoint is empty,return no error and run default(aws) follow.
+	if endpoint == "" {
+		return nil, nil
+	}
+	// if it Contains 'aliyuncs', fetch the sts token.
+	if strings.Contains(endpoint, domainAliyun) {
+		return createOssRamCred()
+	}
+	// other case ,return no error and run default(aws) follow.
+	return nil, nil
+}
+
+func createOssRamCred() (*credentials.Credentials, error) {
+	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
+	if err != nil {
+		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
+	}
+	ncred := cred.(*alicred.StsTokenCredential)
+	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
+}
+
+func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
 		WithS3ForcePathStyle(qs.ForcePathStyle).
@@ -253,9 +284,9 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
 	}
-	var cred *credentials.Credentials
-	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		cred = credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, "")
+	cred, err := autoNewCred(&qs)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if cred != nil {
 		awsConfig.WithCredentials(cred)
@@ -442,6 +473,11 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+
+	if len(opt.ObjPrefix) != 0 {
+		prefix += opt.ObjPrefix
+	}
+
 	maxKeys := int64(1000)
 	if opt.ListCount > 0 {
 		maxKeys = opt.ListCount
@@ -461,14 +497,6 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			return errors.Trace(err)
 		}
 		for _, r := range res.Contents {
-			// when walk on specify directory, the result include storage.Prefix,
-			// which can not be reuse in other API(Open/Read) directly.
-			// so we use TrimPrefix to filter Prefix for next Open/Read.
-			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
-			if err = fn(path, *r.Size); err != nil {
-				return errors.Trace(err)
-			}
-
 			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
 			//
 			// `res.NextMarker` is populated only if we specify req.Delimiter.
@@ -479,6 +507,24 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			// you can use the value of the last Key in the response as the marker
 			// in the subsequent request to get the next set of object keys."
 			req.Marker = r.Key
+
+			// when walk on specify directory, the result include storage.Prefix,
+			// which can not be reuse in other API(Open/Read) directly.
+			// so we use TrimPrefix to filter Prefix for next Open/Read.
+			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
+			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
+			path = strings.TrimPrefix(path, "/")
+			itemSize := *r.Size
+
+			// filter out s3's empty directory items
+			if itemSize <= 0 && strings.HasSuffix(path, "/") {
+				log.Info("this path is an empty directory and cannot be opened in S3.  Skip it", zap.String("path", path))
+				continue
+			}
+			if err = fn(path, itemSize); err != nil {
+				return errors.Trace(err)
+			}
+
 		}
 		if !aws.BoolValue(res.IsTruncated) {
 			break
@@ -533,12 +579,21 @@ func (rs *S3Storage) open(
 		Key:    aws.String(rs.options.Prefix + path),
 	}
 
-	// always set rangeOffset to fetch file size info
-	// s3 endOffset is inclusive
+	// If we just open part of the object, we set `Range` in the request.
+	// If we meant to open the whole object, not just a part of it,
+	// we do not pass the range in the request,
+	// so that even if the object is empty, we can still get the response without errors.
+	// Then this behavior is similar to openning an empty file in local file system.
+	isFullRangeRequest := false
 	var rangeOffset *string
-	if endOffset > startOffset {
+	switch {
+	case endOffset > startOffset:
+		// s3 endOffset is inclusive
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1))
-	} else {
+	case startOffset == 0:
+		// openning the whole object, no need to fill the `Range` field in the request
+		isFullRangeRequest = true
+	default:
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
 	}
 	input.Range = rangeOffset
@@ -547,9 +602,26 @@ func (rs *S3Storage) open(
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
 
-	r, err := ParseRangeInfo(result.ContentRange)
-	if err != nil {
-		return nil, RangeInfo{}, errors.Trace(err)
+	var r RangeInfo
+	// Those requests without a `Range` will have no `ContentRange` in the response,
+	// In this case, we'll parse the `ContentLength` field instead.
+	if isFullRangeRequest {
+		// We must ensure the `ContentLengh` has data even if for empty objects,
+		// otherwise we have no places to get the object size
+		if result.ContentLength == nil {
+			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
+		}
+		objectSize := *(result.ContentLength)
+		r = RangeInfo{
+			Start: 0,
+			End:   objectSize - 1,
+			Size:  objectSize,
+		}
+	} else {
+		r, err = ParseRangeInfo(result.ContentRange)
+		if err != nil {
+			return nil, RangeInfo{}, errors.Trace(err)
+		}
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
@@ -656,6 +728,9 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		realOffset = r.rangeInfo.Size + offset
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+	}
+	if realOffset < 0 {
+		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
 	}
 
 	if realOffset == r.pos {

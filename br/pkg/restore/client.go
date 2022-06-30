@@ -5,10 +5,12 @@ package restore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,19 +32,26 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/mathutil"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -53,21 +62,30 @@ import (
 // defaultChecksumConcurrency is the default number of the concurrent
 // checksum tasks.
 const defaultChecksumConcurrency = 64
+const defaultDDLConcurrency = 16
 const minBatchDdlSize = 1
+
+const (
+	strictPlacementPolicyMode = "STRICT"
+	ignorePlacementPolicyMode = "IGNORE"
+)
 
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
 	toolClient    SplitClient
 	fileImporter  FileImporter
+	rawKVClient   *RawKVBatchClient
 	workerPool    *utils.WorkerPool
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
 	databases map[string]*utils.Database
 	ddlJobs   []*model.Job
-	// ddlJobsMap record the tables' auto id need to restore after create table
-	ddlJobsMap map[UniqueTableName]bool
+
+	// store tables need to rebase info like auto id and random id and so on after create table
+	rebasedTablesMap map[UniqueTableName]bool
+
 	backupMeta *backuppb.BackupMeta
 	// TODO Remove this field or replace it with a []*DB,
 	// since https://github.com/pingcap/br/pull/377 needs more DBs to speed up DDL execution.
@@ -78,7 +96,10 @@ type Client struct {
 	// Before you do it, you can firstly read discussions at
 	// https://github.com/pingcap/br/pull/377#discussion_r446594501,
 	// this probably isn't as easy as it seems like (however, not hard, too :D)
-	db              *DB
+	db *DB
+
+	// use db pool to speed up restoration in BR binary mode.
+	dbPool          []*DB
 	rateLimit       uint64
 	isOnline        bool
 	noSchema        bool
@@ -87,8 +108,6 @@ type Client struct {
 	restoreStores []uint64
 
 	cipher             *backuppb.CipherInfo
-	storage            storage.ExternalStorage
-	backend            *backuppb.StorageBackend
 	switchModeInterval time.Duration
 	switchCh           chan struct{}
 
@@ -99,42 +118,106 @@ type Client struct {
 	dom          *domain.Domain
 
 	batchDdlSize uint
+
+	// correspond to --tidb-placement-mode config.
+	// STRICT(default) means policy related SQL can be executed in tidb.
+	// IGNORE means policy related SQL will be ignored.
+	policyMode string
+
+	// policy name -> policy info
+	policyMap *sync.Map
+
+	supportPolicy bool
+
+	// startTS and restoreTs are used for kv file restore.
+	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
+	startTS   uint64
+	restoreTS uint64
+
+	// If the the commit-ts of txn-entry is belong [startTS, restoreTS],
+	// the start-ts of txn-entry may be smaller than startTS.
+	// We need maintain and restore more entries in default-cf
+	// (the start-ts in these entries is belong to [shiftStartTS, startTS]).
+	shiftStartTS uint64
+
+	// currentTS is used for rewrite meta kv when restore stream.
+	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
+	currentTS uint64
+
+	storage storage.ExternalStorage
 }
 
 // NewRestoreClient returns a new RestoreClient.
 func NewRestoreClient(
-	g glue.Glue,
 	pdClient pd.Client,
-	store kv.Storage,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
-) (*Client, error) {
-	db, err := NewDB(g, store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	dom, err := g.GetDomain(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var statsHandle *handle.Handle
-	// tikv.Glue will return nil, tidb.Glue will return available domain
-	if dom != nil {
-		statsHandle = dom.StatsHandle()
-	}
-
+) *Client {
 	return &Client{
 		pdClient:      pdClient,
 		toolClient:    NewSplitClient(pdClient, tlsConf, isRawKv),
-		db:            db,
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 		switchCh:      make(chan struct{}),
-		dom:           dom,
-		statsHandler:  statsHandle,
-	}, nil
+	}
+}
+
+// Init create db connection and domain for storage.
+func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
+	// setDB must happen after set PolicyMode.
+	// we will use policyMode to set session variables.
+	var err error
+	rc.db, rc.supportPolicy, err = NewDB(g, store, rc.policyMode)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.dom, err = g.GetDomain(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// tikv.Glue will return nil, tidb.Glue will return available domain
+	if rc.dom != nil {
+		rc.statsHandler = rc.dom.StatsHandle()
+	}
+	// init backupMeta only for passing unit test
+	if rc.backupMeta == nil {
+		rc.backupMeta = new(backuppb.BackupMeta)
+	}
+
+	// Only in binary we can use multi-thread sessions to create tables.
+	// so use OwnStorage() to tell whether we are use binary or SQL.
+	if g.OwnsStorage() {
+		// Maybe allow user modify the DDL concurrency isn't necessary,
+		// because executing DDL is really I/O bound (or, algorithm bound?),
+		// and we cost most of time at waiting DDL jobs be enqueued.
+		// So these jobs won't be faster or slower when machine become faster or slower,
+		// hence make it a fixed value would be fine.
+		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
+			db, _, err := NewDB(g, store, rc.policyMode)
+			return db, err
+		})
+		if err != nil {
+			log.Warn("create session pool failed, we will send DDLs only by created sessions",
+				zap.Error(err),
+				zap.Int("sessionCount", len(rc.dbPool)),
+			)
+		}
+	}
+	return errors.Trace(err)
+}
+
+// SetPlacementPolicyMode to policy mode.
+func (rc *Client) SetPlacementPolicyMode(withPlacementPolicy string) {
+	switch strings.ToUpper(withPlacementPolicy) {
+	case strictPlacementPolicyMode:
+		rc.policyMode = strictPlacementPolicyMode
+	case ignorePlacementPolicyMode:
+		rc.policyMode = ignorePlacementPolicyMode
+	default:
+		rc.policyMode = strictPlacementPolicyMode
+	}
+	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
 // SetRateLimit to set rateLimit.
@@ -146,15 +229,32 @@ func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
 }
 
-// SetStorage set ExternalStorage for client.
-func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
-	var err error
-	rc.storage, err = storage.New(ctx, backend, opts)
+// SetPolicyMap set policyMap.
+func (rc *Client) SetPolicyMap(p *sync.Map) {
+	rc.policyMap = p
+}
+
+// GetPolicyMap set policyMap.
+func (rc *Client) GetPolicyMap() *sync.Map {
+	return rc.policyMap
+}
+
+// GetSupportPolicy tells whether target tidb support placement policy.
+func (rc *Client) GetSupportPolicy() bool {
+	return rc.supportPolicy
+}
+
+// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
+func (rc *Client) GetTruncateSafepoint(ctx context.Context) (uint64, error) {
+	ts, err := GetTSFromFile(ctx, rc.storage, TruncateSafePointFileName)
 	if err != nil {
-		return errors.Trace(err)
+		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
 	}
-	rc.backend = backend
-	return nil
+	return ts, err
+}
+
+func (rc *Client) GetDomain() *domain.Domain {
+	return rc.dom
 }
 
 // GetPDClient returns a pd client.
@@ -186,7 +286,40 @@ func (rc *Client) Close() {
 	if rc.db != nil {
 		rc.db.Close()
 	}
+	if rc.rawKVClient != nil {
+		rc.rawKVClient.Close()
+	}
+
 	log.Info("Restore client closed")
+}
+
+func (rc *Client) SetRestoreRangeTS(startTs, restoreTS, shiftStartTS uint64) {
+	rc.startTS = startTs
+	rc.restoreTS = restoreTS
+	rc.shiftStartTS = shiftStartTS
+}
+
+func (rc *Client) SetCurrentTS(ts uint64) {
+	rc.currentTS = ts
+}
+
+func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
+	var err error
+	rc.storage, err = storage.New(ctx, backend, opts)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
+	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
+	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rateLimit)
+}
+
+func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
+	rc.rawKVClient = c
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
@@ -194,8 +327,8 @@ func (rc *Client) InitBackupMeta(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
-	externalStorage storage.ExternalStorage,
 	reader *metautil.MetaReader) error {
+
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
@@ -218,11 +351,9 @@ func (rc *Client) InitBackupMeta(
 		rc.ddlJobs = ddlJobs
 	}
 	rc.backupMeta = backupMeta
-	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, rc.backupMeta.IsRawKv)
-	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, rc.backupMeta.IsRawKv, rc.rateLimit)
+	rc.InitClients(backend, backupMeta.IsRawKv)
+	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
 
@@ -352,6 +483,20 @@ func (rc *Client) GetDatabase(name string) *utils.Database {
 	return rc.databases[name]
 }
 
+// GetPlacementPolicies returns policies.
+func (rc *Client) GetPlacementPolicies() (*sync.Map, error) {
+	policies := &sync.Map{}
+	for _, p := range rc.backupMeta.Policies {
+		policyInfo := &model.PolicyInfo{}
+		err := json.Unmarshal(p.Info, policyInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policies.Store(policyInfo.Name.L, policyInfo)
+	}
+	return policies, nil
+}
+
 // GetDDLJobs returns ddl jobs.
 func (rc *Client) GetDDLJobs() []*model.Job {
 	return rc.ddlJobs
@@ -371,12 +516,47 @@ func (rc *Client) GetTableSchema(
 	return table.Meta(), nil
 }
 
+// CreatePolicies creates all policies in full restore.
+func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error {
+	var err error
+	policyMap.Range(func(key, value interface{}) bool {
+		e := rc.db.CreatePlacementPolicy(ctx, value.(*model.PolicyInfo))
+		if e != nil {
+			err = e
+			return false
+		}
+		return true
+	})
+	return err
+}
+
+// GetDBSchema gets the schema of a db from TiDB cluster
+func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DBInfo, bool) {
+	info := dom.InfoSchema()
+	return info.SchemaByName(dbName)
+}
+
 // CreateDatabase creates a database.
 func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	if rc.IsSkipCreateSQL() {
-		log.Info("skip create database", zap.Stringer("database", db.Name))
+		log.Info("skip create database", zap.Stringer("name", db.Name))
 		return nil
 	}
+
+	log.Info("create database", zap.Stringer("name", db.Name))
+
+	if !rc.supportPolicy {
+		log.Info("set placementPolicyRef to nil when target tidb not support policy",
+			zap.Stringer("database", db.Name))
+		db.PlacementPolicyRef = nil
+	}
+
+	if db.PlacementPolicyRef != nil {
+		if err := rc.db.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return rc.db.CreateDatabase(ctx, db)
 }
 
@@ -395,7 +575,7 @@ func (rc *Client) CreateTables(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, nil, errCh)
+	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
 	for et := range dataCh {
 		rules := et.RewriteRule
 		rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
@@ -426,7 +606,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap())
+		err := db.CreateTables(ctx, tables, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -444,7 +624,7 @@ func (rc *Client) createTables(
 				table.Info.IsCommonHandle,
 				newTableInfo.IsCommonHandle)
 		}
-		rules := GetRewriteRules(newTableInfo, table.Info, newTS)
+		rules := GetRewriteRules(newTableInfo, table.Info, newTS, true)
 		ct := CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
@@ -466,7 +646,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap())
+		err := db.CreateTable(ctx, table, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -482,7 +662,7 @@ func (rc *Client) createTable(
 			table.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
-	rules := GetRewriteRules(newTableInfo, table.Info, newTS)
+	rules := GetRewriteRules(newTableInfo, table.Info, newTS, true)
 	et := CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
@@ -499,13 +679,12 @@ func (rc *Client) GoCreateTables(
 	dom *domain.Domain,
 	tables []*metautil.Table,
 	newTS uint64,
-	dbPool []*DB,
 	errCh chan<- error,
 ) <-chan CreatedTable {
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
-	rc.GenerateDDLJobsMap()
+	rc.GenerateRebasedTables(tables)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -516,9 +695,9 @@ func (rc *Client) GoCreateTables(
 
 	var err error
 
-	if rc.batchDdlSize > minBatchDdlSize && len(dbPool) > 0 {
+	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
 
-		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
+		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
 
 		if err == nil {
 			defer log.Debug("all tables are created")
@@ -565,8 +744,8 @@ func (rc *Client) GoCreateTables(
 		defer close(outCh)
 		defer log.Debug("all tables are created")
 		var err error
-		if len(dbPool) > 0 {
-			err = rc.createTablesWithDBPool(ctx, createOneTable, tables, dbPool)
+		if len(rc.dbPool) > 0 {
+			err = rc.createTablesWithDBPool(ctx, createOneTable, tables)
 		} else {
 			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
 		}
@@ -591,32 +770,32 @@ func (rc *Client) createTablesWithSoleDB(ctx context.Context,
 
 func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	createOneTable func(ctx context.Context, db *DB, t *metautil.Table) error,
-	tables []*metautil.Table, dbPool []*DB) error {
+	tables []*metautil.Table) error {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(uint(len(dbPool)), "DDL workers")
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
 	for _, t := range tables {
 		table := t
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := dbPool[id%uint64(len(dbPool))]
+			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			return createOneTable(ectx, db, table)
 		})
 	}
 	return eg.Wait()
 }
 
-func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, dbPool []*DB, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := utils.MinInt(lastSent+int(rc.batchDdlSize), len(tables))
+		end := mathutil.Min(lastSent+int(rc.batchDdlSize), len(tables))
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := dbPool[id%uint64(len(dbPool))]
+			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
 			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
 				if val.(bool) {
@@ -713,8 +892,17 @@ func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.F
 	return files[:idx], files[idx:]
 }
 
-// RestoreFiles tries to restore the files.
-func (rc *Client) RestoreFiles(
+// SplitRanges implements TiKVRestorer.
+func (rc *Client) SplitRanges(ctx context.Context,
+	ranges []rtree.Range,
+	rewriteRules *RewriteRules,
+	updateCh glue.Progress,
+	isRawKv bool) error {
+	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
+}
+
+// RestoreSSTFiles tries to restore the files.
+func (rc *Client) RestoreSSTFiles(
 	ctx context.Context,
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
@@ -732,7 +920,7 @@ func (rc *Client) RestoreFiles(
 	log.Debug("start to restore files", zap.Int("files", len(files)))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.RestoreFiles", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -755,7 +943,7 @@ func (rc *Client) RestoreFiles(
 						zap.Duration("take", time.Since(fileStart)))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.Import(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 
@@ -796,7 +984,7 @@ func (rc *Client) RestoreRaw(
 		rc.workerPool.ApplyOnErrorGroup(eg,
 			func() error {
 				defer updateCh.Inc()
-				return rc.fileImporter.Import(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 	if err := eg.Wait(); err != nil {
@@ -1237,31 +1425,34 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// GenerateDDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
-// if we execute some DDLs before create table.
-// we may get two situation that need to rebase auto increment/random id.
-// 1. truncate table: truncate will generate new id cache.
-// 2. create table/create and rename table: the first create table will lock down the id cache.
-// because we cannot create onExistReplace table.
-// so the final create DDL with the correct auto increment/random id won't be executed.
-func (rc *Client) GenerateDDLJobsMap() {
-	rc.ddlJobsMap = make(map[UniqueTableName]bool)
-	for _, job := range rc.ddlJobs {
-		switch job.Type {
-		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			rc.ddlJobsMap[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
-		}
+// GenerateRebasedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
+// there are two situations:
+// 1. tables that already exists in the restored cluster.
+// 2. tables that are created by executing ddl jobs.
+// so, only tables in incremental restoration will be added to the map
+func (rc *Client) GenerateRebasedTables(tables []*metautil.Table) {
+	if !rc.IsIncremental() {
+		// in full restoration, all tables are created by Session.CreateTable, and all tables' info is updated.
+		rc.rebasedTablesMap = make(map[UniqueTableName]bool)
+		return
+	}
+
+	rc.rebasedTablesMap = make(map[UniqueTableName]bool, len(tables))
+	for _, table := range tables {
+		rc.rebasedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
 	}
 }
 
-func (rc *Client) GetDDLJobsMap() map[UniqueTableName]bool {
-	return rc.ddlJobsMap
+// GetRebasedTables returns tables that may need to be rebase auto increment id or auto random id
+func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
+	return rc.rebasedTablesMap
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
 func (rc *Client) PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	tables []*metautil.Table,
+	skipTiflash bool,
 ) error {
 	tiFlashStores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.TiFlashOnly)
 	if err != nil {
@@ -1269,7 +1460,8 @@ func (rc *Client) PreCheckTableTiFlashReplica(
 	}
 	tiFlashStoreCount := len(tiFlashStores)
 	for _, table := range tables {
-		if table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount) {
+		if skipTiflash ||
+			(table.Info.TiFlashReplica != nil && table.Info.TiFlashReplica.Count > uint64(tiFlashStoreCount)) {
 			// we cannot satisfy TiFlash replica in restore cluster. so we should
 			// set TiFlashReplica to unavailable in tableInfo, to avoid TiDB cannot sense TiFlash and make plan to TiFlash
 			// see details at https://github.com/pingcap/br/issues/931
@@ -1319,9 +1511,513 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
+const (
+	streamBackupMetaPrefix = "v1/backupmeta"
+)
+
+func GetStreamBackupMetaPrefix() string {
+	return streamBackupMetaPrefix
+}
+
+// ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
+func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
+	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
+	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
+		if strings.Contains(path, streamBackupMetaPrefix) {
+			m := &backuppb.Metadata{}
+			b, err := rc.storage.ReadFile(ctx, path)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = m.Unmarshal(b)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// TODO find a way to filter some unnecessary meta files.
+			log.Debug("backup stream collect meta file", zap.String("file", path))
+			streamBackupMetaFiles = append(streamBackupMetaFiles, m)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return streamBackupMetaFiles, nil
+}
+
+// ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
+func (rc *Client) ReadStreamDataFiles(
+	ctx context.Context,
+	metas []*backuppb.Metadata,
+) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
+	dFiles := make([]*backuppb.DataFileInfo, 0)
+	mFiles := make([]*backuppb.DataFileInfo, 0)
+
+	for _, m := range metas {
+		for _, d := range m.Files {
+			if d.MinTs > rc.restoreTS {
+				continue
+			} else if d.Cf == stream.WriteCF && d.MaxTs < rc.startTS {
+				continue
+			} else if d.Cf == stream.DefaultCF && d.MaxTs < rc.shiftStartTS {
+				continue
+			}
+
+			if d.IsMeta {
+				mFiles = append(mFiles, d)
+			} else {
+				dFiles = append(dFiles, d)
+			}
+			log.Debug("backup stream collect data file", zap.String("file", d.Path))
+		}
+	}
+	return dFiles, mFiles, nil
+}
+
+// FixIndex tries to fix a single index.
+func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("Client.LoadRestoreStores index: %s.%s:%s",
+			schema, table, index), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	sql := fmt.Sprintf("ADMIN RECOVER INDEX %s %s;",
+		utils.EncloseDBAndTable(schema, table),
+		utils.EncloseName(index))
+	log.Debug("Executing fix index sql.", zap.String("sql", sql))
+	err := rc.db.se.Execute(ctx, sql)
+	if err != nil {
+		return errors.Annotatef(err, "failed to execute %s", sql)
+	}
+	return nil
+}
+
+// FixIndicesOfTables tries to fix the indices of the tables via `ADMIN RECOVERY INDEX`.
+func (rc *Client) FixIndicesOfTables(
+	ctx context.Context,
+	fullBackupTables map[int64]*metautil.Table,
+	onProgress func(),
+) error {
+	for _, table := range fullBackupTables {
+		if name, ok := utils.GetSysDBName(table.DB.Name); utils.IsSysDB(name) && ok {
+			// skip system table for now
+			onProgress()
+			continue
+		}
+
+		if err := rc.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info); err != nil {
+			return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
+		}
+		onProgress()
+	}
+
+	return nil
+}
+
+// FixIndicdesOfTable tries to fix the indices of the table via `ADMIN RECOVERY INDEX`.
+func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo) error {
+	tableName := table.Name.L
+	// NOTE: Maybe we can create multi sessions and restore indices concurrently?
+	for _, index := range table.Indices {
+		start := time.Now()
+		if err := rc.FixIndex(ctx, schema, tableName, index.Name.L); err != nil {
+			return errors.Annotatef(err, "failed to fix index %s", index.Name)
+		}
+
+		log.Info("Fix index done.", zap.Stringer("take", time.Since(start)),
+			zap.String("table", schema+"."+tableName),
+			zap.Stringer("index", index.Name))
+	}
+	return nil
+}
+
+func (rc *Client) RestoreKVFiles(
+	ctx context.Context,
+	rules map[int64]*RewriteRules,
+	files []*backuppb.DataFileInfo,
+	onProgress func(),
+) error {
+	var err error
+	start := time.Now()
+	defer func() {
+		elapsed := time.Since(start)
+		if err == nil {
+			log.Info("Restore KV files", zap.Duration("take", elapsed))
+			summary.CollectSuccessUnit("files", len(files), elapsed)
+		}
+	}()
+
+	log.Debug("start to restore files", zap.Int("files", len(files)))
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("Client.RestoreKVFiles", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	eg, ectx := errgroup.WithContext(ctx)
+	skipFile := 0
+	deleteFiles := make([]*backuppb.DataFileInfo, 0)
+
+	applyFunc := func(file *backuppb.DataFileInfo) {
+		// get rewrite rule from table id
+		rule, ok := rules[file.TableId]
+		if !ok {
+			// TODO handle new created table
+			// For this version we do not handle new created table after full backup.
+			// in next version we will perform rewrite and restore meta key to restore new created tables.
+			// so we can simply skip the file that doesn't have the rule here.
+			onProgress()
+			summary.CollectInt("FileSkip", 1)
+			log.Debug("skip file due to table id not matched", zap.String("file", file.Path), zap.Int64("tableId", file.TableId))
+			skipFile++
+		} else {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				fileStart := time.Now()
+				defer func() {
+					onProgress()
+					summary.CollectInt("File", 1)
+					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+				}()
+				startTS := rc.startTS
+				if file.Cf == stream.DefaultCF {
+					startTS = rc.shiftStartTS
+				}
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, startTS, rc.restoreTS)
+			})
+		}
+	}
+	for _, file := range files {
+		if file.Type == backuppb.FileType_Delete {
+			// collect delete type file and apply it later.
+			deleteFiles = append(deleteFiles, file)
+			continue
+		}
+		fileReplica := file
+		applyFunc(fileReplica)
+	}
+	if len(deleteFiles) > 0 {
+		log.Info("restore delete files", zap.Int("count", len(deleteFiles)))
+	}
+	for _, file := range deleteFiles {
+		fileReplica := file
+		applyFunc(fileReplica)
+	}
+	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
+	if skipFile > 0 {
+		log.Debug("table id in full backup storage", zap.Any("tables", rules))
+	}
+
+	if err = eg.Wait(); err != nil {
+		summary.CollectFailureUnit("file", err)
+		log.Error(
+			"restore files failed",
+			zap.Error(err),
+		)
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *Client) CleanUpKVFiles(
+	ctx context.Context,
+) error {
+	// Current we only have v1 prefix.
+	// In the future, we can add more operation for this interface.
+	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
+}
+
+// InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
+// It is used to rewrite meta kv-event.
+func (rc *Client) InitSchemasReplaceForDDL(
+	tables *map[int64]*metautil.Table,
+	tableFilter filter.Filter,
+) (*stream.SchemasReplace, error) {
+	dbMap := make(map[stream.OldID]*stream.DBReplace)
+
+	for _, t := range *tables {
+		name, _ := utils.GetSysDBName(t.DB.Name)
+		dbName := model.NewCIStr(name)
+		newDBInfo, exist := rc.GetDBSchema(rc.GetDomain(), dbName)
+		if !exist {
+			log.Info("db not existed", zap.String("dbname", dbName.String()))
+			continue
+		}
+
+		dbReplace, exist := dbMap[t.DB.ID]
+		if !exist {
+			dbReplace = stream.NewDBReplace(t.DB, newDBInfo.ID)
+			dbMap[t.DB.ID] = dbReplace
+		}
+
+		if t.Info == nil {
+			// If the db is empty, skip it.
+			continue
+		}
+		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+		if err != nil {
+			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
+			continue
+		}
+
+		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
+			OldTableInfo: t.Info,
+			NewTableID:   newTableInfo.ID,
+			PartitionMap: getTableIDMap(newTableInfo, t.Info),
+			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
+		}
+	}
+
+	for oldDBID, dbReplace := range dbMap {
+		log.Info("replace info", func() []zapcore.Field {
+			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
+			fields = append(fields,
+				zap.String("dbName", dbReplace.OldDBInfo.Name.O),
+				zap.Int64("oldID", oldDBID),
+				zap.Int64("newID", dbReplace.NewDBID))
+			for oldTableID, tableReplace := range dbReplace.TableMap {
+				fields = append(fields,
+					zap.String("table", tableReplace.OldTableInfo.Name.String()),
+					zap.Int64("oldID", oldTableID),
+					zap.Int64("newID", tableReplace.NewTableID))
+			}
+			return fields
+		}()...)
+	}
+
+	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
+}
+
+// RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
+func (rc *Client) RestoreMetaKVFiles(
+	ctx context.Context,
+	files []*backuppb.DataFileInfo,
+	schemasReplace *stream.SchemasReplace,
+	progressInc func(),
+) error {
+	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
+
+	// The k-v events in default CF should be restored firstly. The reason is that:
+	// The error of transactions of meta will happen,
+	// if restore default CF events successfully, but failed to restore write CF events.
+	for _, f := range files {
+		if f.Cf == stream.WriteCF {
+			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
+
+		if f.Type == backuppb.FileType_Delete {
+			// this should happen abnormally.
+			// only do some preventive checks here.
+			log.Warn("detected delete file of meta key, skip it", zap.Any("file", f))
+			continue
+		}
+
+		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		progressInc()
+	}
+
+	// Restore files in write CF.
+	for _, f := range filesInWriteCF {
+		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		progressInc()
+	}
+
+	// Update global schema version and report all of TiDBs.
+	if err := rc.UpdateSchemaVersion(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// RestoreMetaKVFile tries to restore a file about meta kv-event from stream-backup.
+func (rc *Client) RestoreMetaKVFile(
+	ctx context.Context,
+	file *backuppb.DataFileInfo,
+	sr *stream.SchemasReplace,
+) error {
+	log.Info("restore meta kv events", zap.String("file", file.Path),
+		zap.String("cf", file.Cf), zap.Int64(("kv-count"), file.NumberOfEntries),
+		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
+
+	rc.rawKVClient.SetColumnFamily(file.GetCf())
+	buff, err := rc.storage.ReadFile(ctx, file.Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
+		return errors.Annotatef(berrors.ErrInvalidMetaFile,
+			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
+	}
+
+	iter := stream.NewEventIterator(buff)
+	for iter.Valid() {
+		iter.Next()
+		if iter.GetError() != nil {
+			return errors.Trace(iter.GetError())
+		}
+
+		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
+		ts, err := GetKeyTS(txnEntry.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// The commitTs in write CF need be limited on [startTs, restoreTs].
+		// We can restore more key-value in default CF.
+		if ts > rc.restoreTS {
+			continue
+		} else if file.Cf == stream.WriteCF && ts < rc.startTS {
+			continue
+		} else if file.Cf == stream.DefaultCF && ts < rc.shiftStartTS {
+			continue
+		}
+		if len(txnEntry.Value) == 0 {
+			// we might record duplicated prewrite keys in some conor cases.
+			// the first prewrite key has the value but the second don't.
+			// so we can ignore the empty value key.
+			// see details at https://github.com/pingcap/tiflow/issues/5468.
+			log.Warn("txn entry is null", zap.Uint64("key-ts", ts), zap.ByteString("tnxKey", txnEntry.Key))
+			continue
+		}
+		log.Debug("txn entry", zap.Uint64("key-ts", ts), zap.Int("txnKey-len", len(txnEntry.Key)),
+			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
+		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
+		if err != nil {
+			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
+				logutil.Key("txn-key", txnEntry.Key))
+			return errors.Trace(err)
+		} else if newEntry == nil {
+			continue
+		}
+		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
+			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
+
+		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, ts); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return rc.rawKVClient.PutRest(ctx)
+}
+
 func transferBoolToValue(enable bool) string {
 	if enable {
 		return "ON"
 	}
 	return "OFF"
+}
+
+// GenGlobalID generates a global id by transaction way.
+func (rc *Client) GenGlobalID(ctx context.Context) (int64, error) {
+	var id int64
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			var e error
+			t := meta.NewMeta(txn)
+			id, e = t.GenGlobalID()
+			return e
+		})
+
+	return id, err
+}
+
+// GenGlobalIDs generates several global ids by transaction way.
+func (rc *Client) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
+	ids := make([]int64, 0)
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			var e error
+			t := meta.NewMeta(txn)
+			ids, e = t.GenGlobalIDs(n)
+			return e
+		})
+
+	return ids, err
+}
+
+// UpdateSchemaVersion updates schema version by transaction way.
+func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
+	storage := rc.GetDomain().Store()
+	var schemaVersion int64
+
+	if err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			var e error
+			schemaVersion, e = t.GenSchemaVersions(128)
+			return e
+		},
+	); err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Info("update global schema version", zap.Int64("global-schema-version", schemaVersion))
+
+	ver := strconv.FormatInt(schemaVersion, 10)
+	if err := ddlutil.PutKVToEtcd(
+		ctx,
+		rc.GetDomain().GetEtcdClient(),
+		math.MaxInt,
+		ddlutil.DDLGlobalSchemaVersion,
+		ver,
+	); err != nil {
+		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
+	}
+
+	return nil
+}
+
+func (rc *Client) SaveSchemas(
+	ctx context.Context,
+	sr *stream.SchemasReplace,
+	logStartTS uint64,
+	restoreTS uint64,
+) error {
+	metaFileName := metautil.CreateMetaFileName(restoreTS)
+	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
+	metaWriter.Update(func(m *backuppb.BackupMeta) {
+		// save log startTS to backupmeta file
+		m.StartVersion = logStartTS
+	})
+
+	schemas := sr.TidyOldSchemas()
+	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
+	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// MockClient create a fake client used to test.
+func MockClient(dbs map[string]*utils.Database) *Client {
+	return &Client{databases: dbs}
 }

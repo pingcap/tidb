@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
 	"context"
@@ -21,14 +21,17 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
+func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
 	Keys := make([]model.CIStr, len(keys))
 	for i, key := range keys {
@@ -58,14 +61,15 @@ func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := ctx.NewTxn(context.Background())
+	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
-	err = d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	return job
 }
 
-func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
+func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, foreignKeyName string) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
@@ -73,7 +77,8 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mo
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
-	err := d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -94,53 +99,31 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func TestForeignKey(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
 
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
+	d := dom.DDL()
+	dbInfo, err := testSchemaInfo(store, "test_foreign")
 	require.NoError(t, err)
-	defer func() {
-		err := d.Stop()
-		require.NoError(t, err)
-	}()
-
-	dbInfo, err := testSchemaInfo(d, "test_foreign")
-	require.NoError(t, err)
-	ctx := testNewContext(d)
-	testCreateSchema(t, ctx, d, dbInfo)
-	tblInfo, err := testTableInfo(d, "t", 3)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
+	tblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
 
-	err = ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-
-	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+	testCreateTable(t, testkit.NewTestKit(t, store).Session(), d, dbInfo, tblInfo)
 
 	// fix data race
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
+	tc := &ddl.TestDDLCallback{}
+	tc.OnJobUpdatedExported = func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(d, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -156,11 +139,9 @@ func TestForeignKey(t *testing.T) {
 	defer d.SetHook(originalHook)
 	d.SetHook(tc)
 
+	ctx := testkit.NewTestKit(t, store).Session()
 	job := testCreateForeignKey(t, d, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
-	testCheckJobDone(t, d, job, true)
-	txn, err = ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
+	testCheckJobDone(t, store, job.ID, true)
 	require.NoError(t, err)
 	mu.Lock()
 	hErr := hookErr
@@ -175,15 +156,15 @@ func TestForeignKey(t *testing.T) {
 	checkOK = false
 	mu.Unlock()
 	// fix data race pr/#9491
-	tc2 := &TestDDLCallback{}
-	tc2.onJobUpdated = func(job *model.Job) {
+	tc2 := &ddl.TestDDLCallback{}
+	tc2.OnJobUpdatedExported = func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(d, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -198,22 +179,18 @@ func TestForeignKey(t *testing.T) {
 	d.SetHook(tc2)
 
 	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
-	testCheckJobDone(t, d, job, false)
+	testCheckJobDone(t, store, job.ID, false)
 	mu.Lock()
 	hErr = hookErr
 	ok = checkOK
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
+	d.SetHook(originalHook)
 
-	err = ctx.NewTxn(context.Background())
-	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	jobID := testDropTable(tk, t, dbInfo.Name.L, tblInfo.Name.L, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	job = testDropTable(t, ctx, d, dbInfo, tblInfo)
-	testCheckJobDone(t, d, job, false)
-
-	txn, err = ctx.Txn(true)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 }

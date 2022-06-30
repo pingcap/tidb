@@ -26,14 +26,14 @@ func TestAllocator(t *testing.T) {
 	alloc := NewAllocator()
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	initCap := 5
@@ -76,14 +76,14 @@ func TestAllocator(t *testing.T) {
 
 func TestColumnAllocator(t *testing.T) {
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 
 	var alloc1 poolColumnAllocator
@@ -123,14 +123,14 @@ func TestNoDuplicateColumnReuse(t *testing.T) {
 	// So when reusing Chunk, some columns may point to the same memory address.
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeJSON),
+		types.NewFieldType(mysql.TypeFloat),
+		types.NewFieldType(mysql.TypeNewDecimal),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeTimestamp),
+		types.NewFieldType(mysql.TypeDatetime),
 	}
 	alloc := NewAllocator()
 	for i := 0; i < maxFreeChunks+10; i++ {
@@ -158,14 +158,14 @@ func TestAvoidColumnReuse(t *testing.T) {
 	// So when reusing Chunk, we should ignore them.
 
 	fieldTypes := []*types.FieldType{
-		{Tp: mysql.TypeVarchar},
-		{Tp: mysql.TypeJSON},
-		{Tp: mysql.TypeFloat},
-		{Tp: mysql.TypeNewDecimal},
-		{Tp: mysql.TypeDouble},
-		{Tp: mysql.TypeLonglong},
-		{Tp: mysql.TypeTimestamp},
-		{Tp: mysql.TypeDatetime},
+		types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).BuildP(),
+		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
 	}
 	alloc := NewAllocator()
 	for i := 0; i < maxFreeChunks+10; i++ {

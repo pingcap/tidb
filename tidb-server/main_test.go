@@ -15,12 +15,13 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -28,8 +29,9 @@ import (
 var isCoverageServer string
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
@@ -51,13 +53,11 @@ func TestSetGlobalVars(t *testing.T) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
-		conf.MemQuotaQuery = 9999999
 		conf.ServerVersion = "test"
 	})
 	setGlobalVars()
 
 	require.Equal(t, "tikv,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
-	require.Equal(t, "9999999", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
 	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
 
@@ -72,4 +72,8 @@ func TestSetGlobalVars(t *testing.T) {
 
 	cfg := config.GetGlobalConfig()
 	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
+
+	if hostname, err := os.Hostname(); err == nil {
+		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
+	}
 }

@@ -56,7 +56,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(pid int64, ranges []*ranger.Range) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error)
 	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
@@ -96,7 +96,7 @@ type TableReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
-	streaming bool
+	paging    bool
 	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
 	corColInFilter bool
@@ -142,13 +142,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
-			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			execs, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+			e.dagPB.Executors, err = constructDistExec(e.ctx, e.plans)
 			if err != nil {
 				return err
 			}
@@ -181,6 +181,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
 	if e.dummy {
+		if e.desc && len(secondPartRanges) != 0 {
+			// TiKV support reverse scan and the `resultHandler` process the range order.
+			// While in UnionScan, it doesn't use reverse scan and reverse the final result rows manually.
+			// So things are differ, we need to reverse the kv range here.
+			// TODO: If we refactor UnionScan to use reverse scan, update the code here.
+			// [9734095886065816708 9734095886065816709] | [1 3] [65535 9734095886065816707] => before the following change
+			// [1 3] [65535 9734095886065816707] | [9734095886065816708 9734095886065816709] => ranges part reverse here
+			// [1 3  65535 9734095886065816707 9734095886065816708 9734095886065816709] => scan (normal order) in UnionScan
+			// [9734095886065816709 9734095886065816708 9734095886065816707 65535 3  1] => rows reverse in UnionScan
+			firstPartRanges, secondPartRanges = secondPartRanges, firstPartRanges
+		}
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -246,15 +257,14 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.dummy {
-		return nil
-	}
-
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
 	e.kvRanges = e.kvRanges[:0]
+	if e.dummy {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -263,20 +273,32 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
-		// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
-		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
-		if err != nil {
-			return nil, err
-		}
-		var results []distsql.SelectResult
-		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if !e.batchCop {
+			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
+			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, result)
+			var results []distsql.SelectResult
+			for _, kvReq := range kvReqs {
+				result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+				if err != nil {
+					return nil, err
+				}
+				results = append(results, result)
+			}
+			return distsql.NewSerialSelectResults(results), nil
 		}
-		return distsql.NewSerialSelectResults(results), nil
+		// Use PartitionTable Scan
+		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
@@ -300,7 +322,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
+		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -310,12 +332,12 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
-			SetStreaming(e.streaming).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
+			SetPaging(e.paging).
 			SetAllowBatchCop(e.batchCop).Build()
 		if err != nil {
 			return nil, err
@@ -325,11 +347,47 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	return kvReqs, nil
 }
 
+func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
+	if err != nil {
+		return nil, err
+	}
+	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
+	for i, kvRange := range kvRanges {
+		e.kvRanges = append(e.kvRanges, kvRange...)
+		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
+			ID:        pids[i],
+			KeyRanges: kvRange,
+		})
+	}
+	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
+		return nil, err
+	}
+	var builder distsql.RequestBuilder
+	reqBuilder := builder.SetPartitionIDAndRanges(partitionIDAndRanges)
+	kvReq, err := reqBuilder.
+		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetMemTracker(e.memTracker).
+		SetStoreType(e.storeType).
+		SetPaging(e.paging).
+		SetAllowBatchCop(e.batchCop).Build()
+	if err != nil {
+		return nil, err
+	}
+	return kvReq, nil
+}
+
 func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
-		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table), ranges)
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(ranges)
 		if err != nil {
 			return nil, err
 		}
@@ -342,14 +400,14 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetStreaming(e.streaming).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
-		SetAllowBatchCop(e.batchCop)
+		SetAllowBatchCop(e.batchCop).
+		SetPaging(e.paging)
 	return reqBuilder.Build()
 }
 

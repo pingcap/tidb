@@ -11,13 +11,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/pingcap/tidb/util/promutil"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
@@ -368,6 +367,46 @@ func TestShowCreateView(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestShowCreateSequence(t *testing.T) {
+	conf := defaultConfigForTest(t)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	tctx := tcontext.Background().WithLogger(appLogger)
+	baseConn := newBaseConn(conn, true, nil)
+
+	conf.ServerInfo.ServerType = version.ServerTypeTiDB
+	mock.ExpectQuery("SHOW CREATE SEQUENCE `test`.`s`").
+		WillReturnRows(sqlmock.NewRows([]string{"Sequence", "Create Sequence"}).
+			AddRow("s", "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	mock.ExpectQuery("SHOW TABLE `test`.`s` NEXT_ROW_ID").
+		WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
+			AddRow("test", "s", nil, 1001, "SEQUENCE"))
+
+	createSequenceSQL, err := ShowCreateSequence(tctx, baseConn, "test", "s", conf)
+	require.NoError(t, err)
+	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVAL(`s`,1001);\n", createSequenceSQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	conf.ServerInfo.ServerType = version.ServerTypeMariaDB
+	mock.ExpectQuery("SHOW CREATE SEQUENCE `test`.`s`").
+		WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).
+			AddRow("s", "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
+	mock.ExpectQuery("SELECT NEXT_NOT_CACHED_VALUE FROM `test`.`s`").
+		WillReturnRows(sqlmock.NewRows([]string{"next_not_cached_value"}).
+			AddRow(1001))
+
+	createSequenceSQL, err = ShowCreateSequence(tctx, baseConn, "test", "s", conf)
+	require.NoError(t, err)
+	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVAL(`s`,1001);\n", createSequenceSQL)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestShowCreatePolicy(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -497,11 +536,13 @@ func TestBuildTableSampleQueries(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      DefaultConfig(),
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	d.conf.ServerInfo = version.ServerInfo{
@@ -907,11 +948,13 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      DefaultConfig(),
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	d.conf.ServerInfo = version.ServerInfo{
@@ -1066,11 +1109,13 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      DefaultConfig(),
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	d.conf.ServerInfo = version.ServerInfo{
@@ -1266,9 +1311,7 @@ func buildMockNewRows(mock sqlmock.Sqlmock, columns []string, driverValues [][]d
 }
 
 func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
-	// nolint: dogsled
-	_, filename, _, _ := runtime.Caller(0)
-	csvFilename := path.Join(path.Dir(filename), "region_results.csv")
+	csvFilename := "region_results.csv"
 	file, err := os.Open(csvFilename)
 	require.NoError(t, err)
 	csvReader := csv.NewReader(file)
@@ -1324,10 +1367,13 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 			{"t4", 0, TableTypeBase},
 		},
 	}
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
+
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      conf,
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	showStatsHistograms := buildMockNewRows(mock, []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size", "Correlation"},

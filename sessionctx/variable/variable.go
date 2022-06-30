@@ -38,6 +38,8 @@ const (
 	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
 	ScopeSession ScopeFlag = 1 << 1
+	// ScopeInstance means it is similar to global but doesn't propagate to other TiDB servers.
+	ScopeInstance ScopeFlag = 1 << 2
 
 	// TypeStr is the default
 	TypeStr TypeFlag = 0
@@ -73,6 +75,10 @@ const (
 	AssertionFastStr = "FAST"
 	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
 	AssertionOffStr = "OFF"
+	// OOMActionCancel constants represents the valid action configurations for OOMAction "CANCEL".
+	OOMActionCancel = "CANCEL"
+	// OOMActionLog constants represents the valid action configurations for OOMAction "LOG".
+	OOMActionLog = "LOG"
 )
 
 // Global config name list.
@@ -126,6 +132,9 @@ type SysVar struct {
 	GetSession func(*SessionVars) (string, error)
 	// GetGlobal is a getter function for global scope.
 	GetGlobal func(*SessionVars) (string, error)
+	// GetStateValue gets the value for session states, which is used for migrating sessions.
+	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
+	GetStateValue func(*SessionVars) (string, bool, error)
 	// skipInit defines if the sysvar should be loaded into the session on init.
 	// This is only important to set for sysvars that include session scope,
 	// since global scoped sysvars are not-applicable.
@@ -248,6 +257,11 @@ func (sv *SysVar) HasGlobalScope() bool {
 	return sv.Scope&ScopeGlobal != 0
 }
 
+// HasInstanceScope returns true if the scope for the sysVar includes instance
+func (sv *SysVar) HasInstanceScope() bool {
+	return sv.Scope&ScopeInstance != 0
+}
+
 // Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Check that the scope is correct first.
@@ -299,7 +313,7 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 	if sv.ReadOnly || sv.Scope == ScopeNone {
 		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
 	}
-	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+	if scope == ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
 	if scope == ScopeSession && !sv.HasSessionScope() {
@@ -394,7 +408,6 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
 		return strconv.FormatUint(sv.MaxValue, 10), nil
-
 	}
 	return value, nil
 }
@@ -506,13 +519,26 @@ func (sv *SysVar) SkipInit() bool {
 	// These a special "Global-only" sysvars that for backward compatibility
 	// are currently cached in the session. Please don't add to this list.
 	switch sv.Name {
-	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
-		TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
-		TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
-		TiDBEnableTelemetry, TiDBEnablePointGetCache:
+	case TiDBRowFormatVersion:
 		return false
 	}
 	return !sv.HasSessionScope()
+}
+
+// SkipSysvarCache returns true if the sysvar should not re-execute on peers
+// This doesn't make sense for the GC variables because they are based in tikv
+// tables. We'd effectively be reading and writing to the same table, which
+// could be in an unsafe manner. In future these variables might be converted
+// to not use a different table internally, but to do that we need to first
+// fix upgrade/downgrade so we know that older servers won't be in the cluster
+// which update only these values.
+func (sv *SysVar) SkipSysvarCache() bool {
+	switch sv.Name {
+	case TiDBGCEnable, TiDBGCRunInterval, TiDBGCLifetime,
+		TiDBGCConcurrency, TiDBGCScanLockMode:
+		return true
+	}
+	return false
 }
 
 var sysVars map[string]*SysVar

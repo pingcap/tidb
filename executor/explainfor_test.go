@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"bytes"
-	"crypto/tls"
 	"fmt"
 	"math"
 	"strconv"
@@ -25,45 +24,12 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/stretchr/testify/require"
 )
-
-// mockSessionManager is a mocked session manager which is used for test.
-type mockSessionManager1 struct {
-	PS []*util.ProcessInfo
-}
-
-func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
-	return nil
-}
-
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
-	for _, item := range msm.PS {
-		ret[item.ID] = item
-	}
-	return ret
-}
-
-func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	for _, item := range msm.PS {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return &util.ProcessInfo{}, false
-}
-
-func (msm *mockSessionManager1) Kill(_ uint64, _ bool)         {}
-func (msm *mockSessionManager1) KillAllConnections()           {}
-func (msm *mockSessionManager1) UpdateTLSConfig(_ *tls.Config) {}
-func (msm *mockSessionManager1) ServerID() uint64              { return 1 }
 
 func TestExplainFor(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -84,8 +50,8 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustQuery("select * from t1;")
 	tkRootProcess := tkRoot.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
-	tkRoot.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	tkUser.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
 		"TableReader_5 10000.00 root  data:TableFullScan_4",
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -94,8 +60,8 @@ func TestExplainFor(t *testing.T) {
 	check := func() {
 		tkRootProcess = tkRoot.Session().ShowProcess()
 		ps = []*util.ProcessInfo{tkRootProcess}
-		tkRoot.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-		tkUser.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+		tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
 		require.Len(t, rows, 2)
 		require.Len(t, rows[0], 9)
@@ -126,7 +92,7 @@ func TestExplainFor(t *testing.T) {
 
 	tkRootProcess.Plan = nil
 	ps = []*util.ProcessInfo{tkRootProcess}
-	tkRoot.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }
 
@@ -143,8 +109,8 @@ func TestExplainForVerbose(t *testing.T) {
 	tk.MustQuery("select * from t1;")
 	tkRootProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	tk2.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	rs := tk.MustQuery("explain format = 'verbose' select * from t1").Rows()
 	rs2 := tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
@@ -159,8 +125,8 @@ func TestExplainForVerbose(t *testing.T) {
 	tk.MustQuery("select * from t2;")
 	tkRootProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkRootProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	tk2.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rs = tk.MustQuery("explain format = 'verbose' select * from t2").Rows()
 	rs2 = tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
 	require.Len(t, rs, len(rs2))
@@ -173,6 +139,10 @@ func TestExplainForVerbose(t *testing.T) {
 			require.Equal(t, rs2[i][j], rs[i][j])
 		}
 	}
+	tk.MustQuery("explain format = 'verbose' select * from t1").Rows()
+	tk.MustQuery("explain format = 'VERBOSE' select * from t1").Rows()
+	tk.MustQuery("explain analyze format = 'verbose' select * from t1").Rows()
+	tk.MustQuery("explain analyze format = 'VERBOSE' select * from t1").Rows()
 }
 
 func TestIssue11124(t *testing.T) {
@@ -192,8 +162,8 @@ func TestIssue11124(t *testing.T) {
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'")
 	tkRootProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
-	tk2.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	rs := tk.MustQuery("explain select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
 	rs2 := tk2.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
@@ -307,7 +277,7 @@ func TestExplainForConnPlanCache(t *testing.T) {
 
 	// single test
 	tk1.MustExec(executeQuery)
-	tk2.Session().SetSessionManager(&mockSessionManager1{
+	tk2.Session().SetSessionManager(&testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk1.Session().ShowProcess()},
 	})
 	tk2.MustQuery(explainQuery).Check(explainResult)
@@ -327,7 +297,7 @@ func TestExplainForConnPlanCache(t *testing.T) {
 
 	wg.Run(func() {
 		for i := 0; i < repeats; i++ {
-			tk2.Session().SetSessionManager(&mockSessionManager1{
+			tk2.Session().SetSessionManager(&testkit.MockSessionManager{
 				PS: []*util.ProcessInfo{tk1.Session().ShowProcess()},
 			})
 			tk2.MustQuery(explainQuery).Check(explainResult)
@@ -385,7 +355,7 @@ func TestExplainDotForExplainPlan(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
 }
@@ -402,7 +372,7 @@ func TestExplainDotForQuery(t *testing.T) {
 	tk.MustQuery("select 1")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	expected := tk2.MustQuery("explain format=\"dot\" select 1").Rows()
 	got := tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Rows()
@@ -504,14 +474,11 @@ func TestExplainTiFlashSystemTables(t *testing.T) {
 }
 
 func TestPointGetUserVarPlanCache(t *testing.T) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	tmp := testkit.NewTestKit(t, store)
+	defer tmp.MustExec("set global tidb_enable_prepared_plan_cache=" + variable.BoolToOnOff(variable.EnablePreparedPlanCache.Load()))
+	tmp.MustExec("set global tidb_enable_prepared_plan_cache=ON")
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -531,7 +498,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	))
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
@@ -547,7 +514,7 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
 		`└─IndexJoin_17 1.00 root  inner join, inner:TableReader_13, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)`,
@@ -588,7 +555,7 @@ func TestExpressionIndexPreparePlanCache(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
 	require.Regexp(t, ".*expression_index.*", res.Rows()[2][3])
@@ -632,7 +599,7 @@ func TestIssue28259(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 3)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -644,7 +611,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -668,7 +635,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -682,7 +649,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -714,7 +681,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -729,7 +696,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -758,7 +725,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -773,7 +740,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -804,7 +771,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -842,7 +809,7 @@ func TestIssue28696(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -900,7 +867,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 7)
 	require.Regexp(t, ".*Selection.*", res.Rows()[1][0])
@@ -920,7 +887,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*Selection.*", res.Rows()[0][0])
@@ -941,7 +908,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
 
@@ -950,7 +917,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
 
@@ -1142,7 +1109,7 @@ func TestSPM4PlanCache(t *testing.T) {
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*TableReader.*", res.Rows()[0][0])
 	require.Regexp(t, ".*TableFullScan.*", res.Rows()[1][0])
@@ -1160,7 +1127,7 @@ func TestSPM4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	// We can use the new binding.
 	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])

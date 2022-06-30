@@ -566,6 +566,9 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	// Make SetPdLoop take effects.
 	time.Sleep(time.Second)
 
+	fCancel := TempDisableEmulatorGC()
+	defer fCancel()
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash_gc")

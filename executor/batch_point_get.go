@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/consistency"
-	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -56,7 +56,6 @@ type BatchPointGetExec struct {
 	singlePart       bool
 	partTblID        int64
 	idxVals          [][]types.Datum
-	startTS          uint64
 	readReplicaScope string
 	isStaleness      bool
 	snapshotTS       uint64
@@ -97,13 +96,9 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-	e.snapshotTS = e.startTS
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	stmtCtx := sessVars.StmtCtx
-	if e.lock {
-		e.snapshotTS = txnCtx.GetForUpdateTS()
-	}
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
@@ -111,11 +106,14 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.txn = txn
 	var snapshot kv.Snapshot
 	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == e.snapshotTS {
-		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
+		// We can safely reuse the transaction snapshot if snapshotTS is equal to forUpdateTS.
+		// The snapshot may contain cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
+	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
 	}
 	if e.cacheTable != nil {
 		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
@@ -129,7 +127,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
-	if replicaReadType.IsFollowerRead() {
+	if replicaReadType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
@@ -150,8 +148,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
-	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
+	setOptionForTopSQL(stmtCtx, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -375,7 +372,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			return e.handles[i].Compare(e.handles[j]) < 0
 
 		}
-		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().GetFlag()) {
 			uintComparator := func(i, h kv.Handle) int {
 				if !i.IsInt() || !h.IsInt() {
 					panic(fmt.Sprintf("both handles need be IntHandle, but got %T and %T ", i, h))
@@ -538,13 +535,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 }
 
 // LockKeys locks the keys for pessimistic transaction.
-func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
-	txnCtx := seCtx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime, len(keys))
+func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
+	txnCtx := sctx.GetSessionVars().TxnCtx
+	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
+	if err != nil {
+		return err
+	}
 	if txnCtx.IsPessimistic {
 		lctx.InitReturnValues(len(keys))
 	}
-	err := doLockKeys(ctx, seCtx, lctx, keys...)
+	err = doLockKeys(ctx, sctx, lctx, keys...)
 	if err != nil {
 		return err
 	}
@@ -587,7 +587,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 
 	switch pi.Type {
 	case model.PartitionTypeHash:
-		partIdx := math.Abs(intVal % int64(pi.Num))
+		partIdx := mathutil.Abs(intVal % int64(pi.Num))
 		return pi.Definitions[partIdx].ID, nil
 	case model.PartitionTypeRange:
 		// we've check the type assertions in func TryFastPlan
@@ -595,7 +595,7 @@ func getPhysID(tblInfo *model.TableInfo, partitionExpr *tables.PartitionExpr, in
 		if !ok {
 			return 0, errors.Errorf("unsupported partition type in BatchGet")
 		}
-		unsigned := mysql.HasUnsignedFlag(col.GetType().Flag)
+		unsigned := mysql.HasUnsignedFlag(col.GetType().GetFlag())
 		ranges := partitionExpr.ForRangePruning
 		length := len(ranges.LessThan)
 		partIdx := sort.Search(length, func(i int) bool {

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2019 PingCAP, Inc.
 #
@@ -28,12 +28,11 @@ export TIKV_STATUS_ADDR="127.0.0.1:2018"
 export TIKV_COUNT=3
 export TIFLASH_STATUS="127.0.0.1:17000"
 export TIFLASH_HTTP="127.0.0.1:8125"
-export IMPORTER_ADDR="127.0.0.1:8808"
 export TIKV_PIDS="${TEST_DIR:?}/tikv_pids.txt"
 
 cleanup_data() {
     # Clean up data
-    for svc in "br" "tidb" "tiflash" "tikv" "pd" "importer"; do
+    for svc in "br" "tidb" "tiflash" "tikv" "pd"; do
         find "$TEST_DIR" -maxdepth 1 -name "${svc}*" -type d -exec echo delete {} \; -exec rm -rf {} \; 2> /dev/null
     done
 }
@@ -46,7 +45,7 @@ stop() {
 }
 
 stop_services() {
-    for svc in "br" "tidb-server" "tiflash" "TiFlashMain" "tikv-server" "pd-server" "cdc" "minio" "tikv-importer"; do
+    for svc in "br" "tidb-server" "tiflash" "TiFlashMain" "tikv-server" "pd-server" "cdc" "minio"; do
         stop $svc &
     done
     sleep 2 # give some time for the OS to reap all processes
@@ -181,16 +180,6 @@ start_tidb() {
     done
 }
 
-start_importer() {
-    echo "Starting Importer..."
-    bin/tikv-importer \
-        --addr "$IMPORTER_ADDR" \
-        --import-dir "$TEST_DIR/importer" \
-        --log-file "$TEST_DIR/importer.log" \
-        --config "tests/config/importer.toml" &
-}
-
-
 start_services_impl() {
     stop_services || true
     cleanup_data || true
@@ -231,7 +220,6 @@ start_services_impl() {
     done
     ensure_tikv
     start_tidb
-    start_importer
 
     if $RUN_TIFLASH; then
         start_tiflash

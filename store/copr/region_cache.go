@@ -18,11 +18,11 @@ import (
 	"bytes"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -77,56 +77,43 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	loc := l.Location
 	res := []*LocationKeyRanges{}
 	for ranges.Len() > 0 {
+		// ranges must be in loc.region, so the bucket returned by loc.LocateBucket is guaranteed to be not nil
 		bucket := loc.LocateBucket(ranges.At(0).StartKey)
-		if bucket == nil {
-			// TODO(youjiali1995): if it's overlapped with some buckets, it can be splitted.
-			//
-			// Buckets information may not be up-to-date and accurate.
-			// Find all ranges that can't be located in a bucket and make it one task.
-			i := 1
-			for ; i < ranges.Len(); i++ {
-				if loc.LocateBucket(ranges.At(i).StartKey) != nil {
-					break
-				}
-			}
-			res = append(res, &LocationKeyRanges{l.Location, ranges.Slice(0, i)})
-			ranges = ranges.Slice(i, ranges.Len())
-		} else {
-			// Iterate to the first range that is not complete in the bucket.
-			var r kv.KeyRange
-			var i int
-			for ; i < ranges.Len(); i++ {
-				r = ranges.At(i)
-				if !(bucket.Contains(r.EndKey) || bytes.Equal(bucket.EndKey, r.EndKey)) {
-					break
-				}
-			}
-			// All rest ranges belong to the same bucket.
-			if i == ranges.Len() {
-				res = append(res, &LocationKeyRanges{l.Location, ranges})
+
+		// Iterate to the first range that is not complete in the bucket.
+		var r kv.KeyRange
+		var i int
+		for ; i < ranges.Len(); i++ {
+			r = ranges.At(i)
+			if !(bucket.Contains(r.EndKey) || bytes.Equal(bucket.EndKey, r.EndKey)) {
 				break
 			}
+		}
+		// All rest ranges belong to the same bucket.
+		if i == ranges.Len() {
+			res = append(res, &LocationKeyRanges{l.Location, ranges})
+			break
+		}
 
-			if bucket.Contains(r.StartKey) {
-				// Part of r is not in the bucket. We need to split it.
-				taskRanges := ranges.Slice(0, i)
-				taskRanges.last = &kv.KeyRange{
-					StartKey: r.StartKey,
-					EndKey:   bucket.EndKey,
-				}
-				res = append(res, &LocationKeyRanges{l.Location, taskRanges})
-
-				ranges = ranges.Slice(i+1, ranges.Len())
-				ranges.first = &kv.KeyRange{
-					StartKey: bucket.EndKey,
-					EndKey:   r.EndKey,
-				}
-			} else {
-				// ranges[i] is not in the bucket.
-				taskRanges := ranges.Slice(0, i)
-				res = append(res, &LocationKeyRanges{l.Location, taskRanges})
-				ranges = ranges.Slice(i, ranges.Len())
+		if bucket.Contains(r.StartKey) {
+			// Part of r is not in the bucket. We need to split it.
+			taskRanges := ranges.Slice(0, i)
+			taskRanges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   bucket.EndKey,
 			}
+			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
+
+			ranges = ranges.Slice(i+1, ranges.Len())
+			ranges.first = &kv.KeyRange{
+				StartKey: bucket.EndKey,
+				EndKey:   r.EndKey,
+			}
+		} else {
+			// ranges[i] is not in the bucket.
+			taskRanges := ranges.Slice(0, i)
+			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
+			ranges = ranges.Slice(i, ranges.Len())
 		}
 	}
 	return res

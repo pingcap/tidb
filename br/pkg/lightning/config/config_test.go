@@ -517,7 +517,7 @@ func TestInvalidTOML(t *testing.T) {
 		delimiter = '\'
 		backslash-escape = true
 	`))
-	require.EqualError(t, err, "Near line 0 (last key parsed ''): bare keys cannot contain '['")
+	require.EqualError(t, err, "Near line 2 (last key parsed ''): expected '.' or '=', but got '[' instead")
 }
 
 func TestTOMLUnusedKeys(t *testing.T) {
@@ -636,7 +636,7 @@ func TestLoadConfig(t *testing.T) {
 func TestDefaultImporterBackendValue(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
-	cfg.TikvImporter.Backend = "importer"
+	cfg.TikvImporter.Backend = "local"
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	require.NoError(t, err)
@@ -658,7 +658,7 @@ func TestDefaultTidbBackendValue(t *testing.T) {
 func TestDefaultCouldBeOverwritten(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
-	cfg.TikvImporter.Backend = "importer"
+	cfg.TikvImporter.Backend = "local"
 	cfg.App.IndexConcurrency = 20
 	cfg.App.TableConcurrency = 60
 	cfg.TiDB.DistSQLScanConcurrency = 1

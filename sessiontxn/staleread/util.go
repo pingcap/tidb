@@ -31,9 +31,14 @@ func CalculateAsOfTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (u
 	if err != nil {
 		return 0, err
 	}
+
+	if tsVal.IsNull() {
+		return 0, errAsOf.FastGenWithCause("as of timestamp cannot be NULL")
+	}
+
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millionsecond here, so set fsp to 3.
-	toTypeTimestamp.Decimal = 3
+	toTypeTimestamp.SetDecimal(3)
 	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
 	if err != nil {
 		return 0, err
@@ -54,4 +59,9 @@ func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Du
 	tsVal := nowVal.Add(readStaleness)
 	minTsVal := expression.GetMinSafeTime(sctx)
 	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
+}
+
+// IsStmtStaleness indicates whether the current statement is staleness or not
+func IsStmtStaleness(sctx sessionctx.Context) bool {
+	return sctx.GetSessionVars().StmtCtx.IsStaleness
 }

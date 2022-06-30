@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
@@ -43,6 +44,26 @@ func TestTxnUsageInfo(t *testing.T) {
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.AsyncCommitUsed)
 		require.True(t, txnUsage.OnePCUsed)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = off", variable.TiDBTxnAssertionLevel))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.False(t, txnUsage.MutationCheckerUsed)
+		require.Equal(t, "OFF", txnUsage.AssertionLevel)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = strict", variable.TiDBTxnAssertionLevel))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.MutationCheckerUsed)
+		require.Equal(t, "STRICT", txnUsage.AssertionLevel)
+
+		tk.MustExec(fmt.Sprintf("set global %s = fast", variable.TiDBTxnAssertionLevel))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.Equal(t, "FAST", txnUsage.AssertionLevel)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCReadCheckTS))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.RcCheckTS)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -106,6 +127,49 @@ func TestCachedTable(t *testing.T) {
 	require.False(t, usage.CachedTable)
 }
 
+func TestPlacementPolicies(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), usage.PlacementPolicyUsage.NumPlacementPolicies)
+	require.Equal(t, uint64(0), usage.PlacementPolicyUsage.NumDBWithPolicies)
+	require.Equal(t, uint64(0), usage.PlacementPolicyUsage.NumTableWithPolicies)
+	require.Equal(t, uint64(0), usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies)
+
+	tk.MustExec("create placement policy p1 followers=4;")
+	tk.MustExec(`create placement policy p2 primary_region="cn-east-1" regions="cn-east-1,cn-east"`)
+	tk.MustExec(`create placement policy p3 followers=3`)
+	tk.MustExec("alter database test placement policy=p1;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("create table t2(a int) placement policy=p2;")
+	tk.MustExec("create table t3(id int) PARTITION BY RANGE (id) (" +
+		"PARTITION p0 VALUES LESS THAN (100) placement policy p3," +
+		"PARTITION p1 VALUES LESS THAN (1000))")
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), usage.PlacementPolicyUsage.NumPlacementPolicies)
+	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumDBWithPolicies)
+	require.Equal(t, uint64(3), usage.PlacementPolicyUsage.NumTableWithPolicies)
+	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies)
+
+	tk.MustExec("drop table t2;")
+	tk.MustExec("drop placement policy p2;")
+	tk.MustExec("alter table t3 placement policy=default")
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), usage.PlacementPolicyUsage.NumPlacementPolicies)
+	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumDBWithPolicies)
+	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumTableWithPolicies)
+	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies)
+}
+
 func TestAutoCapture(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -124,4 +188,60 @@ func TestAutoCapture(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.True(t, usage.AutoCapture)
+}
+
+func TestClusterIndexUsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int key clustered);")
+	tk.MustExec("create table t2(a int);")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.NotNil(t, usage.ClusterIndex)
+	require.Equal(t, uint64(1), usage.NewClusterIndex.NumClusteredTables)
+	require.Equal(t, uint64(2), usage.NewClusterIndex.NumTotalTables)
+}
+
+func TestNonTransactionalUsage(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.NonTransactionalUsage.DeleteCount)
+
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("batch limit 1 delete from t")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.NonTransactionalUsage.DeleteCount)
+}
+
+func TestGlobalKillUsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.GlobalKill)
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.GlobalKill)
 }

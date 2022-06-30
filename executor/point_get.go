@@ -49,11 +49,19 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 
-	startTS, err := b.getSnapshotTS()
+	if p.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
+	}
+
+	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
+
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
@@ -61,14 +69,17 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 
 	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
+		e.cacheTable = b.getCacheTable(p.TblInfo, snapshotTS)
 	}
+
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	e.Init(p, startTS)
+	e.Init(p, snapshotTS)
+
 	if e.lock {
 		b.hasLock = true
 	}
+
 	return e
 }
 
@@ -83,7 +94,7 @@ type PointGetExecutor struct {
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
-	startTS          uint64
+	snapshotTS       uint64
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
@@ -106,13 +117,13 @@ type PointGetExecutor struct {
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, snapshotTS uint64) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
 	e.idxVals = p.IndexValues
-	e.startTS = startTs
+	e.snapshotTS = snapshotTS
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
@@ -142,10 +153,7 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	snapshotTS := e.startTS
-	if e.lock {
-		snapshotTS = txnCtx.GetForUpdateTS()
-	}
+	snapshotTS := e.snapshotTS
 	var err error
 	e.txn, err = e.ctx.Txn(false)
 	if err != nil {
@@ -155,6 +163,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
+	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		e.snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
 	}
 	if e.cacheTable != nil {
 		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
@@ -171,7 +182,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	if readReplicaType.IsFollowerRead() {
+	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
@@ -191,8 +202,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			panic("point get replica option fail")
 		}
 	})
-	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
-	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 
@@ -379,9 +389,12 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
-		lockCtx := newLockCtx(seVars, e.lockWaitTime, 1)
+		lockCtx, err := newLockCtx(e.ctx, e.lockWaitTime, 1)
+		if err != nil {
+			return err
+		}
 		lockCtx.InitReturnValues(1)
-		err := doLockKeys(ctx, e.ctx, lockCtx, key)
+		err = doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
 		}
@@ -496,22 +509,22 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
 		// So we don't use CastValue for string value for now.
 		// TODO: merge two if branch.
-		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+		if colInfo.GetType() == mysql.TypeString || colInfo.GetType() == mysql.TypeVarString || colInfo.GetType() == mysql.TypeVarchar {
 			var str string
 			str, err = idxVals[i].ToString()
-			idxVals[i].SetString(str, colInfo.FieldType.Collate)
-		} else if colInfo.Tp == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
+			idxVals[i].SetString(str, colInfo.FieldType.GetCollate())
+		} else if colInfo.GetType() == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
 			var str string
 			var e types.Enum
 			str, err = idxVals[i].ToString()
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			e, err = types.ParseEnumName(colInfo.FieldType.GetElems(), str, colInfo.FieldType.GetCollate())
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.Collate)
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.GetCollate())
 		} else {
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
@@ -593,7 +606,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 
 func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk,
 	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
-	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
@@ -605,7 +618,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		return false, nil
 	}
 	// Try to decode common handle.
-	if mysql.HasPriKeyFlag(col.RetType.Flag) {
+	if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 		for i, hid := range pkCols {
 			if col.ID == hid && notPKPrefixCol(hid, prefixColIDs) {
 				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)

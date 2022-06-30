@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testkit
 
@@ -21,10 +20,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -32,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
 )
 
@@ -206,13 +210,19 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 		parserWarns := warns[len(prevWarns):]
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
-			rs, err := tk.session.ExecuteStmt(ctx, stmt)
+			var rs sqlexec.RecordSet
+			var err error
+			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
+				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			} else {
+				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
+			}
 			if i == 0 {
 				rs0 = rs
 			}
 			if err != nil {
 				tk.session.GetSessionVars().StmtCtx.AppendError(err)
-				return nil, errors.Trace(err)
+				return rs, errors.Trace(err)
 			}
 		}
 		if len(parserWarns) > 0 {
@@ -231,11 +241,11 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	}
 	rs, err := tk.session.ExecutePreparedStmt(ctx, stmtID, params)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return rs, errors.Trace(err)
 	}
 	err = tk.session.DropPreparedStmt(stmtID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return rs, errors.Trace(err)
 	}
 	return rs, nil
 }
@@ -247,6 +257,15 @@ func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 		tk.require.NoError(res.Close())
 	}
 	return err
+}
+
+// MustExecToErr executes a sql statement and must return Error.
+func (tk *TestKit) MustExecToErr(sql string, args ...interface{}) {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	tk.require.Error(err)
 }
 
 func newSession(t testing.TB, store kv.Storage) session.Session {
@@ -266,19 +285,38 @@ func (tk *TestKit) RefreshConnectionID() {
 // MustGetErrCode executes a sql statement and assert it's error code.
 func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
-	tk.require.Error(err)
+	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "expect type 'terror.Error', but obtain '%T': %v", originErr, originErr)
+	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
 	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
+	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
 }
 
-// MustGetErrMsg executes a sql statement and assert it's error message.
+// MustGetErrMsg executes a sql statement and assert its error message.
 func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
+	tk.require.EqualError(err, errStr)
+}
+
+// MustGetDBError executes a sql statement and assert its terror.
+func (tk *TestKit) MustGetDBError(sql string, dberr *terror.Error) {
+	err := tk.ExecToErr(sql)
+	tk.require.Truef(terror.ErrorEqual(err, dberr), "err %v", err)
+}
+
+// MustContainErrMsg executes a sql statement and assert its error message containing errStr.
+func (tk *TestKit) MustContainErrMsg(sql string, errStr interface{}) {
+	err := tk.ExecToErr(sql)
 	tk.require.Error(err)
-	tk.require.Equal(errStr, err.Error())
+	tk.require.Contains(err.Error(), errStr)
+}
+
+// MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
+func (tk *TestKit) MustMatchErrMsg(sql string, errRx interface{}) {
+	err := tk.ExecToErr(sql)
+	tk.require.Error(err)
+	tk.require.Regexp(errRx, err.Error())
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
@@ -370,4 +408,29 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
+}
+
+// RegionProperityClient is to get region properties.
+type RegionProperityClient struct {
+	tikv.Client
+	mu struct {
+		sync.Mutex
+		failedOnce bool
+		count      int64
+	}
+}
+
+// SendRequest is to mock send request.
+func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	if req.Type == tikvrpc.CmdDebugGetRegionProperties {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.mu.count++
+		// Mock failure once.
+		if !c.mu.failedOnce {
+			c.mu.failedOnce = true
+			return &tikvrpc.Response{}, nil
+		}
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }

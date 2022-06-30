@@ -132,7 +132,7 @@ type CreateDatabaseStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Name        string
+	Name        model.CIStr
 	Options     []*DatabaseOption
 }
 
@@ -142,7 +142,7 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		err := option.Restore(ctx)
@@ -168,13 +168,16 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type AlterDatabaseStmt struct {
 	ddlNode
 
-	Name                 string
+	Name                 model.CIStr
 	AlterDefaultDatabase bool
 	Options              []*DatabaseOption
 }
 
 // Restore implements Node interface.
 func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() && n.isAllPlacementOptions() {
+		return nil
+	}
 	// If all options placement options and RestoreTiDBSpecialComment flag is on,
 	// we should restore the whole node in special comment. For example, the restore result should be:
 	// /*T![placement] ALTER DATABASE `db1` PLACEMENT POLICY = `p1` */
@@ -188,7 +191,7 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER DATABASE")
 	if !n.AlterDefaultDatabase {
 		ctx.WritePlain(" ")
-		ctx.WriteName(n.Name)
+		ctx.WriteName(n.Name.O)
 	}
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
@@ -227,7 +230,7 @@ type DropDatabaseStmt struct {
 	ddlNode
 
 	IfExists bool
-	Name     string
+	Name     model.CIStr
 }
 
 // Restore implements Node interface.
@@ -236,7 +239,7 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	return nil
 }
 
@@ -1936,6 +1939,9 @@ type PlacementOption struct {
 }
 
 func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
 	fn := func() error {
 		switch n.Tp {
 		case PlacementOptionPrimaryRegion:
@@ -2324,6 +2330,9 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
 	case TableOptionPlacementPolicy:
+		if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+			return nil
+		}
 		placementOpt := PlacementOption{
 			Tp:        PlacementOptionPolicy,
 			UintValue: n.UintValue,
@@ -2685,8 +2694,25 @@ func (n *AlterOrderItem) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+func (n *AlterTableSpec) IsAllPlacementRule() bool {
+	switch n.Tp {
+	case AlterTablePartitionAttributes, AlterTablePartitionOptions, AlterTableOption, AlterTableAttributes:
+		for _, o := range n.Options {
+			if o.Tp != TableOptionPlacementPolicy {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // Restore implements Node interface.
 func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
+	if n.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
 	switch n.Tp {
 	case AlterTableSetTiFlashReplica:
 		ctx.WriteKeyWord("SET TIFLASH REPLICA ")
@@ -3275,13 +3301,36 @@ type AlterTableStmt struct {
 	Specs []*AlterTableSpec
 }
 
+func (n *AlterTableStmt) HaveOnlyPlacementOptions() bool {
+	for _, n := range n.Specs {
+		if n.Tp == AlterTablePartitionOptions {
+			if !n.IsAllPlacementRule() {
+				return false
+			}
+		} else {
+			return false
+		}
+
+	}
+	return true
+}
+
 // Restore implements Node interface.
 func (n *AlterTableStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() && n.HaveOnlyPlacementOptions() {
+		return nil
+	}
 	ctx.WriteKeyWord("ALTER TABLE ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterTableStmt.Table")
 	}
-	for i, spec := range n.Specs {
+	var specs []*AlterTableSpec
+	for _, spec := range n.Specs {
+		if !(spec.IsAllPlacementRule() && ctx.Flags.HasSkipPlacementRuleForRestoreFlag()) {
+			specs = append(specs, spec)
+		}
+	}
+	for i, spec := range specs {
 		if i == 0 || spec.Tp == AlterTablePartition || spec.Tp == AlterTableRemovePartitioning || spec.Tp == AlterTableImportTablespace || spec.Tp == AlterTableDiscardTablespace {
 			ctx.WritePlain(" ")
 		} else {
@@ -3991,6 +4040,9 @@ type AlterPlacementPolicyStmt struct {
 }
 
 func (n *AlterPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
+	if ctx.Flags.HasSkipPlacementRuleForRestoreFlag() {
+		return nil
+	}
 	if ctx.Flags.HasTiDBSpecialCommentFlag() {
 		return restorePlacementStmtInSpecialComment(ctx, n)
 	}

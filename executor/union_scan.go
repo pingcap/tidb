@@ -139,7 +139,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer us.memBuf.RUnlock()
 	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
-	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
+	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return err
@@ -162,7 +162,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(us.columns[idx].Flag) || mysql.HasPreventNullInsertFlag(us.columns[idx].Flag)) && castDatum.IsNull() {
+			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(us.columns[idx])
 			}
 			mutableRow.SetDatum(idx, castDatum)

@@ -15,6 +15,7 @@
 package unistore
 
 import (
+	"context"
 	"errors"
 	"math"
 	"sync"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	pd "github.com/tikv/pd/client"
-	"golang.org/x/net/context"
 )
 
 var _ pd.Client = new(pdClient)

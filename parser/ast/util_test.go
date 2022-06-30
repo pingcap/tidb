@@ -190,7 +190,7 @@ func runNodeRestoreTestWithFlags(t *testing.T, nodeTestCases []NodeRestoreTestCa
 
 // runNodeRestoreTestWithFlagsStmtChange likes runNodeRestoreTestWithFlags but not check if the ASTs are same.
 // Sometimes the AST are different and it's expected.
-func runNodeRestoreTestWithFlagsStmtChange(t *testing.T, nodeTestCases []NodeRestoreTestCase, template string, extractNodeFunc func(node Node) Node) {
+func runNodeRestoreTestWithFlagsStmtChange(t *testing.T, nodeTestCases []NodeRestoreTestCase, template string, extractNodeFunc func(node Node) Node, flags RestoreFlags) {
 	p := parser.New()
 	p.EnableWindowFunc(true)
 	for _, testCase := range nodeTestCases {
@@ -200,7 +200,7 @@ func runNodeRestoreTestWithFlagsStmtChange(t *testing.T, nodeTestCases []NodeRes
 		comment := fmt.Sprintf("source %#v", testCase)
 		require.NoError(t, err, comment)
 		var sb strings.Builder
-		err = extractNodeFunc(stmt).Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+		err = extractNodeFunc(stmt).Restore(NewRestoreCtx(flags, &sb))
 		require.NoError(t, err, comment)
 		restoreSql := fmt.Sprintf(template, sb.String())
 		comment = fmt.Sprintf("source %#v; restore %v", testCase, restoreSql)

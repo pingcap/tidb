@@ -254,7 +254,7 @@ Projection	10.00	root		tpch.lineitem.l_orderkey, Column#35, tpch.orders.o_orderd
 └─TopN	10.00	root		Column#35:desc, tpch.orders.o_orderdate, offset:0, count:10
   └─HashAgg	40252367.98	root		group by:Column#48, Column#49, Column#50, funcs:sum(Column#44)->Column#35, funcs:firstrow(Column#45)->tpch.orders.o_orderdate, funcs:firstrow(Column#46)->tpch.orders.o_shippriority, funcs:firstrow(Column#47)->tpch.lineitem.l_orderkey
     └─Projection	91515927.49	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#44, tpch.orders.o_orderdate, tpch.orders.o_shippriority, tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey, tpch.orders.o_orderdate, tpch.orders.o_shippriority
-      └─HashJoin	91515927.49	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
+      └─IndexHashJoin	91515927.49	root		inner join, inner:IndexLookUp, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)
         ├─HashJoin(Build)	22592975.51	root		inner join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
         │ ├─TableReader(Build)	1498236.00	root		data:Selection
         │ │ └─Selection	1498236.00	cop[tikv]		eq(tpch.customer.c_mktsegment, "AUTOMOBILE")
@@ -262,9 +262,10 @@ Projection	10.00	root		tpch.lineitem.l_orderkey, Column#35, tpch.orders.o_orderd
         │ └─TableReader(Probe)	36870000.00	root		data:Selection
         │   └─Selection	36870000.00	cop[tikv]		lt(tpch.orders.o_orderdate, 1995-03-13 00:00:00.000000)
         │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-        └─TableReader(Probe)	163047704.27	root		data:Selection
-          └─Selection	163047704.27	cop[tikv]		gt(tpch.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)
-            └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
+        └─IndexLookUp(Probe)	4.05	root		
+          ├─IndexRangeScan(Build)	7.45	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
+          └─Selection(Probe)	4.05	cop[tikv]		gt(tpch.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)
+            └─TableRowIDScan	7.45	cop[tikv]	table:lineitem	keep order:false
 /*
 Q4 Order Priority Checking Query
 This query determines how well the order priority system is working and gives an assessment of customer satisfaction.
@@ -348,7 +349,7 @@ Sort	5.00	root		Column#49:desc
   └─HashAgg	5.00	root		group by:Column#52, funcs:sum(Column#50)->Column#49, funcs:firstrow(Column#51)->tpch.nation.n_name
     └─Projection	11822812.50	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#50, tpch.nation.n_name, tpch.nation.n_name
       └─Projection	11822812.50	root		tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount, tpch.nation.n_name
-        └─HashJoin	11822812.50	root		inner join, equal:[eq(tpch.supplier.s_nationkey, tpch.customer.c_nationkey) eq(tpch.orders.o_custkey, tpch.customer.c_custkey)]
+        └─HashJoin	11822812.50	root		inner join, equal:[eq(tpch.orders.o_custkey, tpch.customer.c_custkey) eq(tpch.supplier.s_nationkey, tpch.customer.c_nationkey)]
           ├─TableReader(Build)	7500000.00	root		data:TableFullScan
           │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
           └─HashJoin(Probe)	11822812.50	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]

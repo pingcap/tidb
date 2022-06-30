@@ -35,15 +35,10 @@ import (
 
 // PbTypeToFieldType converts tipb.FieldType to FieldType
 func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
-	return &types.FieldType{
-		Tp:      byte(tp.Tp),
-		Flag:    uint(tp.Flag),
-		Flen:    int(tp.Flen),
-		Decimal: int(tp.Decimal),
-		Charset: tp.Charset,
-		Collate: collate.ProtoToCollation(tp.Collate),
-		Elems:   tp.Elems,
-	}
+	ftb := types.NewFieldTypeBuilder()
+	ft := ftb.SetType(byte(tp.Tp)).SetFlag(uint(tp.Flag)).SetFlen(int(tp.Flen)).SetDecimal(int(tp.Decimal)).SetCharset(tp.Charset).SetCollate(collate.ProtoToCollation(tp.Collate)).BuildP()
+	ft.SetElems(tp.Elems)
+	return ft
 }
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
@@ -668,10 +663,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base, nil, false, sync.Once{}}
-	// case tipb.ScalarFuncSig_RegexpSig:
-	// 	f = &builtinRegexpSig{base}
-	// case tipb.ScalarFuncSig_RegexpUTF8Sig:
-	// 	f = &builtinRegexpUTF8Sig{base}
+	case tipb.ScalarFuncSig_RegexpSig:
+		f = newBuiltinRegexpSig(base)
+	case tipb.ScalarFuncSig_RegexpUTF8Sig:
+		f = newBuiltinRegexpUTF8Sig(base)
 	case tipb.ScalarFuncSig_JsonExtractSig:
 		f = &builtinJSONExtractSig{base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
@@ -1191,13 +1186,13 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 		return nil, err
 	}
 	var t types.Time
-	t.SetType(ft.Tp)
-	t.SetFsp(ft.Decimal)
+	t.SetType(ft.GetType())
+	t.SetFsp(ft.GetDecimal())
 	err = t.FromPackedUint(v)
 	if err != nil {
 		return nil, err
 	}
-	if ft.Tp == mysql.TypeTimestamp && tz != time.UTC {
+	if ft.GetType() == mysql.TypeTimestamp && tz != time.UTC {
 		err = t.ConvertTimeZone(time.UTC, tz)
 		if err != nil {
 			return nil, err
@@ -1238,7 +1233,9 @@ func convertUint(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid uint % x", val)
 	}
 	d.SetUint64(u)
-	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
+	ftp := types.NewFieldTypeBuilder()
+	ftp.SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag)
+	return &Constant{Value: d, RetType: ftp.BuildP()}, nil
 }
 
 func convertString(val []byte, tp *tipb.FieldType) (*Constant, error) {

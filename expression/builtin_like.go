@@ -50,7 +50,7 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	sig := &builtinLikeSig{bf, nil, false, sync.Once{}}
 	sig.setPbCode(tipb.ScalarFuncSig_LikeSig)
 	return sig, nil
@@ -121,7 +121,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = 1
+	bf.tp.SetFlen(1)
 	var sig builtinFunc
 	if bf.collation == charset.CollationBin {
 		sig = newBuiltinRegexpSig(bf)
