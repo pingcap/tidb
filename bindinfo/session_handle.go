@@ -108,6 +108,7 @@ func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
 	return h.ch.GetAllBindRecords()
 }
 
+// EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
 func (h *SessionHandle) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	bindRecords := h.ch.GetAllBindRecords()
 	if len(bindRecords) == 0 {
@@ -121,6 +122,7 @@ func (h *SessionHandle) EncodeSessionStates(ctx context.Context, sctx sessionctx
 	return nil
 }
 
+// DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
 func (h *SessionHandle) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	if len(sessionStates.Bindings) == 0 {
 		return nil

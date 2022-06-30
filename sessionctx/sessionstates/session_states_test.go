@@ -1120,6 +1120,21 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("drop global binding for select * from test.t1")
 			},
 		},
+		{
+			// multiple bindings
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create session binding for select * from test.t1 using select * from test.t1 use index(name)")
+				tk.MustExec("create session binding for select count(*) from test.t1 using select count(*) from test.t1 use index(primary)")
+				tk.MustExec("create session binding for select name from test.t1 using select name from test.t1 use index(primary)")
+				rows := tk.MustQuery("show bindings").Sort().Rows()
+				require.Equal(t, 3, len(rows))
+				return rows
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				tk.MustQuery("show bindings").Sort().Check(param.([][]any))
+				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+			},
+		},
 	}
 
 	for _, tt := range tests {
