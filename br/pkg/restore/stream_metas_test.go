@@ -5,6 +5,7 @@ package restore_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"math/rand"
 	"path/filepath"
 	"testing"
@@ -47,7 +48,7 @@ func fakeStreamBackup(s storage.ExternalStorage) error {
 		if err != nil {
 			panic("failed to marshal test meta")
 		}
-		name := fmt.Sprintf("%s/%04d.meta", restore.GetStreamBackupMetaPrefix(), i)
+		name := fmt.Sprintf("%s/%04d.meta", stream.GetStreamBackupMetaPrefix(), i)
 		if err = s.WriteFile(ctx, name, bs); err != nil {
 			return errors.Trace(err)
 		}
@@ -60,7 +61,7 @@ func fakeStreamBackup(s storage.ExternalStorage) error {
 func TestTruncateLog(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	backupMetaDir := filepath.Join(tmpdir, restore.GetStreamBackupMetaPrefix())
+	backupMetaDir := filepath.Join(tmpdir, stream.GetStreamBackupMetaPrefix())
 	_, err := storage.NewLocalStorage(backupMetaDir)
 	require.NoError(t, err)
 
@@ -103,7 +104,7 @@ func TestTruncateLog(t *testing.T) {
 	})
 
 	l.WalkDir(ctx, &storage.WalkOption{
-		SubDir: restore.GetStreamBackupMetaPrefix(),
+		SubDir: stream.GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, deletedFiles, s)
 		return nil

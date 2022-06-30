@@ -1512,40 +1512,24 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-const (
-	streamBackupMetaPrefix = "v1/backupmeta"
-)
-
-func GetStreamBackupMetaPrefix() string {
-	return streamBackupMetaPrefix
-}
-
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
-	err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
-		if strings.Contains(path, streamBackupMetaPrefix) {
-			m := &backuppb.Metadata{}
-			b, err := rc.storage.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = m.Unmarshal(b)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// TODO find a way to filter some unnecessary meta files.
-			log.Debug("backup stream collect meta file", zap.String("file", path))
-			streamBackupMetaFiles = append(streamBackupMetaFiles, m)
-		}
+	streamBackupMetaFiles := struct {
+		sync.Mutex
+		metas []*backuppb.Metadata
+	}{}
+	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
+
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
+		streamBackupMetaFiles.Lock()
+		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		streamBackupMetaFiles.Unlock()
 		return nil
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	return streamBackupMetaFiles, nil
+	return streamBackupMetaFiles.metas, nil
 }
 
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.

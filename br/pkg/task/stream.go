@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/sync/errgroup"
 	"net/http"
 	"sort"
 	"strings"
@@ -1254,7 +1253,7 @@ func getGlobalResolvedTS(
 	s storage.ExternalStorage,
 ) (uint64, error) {
 	storeMap := sync.Map{}
-	err := FastUnmarshalMetaData(ctx, s, func(m *backuppb.Metadata) error {
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
 		if resolveTS, exist := storeMap.Load(m.StoreId); !exist || resolveTS.(uint64) < m.ResolvedTs {
 			storeMap.Store(m.StoreId, m.ResolvedTs)
 		}
@@ -1448,41 +1447,6 @@ func ShiftTS(startTS uint64) uint64 {
 	} else {
 		return oracle.ComposeTS(shiftPhysical, logical)
 	}
-}
-
-// FastUnmarshalMetaData used a 128 worker pool to speed up
-// read metadata content from external_storage.
-func FastUnmarshalMetaData(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	fn func (*backuppb.Metadata) error,
-) error {
-	pool := utils.NewWorkerPool(128, "metadata")
-	eg, ectx := errgroup.WithContext(ctx)
-	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
-	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
-		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
-			readPath := path
-			pool.ApplyOnErrorGroup(eg, func() error {
-				log.Info("read file in", zap.String("path", readPath))
-				b, err := s.ReadFile(ectx, readPath)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				m := &backuppb.Metadata{}
-				err = m.Unmarshal(b)
-				if err != nil {
-					return err
-				}
-				return fn(m)
-			})
-		}
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return eg.Wait()
 }
 
 func buildPauseSafePointName(taskName string) string {
