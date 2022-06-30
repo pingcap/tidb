@@ -56,6 +56,7 @@ go_library(
 
 go_test(
     name = "handle_test",
+    timeout = "short",
     srcs = [
         "ddl_test.go",
         "dump_test.go",

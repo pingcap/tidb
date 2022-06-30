@@ -204,7 +204,7 @@ func rollingbackAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, err := checkDropColumn(t, job)
+	_, colInfo, idxInfos, _, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
