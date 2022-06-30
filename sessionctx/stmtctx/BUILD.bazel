@@ -27,6 +27,7 @@ go_library(
 
 go_test(
     name = "stmtctx_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "stmtctx_test.go",

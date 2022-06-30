@@ -400,25 +400,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 				return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
 			}
 		}
-	case model.ActionDropColumns:
-		var colNames []model.CIStr
-		var ifExists []bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		if len(indexIDs) > 0 {
-			if len(partitionIDs) > 0 {
-				for _, pid := range partitionIDs {
-					if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pid, indexIDs, now, ea); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			} else {
-				return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
-			}
-		}
 	case model.ActionModifyColumn:
 		var indexIDs []int64
 		var partitionIDs []int64
