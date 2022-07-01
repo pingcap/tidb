@@ -801,7 +801,17 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
 		tk2.MustExec("set autocommit = 1")
 
+		// When autocommit meets write conflict, it will retry in pessimistic mode.
+		// conflictAfterTransfer being true means we encounter a write-conflict again during
+		// the pessimistic mode.
+		// doubleConflictAfterTransfer being true means we encounter a write-conflict again
+		// during the pessimistic retry phase.
+		// And only conflictAfterTransfer being true allows doubleConflictAfterTransfer being true.
 		conflictAfterTransfer := testfork.PickEnum(t, true, false)
+		doubleConflictAfterTransfer := testfork.PickEnum(t, true, false)
+		if !conflictAfterTransfer && doubleConflictAfterTransfer {
+			return
+		}
 
 		tk2.SetBreakPoints(
 			sessiontxn.BreakPointBeforeExecutorFirstRun,
@@ -822,16 +832,22 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
 			tk.MustExec("update t1 set v=v+1")
 
-			// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
-			// and then update the record in another session again.
-			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
-			tk.MustExec("update t1 set v=v+1")
+			if doubleConflictAfterTransfer {
+				// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
+				// and then update the record in another session again.
+				tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+				tk.MustExec("update t1 set v=v+1")
+			}
 
 			// Because the record is updated by another session again, when this session continues, it will get a lock error again.
 			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
 			tk2.Continue().ExpectIdle()
 
-			tk2.MustQuery("select * from t1").Check(testkit.Rows("1 14"))
+			if doubleConflictAfterTransfer {
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 14"))
+			} else {
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
+			}
 		} else {
 			tk2.CancelBreakPoints(sessiontxn.BreakPointBeforeExecutorFirstRun)
 			tk2.Continue().ExpectIdle()
