@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -133,7 +132,10 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false
+		e.ctx.GetSessionVars().StmtCtx.DDLJobID = 0
+	}()
 
 	switch x := e.stmt.(type) {
 	case *ast.AlterDatabaseStmt:
@@ -220,30 +222,12 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
-	isAlterTable := false
-	var err error
-	if len(s.TableToTables) == 1 {
-		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
-		if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
+	for _, tables := range s.TableToTables {
+		if _, ok := e.getLocalTemporaryTable(tables.OldTable.Schema, tables.OldTable.Name); ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 		}
-		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
-		err = domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
-	} else {
-		oldIdents := make([]ast.Ident, 0, len(s.TableToTables))
-		newIdents := make([]ast.Ident, 0, len(s.TableToTables))
-		for _, tables := range s.TableToTables {
-			oldIdent := ast.Ident{Schema: tables.OldTable.Schema, Name: tables.OldTable.Name}
-			if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
-				return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
-			}
-			newIdent := ast.Ident{Schema: tables.NewTable.Schema, Name: tables.NewTable.Name}
-			oldIdents = append(oldIdents, oldIdent)
-			newIdents = append(newIdents, newIdent)
-		}
-		err = domain.GetDomain(e.ctx).DDL().RenameTables(e.ctx, oldIdents, newIdents, isAlterTable)
 	}
-	return err
+	return domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, s)
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
@@ -300,14 +284,11 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
-	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ident.Schema, ident.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.KeyType, model.NewCIStr(s.IndexName),
-		s.IndexPartSpecifications, s.IndexOption, s.IfNotExists)
-	return err
+	return domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, s)
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
@@ -335,117 +316,16 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	return err
 }
 
-// If one drop those tables by mistake, it's difficult to recover.
-// In the worst case, the whole TiDB cluster fails to bootstrap, so we prevent user from dropping them.
-var systemTables = map[string]struct{}{
-	"tidb":                 {},
-	"gc_delete_range":      {},
-	"gc_delete_range_done": {},
-}
-
-func isSystemTable(schema, table string) bool {
-	if schema != "mysql" {
-		return false
-	}
-	if _, ok := systemTables[table]; ok {
-		return true
-	}
-	return false
-}
-
-type objectType int
-
-const (
-	tableObject objectType = iota
-	viewObject
-	sequenceObject
-)
-
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
-	return e.dropTableObject(s.Tables, tableObject, s.IfExists)
+	return domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, s)
 }
 
 func (e *DDLExec) executeDropView(s *ast.DropTableStmt) error {
-	return e.dropTableObject(s.Tables, viewObject, s.IfExists)
+	return domain.GetDomain(e.ctx).DDL().DropView(e.ctx, s)
 }
 
 func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
-	return e.dropTableObject(s.Sequences, sequenceObject, s.IfExists)
-}
-
-// dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
-func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
-	var notExistTables []string
-	sessVars := e.ctx.GetSessionVars()
-	for _, tn := range objects {
-		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
-		_, ok := e.is.SchemaByName(tn.Schema)
-		if !ok {
-			// TODO: we should return special error for table not exist, checking "not exist" is not enough,
-			// because some other errors may contain this error string too.
-			notExistTables = append(notExistTables, fullti.String())
-			continue
-		}
-		_, err := e.is.TableByName(tn.Schema, tn.Name)
-		if err != nil && infoschema.ErrTableNotExists.Equal(err) {
-			notExistTables = append(notExistTables, fullti.String())
-			continue
-		} else if err != nil {
-			return err
-		}
-
-		// Protect important system table from been dropped by a mistake.
-		// I can hardly find a case that a user really need to do this.
-		if isSystemTable(tn.Schema.L, tn.Name.L) {
-			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
-		}
-		tableInfo, err := e.is.TableByName(tn.Schema, tn.Name)
-		if err != nil {
-			return err
-		}
-		tempTableType := tableInfo.Meta().TempTableType
-		if obt == tableObject && config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-			logutil.BgLogger().Warn("admin check table before drop",
-				zap.String("database", fullti.Schema.O),
-				zap.String("table", fullti.Name.O),
-			)
-			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-			_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
-			if err != nil {
-				return err
-			}
-		}
-		switch obt {
-		case tableObject:
-			err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
-		case viewObject:
-			err = domain.GetDomain(e.ctx).DDL().DropView(e.ctx, fullti)
-		case sequenceObject:
-			err = domain.GetDomain(e.ctx).DDL().DropSequence(e.ctx, fullti, ifExists)
-		}
-		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
-			notExistTables = append(notExistTables, fullti.String())
-		} else if err != nil {
-			return err
-		}
-	}
-	if len(notExistTables) > 0 && !ifExists {
-		if obt == sequenceObject {
-			return infoschema.ErrSequenceDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
-		}
-		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
-	}
-	// We need add warning when use if exists.
-	if len(notExistTables) > 0 && ifExists {
-		for _, table := range notExistTables {
-			if obt == sequenceObject {
-				sessVars.StmtCtx.AppendNote(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
-			} else {
-				sessVars.StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
-			}
-		}
-	}
-	return nil
+	return domain.GetDomain(e.ctx).DDL().DropSequence(e.ctx, s)
 }
 
 func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) error {
@@ -464,26 +344,19 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 }
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
-	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
-	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
-		err = nil
-	}
-	return err
+	return domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, s)
 }
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
-	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
-	return err
+	return domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, s)
 }
 
 // executeRecoverTable represents a recover table executor.

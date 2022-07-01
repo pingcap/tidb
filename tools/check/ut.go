@@ -812,14 +812,14 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 		// it takes a longer when race is enabled. so it is set more timeout value.
 		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
-	// session.test -test.run TestClusteredPrefixColum
-	args = append(args, "-test.run", fn)
 
+	// session.test -test.run TestClusteredPrefixColum
+	args = append(args, "-test.run", "^"+fn+"$")
 	return exec.Command(exe, args...)
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling"}
+	skipDir := []string{"br", "cmd", "dumpling", "tests"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
