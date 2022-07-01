@@ -258,9 +258,9 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	return nil
 }
 
-// GetReadSnapshot get snapshot with read ts
-func (p *PessimisticRCTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
-	snapshot, err := p.baseTxnContextProvider.GetForUpdateSnapshot()
+// GetSnapshotWithStmtReadTS get snapshot with read ts
+func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
 	if err != nil {
 		return nil, err
 	}

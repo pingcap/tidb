@@ -121,10 +121,10 @@ type TxnContextProvider interface {
 	GetStmtReadTS() (uint64, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 	GetStmtForUpdateTS() (uint64, error)
-	// GetReadSnapshot get snapshot with read ts
-	GetReadSnapshot() (kv.Snapshot, error)
-	// GetForUpdateSnapshot get snapshot with for update ts
-	GetForUpdateSnapshot() (kv.Snapshot, error)
+	// GetSnapshotWithStmtReadTS get snapshot with read ts
+	GetSnapshotWithStmtReadTS() (kv.Snapshot, error)
+	// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+	GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error)
 
 	// OnInitialize is the hook that should be called when enter a new txn with this provider
 	OnInitialize(ctx context.Context, enterNewTxnType EnterNewTxnType) error
