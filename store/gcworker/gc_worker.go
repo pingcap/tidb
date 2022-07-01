@@ -148,7 +148,7 @@ const (
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
 
-	gcLowResolutionInterval = time.Minute * 5
+	gcTryResolveLocksIntervalFromNow = time.Minute * 5
 
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = txnlock.ResolvedCacheSize / 2
@@ -1018,13 +1018,22 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) (bool, error) {
-	lowResolutionTS, err := w.getLowResolutionTS()
+	// tryResolveLocksTS is defined as `now() - gcTryResolveLocksIntervalFromNow`,
+	// it used for trying resolve locks, ts of which is smaller than tryResolveLocksTS and expired.
+	tryResolveLocksTS, err := w.getTryResolveLocksTS()
 	if err != nil {
 		return false, err
 	}
 
+	if tryResolveLocksTS < safePoint {
+		tryResolveLocksTS = safePoint
+	} else {
+		// to do: add a switch for tryResolveLocksTS.
+		// if the config log-backup.enable is false in PiTR, set safePoint to tryResolveLocksTS directly.
+	}
+
 	if !usePhysical {
-		return false, w.legacyResolveLocks(ctx, safePoint, lowResolutionTS, concurrency)
+		return false, w.legacyResolveLocks(ctx, safePoint, tryResolveLocksTS, concurrency)
 	}
 
 	// First try resolve locks with physical scan
@@ -1036,22 +1045,28 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	logutil.Logger(ctx).Error("[gc worker] resolve locks with physical scan failed, trying fallback to legacy resolve lock",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
-		zap.Uint64("low-resolution-ts", lowResolutionTS),
+		zap.Uint64("low-resolution-ts", tryResolveLocksTS),
 		zap.Error(err))
 
-	return false, w.legacyResolveLocks(ctx, safePoint, lowResolutionTS, concurrency)
+	return false, w.legacyResolveLocks(ctx, safePoint, tryResolveLocksTS, concurrency)
 }
 
-func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, lowResolveTS uint64, concurrency int) error {
+func (w *GCWorker) legacyResolveLocks(
+	ctx context.Context,
+	safePoint uint64,
+	tryResolveLocksTS uint64,
+	concurrency int,
+) error {
 	metrics.GCWorkerCounter.WithLabelValues("resolve_locks").Inc()
 	logutil.Logger(ctx).Info("[gc worker] start resolve locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
+		zap.Uint64("try-resolve-locks-ts", tryResolveLocksTS),
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-		return w.resolveLocksForRange(ctx, safePoint, lowResolveTS, r.StartKey, r.EndKey)
+		return w.resolveLocksForRange(ctx, safePoint, tryResolveLocksTS, r.StartKey, r.EndKey)
 	}
 
 	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
@@ -1068,81 +1083,90 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, low
 	logutil.Logger(ctx).Info("[gc worker] finish resolve locks",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
+		zap.Uint64("try-resolve-locks-ts", tryResolveLocksTS),
 		zap.Int("regions", runner.CompletedRegions()))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 
-func (w *GCWorker) getLowResolutionTS() (uint64, error) {
+// getTryResolveLocksTS gets the TryResolveLocksTS
+// that is defined as `now() - gcTryResolveLocksIntervalFromNow`.
+func (w *GCWorker) getTryResolveLocksTS() (uint64, error) {
 	now, err := w.getOracleTime()
 	if err != nil {
 		return 0, err
 	}
 
-	lowResolutionTime := now.Add(-gcLowResolutionInterval)
-	return oracle.GoTimeToTS(lowResolutionTime), nil
+	tryResolveLocksTime := now.Add(-gcTryResolveLocksIntervalFromNow)
+	return oracle.GoTimeToTS(tryResolveLocksTime), nil
 }
 
 // batchResolveExpiredLocks tries to resolve expired locks with batch method.
 // Travesal the given locks and check that:
-// 1. If the tts of lock is equal with or smaller than safepointTS, it will
-// rollback the txn, no matter the lock is expired of not.
-// 2. If the tts of lock is larger than safepointTS, it will check status of the txn.
+// 1. If the ts of lock is equal with or smaller than forceResolveLocksTS(acually equals safepoint),
+// it will rollback the txn, no matter the lock is expired of not.
+// 2. If the ts of lock is larger than forceResolveLocksTS, it will check status of the txn.
 // Resolve the lock if txn is expired, Or do nothing.
 func (w *GCWorker) batchResolveExpiredLocks(
 	bo *tikv.Backoffer,
 	locks []*txnlock.Lock,
 	loc tikv.RegionVerID,
-	safepoint uint64,
-	lowResolutionTS uint64,
+	forceResolveLocksTS uint64,
+	tryResolveLocksTS uint64,
 ) (bool, error) {
 	if len(locks) == 0 {
 		return true, nil
 	}
 
-	locksBeforeSafePoint := make([]*txnlock.Lock, 0, len(locks))
-	locksAfterSafePoint := make([]*txnlock.Lock, 0, len(locks))
+	forceResolveLocks := make([]*txnlock.Lock, 0, len(locks))
+	tryResolveLocks := make([]*txnlock.Lock, 0, len(locks))
 	for _, l := range locks {
-		if l.TxnID <= safepoint {
-			locksBeforeSafePoint = append(locksBeforeSafePoint, l)
+		if l.TxnID <= forceResolveLocksTS {
+			forceResolveLocks = append(forceResolveLocks, l)
 		} else {
-			locksAfterSafePoint = append(locksAfterSafePoint, l)
+			tryResolveLocks = append(tryResolveLocks, l)
 		}
 	}
 
 	logutil.BgLogger().Info("BatchResolveLegacyLocks",
-		zap.Uint64("safepoint", safepoint),
-		zap.Uint64("low-resolution-ts", lowResolutionTS),
-		zap.Int("before-safepoint-count", len(locksBeforeSafePoint)),
-		zap.Int("after-safepoint-count", len(locksAfterSafePoint)))
+		zap.Uint64("force-resolve-locks-ts", forceResolveLocksTS),
+		zap.Uint64("try-resolve-locks-ts", tryResolveLocksTS),
+		zap.Int("force-resolve-locks-count", len(forceResolveLocks)),
+		zap.Int("try-resolve-locks-count", len(tryResolveLocks)))
 
 	var (
 		ok  bool
 		err error
 	)
 	if w.testingKnobs.batchResolveLocks != nil {
-		ok, err = w.testingKnobs.batchResolveLocks(locksBeforeSafePoint, loc, safepoint)
+		ok, err = w.testingKnobs.batchResolveLocks(forceResolveLocks, loc, forceResolveLocksTS)
 	} else {
-		ok, err = w.tikvStore.GetLockResolver().BatchResolveLocks(bo, locksBeforeSafePoint, loc)
+		ok, err = w.tikvStore.GetLockResolver().BatchResolveLocks(bo, forceResolveLocks, loc)
 	}
 	if err != nil || !ok {
 		return ok, err
 	}
 
 	if w.testingKnobs.resolveLocks != nil {
-		_, err = w.testingKnobs.resolveLocks(locksAfterSafePoint, lowResolutionTS)
+		_, err = w.testingKnobs.resolveLocks(tryResolveLocks, tryResolveLocksTS)
 	} else {
-		_, err = w.tikvStore.GetLockResolver().ResolveLocks(bo, 0, locksAfterSafePoint)
+		_, err = w.tikvStore.GetLockResolver().ResolveLocks(bo, 0, tryResolveLocks)
 	}
 	return err == nil, errors.Trace(err)
 }
 
-func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, lowResolveTS uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
+func (w *GCWorker) resolveLocksForRange(
+	ctx context.Context,
+	forceResolveLocksTS uint64,
+	tryResolveLocksTS uint64,
+	startKey []byte,
+	endKey []byte,
+) (rangetask.TaskStat, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
 	req := tikvrpc.NewRequest(tikvrpc.CmdScanLock, &kvrpcpb.ScanLockRequest{
-		MaxVersion: lowResolveTS,
+		MaxVersion: tryResolveLocksTS,
 		Limit:      gcScanLockLimit,
 	})
 
@@ -1201,11 +1225,11 @@ retryScanAndResolve:
 			locks = append(locks, txnlock.NewLock(li))
 		}
 		if w.testingKnobs.scanLocks != nil {
-			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID(), lowResolveTS)...)
+			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID(), tryResolveLocksTS)...)
 		}
 		locForResolve := loc
 		for {
-			ok, err1 := w.batchResolveExpiredLocks(bo, locks, locForResolve.Region, safePoint, lowResolveTS)
+			ok, err1 := w.batchResolveExpiredLocks(bo, locks, locForResolve.Region, forceResolveLocksTS, tryResolveLocksTS)
 			if err1 != nil {
 				return stat, errors.Trace(err1)
 			}
