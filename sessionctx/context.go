@@ -53,8 +53,6 @@ type SessionStatesHandler interface {
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	SessionStatesHandler
-	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
-	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.

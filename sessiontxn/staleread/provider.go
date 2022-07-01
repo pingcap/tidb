@@ -16,14 +16,17 @@ package staleread
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/table/temptable"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
@@ -73,17 +76,52 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 }
 
 func (p *StalenessTxnContextProvider) activateStaleTxn() error {
-	if err := p.sctx.NewStaleTxnWithStartTS(p.ctx, p.ts); err != nil {
+	var err error
+	if err = sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
 		return err
 	}
-	p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+
+	txnScope := config.GetTxnScopeFromConfig()
+	if err = p.sctx.PrepareTSFuture(p.ctx, sessiontxn.ConstantFuture(p.ts), txnScope); err != nil {
+		return err
+	}
+
+	txnFuture := p.sctx.GetPreparedTxnFuture()
+	if txnFuture == nil {
+		return errors.AddStack(kv.ErrInvalidTxn)
+	}
+
+	txn, err := txnFuture.Wait(p.ctx, p.sctx)
+	if err != nil {
+		return err
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	txn.SetVars(sessVars.KVVars)
+	txn.SetOption(kv.IsStalenessReadOnly, true)
+	txn.SetOption(kv.TxnScope, txnScope)
+	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+	is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sessVars.TxnCtx = &variable.TransactionContext{
+		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
+			InfoSchema:  is,
+			CreateTime:  time.Now(),
+			StartTS:     txn.StartTS(),
+			ShardStep:   int(sessVars.ShardAllocateStep),
+			IsStaleness: true,
+			TxnScope:    txnScope,
+		},
+	}
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	p.is = is
 	if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 		return err
 	}
 
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	txnCtx.IsStaleness = true
-	txnCtx.InfoSchema = p.is
 	return nil
 }
 

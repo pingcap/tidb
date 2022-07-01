@@ -2517,39 +2517,6 @@ func (s *session) checkBeforeNewTxn(ctx context.Context) error {
 	return nil
 }
 
-// NewStaleTxnWithStartTS create a transaction with the given StartTS.
-func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
-	if err := s.checkBeforeNewTxn(ctx); err != nil {
-		return err
-	}
-	txnScope := config.GetTxnScopeFromConfig()
-	txn, err := s.store.Begin(tikv.WithTxnScope(txnScope), tikv.WithStartTS(startTS))
-	if err != nil {
-		return err
-	}
-	txn.SetVars(s.sessionVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
-	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
-	s.txn.changeInvalidToValid(txn)
-	is, err := getSnapshotInfoSchema(s, txn.StartTS())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
-			InfoSchema:  is,
-			CreateTime:  time.Now(),
-			StartTS:     txn.StartTS(),
-			ShardStep:   int(s.sessionVars.ShardAllocateStep),
-			IsStaleness: true,
-			TxnScope:    txnScope,
-		},
-	}
-	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return nil
-}
-
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
 	s.mu.Lock()
 	s.mu.values[key] = value
