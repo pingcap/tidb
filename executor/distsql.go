@@ -779,13 +779,11 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 
 func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
-		if e.stats == nil {
-			e.stats = &IndexLookUpRunTimeStats{
-				indexScanBasicStats: &execdetails.BasicRuntimeStats{},
-				Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
-			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		e.stats = &IndexLookUpRunTimeStats{
+			indexScanBasicStats: &execdetails.BasicRuntimeStats{},
+			Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 

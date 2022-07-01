@@ -455,7 +455,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 }
 
 func (e *IndexMergeReaderExecutor) initRuntimeStats() {
-	if e.runtimeStats != nil && e.stats == nil {
+	if e.runtimeStats != nil {
 		e.stats = &IndexMergeRuntimeStat{
 			Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
