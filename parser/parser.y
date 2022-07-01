@@ -1819,7 +1819,7 @@ AlterTableSpec:
 		partitionMethod := ast.PartitionMethod{Expr: $6}
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
-			Tp:              ast.AlterTableLastPartition,
+			Tp:              ast.AlterTableAddLastPartition,
 			Partition:       &ast.PartitionOptions{PartitionMethod: partitionMethod},
 		}
 	}
@@ -1895,6 +1895,15 @@ AlterTableSpec:
 			IfExists:       $3.(bool),
 			Tp:             ast.AlterTableDropPartition,
 			PartitionNames: $4.([]model.CIStr),
+		}
+	}
+|	"FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')' IfExists
+	{
+		partitionMethod := ast.PartitionMethod{Expr: $6}
+		$$ = &ast.AlterTableSpec{
+			IfExists:  $8.(bool),
+			Tp:        ast.AlterTableDropFirstPartition,
+			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
 		}
 	}
 |	"DROP" "STATS_EXTENDED" IfExists Identifier

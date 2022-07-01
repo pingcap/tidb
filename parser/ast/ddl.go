@@ -2570,7 +2570,7 @@ const (
 	AlterTableNoCache
 	AlterTableStatsOptions
 	AlterTableDropFirstPartition
-	AlterTableLastPartition
+	AlterTableAddLastPartition
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
 )
@@ -2978,10 +2978,19 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord(" PARTITIONS ")
 			ctx.WritePlainf("%d", n.Num)
 		}
-	case AlterTableLastPartition:
+	case AlterTableDropFirstPartition:
+		ctx.WriteKeyWord("FIRST PARTITION LESS THAN (")
+		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableDropFirstPartition Exprs")
+		}
+		ctx.WriteKeyWord(")")
+		if n.NoWriteToBinlog {
+			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
+		}
+	case AlterTableAddLastPartition:
 		ctx.WriteKeyWord("LAST PARTITION LESS THAN (")
 		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterTableLastPartition Exprs")
+			return errors.Annotatef(err, "An error occurred while restore AlterTableAddLastPartition Exprs")
 		}
 		ctx.WriteKeyWord(")")
 		if n.NoWriteToBinlog {
