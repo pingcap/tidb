@@ -144,7 +144,7 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		totalExpectedCnt := 0
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			p := sub.ToProxyJob(job)
-			cnt, err := expectedDeleteRangeCnt(p)
+			cnt, err := expectedDeleteRangeCnt(&p)
 			if err != nil {
 				return 0, err
 			}
