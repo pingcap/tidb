@@ -441,6 +441,30 @@ func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	return keys, nil
 }
 
+// Wait converts pending txn to valid
+func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+	if !txn.validOrPending() {
+		return txn, errors.AddStack(kv.ErrInvalidTxn)
+	}
+	if txn.pending() {
+		defer func(begin time.Time) {
+			sctx.GetSessionVars().DurationWaitTS = time.Since(begin)
+		}(time.Now())
+
+		// Transaction is lazy initialized.
+		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
+		// If Txn() is called later, wait for the future to get a valid txn.
+		if err := txn.changePendingToValid(ctx); err != nil {
+			logutil.BgLogger().Error("active transaction fail",
+				zap.Error(err))
+			txn.cleanup()
+			sctx.GetSessionVars().TxnCtx.StartTS = 0
+			return txn, err
+		}
+	}
+	return txn, nil
+}
+
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {

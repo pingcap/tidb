@@ -32,6 +32,7 @@ go_library(
 
 go_test(
     name = "collate_test",
+    timeout = "short",
     srcs = [
         "collate_bench_test.go",
         "collate_test.go",
