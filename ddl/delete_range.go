@@ -115,7 +115,7 @@ func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionc
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		proxyJob := sub.ToProxyJob(job)
 		if jobNeedGC(&proxyJob) {
-			err := insertJobIntoDeleteRangeTable(ctx, sctx, proxyJob, &ea)
+			err := insertJobIntoDeleteRangeTable(ctx, sctx, &proxyJob, &ea)
 			if err != nil {
 				return errors.Trace(err)
 			}
