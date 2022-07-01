@@ -135,27 +135,6 @@ func (tk *SteppedTestKit) SetBreakPoints(breakPoints ...string) {
 	tk.breakPoints = breakPoints
 }
 
-// CancelBreakPoints cancels the breakpoints in the parameter
-func (tk *SteppedTestKit) CancelBreakPoints(breakPoints ...string) {
-	for _, bp := range breakPoints {
-		for i := 0; i < len(tk.breakPoints); i++ {
-			if tk.breakPoints[i] == bp {
-				if i == 0 {
-					tk.breakPoints = tk.breakPoints[1:]
-				} else if i == len(tk.breakPoints)-1 {
-					tk.breakPoints = tk.breakPoints[:i]
-				} else {
-					tk.breakPoints[i] = tk.breakPoints[len(tk.breakPoints)-1]
-					tk.breakPoints = tk.breakPoints[:len(tk.breakPoints)-1]
-				}
-				break
-			}
-		}
-		path := "github.com/pingcap/tidb/util/breakpoint/" + bp
-		require.NoError(tk.t, failpoint.Disable(path))
-	}
-}
-
 func (tk *SteppedTestKit) handleCommandMsg() {
 	msg, err := tk.ch2.recvMsg()
 	require.NoError(tk.t, err)

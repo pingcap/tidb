@@ -849,7 +849,7 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
 			}
 		} else {
-			tk2.CancelBreakPoints(sessiontxn.BreakPointBeforeExecutorFirstRun)
+			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
 			tk2.Continue().ExpectIdle()
 
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("1 12"))
