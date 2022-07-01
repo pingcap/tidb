@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -913,7 +914,8 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i1;")
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column c2;")
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add column c1 int")
-	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column if exists c1;")
+	tk.MustGetErrCode("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column if exists c1;",
+		errno.ErrUnsupportedDDLOperation)
 }
 
 func TestDropPrimaryKey(t *testing.T) {
