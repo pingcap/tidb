@@ -2554,18 +2554,6 @@ func TestHideIndexUsageSyncLease(t *testing.T) {
 	}
 }
 
-func TestHideExtendedStatsSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	// NOTICE: remove this test when this extended-stats reaches GA state.
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_enable_extended_stats", strings.ToLower(r[0].(string)))
-	}
-	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
-}
-
 func TestRepetitiveAddDropExtendedStats(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
