@@ -17,6 +17,7 @@ go_library(
 
 go_test(
     name = "deadlockhistory_test",
+    timeout = "short",
     srcs = [
         "deadlock_history_test.go",
         "main_test.go",
