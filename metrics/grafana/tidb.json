@@ -6249,7 +6249,7 @@
             "x": 16,
             "y": 67
           },
-          "id": 257,
+          "id": 261,
           "legend": {
             "avg": false,
             "current": false,
@@ -6921,7 +6921,7 @@
             "y": 21
           },
           "hiddenSeries": false,
-          "id": 252,
+          "id": 258,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -9224,7 +9224,7 @@
             "y": 23
           },
           "hiddenSeries": false,
-          "id": 255,
+          "id": 262,
           "legend": {
             "alignAsTable": true,
             "avg": false,
@@ -15759,7 +15759,7 @@
             "y": 15
           },
           "hiddenSeries": false,
-          "id": 253,
+          "id": 259,
           "legend": {
             "alignAsTable": true,
             "avg": true,
@@ -15887,7 +15887,7 @@
             "y": 15
           },
           "hiddenSeries": false,
-          "id": 254,
+          "id": 260,
           "legend": {
             "alignAsTable": true,
             "avg": true,
