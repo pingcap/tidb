@@ -46,7 +46,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20220517085838-12e2f5a9d167
+	github.com/pingcap/kvproto v0.0.0-20220525022339-6aaebf466305
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -62,7 +62,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.1-0.20220613112734-be31f33ba03b
+	github.com/tikv/client-go/v2 v2.0.1-0.20220627063500-947d923945fd
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -97,8 +97,15 @@ require (
 
 require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/charithe/durationcheck v0.0.9
+	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
+	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
+	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
+	github.com/kyoh86/exportloopref v0.1.8
 	honnef.co/go/tools v0.0.1-2020.1.4
 )
+
+require github.com/kisielk/gotool v1.0.0 // indirect
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
@@ -113,7 +120,7 @@ require (
 	github.com/benbjohnson/clock v1.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/cockroachdb/errors v1.8.1 // indirect
+	github.com/cockroachdb/errors v1.8.1
 	github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f // indirect
 	github.com/cockroachdb/redact v1.0.8 // indirect
 	github.com/cockroachdb/sentry-go v0.6.1-cockroachdb.2 // indirect
