@@ -288,7 +288,8 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 }
 
 func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)

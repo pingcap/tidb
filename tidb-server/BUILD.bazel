@@ -21,6 +21,7 @@ go_library(
         "//privilege/privileges",
         "//server",
         "//session",
+        "//session/txninfo",
         "//sessionctx/binloginfo",
         "//sessionctx/variable",
         "//statistics",

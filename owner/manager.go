@@ -56,6 +56,9 @@ type Manager interface {
 	RequireOwner(ctx context.Context) error
 	// CampaignCancel cancels one etcd campaign
 	CampaignCancel()
+
+	// SetBeOwnerHook sets a hook. The hook is called before becoming an owner.
+	SetBeOwnerHook(hook func())
 }
 
 const (
@@ -80,6 +83,7 @@ type ownerManager struct {
 	cancel         context.CancelFunc
 	elec           unsafe.Pointer
 	wg             sync.WaitGroup
+	beOwnerHook    func()
 	campaignCancel context.CancelFunc
 }
 
@@ -118,6 +122,10 @@ func (m *ownerManager) Cancel() {
 // RequireOwner implements Manager.RequireOwner interface.
 func (m *ownerManager) RequireOwner(ctx context.Context) error {
 	return nil
+}
+
+func (m *ownerManager) SetBeOwnerHook(hook func()) {
+	m.beOwnerHook = hook
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
@@ -169,6 +177,9 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 }
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
+	if m.beOwnerHook != nil {
+		m.beOwnerHook()
+	}
 	atomic.StorePointer(&m.elec, unsafe.Pointer(elec))
 }
 

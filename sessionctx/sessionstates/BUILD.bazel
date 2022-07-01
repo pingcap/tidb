@@ -7,18 +7,25 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/types",
+        "//sessionctx/stmtctx",
         "//types",
     ],
 )
 
 go_test(
     name = "sessionstates_test",
+    timeout = "short",
     srcs = ["session_states_test.go"],
     deps = [
         "//errno",
+        "//parser/mysql",
+        "//parser/terror",
+        "//server",
         "//sessionctx/variable",
         "//testkit",
+        "//types",
         "//util/sem",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
 )

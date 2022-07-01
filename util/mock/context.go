@@ -56,10 +56,15 @@ type Context struct {
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
 	level       kvrpcpb.DiskFullOpt
+	is          sessionctx.InfoschemaMetaVersion
 }
 
 type wrapTxn struct {
 	kv.Transaction
+}
+
+func (txn *wrapTxn) Wait(_ context.Context, _ sessionctx.Context) (kv.Transaction, error) {
+	return txn, nil
 }
 
 func (txn *wrapTxn) Valid() bool {
@@ -173,12 +178,21 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 			return is
 		}
 	}
-	return nil
+	if c.is == nil {
+		c.is = MockInfoschema(nil)
+	}
+	return c.is
 }
+
+// MockInfoschema only serves for test.
+var MockInfoschema func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion
 
 // GetDomainInfoSchema returns the latest information schema in domain
 func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
-	return nil
+	if c.is == nil {
+		c.is = MockInfoschema(nil)
+	}
+	return c.is
 }
 
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
@@ -238,11 +252,6 @@ func (c *Context) NewTxn(context.Context) error {
 // NewStaleTxnWithStartTS implements the sessionctx.Context interface.
 func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
 	return c.NewTxn(ctx)
-}
-
-// GetSnapshotWithTS return a snapshot with ts
-func (c *Context) GetSnapshotWithTS(ts uint64) kv.Snapshot {
-	return c.Store.GetSnapshot(kv.Version{Ver: ts})
 }
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
@@ -360,9 +369,9 @@ func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	return nil
 }
 
-// GetPreparedTSFuture returns the prepared ts future
-func (c *Context) GetPreparedTSFuture() oracle.Future {
-	return nil
+// GetPreparedTxnFuture returns the prepared ts future
+func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	return &c.txn
 }
 
 // GetStmtStats implements the sessionctx.Context interface.

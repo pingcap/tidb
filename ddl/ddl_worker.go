@@ -103,6 +103,7 @@ type JobContext struct {
 	cacheSQL           string
 	cacheNormalizedSQL string
 	cacheDigest        *parser.Digest
+	tp                 string
 }
 
 // NewJobContext returns a new ddl job context.
@@ -112,6 +113,7 @@ func NewJobContext() *JobContext {
 		cacheSQL:           "",
 		cacheNormalizedSQL: "",
 		cacheDigest:        nil,
+		tp:                 "unknown",
 	}
 }
 
@@ -282,7 +284,8 @@ func (d *ddl) limitDDLJobs() {
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
@@ -294,7 +297,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
-			job.State = model.JobStateQueueing
+			setJobStateToQueueing(job)
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
@@ -302,13 +305,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			if job.MayNeedReorg() {
 				jobListKey = meta.AddIndexJobListKey
 			}
-			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
-				if val.(bool) {
-					if len(job.Args) > 0 {
-						job.Args[0] = 1
-					}
-				}
-			})
+			injectModifyJobArgFailPoint(job)
 			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
@@ -332,6 +329,30 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	} else {
 		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
 	}
+}
+
+func injectModifyJobArgFailPoint(job *model.Job) {
+	failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+		if val.(bool) {
+			// Corrupt the DDL job argument.
+			if job.Type == model.ActionMultiSchemaChange {
+				if len(job.MultiSchemaInfo.SubJobs) > 0 && len(job.MultiSchemaInfo.SubJobs[0].Args) > 0 {
+					job.MultiSchemaInfo.SubJobs[0].Args[0] = 1
+				}
+			} else if len(job.Args) > 0 {
+				job.Args[0] = 1
+			}
+		}
+	})
+}
+
+func setJobStateToQueueing(job *model.Job) {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			sub.State = model.JobStateQueueing
+		}
+	}
+	job.State = model.JobStateQueueing
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
@@ -414,6 +435,11 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 
 func jobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
+		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
+			// For the field/key not exists warnings, there is no need to
+			// delete the ranges.
+			return false
+		}
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			if job.State != model.JobStateRollbackDone {
@@ -422,8 +448,17 @@ func jobNeedGC(job *model.Job) bool {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			return true
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn, model.ActionDropIndexes:
 			return true
+		case model.ActionMultiSchemaChange:
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job)
+				needGC := jobNeedGC(&proxyJob)
+				if needGC {
+					return true
+				}
+			}
+			return false
 		}
 	}
 	return false
@@ -440,7 +475,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if jobNeedGC(job) {
 		err = w.deleteRange(w.ctx, job)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
@@ -550,6 +585,25 @@ func (w *worker) unlockSeqNum(err error) {
 	}
 }
 
+// DDLBackfillers contains the DDL need backfill step.
+var DDLBackfillers = map[model.ActionType]string{
+	model.ActionAddIndex:     "add_index",
+	model.ActionModifyColumn: "modify_column",
+	model.ActionDropIndex:    "drop_index",
+}
+
+func getDDLRequestSource(job *model.Job) string {
+	if tp, ok := DDLBackfillers[job.Type]; ok {
+		return kv.InternalTxnBackfillDDLPrefix + tp
+	}
+	return kv.InternalTxnDDL
+}
+
+func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
+	w.tp = getDDLRequestSource(job)
+	w.ddlJobCtx = kv.WithInternalSourceType(w.ddlJobCtx, w.ddlJobSourceType())
+}
+
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
@@ -561,6 +615,10 @@ func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
 	return tagger
+}
+
+func (w *JobContext) ddlJobSourceType() string {
+	return w.tp
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -578,7 +636,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			runJobErr error
 		)
 		waitTime := 2 * d.lease
-		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() {
 				return nil
@@ -598,6 +657,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
+			w.setDDLSourceForDiagnosis(job)
+			jobContext := w.jobContext(job)
 			if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
@@ -623,6 +684,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
 
+			// set request source type to DDL type
+			txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
@@ -713,7 +776,7 @@ func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.
 		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
 		// but the column has been removed from the binlog of the write operation.
 		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		((job.Type == model.ActionDropColumn || job.Type == model.ActionDropColumns) && job.SchemaState == model.StateDeleteOnly) {
+		((job.Type == model.ActionDropColumn) && job.SchemaState == model.StateDeleteOnly) {
 		if skipWriteBinlog(job) {
 			return
 		}
@@ -856,12 +919,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onExchangeTablePartition(d, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
-	case model.ActionAddColumns:
-		ver, err = onAddColumns(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(d, t, job)
-	case model.ActionDropColumns:
-		ver, err = onDropColumns(d, t, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(d, t, job)
 	case model.ActionSetDefaultValue:
@@ -934,6 +993,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterCacheTable(d, t, job)
 	case model.ActionAlterNoCacheTable:
 		ver, err = onAlterNoCacheTable(d, t, job)
+	case model.ActionMultiSchemaChange:
+		ver, err = onMultiSchemaChange(w, d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
