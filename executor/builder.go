@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -68,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 var (
@@ -1526,6 +1529,39 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return txnManager.GetStmtForUpdateTS()
 	}
 	return txnManager.GetStmtReadTS()
+}
+
+// getSnapshot get the appropriate snapshot from txnManager and set
+// the relevant snapshot options before return.
+func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
+	var snapshot kv.Snapshot
+	var err error
+
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		snapshot, err = txnManager.GetForUpdateSnapshot()
+	} else {
+		snapshot, err = txnManager.GetReadSnapshot()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	sessVars := b.ctx.GetSessionVars()
+	replicaReadType := sessVars.GetReplicaRead()
+	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+
+	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: b.readReplicaScope,
+			},
+		})
+	}
+
+	return snapshot, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -4549,7 +4585,8 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if err := b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
+	var err error
+	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4561,34 +4598,53 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}()
 	}
 
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
+	e := &BatchPointGetExec{
+		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		tblInfo:      plan.TblInfo,
+		idxInfo:      plan.IndexInfo,
+		rowDecoder:   decoder,
+		keepOrder:    plan.KeepOrder,
+		desc:         plan.Desc,
+		lock:         plan.Lock,
+		waitTime:     plan.LockWaitTime,
+		partExpr:     plan.PartitionExpr,
+		partPos:      plan.PartitionColPos,
+		singlePart:   plan.SinglePart,
+		partTblID:    plan.PartTblID,
+		columns:      plan.Columns,
+	}
+
+	e.snapshot, err = b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != b.readReplicaScope {
+			panic("batch point get replica option fail")
+		}
+	})
+
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-
-	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
-	e := &BatchPointGetExec{
-		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:          plan.TblInfo,
-		idxInfo:          plan.IndexInfo,
-		rowDecoder:       decoder,
-		snapshotTS:       snapshotTS,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
-		keepOrder:        plan.KeepOrder,
-		desc:             plan.Desc,
-		lock:             plan.Lock,
-		waitTime:         plan.LockWaitTime,
-		partExpr:         plan.PartitionExpr,
-		partPos:          plan.PartitionColPos,
-		singlePart:       plan.SinglePart,
-		partTblID:        plan.PartTblID,
-		columns:          plan.Columns,
-	}
-
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
+		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
+			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+		}
 	}
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {
