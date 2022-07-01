@@ -112,7 +112,7 @@ func (r *Rule) Valid() error {
 	if r.Expression == PartitionID {
 		switch len(r.Arguments) {
 		case 3, 4:
-			break
+			return nil
 		default:
 			return errors.NotValidf("arguments %v for patition id", r.Arguments)
 		}

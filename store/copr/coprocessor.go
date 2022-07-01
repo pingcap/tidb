@@ -934,7 +934,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "write conflict") {
-			return nil, kv.ErrWriteConflict
+			return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 		}
 		return nil, errors.Trace(err)
 	}
@@ -974,23 +974,25 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
-			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
-				data := make([]byte, len(resp.pbResp.Data))
-				copy(data, resp.pbResp.Data)
+			if resp.detail != nil {
+				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
+					data := make([]byte, len(resp.pbResp.Data))
+					copy(data, resp.pbResp.Data)
 
-				newCacheValue := coprCacheValue{
-					Data:              data,
-					TimeStamp:         worker.req.StartTs,
-					RegionID:          task.region.GetID(),
-					RegionDataVersion: resp.pbResp.CacheLastVersion,
-				}
-				// When paging protocol is used, the response key range is part of the cache data.
-				if r := resp.pbResp.GetRange(); r != nil {
-					newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
-					newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
-				}
+					newCacheValue := coprCacheValue{
+						Data:              data,
+						TimeStamp:         worker.req.StartTs,
+						RegionID:          task.region.GetID(),
+						RegionDataVersion: resp.pbResp.CacheLastVersion,
+					}
+					// When paging protocol is used, the response key range is part of the cache data.
+					if r := resp.pbResp.GetRange(); r != nil {
+						newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
+						newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
+					}
 
-				worker.store.coprCache.Set(cacheKey, &newCacheValue)
+					worker.store.coprCache.Set(cacheKey, &newCacheValue)
+				}
 			}
 		}
 	}
