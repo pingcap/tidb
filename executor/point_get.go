@@ -65,13 +65,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e.base().maxChunkSize = 1
 	e.Init(p)
 
-	e.snapshot, err = b.getSnapshot()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	err = setSnapshotOptions(b, e, e.snapshot)
+	e.snapshot, err = b.getSnapshotWithExecutor(e)
 	if err != nil {
 		b.err = err
 		return nil

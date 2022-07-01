@@ -166,7 +166,7 @@ func (p *StalenessTxnContextProvider) GetReadSnapshot() (kv.Snapshot, error) {
 	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, p.ts)
 
 	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+	if replicaReadType.IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.IsStalenessReadOnly, true)

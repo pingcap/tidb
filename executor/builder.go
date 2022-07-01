@@ -1531,12 +1531,61 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	return txnManager.GetStmtReadTS()
 }
 
-func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
+// getSnapshotWithExecutor get the appropriate snapshot from txnManager and set
+// the relevant snapshot options before return.
+func (b *executorBuilder) getSnapshotWithExecutor(e Executor) (kv.Snapshot, error) {
+	var snapshot kv.Snapshot
+	var err error
+
 	txnManager := sessiontxn.GetTxnManager(b.ctx)
 	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		return txnManager.GetForUpdateSnapshot()
+		snapshot, err = txnManager.GetForUpdateSnapshot()
+	} else {
+		snapshot, err = txnManager.GetReadSnapshot()
 	}
-	return txnManager.GetReadSnapshot()
+	if err != nil {
+		return nil, err
+	}
+
+	sessVars := b.ctx.GetSessionVars()
+
+	switch v := e.(type) {
+	case *BatchPointGetExec:
+		if v.runtimeStats != nil {
+			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+			v.stats = &runtimeStatsWithSnapshot{
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+			sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(v.id, v.stats)
+		}
+	case *PointGetExecutor:
+		if v.runtimeStats != nil {
+			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+			v.stats = &runtimeStatsWithSnapshot{
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+			sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(v.id, v.stats)
+		}
+	default:
+		return nil, errors.New("Mismatched executor")
+	}
+
+	replicaReadType := sessVars.GetReplicaRead()
+	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+
+	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: b.readReplicaScope,
+			},
+		})
+	}
+
+	return snapshot, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -4589,13 +4638,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		columns:      plan.Columns,
 	}
 
-	snapshot, err := b.getSnapshot()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	err = setSnapshotOptions(b, e, snapshot)
+	snapshot, err := b.getSnapshotWithExecutor(e)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4961,46 +5004,4 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 		tableInfo:    v.TableInfo,
 		tikvStore:    tikvStore,
 	}
-}
-
-func setSnapshotOptions(b *executorBuilder, e Executor, snapshot kv.Snapshot) error {
-	sessVars := b.ctx.GetSessionVars()
-
-	switch v := e.(type) {
-	case *BatchPointGetExec:
-		if v.runtimeStats != nil {
-			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-			v.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
-			}
-			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-			sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(v.id, v.stats)
-		}
-	case *PointGetExecutor:
-		if v.runtimeStats != nil {
-			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-			v.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
-			}
-			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-			sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(v.id, v.stats)
-		}
-	default:
-		return errors.New("Mismatched executor")
-	}
-
-	replicaReadType := sessVars.GetReplicaRead()
-	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
-	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
-
-	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
-		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: b.readReplicaScope,
-			},
-		})
-	}
-
-	return nil
 }
