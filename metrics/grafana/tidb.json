@@ -5689,6 +5689,648 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "How much time transactions spend on each state",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 60
+          },
+          "id": 252,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
+              "legendFormat": "{{type}}-99",
+              "interval": "",
+              "exemplar": true,
+              "hide": false,
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.9, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
+              "legendFormat": "{{type}}-90",
+              "interval": "",
+              "exemplar": true,
+              "refId": "B",
+              "hide": false
+            },
+            {
+              "expr": "histogram_quantile(0.8, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
+              "legendFormat": "{{type}}-80",
+              "interval": "",
+              "exemplar": true,
+              "refId": "C",
+              "hide": false
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Transaction execution states duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:230",
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:231",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "bars": false,
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "aliasColors": {},
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "How much time transactions spend on each state after it acquire at least one lock",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 60
+          },
+          "id": 253,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", has_lock=\"true\"}[1m])) by (le, type))",
+              "legendFormat": "{{type}}-99",
+              "interval": "",
+              "exemplar": true,
+              "hide": false,
+              "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", has_lock=\"true\"}[1m])) by (le, type))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}-90",
+              "refId": "B"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_txn_state_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", has_lock=\"true\"}[1m])) by (le, type))",
+              "interval": "",
+              "legendFormat": "{{type}}-80",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Transaction with lock execution states duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:230",
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:231",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "bars": false,
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "percentage": false,
+          "points": false,
+          "stack": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "aliasColors": {},
+          "bars": true,
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "How much time transactions spend on each state",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 60
+          },
+          "id": 255,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [
+            {
+              "$$hashKey": "object:1266",
+              "alias": "total",
+              "bars": false,
+              "lines": true
+            }
+          ],
+          "spaceLength": 10,
+          "stack": true,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_session_txn_state_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "legendFormat": "{{type}}",
+              "interval": "",
+              "exemplar": true,
+              "hide": false,
+              "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_session_transaction_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "total",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Transaction execution states duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:230",
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:231",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "lines": false,
+          "percentage": false,
+          "points": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "aliasColors": {},
+          "bars": true,
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "How many times transactions enter this state in the last minute",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 0,
+            "y": 67
+          },
+          "id": 254,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": true,
+          "targets": [
+            {
+              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "legendFormat": "{{type}}",
+              "interval": "",
+              "exemplar": true,
+              "hide": false,
+              "intervalFactor": 1,
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Transaction enter state",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:230",
+              "format": "none",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:231",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "lines": false,
+          "percentage": false,
+          "points": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "aliasColors": {},
+          "bars": true,
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "How many times transactions leave this state in the last minute",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 8,
+            "y": 67
+          },
+          "id": 256,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": true,
+          "targets": [
+            {
+              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "legendFormat": "{{type}}",
+              "interval": "",
+              "exemplar": true,
+              "hide": false,
+              "intervalFactor": 1,
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Transaction leave state",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:230",
+              "format": "none",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:231",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "lines": false,
+          "percentage": false,
+          "points": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
+        },
+        {
+          "aliasColors": {},
+          "bars": true,
+          "dashLength": 10,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 67
+          },
+          "id": 257,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": false
+          },
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": true,
+          "targets": [
+            {
+              "expr": "sum(increase(tidb_session_txn_state_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type) - on (type) increase(tidb_session_txn_state_entering_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])",
+              "legendFormat": "{{type}}",
+              "interval": "",
+              "exemplar": true,
+              "hide": false,
+              "intervalFactor": 1,
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeRegions": [],
+          "title": "Transaction state count change",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "$$hashKey": "object:230",
+              "format": "none",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "$$hashKey": "object:231",
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          },
+          "description": "Transaction leave state minus Transaction enter state",
+          "dashes": false,
+          "fillGradient": 0,
+          "hiddenSeries": false,
+          "lines": false,
+          "percentage": false,
+          "points": false,
+          "steppedLine": false,
+          "timeFrom": null,
+          "timeShift": null
         }
       ],
       "repeat": null,

@@ -1586,10 +1586,6 @@ func TestShowVar(t *testing.T) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if v.Hidden {
-			continue
-		}
-
 		if v.Scope == variable.ScopeSession {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
@@ -1613,10 +1609,6 @@ func TestShowVar(t *testing.T) {
 	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
-
-	// Test Hidden tx_read_ts
-	res = tk.MustQuery("show variables like '%tx_read_ts'")
-	require.Len(t, res.Rows(), 0)
 
 	// Test versions' related variables
 	res = tk.MustQuery("show variables like 'version%'")

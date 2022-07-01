@@ -36,7 +36,7 @@ func TestAuditLogNormal(t *testing.T) {
 	defer clean()
 	sv := server.CreateMockServer(t, store)
 	defer sv.Close()
-	conn := server.CreateMockConn(t, store, sv)
+	conn := server.CreateMockConn(t, sv)
 	defer conn.Close()
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
