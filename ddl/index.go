@@ -746,9 +746,8 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 		// The target index has been removed.
 		return
 	}
-	// Swap the target index to the end and remove it.
-	indices[offset], indices[len(indices)-1] = indices[len(indices)-1], indices[offset]
-	tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-1]
+	// Remove the target index.
+	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
 }
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, bool /* ifExists */, error) {
