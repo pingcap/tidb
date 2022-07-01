@@ -333,6 +333,10 @@ partition by range (a)
     partition p0 values less than (200),
     partition p1 values less than (300),
     partition p2 values less than maxvalue)`)
+
+	// Fix https://github.com/pingcap/tidb/issues/35827
+	tk.MustExec(`create table t37 (id tinyint unsigned, idpart tinyint, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`)
+	tk.MustGetErrCode(`create table t38 (id tinyint unsigned, idpart tinyint unsigned, i varchar(255)) partition by range (idpart) (partition p1 values less than (-1));`, tmysql.ErrPartitionConstDomain)
 }
 
 func TestCreateTableWithHashPartition(t *testing.T) {

@@ -660,9 +660,11 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 
 func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
+	col := model.FindColumnInfo(tbInfo.Columns, tbInfo.Partition.Expr[1:len(tbInfo.Partition.Expr)-1])
+	if col != nil && mysql.HasUnsignedFlag(col.GetFlag()) {
 		tp.AddFlag(mysql.UnsignedFlag)
 	}
+
 	for _, exp := range exprs {
 		if _, ok := exp.(*ast.MaxValueExpr); ok {
 			continue
