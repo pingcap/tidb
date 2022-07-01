@@ -1087,7 +1087,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 }
 
 func (e *HashAggExec) initRuntimeStats() {
-	if e.runtimeStats != nil && e.stats == nil {
+	if e.runtimeStats != nil {
 		stats := &HashAggRuntimeStats{
 			PartialConcurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
 			FinalConcurrency:   e.ctx.GetSessionVars().HashAggFinalConcurrency(),
