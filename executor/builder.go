@@ -1533,7 +1533,7 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 
 // getSnapshot get the appropriate snapshot from txnManager and set
 // the relevant snapshot options before return.
-func (b *executorBuilder) getSnapshot(e Executor) (kv.Snapshot, error) {
+func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	var snapshot kv.Snapshot
 	var err error
 
@@ -1548,30 +1548,6 @@ func (b *executorBuilder) getSnapshot(e Executor) (kv.Snapshot, error) {
 	}
 
 	sessVars := b.ctx.GetSessionVars()
-
-	switch v := e.(type) {
-	case *BatchPointGetExec:
-		if v.runtimeStats != nil {
-			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-			v.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
-			}
-			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-			sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(v.id, v.stats)
-		}
-	case *PointGetExecutor:
-		if v.runtimeStats != nil {
-			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-			v.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
-			}
-			snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-			sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(v.id, v.stats)
-		}
-	default:
-		return nil, errors.New("Mismatched executor")
-	}
-
 	replicaReadType := sessVars.GetReplicaRead()
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
@@ -4639,7 +4615,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		columns:      plan.Columns,
 	}
 
-	e.snapshot, err = b.getSnapshot(e)
+	e.snapshot, err = b.getSnapshot()
 	if err != nil {
 		b.err = err
 		return nil
