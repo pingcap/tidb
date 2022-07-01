@@ -308,8 +308,8 @@ func (sub *SubJob) IsFinished() bool {
 }
 
 // ToProxyJob converts a sub-job to a proxy job.
-func (sub *SubJob) ToProxyJob(parentJob *Job) *Job {
-	return &Job{
+func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
+	return Job{
 		ID:              parentJob.ID,
 		Type:            sub.Type,
 		SchemaID:        parentJob.SchemaID,
@@ -434,6 +434,28 @@ func (job *Job) MarkNonRevertible() {
 	if job.MultiSchemaInfo != nil {
 		job.MultiSchemaInfo.Revertible = false
 	}
+}
+
+// Clone returns a copy of the job.
+func (job *Job) Clone() *Job {
+	encode, err := job.Encode(true)
+	if err != nil {
+		return nil
+	}
+	var clone Job
+	err = clone.Decode(encode)
+	if err != nil {
+		return nil
+	}
+	if len(job.Args) > 0 {
+		clone.Args = make([]interface{}, len(job.Args))
+		copy(clone.Args, job.Args)
+	}
+	for i, sub := range job.MultiSchemaInfo.SubJobs {
+		clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+		copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+	}
+	return &clone
 }
 
 // TSConvert2Time converts timestamp to time.
