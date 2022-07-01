@@ -101,16 +101,18 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		var indexID int64
+		var ifExists bool
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
+		var ifNotExists bool
 		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil

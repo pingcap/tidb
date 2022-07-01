@@ -321,8 +321,9 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		tableID := job.TableID
 		var indexID int64
+		var ifExists bool
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
@@ -343,9 +344,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexName interface{}
+		var ifExists bool
 		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
