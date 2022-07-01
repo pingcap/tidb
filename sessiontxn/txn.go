@@ -16,6 +16,8 @@ package sessiontxn
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -69,6 +71,28 @@ func CanReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
 	// initialized with snapshot ts.
 	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
+}
+
+// CheckBeforeNewTxn is called before entering a new transaction. It checks whether the old
+// txn is valid in which case we should commit it first.
+func CheckBeforeNewTxn(ctx context.Context, sctx sessionctx.Context) error {
+	txn, err := sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	if txn.Valid() {
+		txnStartTS := txn.StartTS()
+		txnScope := sctx.GetSessionVars().TxnCtx.TxnScope
+		err = sctx.CommitTxn(ctx)
+		if err != nil {
+			return err
+		}
+		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
+			zap.Int64("schemaVersion", sctx.GetInfoSchema().SchemaMetaVersion()),
+			zap.Uint64("txnStartTS", txnStartTS),
+			zap.String("txnScope", txnScope))
+	}
+	return nil
 }
 
 // SetTxnAssertionLevel sets assertion level of a transactin. Note that assertion level should be set only once just

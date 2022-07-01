@@ -67,12 +67,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	activeNow := true
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault:
-		if err = p.sctx.NewTxn(ctx); err != nil {
+		if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
 		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
-			if err = p.sctx.NewTxn(ctx); err != nil {
+			if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
 				return err
 			}
 		}
