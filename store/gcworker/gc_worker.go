@@ -1045,7 +1045,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 	logutil.Logger(ctx).Error("[gc worker] resolve locks with physical scan failed, trying fallback to legacy resolve lock",
 		zap.String("uuid", w.uuid),
 		zap.Uint64("safePoint", safePoint),
-		zap.Uint64("low-resolution-ts", tryResolveLocksTS),
+		zap.Uint64("try-resolve-locks-ts", tryResolveLocksTS),
 		zap.Error(err))
 
 	return false, w.legacyResolveLocks(ctx, safePoint, tryResolveLocksTS, concurrency)
@@ -1128,7 +1128,7 @@ func (w *GCWorker) batchResolveExpiredLocks(
 		}
 	}
 
-	logutil.BgLogger().Info("BatchResolveLegacyLocks",
+	logutil.BgLogger().Debug("batchResolveExpiredLocks",
 		zap.Uint64("force-resolve-locks-ts", forceResolveLocksTS),
 		zap.Uint64("try-resolve-locks-ts", tryResolveLocksTS),
 		zap.Int("force-resolve-locks-count", len(forceResolveLocks)),
