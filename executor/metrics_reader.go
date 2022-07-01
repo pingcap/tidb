@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -204,6 +205,7 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 	}
 	sort.Strings(tables)
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {
@@ -280,6 +282,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 	}
 	sort.Strings(tables)
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
 	condition := e.timeRange.Condition()
 	for _, name := range tables {
