@@ -223,6 +223,11 @@ type ExecStmt struct {
 	Ti          *TelemetryInfo
 }
 
+// GetStmtNode returns the stmtNode inside Statement
+func (a ExecStmt) GetStmtNode() ast.StmtNode {
+	return a.StmtNode
+}
+
 // PointGet short path for point exec directly from plan, keep only necessary steps
 func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {

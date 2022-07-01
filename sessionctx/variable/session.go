@@ -1684,6 +1684,11 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
+// SetNextPreparedStmtID sets the next prepared statement id. It's only used in restoring session states.
+func (s *SessionVars) SetNextPreparedStmtID(preparedStmtID uint32) {
+	s.preparedStmtID = preparedStmtID
+}
+
 // Location returns the value of time_zone session variable. If it is nil, then return time.Local.
 func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone

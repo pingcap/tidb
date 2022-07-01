@@ -942,6 +942,13 @@ def go_deps():
         sum = "h1:leSNB7iYzLYSSx3J/s5sVf4Drkc68W2wm4Ixh/mr0us=",
         version = "v0.0.0-20180630174525-215b22d4de21",
     )
+    go_repository(
+        name = "com_github_golangci_unconvert",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/golangci/unconvert",
+        sum = "h1:zwtduBRr5SSWhqsYNgcuWO2kFlpdOZbP0+yRjmvPGys=",
+        version = "v0.0.0-20180507085042-28b1c447d1f4",
+    )
 
     go_repository(
         name = "com_github_gomodule_redigo",
