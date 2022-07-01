@@ -337,7 +337,7 @@ func TestTemporaryTableInterceptor(t *testing.T) {
 	}
 
 	// Also check GetSnapshotWithTS
-	snap := tk.Session().GetSnapshotWithTS(0)
+	snap := sessiontxn.GetSnapshotWithTS(tk.Session(), 0)
 	val, err := snap.Get(context.Background(), k)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v1"), val)
