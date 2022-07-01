@@ -123,7 +123,7 @@ type Context interface {
 
 	// UpdateColStatsUsage updates the column stats usage.
 	// TODO: maybe we can use a method called GetSessionStatsCollector to replace both StoreQueryFeedback and UpdateColStatsUsage but we need to deal with import circle if we do so.
-	UpdateColStatsUsage(predicateColumns []model.TableColumnID)
+	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 
 	// HasDirtyContent checks whether there's dirty update on the given table.
 	HasDirtyContent(tid int64) bool

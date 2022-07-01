@@ -208,9 +208,9 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
-	handle.StatsLoad.NeededColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.TimeoutColumnsCh = make(chan *NeededColumnTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.WorkingColMap = map[model.TableColumnID][]chan model.TableColumnID{}
+	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan model.TableItemID{}
 	err := handle.RefreshVars()
 	if err != nil {
 		return nil, err
@@ -2006,7 +2006,7 @@ func (h *Handle) getDisableColumnTrackingTime() (*time.Time, error) {
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumnID]colStatsTimeInfo, error) {
+func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableItemID]colStatsTimeInfo, error) {
 	disableTime, err := h.getDisableColumnTrackingTime()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2016,12 +2016,12 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableColumn
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colStatsMap := make(map[model.TableColumnID]colStatsTimeInfo, len(rows))
+	colStatsMap := make(map[model.TableItemID]colStatsTimeInfo, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
-		tblColID := model.TableColumnID{TableID: row.GetInt64(0), ColumnID: row.GetInt64(1)}
+		tblColID := model.TableItemID{TableID: row.GetInt64(0), ID: row.GetInt64(1), IsIndex: false}
 		var statsUsage colStatsTimeInfo
 		if !row.IsNull(2) {
 			gt, err := row.GetTime(2).GoTime(time.UTC)

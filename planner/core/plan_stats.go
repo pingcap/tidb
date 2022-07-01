@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -40,8 +41,10 @@ func (c collectPredicateColumnsPoint) optimize(ctx context.Context, plan Logical
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
-	if histNeeded && len(histNeededColumns) > 0 {
-		err := RequestLoadColumnStats(plan.SCtx(), histNeededColumns, syncWait)
+	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
+	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
+	if histNeeded && len(histNeededItems) > 0 {
+		err := RequestLoadColumnStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, err
 	}
 	return plan, nil
@@ -68,7 +71,7 @@ func (s syncWaitStatsLoadPoint) name() string {
 const maxDuration = 1<<63 - 1
 
 // RequestLoadColumnStats send requests to stats handle
-func RequestLoadColumnStats(ctx sessionctx.Context, neededColumns []model.TableColumnID, syncWait int64) error {
+func RequestLoadColumnStats(ctx sessionctx.Context, neededHistItems []model.TableItemID, syncWait int64) error {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
 	if hintMaxExecutionTime <= 0 {
@@ -80,7 +83,7 @@ func RequestLoadColumnStats(ctx sessionctx.Context, neededColumns []model.TableC
 	}
 	waitTime := mathutil.Min(syncWait, hintMaxExecutionTime, sessMaxExecutionTime)
 	var timeout = time.Duration(waitTime)
-	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
+	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		return handleTimeout(stmtCtx)
 	}
@@ -109,4 +112,63 @@ func handleTimeout(stmtCtx *stmtctx.StatementContext) error {
 		return nil
 	}
 	return err
+}
+
+// collectSyncIndices will collect the indices which includes following conditions:
+// 1. the indices contained the any one of histNeededColumns, eg: histNeededColumns contained A,B columns, and idx_a is
+// composed up by A column, then we thought the idx_a should be collected
+// 2. The stats condition of idx_a can't meet IsEssentialStatsLoaded, which means its stats was evicted previously
+func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableItemID) map[model.TableItemID]struct{} {
+	var histNeededIndices map[model.TableItemID]struct{}
+	stats := domain.GetDomain(ctx).StatsHandle()
+	for _, column := range histNeededColumns {
+		if column.IsIndex {
+			continue
+		}
+		tbl, ok := ctx.GetDomainInfoSchema().(infoschema.InfoSchema).TableByID(column.TableID)
+		if !ok {
+			continue
+		}
+		colName := ""
+		for _, col := range tbl.Cols() {
+			if col.ID == column.ID {
+				colName = col.Name.String()
+				break
+			}
+		}
+		if colName == "" {
+			continue
+		}
+		for _, idx := range tbl.Indices() {
+			if idx.Meta().State != model.StatePublic {
+				continue
+			}
+			hasCol := false
+			for _, idxCol := range idx.Meta().Columns {
+				if idxCol.Name.String() == colName {
+					hasCol = true
+					break
+				}
+			}
+			if hasCol {
+				tblStats := stats.GetTableStats(tbl.Meta())
+				if tblStats == nil || tblStats.Pseudo {
+					continue
+				}
+				idxStats, ok := tblStats.Indices[idx.Meta().ID]
+				if !ok || !idxStats.IsEssentialStatsLoaded() {
+					histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxStats.ID, IsIndex: true}] = struct{}{}
+				}
+			}
+		}
+	}
+	return histNeededIndices
+}
+
+func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.TableItemID) {
+	for idx := range histNeededIndices {
+		histNeededItems = append(histNeededItems, idx)
+	}
+	histNeededItems = append(histNeededItems, histNeededColumns...)
+	return
 }

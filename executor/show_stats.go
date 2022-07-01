@@ -476,7 +476,7 @@ func (e *ShowExec) fetchShowColumnStatsUsage() error {
 			partitionName = "global"
 		}
 		for _, col := range tbl.Columns {
-			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+			tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 			colStatsUsage, ok := colStatsMap[tblColID]
 			if !ok {
 				continue

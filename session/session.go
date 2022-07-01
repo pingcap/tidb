@@ -443,12 +443,12 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	}
 }
 
-func (s *session) UpdateColStatsUsage(predicateColumns []model.TableColumnID) {
+func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 	if s.statsCollector == nil {
 		return
 	}
 	t := time.Now()
-	colMap := make(map[model.TableColumnID]time.Time, len(predicateColumns))
+	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
 	for _, col := range predicateColumns {
 		colMap[col] = t
 	}

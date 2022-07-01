@@ -302,7 +302,7 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // UpdateColStatsUsage updates the column stats usage.
-func (c *Context) UpdateColStatsUsage(_ []model.TableColumnID) {}
+func (c *Context) UpdateColStatsUsage(_ []model.TableItemID) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}

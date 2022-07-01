@@ -136,7 +136,7 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 }
 
 // colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
-type colStatsUsageMap map[model.TableColumnID]time.Time
+type colStatsUsageMap map[model.TableItemID]time.Time
 
 func (m colStatsUsageMap) merge(other colStatsUsageMap) {
 	for id, t := range other {
@@ -901,7 +901,7 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		h.colMap.Unlock()
 	}()
 	type pair struct {
-		tblColID   model.TableColumnID
+		tblColID   model.TableItemID
 		lastUsedAt string
 	}
 	pairs := make([]pair, 0, len(colMap))
@@ -910,7 +910,7 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 	}
 	sort.Slice(pairs, func(i, j int) bool {
 		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
-			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+			return pairs[i].tblColID.ID < pairs[j].tblColID.ID
 		}
 		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
 	})
@@ -925,7 +925,7 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		for j := i; j < end; j++ {
 			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
 			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
-			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ColumnID, pairs[j].lastUsedAt)
+			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ID, pairs[j].lastUsedAt)
 			if j < end-1 {
 				sqlexec.MustFormatSQL(sql, ",")
 			}
