@@ -185,7 +185,13 @@ func TestCoalesce(t *testing.T) {
 		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
 		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
 		{[]interface{}{nil, duration}, duration, false, false},
+		{[]interface{}{nil, durationWithFsp}, durationWithFsp, false, false},
+		{[]interface{}{durationWithFsp, duration}, durationWithFsp, false, false},
+		{[]interface{}{duration, durationWithFsp}, durationWithFsp, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
+		{[]interface{}{nil, tmWithFsp, nil}, tmWithFsp, false, false},
+		{[]interface{}{tmWithFsp, tm, nil}, tmWithFsp, false, false},
+		{[]interface{}{tm, tmWithFsp, nil}, tmWithFsp, false, false},
 		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
@@ -203,7 +209,11 @@ func TestCoalesce(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				require.Equal(t, test.expected, d.GetValue())
+				if f.GetType().EvalType() == types.ETDuration {
+					require.Equal(t, test.expected.(types.Duration).String(), d.GetValue().(types.Duration).String())
+				} else {
+					require.Equal(t, test.expected, d.GetValue())
+				}
 			}
 		}
 	}

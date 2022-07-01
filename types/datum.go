@@ -360,6 +360,12 @@ func (d *Datum) SetMysqlDuration(b Duration) {
 	d.decimal = uint16(b.Fsp)
 }
 
+func (d *Datum) SetMysqlDurationWithFsp(b Duration, fsp int) {
+	d.k = KindMysqlDuration
+	d.i = int64(b.Duration)
+	d.decimal = uint16(fsp)
+}
+
 // GetMysqlEnum gets Enum value
 func (d *Datum) GetMysqlEnum() Enum {
 	str := string(hack.String(d.b))
@@ -588,7 +594,7 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 	case *MyDecimal:
 		d.SetMysqlDecimal(x)
 	case Duration:
-		d.SetMysqlDuration(x)
+		d.SetMysqlDurationWithFsp(x, tp.GetDecimal())
 	case Enum:
 		d.SetMysqlEnum(x, tp.GetCollate())
 	case BinaryLiteral:
