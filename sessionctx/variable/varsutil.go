@@ -193,6 +193,29 @@ func GetSessionOrGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	return sv.GetGlobalFromHook(s)
 }
 
+// GetSessionStatesSystemVar gets the session variable value for session states.
+// It's only used for encoding session states when migrating a session.
+// The returned boolean indicates whether to keep this value in the session states.
+func GetSessionStatesSystemVar(s *SessionVars, name string) (string, bool, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	// Call GetStateValue first if it exists. Otherwise, call GetSession.
+	if sv.GetStateValue != nil {
+		return sv.GetStateValue(s)
+	}
+	if sv.GetSession != nil {
+		val, err := sv.GetSessionFromHook(s)
+		return val, err == nil, err
+	}
+	// Only get the cached value. No need to check the global or default value.
+	if val, ok := s.systems[sv.Name]; ok {
+		return val, true, nil
+	}
+	return "", false, nil
+}
+
 // GetGlobalSystemVar gets a global system variable.
 func GetGlobalSystemVar(s *SessionVars, name string) (string, error) {
 	sv := GetSysVar(name)
@@ -407,7 +430,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	// The time zone's value should in [-12:59,+14:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, err := types.ParseDuration(nil, s[1:], 0)
+		d, _, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
 			if s[0] == '-' {
 				if d.Duration > 12*time.Hour+59*time.Minute {

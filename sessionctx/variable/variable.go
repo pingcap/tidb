@@ -122,7 +122,8 @@ type SysVar struct {
 	SetGlobal func(*SessionVars, string) error
 	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
 	IsHintUpdatable bool
-	// Hidden means that it still responds to SET but doesn't show up in SHOW VARIABLES
+	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
+	// However, this feature is no longer used. All variables are visble.
 	Hidden bool
 	// Aliases is a list of sysvars that should also be updated when this sysvar is updated.
 	// Updating aliases calls the SET function of the aliases, but does not update their aliases (preventing SET recursion)
@@ -132,6 +133,9 @@ type SysVar struct {
 	GetSession func(*SessionVars) (string, error)
 	// GetGlobal is a getter function for global scope.
 	GetGlobal func(*SessionVars) (string, error)
+	// GetStateValue gets the value for session states, which is used for migrating sessions.
+	// We need a function to override GetSession sometimes, because GetSession may not return the real value.
+	GetStateValue func(*SessionVars) (string, bool, error)
 	// skipInit defines if the sysvar should be loaded into the session on init.
 	// This is only important to set for sysvars that include session scope,
 	// since global scoped sysvars are not-applicable.

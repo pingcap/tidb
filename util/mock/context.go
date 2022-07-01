@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var (
@@ -56,10 +56,15 @@ type Context struct {
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
 	level       kvrpcpb.DiskFullOpt
+	is          sessionctx.InfoschemaMetaVersion
 }
 
 type wrapTxn struct {
 	kv.Transaction
+}
+
+func (txn *wrapTxn) Wait(_ context.Context, _ sessionctx.Context) (kv.Transaction, error) {
+	return txn, nil
 }
 
 func (txn *wrapTxn) Valid() bool {
@@ -173,7 +178,21 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 			return is
 		}
 	}
-	return nil
+	if c.is == nil {
+		c.is = MockInfoschema(nil)
+	}
+	return c.is
+}
+
+// MockInfoschema only serves for test.
+var MockInfoschema func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion
+
+// GetDomainInfoSchema returns the latest information schema in domain
+func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+	if c.is == nil {
+		c.is = MockInfoschema(nil)
+	}
+	return c.is
 }
 
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
@@ -268,21 +287,6 @@ func (c *Context) CommitTxn(ctx context.Context) error {
 	return nil
 }
 
-// InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
-func (c *Context) InitTxnWithStartTS(startTS uint64) error {
-	if c.txn.Valid() {
-		return nil
-	}
-	if c.Store != nil {
-		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		c.txn.Transaction = txn
-	}
-	return nil
-}
-
 // GetStore gets the store of session.
 func (c *Context) GetStore() kv.Storage {
 	return c.Store
@@ -366,7 +370,13 @@ func (c *Context) HasLockedTables() bool {
 }
 
 // PrepareTSFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTSFuture(ctx context.Context) {
+func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
+	return nil
+}
+
+// GetPreparedTxnFuture returns the prepared ts future
+func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	return &c.txn
 }
 
 // GetStmtStats implements the sessionctx.Context interface.
