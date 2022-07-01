@@ -50,6 +50,7 @@ var stateLabel map[TxnRunningState]string = map[TxnRunningState]string{
 	TxnRollingBack:   "rolling_back",
 }
 
+// StateLabel is used to translate TxnRunningState to its prometheus label name.
 func StateLabel(state TxnRunningState) string {
 	return stateLabel[state]
 }

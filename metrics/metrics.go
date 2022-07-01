@@ -189,7 +189,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
-	prometheus.MustRegister(TxnStatusGauge)
+	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)

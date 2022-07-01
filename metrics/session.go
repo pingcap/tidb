@@ -135,12 +135,12 @@ var (
 			Name:      "non_transactional_delete_count",
 			Help:      "Counter of non-transactional delete",
 		})
-	TxnStatusGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
+	TxnStatusEnteringCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
-			Name:      "txn_state_count",
-			Help:      "Transaction in different states in this instant",
+			Name:      "txn_state_entering_count",
+			Help:      "How many times transactions enter this state",
 		}, []string{LblType},
 	)
 	TxnDurationHistogram = prometheus.NewHistogramVec(
