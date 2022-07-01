@@ -2684,8 +2684,6 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
-	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
@@ -2904,6 +2902,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 
 	sessionBindHandle := bindinfo.NewSessionBindHandle(parser.New())
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
+	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
 	return s, nil
 }
 
@@ -3090,13 +3089,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	s.updateStatsDeltaToCollector()
 
 	return sessiontxn.NewTxn(ctx, s)
-}
-
-// GetSnapshotWithTS returns a snapshot with ts.
-func (s *session) GetSnapshotWithTS(ts uint64) kv.Snapshot {
-	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
-	snap.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return snap
 }
 
 // GetStore gets the store of session.
@@ -3405,7 +3397,8 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 		}
 	}
 
-	if handler, ok := s.sessionStatesHandlers[sessionstates.StatePrepareStmt]; ok {
+	// Encode prepared statements and sql bindings.
+	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.EncodeSessionStates(ctx, s, sessionStates); err != nil {
 			return err
 		}
@@ -3415,7 +3408,8 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
 func (s *session) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
-	if handler, ok := s.sessionStatesHandlers[sessionstates.StatePrepareStmt]; ok {
+	// Decode prepared statements and sql bindings.
+	for _, handler := range s.sessionStatesHandlers {
 		if err := handler.DecodeSessionStates(ctx, s, sessionStates); err != nil {
 			return err
 		}
