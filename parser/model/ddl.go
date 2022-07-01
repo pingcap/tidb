@@ -436,6 +436,20 @@ func (job *Job) MarkNonRevertible() {
 	}
 }
 
+// Clone returns a copy of the job.
+func (job *Job) Clone() *Job {
+	encode, err := job.Encode(job.Args != nil)
+	if err != nil {
+		return nil
+	}
+	var clone Job
+	err = clone.Decode(encode)
+	if err != nil {
+		return nil
+	}
+	return &clone
+}
+
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.

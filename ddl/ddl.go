@@ -724,7 +724,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
 			// The same job will be put to the DDL queue twice.
-			task1 := &limitJobTask{job, make(chan error)}
+			task1 := &limitJobTask{job.Clone(), make(chan error)}
 			d.limitJobCh <- task1
 			<-task.err
 			// The second job result is used for test.
