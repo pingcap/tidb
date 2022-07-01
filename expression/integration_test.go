@@ -4720,51 +4720,6 @@ func TestCTEWithDML(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 1),(2,1),(3,1);")
 	tk.MustExec("replace into t1 with recursive cte(a,b) as (select 1, 1 union select a + 1,b+1 from cte where a < 5) select * from cte;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5"))
-
-	// fix issue https://github.com/pingcap/tidb/issues/35758
-	tk.MustExec("drop table if exists t1, t2, t3")
-	tk.MustExec("create table t1 (a int, b int);")
-	tk.MustExec("create table t2 (c int, d int);")
-	tk.MustExec("create table t3 (e int, f int);")
-	tk.MustExec("insert into t1 values(1,1)")
-	tk.MustExec("insert into t2 values(1,1)")
-	tk.MustExec("insert into t3 values(1,1234)")
-	tk.MustQuery("explain update" +
-		" t1 inner join (" +
-		"				select t2.c from t2 inner join" +
-		"					(" +
-		"						with temp as (select e from t3 where t3.f = 1234)" +
-		"							 select e from temp" +
-		"					) tt" +
-		"					on t2.d = tt.e" +
-		"			) t on t1.a = t.c" +
-		" set t1.b = 4321;").Check(testkit.Rows("Update_14 N/A root  N/A",
-		"└─HashJoin_25 12.49 root  inner join, equal:[eq(test.t1.a, test.t2.c)]",
-		"  ├─HashJoin_33(Build) 9.99 root  inner join, equal:[eq(test.t3.e, test.t2.d)]",
-		"  │ ├─Selection_35(Build) 7.99 root  not(isnull(test.t3.e))",
-		"  │ │ └─CTEFullScan_36 9.99 root CTE:temp data:CTE_0",
-		"  │ └─TableReader_39(Probe) 9980.01 root  data:Selection_38",
-		"  │   └─Selection_38 9980.01 cop[tikv]  not(isnull(test.t2.c)), not(isnull(test.t2.d))",
-		"  │     └─TableFullScan_37 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"  └─TableReader_29(Probe) 9990.00 root  data:Selection_28",
-		"    └─Selection_28 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"      └─TableFullScan_27 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"CTE_0 9.99 root  Non-Recursive CTE",
-		"└─Projection_17(Seed Part) 9.99 root  test.t3.e",
-		"  └─TableReader_20 9.99 root  data:Selection_19",
-		"    └─Selection_19 9.99 cop[tikv]  eq(test.t3.f, 1234), not(isnull(test.t3.e))",
-		"      └─TableFullScan_18 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
-	tk.MustExec("update" +
-		" t1 inner join (" +
-		"				select t2.c from t2 inner join" +
-		"					(" +
-		"						with temp as (select e from t3 where t3.f = 1234)" +
-		"							 select e from temp" +
-		"					) tt" +
-		"					on t2.d = tt.e" +
-		"			) t on t1.a = t.c" +
-		" set t1.b = 4321;")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 4321"))
 }
 
 func TestIssue16419(t *testing.T) {

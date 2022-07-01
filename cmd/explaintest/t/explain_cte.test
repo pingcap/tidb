@@ -263,3 +263,15 @@ where v1.bench_type =v2.bench_type;
 drop table if exists tbl;
 create table tbl (id int);
 explain with t1 as (select id from tbl), t2 as (select a.id from t1 a join t1 b on a.id = b.id) select * from t2 where id in (select id from t2);
+
+# issue 35758
+drop table if exists t1, t2, t3;
+create table t1 (a int, b int);
+create table t2 (c int, d int);
+create table t3 (e int, f int);
+insert into t1 values(1,1);
+insert into t2 values(1,1);
+insert into t3 values(1,1234);
+explain update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
+update t1 inner join (select t2.c from t2 inner join (with temp as (select e from t3 where t3.f = 1234) select e from temp) tt on t2.d = tt.e) t on t1.a = t.c set t1.b = 4321;
+select * from t1;
