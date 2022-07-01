@@ -1531,9 +1531,9 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	return txnManager.GetStmtReadTS()
 }
 
-// getSnapshotWithExecutor get the appropriate snapshot from txnManager and set
+// getSnapshot get the appropriate snapshot from txnManager and set
 // the relevant snapshot options before return.
-func (b *executorBuilder) getSnapshotWithExecutor(e Executor) (kv.Snapshot, error) {
+func (b *executorBuilder) getSnapshot(e Executor) (kv.Snapshot, error) {
 	var snapshot kv.Snapshot
 	var err error
 
@@ -4609,7 +4609,8 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if err := b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
+	var err error
+	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4638,10 +4639,18 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		columns:      plan.Columns,
 	}
 
-	snapshot, err := b.getSnapshotWithExecutor(e)
+	e.snapshot, err = b.getSnapshot(e)
 	if err != nil {
 		b.err = err
 		return nil
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
 	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
@@ -4650,8 +4659,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			panic("batch point get replica option fail")
 		}
 	})
-
-	e.snapshot = snapshot
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {

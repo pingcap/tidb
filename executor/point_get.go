@@ -65,10 +65,18 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e.base().maxChunkSize = 1
 	e.Init(p)
 
-	e.snapshot, err = b.getSnapshotWithExecutor(e)
+	e.snapshot, err = b.getSnapshot(e)
 	if err != nil {
 		b.err = err
 		return nil
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 
 	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
