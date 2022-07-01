@@ -452,7 +452,7 @@ func jobNeedGC(job *model.Job) bool {
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				proxyJob := sub.ToProxyJob(job)
-				needGC := jobNeedGC(proxyJob)
+				needGC := jobNeedGC(&proxyJob)
 				if needGC {
 					return true
 				}
