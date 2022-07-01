@@ -767,7 +767,8 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	once := sync.Once{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		once.Do(func() {
-			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
 				err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
