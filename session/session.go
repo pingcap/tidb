@@ -103,7 +103,6 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
@@ -2469,36 +2468,6 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	}
 	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
 	return &s.txn, err
-}
-
-func (s *session) NewTxn(ctx context.Context) error {
-	if err := s.checkBeforeNewTxn(ctx); err != nil {
-		return err
-	}
-	txn, err := s.store.Begin(tikv.WithTxnScope(s.sessionVars.CheckAndGetTxnScope()))
-	if err != nil {
-		return err
-	}
-	txn.SetVars(s.sessionVars.KVVars)
-	replicaReadType := s.GetSessionVars().GetReplicaRead()
-	if replicaReadType.IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, replicaReadType)
-	}
-	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
-	s.txn.changeInvalidToValid(txn)
-	is := s.GetDomainInfoSchema()
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
-			InfoSchema:  is,
-			CreateTime:  time.Now(),
-			StartTS:     txn.StartTS(),
-			ShardStep:   int(s.sessionVars.ShardAllocateStep),
-			IsStaleness: false,
-			TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
-		},
-	}
-	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return nil
 }
 
 func (s *session) checkBeforeNewTxn(ctx context.Context) error {
