@@ -434,6 +434,11 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 
 func jobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
+		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
+			// For the field/key not exists warnings, there is no need to
+			// delete the ranges.
+			return false
+		}
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			if job.State != model.JobStateRollbackDone {
@@ -442,8 +447,17 @@ func jobNeedGC(job *model.Job) bool {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			return true
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn, model.ActionDropIndexes:
 			return true
+		case model.ActionMultiSchemaChange:
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job)
+				needGC := jobNeedGC(&proxyJob)
+				if needGC {
+					return true
+				}
+			}
+			return false
 		}
 	}
 	return false
@@ -460,7 +474,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if jobNeedGC(job) {
 		err = w.deleteRange(w.ctx, job)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 
@@ -733,7 +747,7 @@ func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.
 		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
 		// but the column has been removed from the binlog of the write operation.
 		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		((job.Type == model.ActionDropColumn || job.Type == model.ActionDropColumns) && job.SchemaState == model.StateDeleteOnly) {
+		((job.Type == model.ActionDropColumn) && job.SchemaState == model.StateDeleteOnly) {
 		if skipWriteBinlog(job) {
 			return
 		}
@@ -876,12 +890,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onExchangeTablePartition(d, t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
-	case model.ActionAddColumns:
-		ver, err = onAddColumns(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(d, t, job)
-	case model.ActionDropColumns:
-		ver, err = onDropColumns(d, t, job)
 	case model.ActionModifyColumn:
 		ver, err = w.onModifyColumn(d, t, job)
 	case model.ActionSetDefaultValue:
