@@ -50,6 +50,7 @@ go_library(
         "//session/txninfo",
         "//sessionctx",
         "//sessionctx/binloginfo",
+        "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
@@ -115,6 +116,7 @@ go_library(
 
 go_test(
     name = "server_test",
+    timeout = "short",
     srcs = [
         "column_test.go",
         "conn_stmt_test.go",
