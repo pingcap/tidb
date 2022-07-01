@@ -11,10 +11,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//infoschema",
+        "//kv",
         "//parser/ast",
         "//sessionctx",
+        "//sessionctx/variable",
         "//util/stringutil",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_tikv_client_go_v2//oracle",
     ],
 )
@@ -35,6 +38,7 @@ go_test(
         "//sessionctx",
         "//sessiontxn/staleread",
         "//testkit",
+        "//testkit/testfork",
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
