@@ -35,6 +35,7 @@ go_library(
 
 go_test(
     name = "privileges_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "main_test.go",
