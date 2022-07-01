@@ -21,6 +21,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -44,7 +45,7 @@ type infoStore struct {
 	tables map[string]map[string]*model.TableInfo
 }
 
-func newInMemoryInfoSchema(lowerCaseTableNames int) *infoStore {
+func newInfoStore(lowerCaseTableNames int) *infoStore {
 	return &infoStore{
 		lowerCaseTableNames: lowerCaseTableNames,
 		dbs:                 map[string]*model.DBInfo{},
@@ -156,19 +157,19 @@ func (i infoSchemaAdaptor) TableByName(schema, table model.CIStr) (t table.Table
 	return tables.MockTableFromMeta(tableInfo), nil
 }
 
-var _ DDL = InMemoryDDL{}
+var _ DDL = SchemaTracker{}
 
-type InMemoryDDL struct {
+type SchemaTracker struct {
 	*infoStore
 }
 
-func NewInMemoryDDL(lowerCaseTableNames int) InMemoryDDL {
-	return InMemoryDDL{
-		infoStore: newInMemoryInfoSchema(lowerCaseTableNames),
+func NewInMemoryDDL(lowerCaseTableNames int) SchemaTracker {
+	return SchemaTracker{
+		infoStore: newInfoStore(lowerCaseTableNames),
 	}
 }
 
-func (d InMemoryDDL) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error {
+func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt) error {
 	// we only consider explicit charset/collate, if not found, fallback to default charset/collate.
 	charsetOpt := ast.CharsetOpt{}
 	for _, val := range stmt.Options {
@@ -193,7 +194,7 @@ func (d InMemoryDDL) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDataba
 	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
 }
 
-func (d InMemoryDDL) CreateSchemaWithInfo(ctx sessionctx.Context, dbInfo *model.DBInfo, onExist OnExist) error {
+func (d SchemaTracker) CreateSchemaWithInfo(ctx sessionctx.Context, dbInfo *model.DBInfo, onExist OnExist) error {
 	oldInfo := d.SchemaByName(dbInfo.Name)
 	if oldInfo != nil {
 		if onExist == OnExistIgnore {
@@ -206,7 +207,7 @@ func (d InMemoryDDL) CreateSchemaWithInfo(ctx sessionctx.Context, dbInfo *model.
 	return nil
 }
 
-func (d InMemoryDDL) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error {
+func (d SchemaTracker) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error {
 	dbInfo := d.SchemaByName(stmt.Name)
 	if dbInfo == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(stmt.Name.O)
@@ -224,7 +225,7 @@ func (d InMemoryDDL) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabase
 	return nil
 }
 
-func (d InMemoryDDL) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error {
+func (d SchemaTracker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error {
 	ok := d.deleteSchema(stmt.Name)
 	if !ok {
 		if stmt.IfExists {
@@ -235,7 +236,7 @@ func (d InMemoryDDL) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseSt
 	return nil
 }
 
-func (d InMemoryDDL) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) error {
+func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	schema := d.SchemaByName(ident.Schema)
 	if schema == nil {
@@ -272,7 +273,7 @@ func (d InMemoryDDL) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt)
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
-func (d InMemoryDDL) CreateTableWithInfo(
+func (d SchemaTracker) CreateTableWithInfo(
 	ctx sessionctx.Context,
 	dbName model.CIStr,
 	info *model.TableInfo,
@@ -298,7 +299,7 @@ func (d InMemoryDDL) CreateTableWithInfo(
 	return d.putTable(dbName, info)
 }
 
-func (d InMemoryDDL) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) error {
+func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) error {
 	viewInfo, err := buildViewInfo(ctx, s)
 	if err != nil {
 		return err
@@ -328,7 +329,7 @@ func (d InMemoryDDL) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) e
 	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
-func (d InMemoryDDL) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+func (d SchemaTracker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
 		tb, err := d.TableByName(name.Schema, name.Name)
@@ -351,11 +352,11 @@ func (d InMemoryDDL) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) 
 	return nil
 }
 
-func (d InMemoryDDL) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
+func (d SchemaTracker) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (err error) {
 	return nil
 }
 
-func (d InMemoryDDL) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
+func (d SchemaTracker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	notExistTables := make([]string, 0, len(stmt.Tables))
 	for _, name := range stmt.Tables {
 		tb, err := d.TableByName(name.Schema, name.Name)
@@ -382,46 +383,13 @@ func (d InMemoryDDL) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (
 	return nil
 }
 
-func buildIndexColumnsSkipCheck(
-	ctx sessionctx.Context,
-	columns []*model.ColumnInfo,
-	indexPartSpecifications []*ast.IndexPartSpecification,
-) ([]*model.IndexColumn, error) {
-	// Build offsets.
-	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
-	var col *model.ColumnInfo
-	// The sum of length of all index columns.
-	sumLength := 0
-	for _, ip := range indexPartSpecifications {
-		col = model.FindColumnInfo(columns, ip.Column.Name.L)
-		if col == nil {
-			return nil, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
-		}
-
-		indexColLen := ip.Length
-		indexColumnLength, err := getIndexColumnLength(col, ip.Length)
-		if err != nil {
-			return nil, err
-		}
-		sumLength += indexColumnLength
-
-		idxParts = append(idxParts, &model.IndexColumn{
-			Name:   col.Name,
-			Offset: col.Offset,
-			Length: indexColLen,
-		})
-	}
-
-	return idxParts, nil
-}
-
-func (d InMemoryDDL) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
+func (d SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	return d.createIndex(ctx, ident, stmt.KeyType, model.NewCIStr(stmt.IndexName),
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
-func (d InMemoryDDL) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
+func (d SchemaTracker) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 
 	unique := keyType == ast.IndexKeyTypeUnique
@@ -477,7 +445,7 @@ func (d InMemoryDDL) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType a
 	return nil
 }
 
-func (d InMemoryDDL) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
+func (d SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	err := d.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
@@ -486,7 +454,7 @@ func (d InMemoryDDL) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) 
 	return err
 }
 
-func (d InMemoryDDL) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
+func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
 	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
@@ -525,16 +493,16 @@ func (d InMemoryDDL) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return nil
 }
 
-func (d InMemoryDDL) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
+func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (d InMemoryDDL) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
+func (d SchemaTracker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error {
 	return nil
 }
 
-func (d InMemoryDDL) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
+func (d SchemaTracker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
 	oldIdents := make([]ast.Ident, 0, len(stmt.TableToTables))
 	newIdents := make([]ast.Ident, 0, len(stmt.TableToTables))
 	for _, tablePair := range stmt.TableToTables {
@@ -569,59 +537,59 @@ func (d InMemoryDDL) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableSt
 	return nil
 }
 
-func (d InMemoryDDL) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
+func (d SchemaTracker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
 	return nil
 }
 
-func (d InMemoryDDL) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
-	return nil
-
-}
-
-func (d InMemoryDDL) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
+func (d SchemaTracker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
 	return nil
 
 }
 
-func (d InMemoryDDL) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
+func (d SchemaTracker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
 	return nil
 
 }
 
-func (d InMemoryDDL) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
+func (d SchemaTracker) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error {
 	return nil
 
 }
 
-func (d InMemoryDDL) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
-	return nil
-}
-
-func (d InMemoryDDL) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
+func (d SchemaTracker) RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error {
 	return nil
 
 }
 
-func (d InMemoryDDL) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+func (d SchemaTracker) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error {
 	return nil
 }
 
-func (d InMemoryDDL) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error {
-	return nil
-
-}
-
-func (d InMemoryDDL) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error {
+func (d SchemaTracker) DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error) {
 	return nil
 
 }
 
-func (d InMemoryDDL) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
+func (d SchemaTracker) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+	return nil
+}
+
+func (d SchemaTracker) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error {
 	return nil
 
 }
 
-func (d InMemoryDDL) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist OnExist) error {
+func (d SchemaTracker) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error {
+	return nil
+
+}
+
+func (d SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error {
+	return nil
+
+}
+
+func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist OnExist) error {
 	for _, tableInfo := range info {
 		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, onExist); err != nil {
 			return err
@@ -630,58 +598,58 @@ func (d InMemoryDDL) BatchCreateTableWithInfo(ctx sessionctx.Context, schema mod
 	return nil
 }
 
-func (d InMemoryDDL) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
+func (d SchemaTracker) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
 	return nil
 
 }
 
-func (d InMemoryDDL) Start(ctxPool *pools.ResourcePool) error {
+func (d SchemaTracker) Start(ctxPool *pools.ResourcePool) error {
 	return nil
 
 }
 
-func (d InMemoryDDL) GetLease() time.Duration {
+func (d SchemaTracker) GetLease() time.Duration {
 	return 0
 }
 
-func (d InMemoryDDL) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (d SchemaTracker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	return nil, nil
 }
 
-func (d InMemoryDDL) GetScope(status string) variable.ScopeFlag {
+func (d SchemaTracker) GetScope(status string) variable.ScopeFlag {
 	return 0
 }
 
-func (d InMemoryDDL) Stop() error {
+func (d SchemaTracker) Stop() error {
 	return nil
 }
 
-func (d InMemoryDDL) RegisterStatsHandle(handle *handle.Handle) {}
+func (d SchemaTracker) RegisterStatsHandle(handle *handle.Handle) {}
 
-func (d InMemoryDDL) SchemaSyncer() util.SchemaSyncer {
+func (d SchemaTracker) SchemaSyncer() util.SchemaSyncer {
 	return nil
 }
 
-func (d InMemoryDDL) OwnerManager() owner.Manager {
+func (d SchemaTracker) OwnerManager() owner.Manager {
 	return nil
 }
 
-func (d InMemoryDDL) GetID() string {
+func (d SchemaTracker) GetID() string {
 	return "in-memory-ddl"
 }
 
-func (d InMemoryDDL) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
+func (d SchemaTracker) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
 	return nil, false, nil
 }
 
-func (d InMemoryDDL) SetBinlogClient(client *pumpcli.PumpsClient) {}
+func (d SchemaTracker) SetBinlogClient(client *pumpcli.PumpsClient) {}
 
-func (d InMemoryDDL) GetHook() Callback {
+func (d SchemaTracker) GetHook() Callback {
 	return nil
 }
 
-func (d InMemoryDDL) SetHook(h Callback) {}
+func (d SchemaTracker) SetHook(h Callback) {}
 
-func (d InMemoryDDL) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d SchemaTracker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return nil
 }
