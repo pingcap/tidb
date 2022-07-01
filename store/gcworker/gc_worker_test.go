@@ -272,7 +272,7 @@ func TestGetLowResolveTS(t *testing.T) {
 	require.NoError(t, err)
 
 	lowResolveTime := oracle.GetTimeFromTS(lowResolveTS)
-	timeEqual(t, time.Now(), lowResolveTime.Add(gcTryResolveLocksIntervalFromNow), time.Millisecond*500)
+	timeEqual(t, time.Now(), lowResolveTime.Add(gcTryResolveLocksIntervalFromNow), time.Millisecond*10)
 }
 
 func TestMinStartTS(t *testing.T) {

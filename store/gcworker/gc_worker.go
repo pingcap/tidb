@@ -1092,13 +1092,13 @@ func (w *GCWorker) legacyResolveLocks(
 // getTryResolveLocksTS gets the TryResolveLocksTS
 // that is defined as `now() - gcTryResolveLocksIntervalFromNow`.
 func (w *GCWorker) getTryResolveLocksTS() (uint64, error) {
-	now, err := w.getOracleTime()
+	now, err := w.tikvStore.CurrentTimestamp(kv.GlobalTxnScope)
 	if err != nil {
 		return 0, err
 	}
 
-	tryResolveLocksTime := now.Add(-gcTryResolveLocksIntervalFromNow)
-	return oracle.GoTimeToTS(tryResolveLocksTime), nil
+	gcTryResolveLockTS := oracle.ComposeTS(oracle.ExtractPhysical(now)-gcTryResolveLocksIntervalFromNow.Milliseconds(), oracle.ExtractLogical(now))
+	return gcTryResolveLockTS, nil
 }
 
 // batchResolveExpiredLocks tries to resolve expired locks with batch method.
