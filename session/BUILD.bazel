@@ -100,6 +100,7 @@ go_library(
 
 go_test(
     name = "session_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
@@ -133,6 +134,7 @@ go_test(
         "//planner/core",
         "//sessionctx",
         "//sessionctx/variable",
+        "//sessiontxn",
         "//statistics",
         "//store/mockstore",
         "//table",
