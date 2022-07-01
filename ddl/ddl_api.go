@@ -3490,7 +3490,10 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	if utf8.RuneCountInString(colName) > mysql.MaxColumnNameLength {
 		return nil, dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
+	return createNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+}
 
+func createNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
 	// If new column is a generated column, do validation.
 	// NOTE: we do check whether the column refers other generated
 	// columns occurring later in a table, but we don't handle the col offset.
@@ -3506,7 +3509,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 
 			_, dependColNames := findDependedColumnNames(specNewColumn)
 			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
-				if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+				if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 					return nil, errors.Trace(err)
 				}
 			}
@@ -3516,11 +3519,11 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 			}
 			cols := t.Cols()
 
-			if err = checkDependedColExist(dependColNames, cols); err != nil {
+			if err := checkDependedColExist(dependColNames, cols); err != nil {
 				return nil, errors.Trace(err)
 			}
 
-			if err = verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
+			if err := verifyColumnGenerationSingle(duplicateColNames, cols, spec.Position); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -3552,7 +3555,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 	// Ignore table constraints now, they will be checked later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
-	col, _, err = buildColumnAndConstraint(
+	col, _, err := buildColumnAndConstraint(
 		ctx,
 		len(t.Cols()),
 		specNewColumn,
