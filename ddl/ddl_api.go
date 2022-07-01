@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -820,6 +821,24 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, co
 	return checkTooBigFieldLengthAndTryAutoConvert(tp, colName, sessVars)
 }
 
+func decodeEnumSetBinaryLiteralToUTF8(tp *types.FieldType, chs string) {
+	if tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
+		return
+	}
+	enc := charset.FindEncoding(chs)
+	for i, elem := range tp.GetElems() {
+		if !tp.GetElemIsBinaryLit(i) {
+			continue
+		}
+		s, err := enc.Transform(nil, hack.Slice(elem), charset.OpDecodeReplace)
+		if err != nil {
+			logutil.BgLogger().Warn("decode enum binary literal to utf-8 failed", zap.Error(err))
+		}
+		tp.SetElem(i, string(hack.String(s)))
+	}
+	tp.CleanElemIsBinaryLit()
+}
+
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
 // outPriKeyConstraint is the primary key constraint out of column definition. For example:
 // `create table t1 (id int , age int, primary key(id));`
@@ -852,6 +871,7 @@ func buildColumnAndConstraint(
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, colDef.Name.Name.O, chs, coll, ctx.GetSessionVars()); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	decodeEnumSetBinaryLiteralToUTF8(colDef.Tp, chs)
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -3048,11 +3068,22 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 			return dbterror.ErrRunMultiSchemaChanges
 		}
 	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
+		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) && !allSupported(specs) {
 			return dbterror.ErrRunMultiSchemaChanges
 		}
 	}
 	return nil
+}
+
+func allSupported(specs []*ast.AlterTableSpec) bool {
+	for _, s := range specs {
+		switch s.Tp {
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
@@ -3088,10 +3119,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	if len(validSpecs) > 1 {
 		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
 			useMultiSchemaChange = true
-		case ast.AlterTableDropColumn:
-			err = d.DropColumns(sctx, ident, validSpecs)
 		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
 			err = d.DropIndexes(sctx, ident, validSpecs)
 		default:
@@ -3584,81 +3613,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	return errors.Trace(err)
 }
 
-// AddColumns will add multi new columns to the table.
-func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Check all the columns at once.
-	addingColumnNames := make(map[string]bool)
-	dupColumnNames := make(map[string]bool)
-	for _, spec := range specs {
-		for _, specNewColumn := range spec.NewColumns {
-			if !addingColumnNames[specNewColumn.Name.Name.L] {
-				addingColumnNames[specNewColumn.Name.Name.L] = true
-				continue
-			}
-			if !spec.IfNotExists {
-				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
-			}
-			dupColumnNames[specNewColumn.Name.Name.L] = true
-		}
-	}
-	columns := make([]*table.Column, 0, len(addingColumnNames))
-	positions := make([]*ast.ColumnPosition, 0, len(addingColumnNames))
-	offsets := make([]int, 0, len(addingColumnNames))
-	ifNotExists := make([]bool, 0, len(addingColumnNames))
-	newColumnsCount := 0
-	// Check the columns one by one.
-	for _, spec := range specs {
-		for _, specNewColumn := range spec.NewColumns {
-			if spec.IfNotExists && dupColumnNames[specNewColumn.Name.Name.L] {
-				err = infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O)
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				continue
-			}
-			col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// Added column has existed and if_not_exists flag is true.
-			if col == nil && spec.IfNotExists {
-				continue
-			}
-			columns = append(columns, col)
-			positions = append(positions, spec.Position)
-			offsets = append(offsets, 0)
-			ifNotExists = append(ifNotExists, spec.IfNotExists)
-			newColumnsCount++
-		}
-	}
-	if newColumnsCount == 0 {
-		return nil
-	}
-	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
-		return errors.Trace(err)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAddColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{columns, positions, offsets, ifNotExists},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
@@ -4088,96 +4042,15 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
 		SchemaName:      schema.Name.L,
+		SchemaState:     model.StatePublic,
 		TableName:       t.Meta().Name.L,
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
 		MultiSchemaInfo: multiSchemaInfo,
-		SchemaState:     model.StatePublic,
-		Args:            []interface{}{colName},
+		Args:            []interface{}{colName, spec.IfExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	// column not exists, but if_exists flags is true, so we ignore this error.
-	if dbterror.ErrCantDropFieldOrKey.Equal(err) && spec.IfExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
-// DropColumns will drop multi-columns from the table, now we don't support drop the column with index covered.
-func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tblInfo := t.Meta()
-
-	dropingColumnNames := make(map[string]bool)
-	dupColumnNames := make(map[string]bool)
-	for _, spec := range specs {
-		if !dropingColumnNames[spec.OldColumnName.Name.L] {
-			dropingColumnNames[spec.OldColumnName.Name.L] = true
-		} else {
-			if spec.IfExists {
-				dupColumnNames[spec.OldColumnName.Name.L] = true
-				continue
-			}
-			return errors.Trace(dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.O))
-		}
-	}
-
-	ifExists := make([]bool, 0, len(specs))
-	colNames := make([]model.CIStr, 0, len(specs))
-	for _, spec := range specs {
-		if spec.IfExists && dupColumnNames[spec.OldColumnName.Name.L] {
-			err = dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.L)
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			continue
-		}
-		isDropable, err := checkIsDroppableColumn(ctx, t, spec)
-		if err != nil {
-			return err
-		}
-		// Column can't drop and if_exists flag is true.
-		if !isDropable && spec.IfExists {
-			continue
-		}
-		colNames = append(colNames, spec.OldColumnName.Name)
-		ifExists = append(ifExists, spec.IfExists)
-	}
-	if len(colNames) == 0 {
-		return nil
-	}
-	if len(tblInfo.Columns) == len(colNames) {
-		return dbterror.ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
-			tblInfo.Name)
-	}
-	err = checkVisibleColumnCnt(t, 0, len(colNames))
-	if err != nil {
-		return err
-	}
-	var multiSchemaInfo *model.MultiSchemaInfo
-	if variable.EnableChangeMultiSchema.Load() {
-		multiSchemaInfo = &model.MultiSchemaInfo{}
-	}
-
-	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		TableName:       t.Meta().Name.L,
-		Type:            model.ActionDropColumns,
-		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: multiSchemaInfo,
-		Args:            []interface{}{colNames, ifExists},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -4523,6 +4396,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
 		return nil, errors.Trace(err)
 	}
+	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	// Check the column with foreign key, waiting for the default flen and decimal.
 	if fkInfo := getColumnForeignKeyInfo(originalColName.L, t.Meta().ForeignKeys); fkInfo != nil {
