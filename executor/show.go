@@ -1376,6 +1376,7 @@ func appendPartitionInfo(ctx sessionctx.Context, partitionInfo *model.PartitionI
 		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
 
+	// TODO: Check if non-table default placement rules has been set, then skip this and fall back to old behaviour
 	if ctx.GetSessionVars().ExtensionNonMySQLCompatible && partitionInfo.IntervalExpr != "" && partitionInfo.IntervalFirst != "" && partitionInfo.IntervalLast != "" {
 		intervalStr := partitionInfo.IntervalExpr
 		if partitionInfo.IntervalUnit != "" {

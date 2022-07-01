@@ -1655,17 +1655,17 @@ AlterTablePartitionOpt:
 		ret.NoWriteToBinlog = $3.(bool)
 		$$ = ret
 	}
-|	"SPLIT" "MAX" "PARTITION" '(' BitExpr ')'
+|	"SPLIT" "MAX" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
-		partitionMethod := ast.PartitionMethod{Expr: $5}
+		partitionMethod := ast.PartitionMethod{Expr: $7}
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
 		}
 	}
-|	"MERGE" "FIRST" "PARTITION" '(' BitExpr ')'
+|	"MERGE" "FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
-		partitionMethod := ast.PartitionMethod{Expr: $5}
+		partitionMethod := ast.PartitionMethod{Expr: $7}
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},

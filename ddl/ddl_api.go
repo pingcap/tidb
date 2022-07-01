@@ -3026,7 +3026,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			} else {
 				err = d.AddColumn(sctx, ident, spec)
 			}
-		case ast.AlterTableAddPartitions:
+		case ast.AlterTableAddPartitions, ast.AlterTableLastPartition:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
 			err = d.CoalescePartitions(sctx, ident, spec)
@@ -3050,7 +3050,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.DropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(sctx, ident, spec)
-		case ast.AlterTableDropPartition:
+		case ast.AlterTableDropPartition, ast.AlterTableDropFirstPartition:
 			err = d.DropTablePartition(sctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(sctx, ident, spec)

@@ -2569,6 +2569,7 @@ const (
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
+	AlterTableDropFirstPartition
 	AlterTableLastPartition
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
@@ -3155,13 +3156,13 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteName(name.O)
 		}
 	case AlterTableReorganizeLastPartition:
-		ctx.WriteKeyWord("SPLIT MAX PARTITION (")
+		ctx.WriteKeyWord("SPLIT MAX PARTITION LESS THAN (")
 		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
 		}
 		ctx.WriteKeyWord(")")
 	case AlterTableReorganizeFirstPartition:
-		ctx.WriteKeyWord("MERGE FIRST PARTITION (")
+		ctx.WriteKeyWord("MERGE FIRST PARTITION LESS THAN (")
 		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
 		}
