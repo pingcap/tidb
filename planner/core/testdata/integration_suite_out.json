@@ -7096,6 +7096,20 @@
         ]
       },
       {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 where c1 < 100 window w1 as (partition by c1 order by c1);",
+        "Plan": [
+          "TableReader 3323.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3323.33 mpp[tiflash]  Column#5",
+          "    └─Window 3323.33 mpp[tiflash]  row_number()->Column#5 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row)",
+          "      └─Sort 3323.33 mpp[tiflash]  test.t1.c1, test.t1.c1",
+          "        └─ExchangeReceiver 3323.33 mpp[tiflash]  ",
+          "          └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─Selection 3323.33 mpp[tiflash]  lt(test.t1.c1, 100)",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "explain format = 'brief' select * from t1;",
         "Plan": [
           "TableReader 10000.00 root  data:ExchangeSender",
