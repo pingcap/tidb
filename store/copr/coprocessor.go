@@ -712,15 +712,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	var cacheKey []byte
 	var cacheValue *coprCacheValue
 
-	// TODO: cache paging copr
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && !task.paging && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(&copReq)
 		if err == nil {
 			cacheKey = cKey
 			cValue := worker.store.coprCache.Get(cKey)
 			copReq.IsCacheEnabled = true
+
 			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
@@ -779,7 +779,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
 
 	if worker.req.Paging {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, costTime)
+		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, costTime)
 	}
 
 	// Handles the response for non-paging copTask.
@@ -848,8 +848,8 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
-	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, nil, nil, task, ch, nil, costTime)
+func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
+	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, ch, nil, costTime)
 	if err != nil || len(remainedTasks) != 0 {
 		// If there is region error or lock error, keep the paging size and retry.
 		for _, remainedTask := range remainedTasks {
@@ -954,6 +954,26 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		data := make([]byte, len(cacheValue.Data))
 		copy(data, cacheValue.Data)
 		resp.pbResp.Data = data
+		if worker.req.Paging {
+			var start, end []byte
+			if cacheValue.PageStart != nil {
+				start = make([]byte, len(cacheValue.PageStart))
+				copy(start, cacheValue.PageStart)
+			}
+			if cacheValue.PageEnd != nil {
+				end = make([]byte, len(cacheValue.PageEnd))
+				copy(end, cacheValue.PageEnd)
+			}
+			// When paging protocol is used, the response key range is part of the cache data.
+			if start != nil || end != nil {
+				resp.pbResp.Range = &coprocessor.KeyRange{
+					Start: start,
+					End:   end,
+				}
+			} else {
+				resp.pbResp.Range = nil
+			}
+		}
 		resp.detail.CoprCacheHit = true
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
@@ -969,6 +989,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 						RegionID:          task.region.GetID(),
 						RegionDataVersion: resp.pbResp.CacheLastVersion,
 					}
+					// When paging protocol is used, the response key range is part of the cache data.
+					if r := resp.pbResp.GetRange(); r != nil {
+						newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
+						newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
+					}
+
 					worker.store.coprCache.Set(cacheKey, &newCacheValue)
 				}
 			}
