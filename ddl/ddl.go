@@ -485,7 +485,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	var err error
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
-	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
@@ -494,8 +493,34 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
 		}
 	})
+	if config.TableLockEnabled() {
+		d.wg.Add(1)
+		go d.startCleanDeadTableLock()
+	}
+	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
+
+	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
+	// Otherwise, we needn't do that.
+	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
+		if err = d.EnableDDL(); err != nil {
+			return err
+		}
+	}
+
+	variable.RegisterStatistics(d)
+
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+
+	return nil
+}
+
+// EnableDDL enable this node to execute ddl.
+// Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
+// we should make sure that before invoking EnableDDL(), ddl is DISABLE.
+func (d *ddl) EnableDDL() error {
+	d.wg.Run(d.limitDDLJobs)
 	d.workers = make(map[workerType]*worker, 2)
-	d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+	d.delRangeMgr = d.newDeleteRangeManager(d.sessPool.resPool == nil)
 	d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 	d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 	for _, worker := range d.workers {
@@ -511,35 +536,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	}
 
 	go d.schemaSyncer.StartCleanWork()
-	if config.TableLockEnabled() {
-		d.wg.Add(1)
-		go d.startCleanDeadTableLock()
-	}
-	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
-
-	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
-	// Otherwise, we needn't do that.
-	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
-		err = d.ownerManager.CampaignOwner()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	variable.RegisterStatistics(d)
-
-	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
-
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
-	return nil
-}
-
-// EnableDDL enable this node to execute ddl.
-// Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
-// we should make sure that before invoking EnableDDL(), ddl is DISABLE.
-func (d *ddl) EnableDDL() error {
 	err := d.ownerManager.CampaignOwner()
 	return errors.Trace(err)
 }
@@ -567,8 +566,21 @@ func (d *ddl) DisableDDL() error {
 		}
 	}
 
+	// d.delRangeMgr using sessions from d.sessPool.
+	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
+	if d.delRangeMgr != nil {
+		d.delRangeMgr.clear()
+	}
+	for k, worker := range d.workers {
+		worker.Close()
+		delete(d.workers, k)
+	}
+	d.schemaSyncer.Close()
+
 	// disable campaign by interrupting campaignLoop
 	d.ownerManager.CampaignCancel()
+	d.cancel()
+	d.wg.Wait()
 
 	return nil
 }
@@ -592,22 +604,10 @@ func (d *ddl) close() {
 	}
 
 	startTime := time.Now()
-	d.cancel()
-	d.wg.Wait()
+	if err := d.DisableDDL(); err != nil {
+		logutil.BgLogger().Error("[ddl] error when closing DDL", zap.Error(err))
+	}
 	d.ownerManager.Cancel()
-	d.schemaSyncer.Close()
-
-	for _, worker := range d.workers {
-		worker.Close()
-	}
-	// d.delRangeMgr using sessions from d.sessPool.
-	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
-	if d.delRangeMgr != nil {
-		d.delRangeMgr.clear()
-	}
-	if d.sessPool != nil {
-		d.sessPool.close()
-	}
 
 	variable.UnregisterStatistics(d)
 
