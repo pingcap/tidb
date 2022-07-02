@@ -132,7 +132,7 @@ var tlsVersionString = map[uint16]string{
 }
 
 func getAvailableTLSVersion() string {
-	res := make([]string, len(tlsVersionString))
+	res := make([]string, 0, len(tlsVersionString))
 	for _, v := range tlsVersionString {
 		res = append(res, v)
 	}
