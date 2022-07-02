@@ -1108,7 +1108,6 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		return 0, nil
 	}
 
-
 	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, 3, []byte(""), []byte("z"))
 	require.NoError(t, err)
 	require.Len(t, resolvedLock, 4)
@@ -1874,7 +1873,7 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
 
-	ctx := context.Background()
+	ctx := gcContext()
 	gcSafePointCacheInterval = 0
 	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
 	require.NoError(t, err)
@@ -1883,8 +1882,8 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	require.NoError(t, err)
 
 	// Prepare to run gc with txn's startTS as the safepoint ts.
-	// spkv := s.tikvStore.GetSafePointKV()
-	// err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
+	spkv := s.tikvStore.GetSafePointKV()
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
 	require.NoError(t, err)
 	s.mustSetTiDBServiceSafePoint(t, now, now)
 	veryLong := gcDefaultLifeTime * 100
