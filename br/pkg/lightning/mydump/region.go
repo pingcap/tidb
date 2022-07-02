@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -239,8 +240,8 @@ func MakeTableRegions(
 		}
 	}
 
-	log.FromContext(ctx).Info("virtually splitted source table data files into chunks(table regions) based on MaxRegionSize, and assign splitted chunks into engines to concurrently restore table",
-		zap.String("table", meta.Name),
+	log.FromContext(ctx).Info("virtually split source table data files into chunks(table regions) based on MaxRegionSize, and assign split chunks into engines to concurrently restore table",
+		zap.String("table", common.UniqueTable(meta.DB, meta.Name)),
 		zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
 		zap.Int("RegionsCount", len(filesRegions)),
