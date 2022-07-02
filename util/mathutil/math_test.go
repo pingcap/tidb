@@ -91,6 +91,8 @@ func BenchmarkMaxMin(b *testing.B) {
 		Max(i, i+1)
 		Max(i, i)
 		Max(i, i-1)
+		Min("short_string", "long_string:123456789012345678901234567890123456789012345678901234567890")
+		Max("short_string", "long_string:123456789012345678901234567890123456789012345678901234567890")
 	}
 }
 func BenchmarkClamp(b *testing.B) {
@@ -98,5 +100,6 @@ func BenchmarkClamp(b *testing.B) {
 		Clamp(i, 1, i+1)
 		Clamp(i, 1, i)
 		Clamp(i, 1, i-1)
+		Clamp("target", "short_string", "long_string:123456789012345678901234567890123456789012345678901234567890")
 	}
 }
