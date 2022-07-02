@@ -485,6 +485,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	var err error
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
+	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
@@ -518,7 +519,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
 // we should make sure that before invoking EnableDDL(), ddl is DISABLE.
 func (d *ddl) EnableDDL() error {
-	d.wg.Run(d.limitDDLJobs)
 	d.workers = make(map[workerType]*worker, 2)
 	d.delRangeMgr = d.newDeleteRangeManager(d.sessPool.resPool == nil)
 	d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
@@ -608,6 +608,9 @@ func (d *ddl) close() {
 		logutil.BgLogger().Error("[ddl] error when closing DDL", zap.Error(err))
 	}
 	d.ownerManager.Cancel()
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
 
 	variable.UnregisterStatistics(d)
 
