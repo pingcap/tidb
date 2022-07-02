@@ -2294,6 +2294,14 @@ def go_deps():
         version = "v1.2.0",
     )
     go_repository(
+        name = "com_github_tdakkota_asciicheck",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tdakkota/asciicheck",
+        sum = "h1:PKzG7JUTUmVspQTDqtkX9eSiLGossXTybutHwTXuO0A=",
+        version = "v0.1.1",
+    )
+
+    go_repository(
         name = "com_github_tiancaiamao_appdash",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tiancaiamao/appdash",

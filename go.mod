@@ -104,6 +104,7 @@ require (
 	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
 	github.com/nishanths/predeclared v0.2.2
+	github.com/tdakkota/asciicheck v0.1.1
 	honnef.co/go/tools v0.0.1-2020.1.4
 )
 
