@@ -103,6 +103,7 @@ require (
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
 	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
+	github.com/nishanths/predeclared v0.2.2
 	honnef.co/go/tools v0.0.1-2020.1.4
 )
 
