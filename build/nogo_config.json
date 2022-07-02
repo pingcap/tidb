@@ -649,6 +649,7 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
+      "parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }
