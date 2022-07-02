@@ -78,4 +78,25 @@ func TestClamp(t *testing.T) {
 	require.Equal(t, float32(1.0), Clamp(float32(0), 1.0, 3.0))
 	require.Equal(t, 1, Clamp(0, 1, 1))
 	require.Equal(t, 1, Clamp(100, 1, 1))
+	require.Equal(t, "ab", Clamp("aa", "ab", "xy"))
+	require.Equal(t, "xy", Clamp("yy", "ab", "xy"))
+	require.Equal(t, "ab", Clamp("ab", "ab", "ab"))
+}
+
+func BenchmarkMaxMin(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Min(i, i+1)
+		Min(i, i)
+		Min(i, i-1)
+		Max(i, i+1)
+		Max(i, i)
+		Max(i, i-1)
+	}
+}
+func BenchmarkClamp(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		Clamp(i, 1, i+1)
+		Clamp(i, 1, i)
+		Clamp(i, 1, i-1)
+	}
 }

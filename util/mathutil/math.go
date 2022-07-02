@@ -90,10 +90,10 @@ func Min[T constraints.Ordered](x T, xs ...T) T {
 }
 
 // Clamp restrict a value to a certain interval.
-func Clamp[T constraints.Integer | constraints.Float](n, min, max T) T {
-	if n >= max {
+func Clamp[T constraints.Ordered](n, min, max T) T {
+	if n > max {
 		return max
-	} else if n <= min {
+	} else if n < min {
 		return min
 	}
 	return n
