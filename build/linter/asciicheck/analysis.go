@@ -16,5 +16,5 @@ package asciicheck
 
 import "github.com/tdakkota/asciicheck"
 
-// Analyzer is the analyzer struct of durationcheck.
+// Analyzer is the analyzer struct of asciicheck.
 var Analyzer = asciicheck.NewAnalyzer()
