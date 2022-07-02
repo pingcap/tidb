@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/build/linter/util"
 )
 
+// Analyzer is the analyzer struct of predeclared.
 var Analyzer = predeclared.Analyzer
 
 func init() {
