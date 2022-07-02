@@ -7448,3 +7448,12 @@ func TestImcompleteDateFunc(t *testing.T) {
 	tk.MustQuery("select YEARWEEK('1998-10-00')").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
 }
+
+func TestShowVariableOfTlsVersion(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tls_version';").
+		Check(testkit.Rows("tls_version TLSv1,TLSv1.1,TLSv1.2,TLSv1.3"))
+}

@@ -128,7 +128,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "skip_networking", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_reset", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_cipher", Value: ""},
-	{Scope: ScopeNone, Name: "tls_version", Value: "TLSv1,TLSv1.1,TLSv1.2"},
+	{Scope: ScopeNone, Name: "tls_version", Value: getAvailableTlsVersion()},
 	{Scope: ScopeGlobal, Name: InnodbPrintAllDeadlocks, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "innodb_autoinc_lock_mode", Value: "1"},
 	{Scope: ScopeGlobal, Name: "key_buffer_size", Value: "8388608"},
