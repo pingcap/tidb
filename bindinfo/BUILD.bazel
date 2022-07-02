@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/bindinfo",
     visibility = ["//visibility:public"],
     deps = [
+        "//kv",
         "//metrics",
         "//parser",
         "//parser/ast",

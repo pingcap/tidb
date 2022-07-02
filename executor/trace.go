@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -242,6 +243,7 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 	defer func() {
 		vars.InRestrictedSQL = origin
 	}()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTrace)
 	rs, err := se.ExecuteStmt(ctx, e.stmtNode)
 	if err != nil {
 		var errCode uint16
