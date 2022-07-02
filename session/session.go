@@ -3433,6 +3433,30 @@ func (s *session) GetStmtStats() *stmtstats.StatementStats {
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
 func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+	// Transaction status is hard to encode, so we do not support it.
+	s.txn.mu.Lock()
+	valid := s.txn.Valid()
+	s.txn.mu.Unlock()
+	if valid {
+		return ErrCannotMigrateSession.FastGen("session has an active transaction")
+	}
+	// Data in local temporary tables is hard to encode, so we do not support it.
+	// Check temporary tables here to avoid circle dependency.
+	if s.sessionVars.LocalTemporaryTables != nil {
+		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+		if localTempTables.Count() > 0 {
+			return ErrCannotMigrateSession.FastGen("session has local temporary tables")
+		}
+	}
+	// The advisory locks will be released when the session is closed.
+	if len(s.advisoryLocks) > 0 {
+		return ErrCannotMigrateSession.FastGen("session has advisory locks")
+	}
+	// The TableInfo stores session ID and server ID, so the session cannot be migrated.
+	if len(s.lockedTables) > 0 {
+		return ErrCannotMigrateSession.FastGen("session has locked tables")
+	}
+
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}

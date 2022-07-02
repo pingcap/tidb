@@ -332,6 +332,15 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 		if !ok {
 			return errors.Errorf("prepared statement %d not found", id)
 		}
+		// Bound params are sent by CMD_STMT_SEND_LONG_DATA, the proxy can wait for COM_STMT_EXECUTE.
+		for _, boundParam := range stmt.BoundParams() {
+			if boundParam != nil {
+				return session.ErrCannotMigrateSession.FastGen("prepared statements have bound params")
+			}
+		}
+		if rs := stmt.GetResultSet(); rs != nil && !rs.IsClosed() {
+			return session.ErrCannotMigrateSession.FastGen("prepared statements have open result sets")
+		}
 		preparedStmtInfo.ParamTypes = stmt.GetParamsType()
 	}
 	return nil
@@ -414,6 +423,11 @@ func (trs *tidbResultSet) Close() error {
 	err := trs.recordSet.Close()
 	trs.recordSet = nil
 	return err
+}
+
+// IsClosed implements ResultSet.IsClosed interface.
+func (trs *tidbResultSet) IsClosed() bool {
+	return atomic.LoadInt32(&trs.closed) == 1
 }
 
 // OnFetchReturned implements fetchNotifier#OnFetchReturned
