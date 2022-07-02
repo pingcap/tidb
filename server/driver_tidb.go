@@ -335,11 +335,11 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 		// Bound params are sent by CMD_STMT_SEND_LONG_DATA, the proxy can wait for COM_STMT_EXECUTE.
 		for _, boundParam := range stmt.BoundParams() {
 			if boundParam != nil {
-				return session.ErrCannotMigrateSession.FastGen("prepared statements have bound params")
+				return session.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have bound params")
 			}
 		}
 		if rs := stmt.GetResultSet(); rs != nil && !rs.IsClosed() {
-			return session.ErrCannotMigrateSession.FastGen("prepared statements have open result sets")
+			return session.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have open result sets")
 		}
 		preparedStmtInfo.ParamTypes = stmt.GetParamsType()
 	}
