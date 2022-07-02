@@ -131,7 +131,7 @@ var tlsVersionString = map[uint16]string{
 	tls.VersionTLS13: "TLSv1.3",
 }
 
-func getAvailableTlsVersion() string {
+func getAvailableTLSVersion() string {
 	var res []string
 	for _, v := range tlsVersionString {
 		res = append(res, v)
