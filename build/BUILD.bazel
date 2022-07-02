@@ -125,6 +125,7 @@ nogo(
                "//build/linter/gofmt:gofmt",
                "//build/linter/ineffassign:ineffassign",
                "//build/linter/prealloc:prealloc",
+               "//build/linter/predeclared:predeclared",
                "//build/linter/unconvert:unconvert",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
