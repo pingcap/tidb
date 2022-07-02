@@ -120,6 +120,7 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unreachable:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
+               "//build/linter/asciicheck:asciicheck",
                "//build/linter/durationcheck:durationcheck",
                "//build/linter/exportloopref:exportloopref",
                "//build/linter/gofmt:gofmt",
