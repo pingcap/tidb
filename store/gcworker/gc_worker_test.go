@@ -1860,6 +1860,77 @@ func TestGCWithPendingTxn(t *testing.T) {
 	require.NoError(t, err)
 
 	err = txn.Commit(ctx)
+	require.Error(t, err)
+}
+
+func TestGCWithPendingTxn2(t *testing.T) {
+	s, clean := createGCWorkerSuite(t)
+	defer clean()
+
+	ctx := context.Background()
+	gcSafePointCacheInterval = 0
+	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	require.NoError(t, err)
+
+	now, err := s.oracle.GetTimestamp(ctx, &oracle.Option{})
+	require.NoError(t, err)
+
+	// Prepare to run gc with txn's startTS as the safepoint ts.
+	// spkv := s.tikvStore.GetSafePointKV()
+	// err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
+	require.NoError(t, err)
+	s.mustSetTiDBServiceSafePoint(t, now, now)
+	veryLong := gcDefaultLifeTime * 100
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
+	require.NoError(t, err)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	require.NoError(t, err)
+
+	// lock the key1
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	txn, err := s.store.Begin(tikv.WithStartTS(now))
+	require.NoError(t, err)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+
+	err = txn.Set(k1, v1)
+	require.NoError(t, err)
+	err = txn.LockKeys(ctx, lockCtx, k1)
+	require.NoError(t, err)
+
+	// lock the key2
+	k2 := []byte("tk2")
+	v2 := []byte("v2")
+	startTS := oracle.ComposeTS(oracle.ExtractPhysical(now)+10000, oracle.ExtractLogical(now))
+	txn2, err := s.store.Begin(tikv.WithStartTS(startTS))
+	require.NoError(t, err)
+	txn2.SetOption(kv.Pessimistic, true)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), WaitStartTime: time.Now()}
+
+	err = txn2.Set(k2, v2)
+	require.NoError(t, err)
+	err = txn2.LockKeys(ctx, lockCtx, k2)
+	require.NoError(t, err)
+
+	// Trigger the tick let the gc job start.
+	s.oracle.AddOffset(time.Minute * 5)
+	err = s.gcWorker.leaderTick(ctx)
+	require.NoError(t, err)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	require.NoError(t, err)
+
+	err = txn.Commit(ctx)
+	require.Error(t, err)
+	err = txn2.Commit(ctx)
 	require.NoError(t, err)
 }
 
