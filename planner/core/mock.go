@@ -554,7 +554,7 @@ func MockListPartitionTable() *model.TableInfo {
 	return tableInfo
 }
 
-// MockUnsignedTable is only used for plan related tests.
+// MockStateNoneColumnTable is only used for plan related tests.
 func MockStateNoneColumnTable() *model.TableInfo {
 	// column: a, b
 	// PK: a
