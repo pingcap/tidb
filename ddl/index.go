@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -47,6 +46,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -722,9 +722,7 @@ func removeDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.Index
 		}
 	}
 	// Sort the offset in descending order.
-	sort.Slice(hiddenColOffs, func(i, j int) bool {
-		return hiddenColOffs[i] > hiddenColOffs[j]
-	})
+	slices.SortFunc(hiddenColOffs, func(a, b int) bool { return a > b })
 	// Move all the dependent hidden columns to the end.
 	endOffset := len(tblInfo.Columns) - 1
 	for _, offset := range hiddenColOffs {
