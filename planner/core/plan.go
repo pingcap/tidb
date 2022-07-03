@@ -428,6 +428,9 @@ type basePhysicalPlan struct {
 	planCostInit bool
 	planCost     float64
 
+	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
+	// 1. For ExchangeSender, means its output will be partitioned by hash key.
+	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
 	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
