@@ -1,4 +1,11 @@
 {
+  "asciicheck": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
+    }
+  },
   "asmdecl": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -641,6 +648,15 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "predeclared": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/yy_parser.go": "ignore generated code",
+      "parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }
