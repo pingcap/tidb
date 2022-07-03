@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strings"
 
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
@@ -528,9 +529,15 @@ func (s *Server) onConn(conn *clientConn) {
 			}
 		default:
 			metrics.HandShakeErrorCounter.Inc()
-			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-				Warn("Server.onConn handshake", zap.Error(err),
-					zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+			if strings.Contains(err.Error(), "connection reset by peer") {
+				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+					Debug("Server.onConn handshake", zap.Error(err),
+						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+			} else {
+				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+					Warn("Server.onConn handshake", zap.Error(err),
+						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+			}
 		}
 		terror.Log(conn.Close())
 		return
