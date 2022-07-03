@@ -5,6 +5,7 @@ package streamhelper_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 )
 
 func TestBasic(t *testing.T) {
-	c := createFakeCluster(4, false)
+	c := createFakeCluster(t, 4, false)
 	defer func() {
 		fmt.Println(c)
 	}()
@@ -37,7 +38,7 @@ func TestBasic(t *testing.T) {
 }
 
 func TestTick(t *testing.T) {
-	c := createFakeCluster(4, false)
+	c := createFakeCluster(t, 4, false)
 	defer func() {
 		fmt.Println(c)
 	}()
@@ -60,7 +61,7 @@ func TestTick(t *testing.T) {
 
 func TestWithFailure(t *testing.T) {
 	log.SetLevel(zapcore.DebugLevel)
-	c := createFakeCluster(4, true)
+	c := createFakeCluster(t, 4, true)
 	defer func() {
 		fmt.Println(c)
 	}()
@@ -108,7 +109,7 @@ func shouldFinishInTime(t *testing.T, d time.Duration, name string, f func()) {
 
 func TestCollectorFailure(t *testing.T) {
 	log.SetLevel(zapcore.DebugLevel)
-	c := createFakeCluster(4, true)
+	c := createFakeCluster(t, 4, true)
 	c.onGetClient = func(u uint64) error {
 		return status.Error(codes.DataLoss,
 			"Exiled requests from the client, please slow down and listen a story: "+
@@ -134,4 +135,45 @@ func TestCollectorFailure(t *testing.T) {
 		_, err := coll.Finish(ctx)
 		require.Error(t, err)
 	})
+}
+
+func oneStoreFailure() func(uint64) error {
+	victim := uint64(0)
+	mu := new(sync.Mutex)
+	return func(u uint64) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if victim == 0 {
+			victim = u
+		}
+		if victim == u {
+			return status.Error(codes.NotFound,
+				"The place once lit by the warm lamplight has been swallowed up by the debris.")
+		}
+		return nil
+	}
+}
+
+func TestOneStoreFailure(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	c := createFakeCluster(t, 4, true)
+	ctx := context.Background()
+	splitKeys := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		splitKeys = append(splitKeys, fmt.Sprintf("%04d", i))
+	}
+	c.splitAndScatter(splitKeys...)
+	c.flushAll()
+
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	c.onGetClient = oneStoreFailure()
+
+	for i := 0; i < 100; i++ {
+		c.advanceCheckpoints()
+		c.flushAll()
+		require.ErrorContains(t, adv.OnTick(ctx), "the warm lamplight")
+	}
 }

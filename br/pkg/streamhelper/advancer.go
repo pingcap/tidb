@@ -26,6 +26,26 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// CheckpointAdvancer is the central node for advancing the checkpoint of log backup.
+// It's a part of "checkpoint v3".
+// Generally, it scan the regions in the task range, collect checkpoints from tikvs.
+//                                         ┌──────┐
+//                                   ┌────►│ TiKV │
+//                                   │     └──────┘
+//                                   │
+//                                   │
+// ┌──────────┐GetLastFlushTSOfRegion│     ┌──────┐
+// │ Advancer ├──────────────────────┼────►│ TiKV │
+// └────┬─────┘                      │     └──────┘
+//      │                            │
+//      │                            │
+//      │                            │     ┌──────┐
+//      │                            └────►│ TiKV │
+//      │                                  └──────┘
+//      │
+//      │ UploadCheckpointV3   ┌──────────────────┐
+//      └─────────────────────►│ UploadCheckpoint │
+//                             └──────────────────┘
 type CheckpointAdvancer struct {
 	env Env
 
@@ -375,19 +395,22 @@ func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	return
 }
 
-func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) {
+func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) error {
 	if s.consistencyCheckTick > 0 {
 		s.consistencyCheckTick--
-		return
+		return nil
 	}
 	defer c.recordTimeCost("consistency check")()
 	err := c.cache.ConsistencyCheck()
 	if err != nil {
-		log.Error("consistency check failed! log backup may lose data!", logutil.ShortError(err))
+		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
+		c.state = &fullScan{}
+		return err
 	} else {
 		log.Debug("consistency check passed.")
 	}
 	s.consistencyCheckTick = config.DefaultConsistencyCheckTick
+	return nil
 }
 
 func (c *CheckpointAdvancer) tick(ctx context.Context) error {
@@ -416,7 +439,9 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 			c.state = &updateSmallTree{}
 		}
 	case *updateSmallTree:
-		c.onConsistencyCheckTick(s)
+		if err := c.onConsistencyCheckTick(s); err != nil {
+			return err 
+		}
 		err := c.advanceCheckpointBy(ctx, func() (uint64, error) { return c.UpdateGlobalCheckpointLight(ctx) })
 		if err != nil {
 			return err

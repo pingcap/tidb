@@ -3,7 +3,6 @@
 package config
 
 import (
-	"runtime"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -21,7 +20,7 @@ const (
 )
 
 var (
-	DefaultMaxConcurrencyAdvance = uint((runtime.NumCPU() + 1) / 2)
+	DefaultMaxConcurrencyAdvance = 8
 )
 
 type Config struct {

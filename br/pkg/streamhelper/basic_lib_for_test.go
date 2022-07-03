@@ -69,9 +69,11 @@ type fakeStore struct {
 }
 
 type fakeCluster struct {
+	mu        sync.Mutex
 	idAlloced uint64
 	stores    map[uint64]*fakeStore
 	regions   []*region
+	testCtx   *testing.T
 
 	onGetClient func(uint64) error
 }
@@ -159,6 +161,8 @@ func (f *fakeStore) GetLastFlushTSOfRegion(ctx context.Context, in *logbackup.Ge
 // RegionScan gets a list of regions, starts from the region that contains key.
 // Limit limits the maximum number of regions returned.
 func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte, limit int) ([]streamhelper.RegionWithLeader, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	sort.Slice(f.regions, func(i, j int) bool {
 		return bytes.Compare(f.regions[i].rng.StartKey, f.regions[j].rng.StartKey) < 0
 	})
@@ -190,9 +194,15 @@ func (f *fakeCluster) RegionScan(ctx context.Context, key []byte, endKey []byte,
 func (f *fakeCluster) GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error) {
 	if f.onGetClient != nil {
 		err := f.onGetClient(storeID)
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
 	}
-	return f.stores[storeID], nil
+	cli, ok := f.stores[storeID]
+	if !ok {
+		f.testCtx.Fatalf("the store %d doesn't exist", storeID)
+	}
+	return cli, nil
 }
 
 func (f *fakeCluster) findRegionById(rid uint64) *region {
@@ -265,7 +275,7 @@ func (f *fakeCluster) findPeers(rid uint64) (result []uint64) {
 	return
 }
 
-func (f *fakeCluster) suffleLeader(rid uint64) {
+func (f *fakeCluster) shuffleLeader(rid uint64) {
 	r := f.findRegionById(rid)
 	peers := f.findPeers(rid)
 	rand.Shuffle(len(peers), func(i, j int) {
@@ -277,12 +287,14 @@ func (f *fakeCluster) suffleLeader(rid uint64) {
 }
 
 func (f *fakeCluster) splitAndScatter(keys ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, key := range keys {
 		f.splitAt(key)
 	}
 	for _, r := range f.regions {
 		f.transferRegionTo(r.id, f.chooseStores(3))
-		f.suffleLeader(r.id)
+		f.shuffleLeader(r.id)
 	}
 }
 
@@ -306,10 +318,11 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 	return minCheckpoint
 }
 
-func createFakeCluster(n int, simEnabled bool) *fakeCluster {
+func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 	c := &fakeCluster{
 		stores:  map[uint64]*fakeStore{},
 		regions: []*region{},
+		testCtx: t,
 	}
 	stores := make([]*fakeStore, 0, n)
 	for i := 0; i < n; i++ {

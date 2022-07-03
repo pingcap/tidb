@@ -98,7 +98,7 @@ func (c *storeCollector) recvLoop(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		case r, ok := <-c.input:
 			if !ok {
 				return c.flush(ctx)
@@ -116,7 +116,7 @@ func (c *storeCollector) recvLoop(ctx context.Context) error {
 				Id:           r.Region.GetId(),
 				EpochVersion: r.Region.GetRegionEpoch().GetVersion(),
 			})
-			if len(c.currentRequest.Regions) > c.batchSize {
+			if len(c.currentRequest.Regions) >= c.batchSize {
 				err := c.flush(ctx)
 				if err != nil {
 					return err
@@ -244,7 +244,7 @@ func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
 	}
 
 	if r.Leader.GetStoreId() == 0 {
-		log.Warn("there is regions without leader", zap.Uint64("region", r.Region.GetId()))
+		log.Warn("there are regions without leader", zap.Uint64("region", r.Region.GetId()))
 		c.noLeaders = append(c.noLeaders, kv.KeyRange{StartKey: r.Region.StartKey, EndKey: r.Region.EndKey})
 	}
 	leader := r.Leader.StoreId
@@ -261,12 +261,16 @@ func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
 	}
 
 	sc := c.collectors[leader].collector
-	if err := sc.Err(); err != nil {
-		c.cancel()
+	select {
+	case sc.input <- r:
+		return nil
+	case <-sc.doneMessenger:
+		err := sc.Err()
+		if err != nil {
+			c.cancel()
+		}
 		return err
 	}
-	sc.input <- r
-	return nil
 }
 
 func (c *clusterCollector) Finish(ctx context.Context) (StoreCheckpoints, error) {
