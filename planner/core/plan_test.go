@@ -892,3 +892,33 @@ func TestIssue34863(t *testing.T) {
 	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
 	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
 }
+
+func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
+	window := &core.PhysicalWindow{}
+	newPlan, err := window.Clone()
+	require.NoError(t, err)
+	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	window.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = window.Clone()
+	require.NoError(t, err)
+	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	sort := &core.PhysicalSort{}
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok := newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+
+	sort.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok = newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+}

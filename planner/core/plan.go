@@ -443,8 +443,9 @@ func (p *basePhysicalPlan) SetCost(cost float64) {
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
-		basePlan: p.basePlan,
-		self:     newSelf,
+		basePlan:                             p.basePlan,
+		self:                                 newSelf,
+		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()
