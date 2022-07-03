@@ -77,6 +77,9 @@ const (
 
 	batchAddingJobs = 10
 
+	reorgWorkerCnt   = 10
+	generalWorkerCnt = 1
+
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 8192
@@ -211,6 +214,43 @@ type ddl struct {
 	// used in the concurrency ddl.
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
+	// get notification if any DDL coming.
+	ddlJobCh chan struct{}
+}
+
+// waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
+type waitSchemaSyncedController struct {
+	mu  sync.RWMutex
+	job map[int64]struct{}
+
+	// true if this node is elected to the DDL owner, we should wait 2 * lease before it runs the first DDL job.
+	once *atomicutil.Bool
+}
+
+func newWaitSchemaSyncedController() *waitSchemaSyncedController {
+	return &waitSchemaSyncedController{
+		job:  make(map[int64]struct{}, 16),
+		once: atomicutil.NewBool(true),
+	}
+}
+
+func (w *waitSchemaSyncedController) registerSync(job *model.Job) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.job[job.ID] = struct{}{}
+}
+
+func (w *waitSchemaSyncedController) isSynced(job *model.Job) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	_, ok := w.job[job.ID]
+	return !ok
+}
+
+func (w *waitSchemaSyncedController) synced(job *model.Job) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.job, job.ID)
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -230,6 +270,15 @@ type ddlCtx struct {
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
 
+	*waitSchemaSyncedController
+	*schemaVersionManager
+	// recording the running jobs.
+	runningJobs struct {
+		sync.RWMutex
+		runningJobMap map[int64]struct{}
+	}
+	// It holds the running DDL jobs ID.
+	runningJobIDs []string
 	// reorgCtx is used for reorganization.
 	reorgCtx struct {
 		sync.RWMutex
@@ -253,6 +302,49 @@ type ddlCtx struct {
 	ddlSeqNumMu struct {
 		sync.Mutex
 		seqNum uint64
+	}
+}
+
+// schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
+// we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
+type schemaVersionManager struct {
+	schemaVersionMu sync.Mutex
+	// lockOwner stores the job ID that is holding the lock.
+	lockOwner atomicutil.Int64
+}
+
+func newSchemaVersionManager() *schemaVersionManager {
+	return &schemaVersionManager{}
+}
+
+func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
+	sv.lockSchemaVersion(job.ID)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		var err error
+		m := meta.NewMeta(txn)
+		schemaVersion, err = m.GenSchemaVersion()
+		return err
+	})
+	return schemaVersion, err
+}
+
+// lockSchemaVersion gets the lock to prevent the schema version from being updated.
+func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) {
+	ownerID := sv.lockOwner.Load()
+	// there may exist one job update schema version many times in multiple schema change, so we do not lock here again
+	// if they are the same job. jobID == 0 is a special one, it means we must get the lock.
+	if ownerID != jobID || jobID == 0 {
+		sv.schemaVersionMu.Lock()
+		sv.lockOwner.Store(jobID)
+	}
+}
+
+// unlockSchemaVersion releases the lock.
+func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
+	ownerID := sv.lockOwner.Load()
+	if ownerID == jobID {
+		sv.lockOwner.Store(0)
+		sv.schemaVersionMu.Unlock()
 	}
 }
 
@@ -434,16 +526,19 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	ddlCtx := &ddlCtx{
-		uuid:         id,
-		store:        opt.Store,
-		lease:        opt.Lease,
-		ddlJobDoneCh: make(chan struct{}, 1),
-		ownerManager: manager,
-		schemaSyncer: syncer,
-		binlogCli:    binloginfo.GetPumpsClient(),
-		infoCache:    opt.InfoCache,
-		tableLockCkr: deadLockCkr,
-		etcdCli:      opt.EtcdCli,
+		uuid:                       id,
+		store:                      opt.Store,
+		lease:                      opt.Lease,
+		ddlJobDoneCh:               make(chan struct{}, 1),
+		ownerManager:               manager,
+		schemaSyncer:               syncer,
+		binlogCli:                  binloginfo.GetPumpsClient(),
+		infoCache:                  opt.InfoCache,
+		tableLockCkr:               deadLockCkr,
+		etcdCli:                    opt.EtcdCli,
+		schemaVersionManager:       newSchemaVersionManager(),
+		waitSchemaSyncedController: newWaitSchemaSyncedController(),
+		runningJobIDs:              make([]string, 0, 16),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
@@ -451,10 +546,14 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
+	ddlCtx.runningJobs.runningJobMap = make(map[int64]struct{})
+	ddlCtx.runningJobIDs = append(ddlCtx.runningJobIDs, "0")
+
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
+		ddlJobCh:          make(chan struct{}, 100),
 	}
 
 	return d
@@ -484,7 +583,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 }
 
 func (d *ddl) readyForConcurrencyDDL() {
-	workerFactor := func(tp workerType) func() (pools.Resource, error) {
+	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(d.ctx, tp, d.sessPool, d.delRangeMgr, d.ddlCtx, true)
 			sessForJob, err := d.sessPool.get()
@@ -497,8 +596,9 @@ func (d *ddl) readyForConcurrencyDDL() {
 			return wk, nil
 		}
 	}
-	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactor(addIdxWorker), batchAddingJobs, batchAddingJobs, 0), reorg)
-	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactor(generalWorker), 1, 1, 0), general)
+	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgWorkerCnt, reorgWorkerCnt, 0), reorg)
+	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
+	d.wg.Run(d.startDispatchLoop)
 }
 
 func (d *ddl) readyForDDL() {
@@ -563,7 +663,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-const ddlCount = "select count(1) from mysql.tidb_ddl_history"
+const getHistoryDDLCntSQL = "select count(1) from mysql.tidb_ddl_history"
 
 // GetNextDDLSeqNum return the next ddl seq num.
 func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
@@ -579,7 +679,7 @@ func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 		if err != nil {
 			return err
 		}
-		rows, err := s.execute(ctx, ddlCount, "get_history_ddl_cnt")
+		rows, err := s.execute(ctx, getHistoryDDLCntSQL, "get_history_ddl_cnt")
 		if err != nil {
 			return err
 		}

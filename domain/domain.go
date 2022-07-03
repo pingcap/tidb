@@ -286,8 +286,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
