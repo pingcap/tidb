@@ -1513,11 +1513,11 @@ def go_deps():
         name = "com_github_kisielk_errcheck",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/kisielk/errcheck",
-        sum = "h1:cErYo+J4SmEjdXZrVXGwLJCE2sB06s23LpkcyWNrT+s=",
         patch_args = ["-p1"],
         patches = [
             "//build/patches:com_github_kisielk_errcheck.patch",
         ],
+        sum = "h1:cErYo+J4SmEjdXZrVXGwLJCE2sB06s23LpkcyWNrT+s=",
         version = "v1.6.1",
     )
     go_repository(
@@ -1801,6 +1801,14 @@ def go_deps():
         sum = "h1:fD57ERR4JtEqsWbfPhv4DMiApHyliiK5xCTNVSPiaAs=",
         version = "v0.0.0-20200227124842-a10e7caefd8e",
     )
+    go_repository(
+        name = "com_github_nishanths_predeclared",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/nishanths/predeclared",
+        sum = "h1:V2EPdZPliZymNAn79T8RkNApBjMmVKh5XRpLm/w98Vk=",
+        version = "v0.2.2",
+    )
+
     go_repository(
         name = "com_github_nxadm_tail",
         build_file_proto_mode = "disable_global",
@@ -2285,6 +2293,14 @@ def go_deps():
         sum = "h1:Slr1R9HxAlEKefgq5jn9U+DnETlIUa6HfgEzj0g5d7s=",
         version = "v1.2.0",
     )
+    go_repository(
+        name = "com_github_tdakkota_asciicheck",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/tdakkota/asciicheck",
+        sum = "h1:PKzG7JUTUmVspQTDqtkX9eSiLGossXTybutHwTXuO0A=",
+        version = "v0.1.1",
+    )
+
     go_repository(
         name = "com_github_tiancaiamao_appdash",
         build_file_proto_mode = "disable_global",
