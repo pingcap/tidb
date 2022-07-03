@@ -377,7 +377,7 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 // TiFlashFineGrainedShuffleStreamCount:
 // == 0: fine grained shuffle is disabled.
 // > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
-// < 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefTiFlashFineGrainedShuffleStreamCount.
+// < 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
 func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
 	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
 	if streamCount == 0 {
@@ -411,6 +411,10 @@ func enableFineGrainedShuffle(streamCount uint64, p PhysicalPlan) {
 	}
 }
 
+// Valid window:
+// 1. Partition by hash.
+// 2. Its child is valid_Window/Sort/ExchangeReceiver. Cannot be Join or HashAgg.
+// Will return PhysicalPlan that needs to be tagged as enable fine grained shuffle.
 func isValidWindowForFineGrainedShuffle(p PhysicalPlan) []*basePhysicalPlan {
 	switch x := p.(type) {
 	case *PhysicalWindow:
@@ -428,9 +432,12 @@ func isValidWindowForFineGrainedShuffle(p PhysicalPlan) []*basePhysicalPlan {
 		}
 		switch ch := child.(type) {
 		case *PhysicalWindow:
-			plans := isValidWindowForFineGrainedShuffle(child)
-			if len(plans) > 0 {
-				plans = append(plans, plans...)
+			childPlans := isValidWindowForFineGrainedShuffle(child)
+			if len(childPlans) > 0 {
+				plans = append(plans, childPlans...)
+			} else {
+				// Child is not valid Window. So this Window is also not valid.
+				plans = nil
 			}
 			return plans
 		case *PhysicalExchangeReceiver:
