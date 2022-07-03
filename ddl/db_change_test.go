@@ -1378,7 +1378,7 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 			require.NoError(t, err)
 			txn, err := sess.Txn(true)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -1407,7 +1407,7 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *doma
 			require.NoError(t, err)
 			txn, err := sess.Txn(true)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			jobs, err := ddl.GetAllDDLJobs(sess, meta.NewMeta(txn))
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {

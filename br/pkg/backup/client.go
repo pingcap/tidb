@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -472,7 +473,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
@@ -481,17 +482,28 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
+	backupSchemaVersion, err := snapMeta.GetSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := waitDDLJobCommit(store, lastSchemaVersion); err != nil {
+		return errors.Trace(err)
+	}
+
+	allJobs, err := ddl.GetAllDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get history jobs", zap.Int("jobs", len(historyJobs)))
 	allJobs = append(allJobs, historyJobs...)
+
+	jobMap := make(map[int64]struct{})
 
 	count := 0
 	for _, job := range allJobs {
@@ -499,8 +511,14 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 			continue
 		}
 
+		if _, exists := jobMap[job.ID]; exists {
+			continue
+		}
+
+		jobMap[job.ID] = struct{}{}
+
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
 			if job.BinlogInfo.DBInfo != nil {
 				// ignore all placement policy info during incremental backup for now.
 				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
@@ -522,6 +540,39 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 	}
 	log.Debug("get completed jobs", zap.Int("jobs", count))
 	return nil
+}
+
+func waitDDLJobCommit(store kv.Storage, lastSchemaVersion int64) error {
+	for i := 0; i < 10; i++ {
+		err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			v, err := m.GetSchemaVersion()
+			if err != nil {
+				return err
+			}
+			if v > lastSchemaVersion {
+				return nil
+			}
+
+			diff, err := m.GetSchemaDiff(lastSchemaVersion)
+			if err != nil {
+				return err
+			}
+
+			if diff == nil {
+				return errors.New("schema diff is nil, wait a while and retry")
+			}
+
+			return nil
+		})
+		if err == nil {
+			return nil
+		}
+		log.Info("wait job commit", zap.Error(err))
+		time.Sleep(time.Millisecond * 100)
+	}
+
+	return errors.New("wait job commit timeout")
 }
 
 // BackupRanges make a backup of the given key ranges.

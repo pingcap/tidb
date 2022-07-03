@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -220,6 +222,55 @@ func (d *ddl) doDDLJob(wk *worker, pool *workerPool, job *model.Job) {
 			logutil.BgLogger().Info("[ddl] handle ddl job failed", zap.Error(err), zap.String("job", job.String()))
 		}
 	})
+}
+
+const (
+	addDDLJobSQL               = "insert into mysql.tidb_ddl_job(job_id, reorg, schema_id, table_id, job_meta, is_drop_schema) values"
+	updateConcurrencyDDLJobSQL = "update mysql.tidb_ddl_job set job_meta = %s where job_id = %d"
+)
+
+func (d *ddl) addDDLJobs(jobs []*model.Job) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+	var sql bytes.Buffer
+	sql.WriteString(addDDLJobSQL)
+	for i, job := range jobs {
+		b, err := job.Encode(true)
+		if err != nil {
+			return err
+		}
+		if i != 0 {
+			sql.WriteString(",")
+		}
+		sql.WriteString(fmt.Sprintf("(%d, %t, %d, %d, %s, %t)", job.ID, job.MayNeedReorg(), job.SchemaID, job.TableID, wrapKey2String(b), job.Type == model.ActionDropSchema))
+	}
+	sess, err := d.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	defer d.sessPool.put(sess)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err = newSession(sess).execute(ctx, sql.String(), "insert_job")
+	logutil.BgLogger().Debug("[ddl] add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
+	return errors.Trace(err)
+}
+
+func (w *worker) deleteDDLJob(job *model.Job) error {
+	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
+	_, err := w.sess.execute(context.Background(), sql, "delete_job")
+	return errors.Trace(err)
+}
+
+func updateConcurrencyDDLJob(sctx *session, job *model.Job, updateRawArgs bool) error {
+	b, err := job.Encode(updateRawArgs)
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, wrapKey2String(b), job.ID)
+	_, err = sctx.execute(context.Background(), sql, "update_job")
+	return errors.Trace(err)
 }
 
 // getDDLReorgHandle get ddl reorg handle.

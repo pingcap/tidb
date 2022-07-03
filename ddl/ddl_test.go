@@ -798,7 +798,7 @@ func TestCancelJobs(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	errs, err := CancelJobs(txn, ids)
+	errs, err := cancelJobs(txn, ids)
 	require.NoError(t, err)
 	for i, err := range errs {
 		if i == 0 {
@@ -808,11 +808,11 @@ func TestCancelJobs(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	errs, err = CancelJobs(txn, []int64{})
+	errs, err = cancelJobs(txn, []int64{})
 	require.NoError(t, err)
 	require.Nil(t, errs)
 
-	errs, err = CancelJobs(txn, []int64{-1})
+	errs, err = cancelJobs(txn, []int64{-1})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
 	require.Regexp(t, "DDL Job:-1 not found$", errs[0].Error())
@@ -826,7 +826,7 @@ func TestCancelJobs(t *testing.T) {
 	}
 	err = m.EnQueueDDLJob(job)
 	require.NoError(t, err)
-	errs, err = CancelJobs(txn, []int64{100})
+	errs, err = cancelJobs(txn, []int64{100})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
 	require.Regexp(t, "This job:100 is finished, so can't be cancelled$", errs[0].Error())
@@ -838,7 +838,7 @@ func TestCancelJobs(t *testing.T) {
 	job.ID = 101
 	err = m.EnQueueDDLJob(job)
 	require.NoError(t, err)
-	errs, err = CancelJobs(txn, []int64{101})
+	errs, err = cancelJobs(txn, []int64{101})
 	require.NoError(t, err)
 	require.Error(t, errs[0])
 	require.Regexp(t, "This job:101 is almost finished, can't be cancelled now$", errs[0].Error())
@@ -874,7 +874,7 @@ func TestCancelJobs(t *testing.T) {
 	require.NoError(t, m.EnQueueDDLJob(job2, meta.AddIndexJobListKey))
 	require.NoError(t, m.EnQueueDDLJob(job3))
 
-	errs, err = CancelJobs(txn, []int64{job1.ID, job.ID, job2.ID, job3.ID})
+	errs, err = cancelJobs(txn, []int64{job1.ID, job.ID, job2.ID, job3.ID})
 	require.NoError(t, err)
 	for _, err := range errs {
 		require.NoError(t, err)

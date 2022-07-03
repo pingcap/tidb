@@ -1228,7 +1228,12 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	}
 	e.DDLJobRetriever.is = e.is
 	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	err = e.DDLJobRetriever.initial(txn)
+	sess, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sess)
+	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
 	}

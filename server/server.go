@@ -49,6 +49,7 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -724,15 +725,17 @@ func killConn(conn *clientConn) {
 	// we need to CANCEL the matching jobID first.
 	if sessVars.StmtCtx.IsDDLJobInQueue {
 		jobID := sessVars.StmtCtx.DDLJobID
-		err := kv.RunInNewTxn(context.Background(), conn.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-			// errs is the error per job, there is only one submitted
-			// err is the error of the overall task
-			errs, err := ddl.CancelJobs(txn, []int64{jobID})
+		se, err := session.CreateSession(conn.ctx.GetStore())
+		if err == nil {
+			var errs []error
+			se.GetSessionVars().CommonGlobalLoaded = true
+			se.GetSessionVars().InRestrictedSQL = true
+			se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			errs, err = ddl.CancelJobs(se, conn.ctx.GetStore(), []int64{jobID})
 			if len(errs) > 0 {
 				logutil.BgLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
 			}
-			return err
-		})
+		}
 		if err != nil {
 			logutil.BgLogger().Warn("could not cancel DDL job", zap.Error(err))
 		}
