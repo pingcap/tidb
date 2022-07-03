@@ -1156,10 +1156,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
 	case ast.Hex:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_HexStrArg:
-			return true
-		}
+		return true
 	}
 	return false
 }
