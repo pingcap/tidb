@@ -74,6 +74,12 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "deadcode": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "deepequalerrors": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -83,6 +89,7 @@
   "durationcheck": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
+      "/rules_go_work-*": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -90,6 +97,20 @@
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "errcheck": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore generated code",
+      "util/logutil": "ignore util/logutil code",
+      "tools/": "ignore tools code",
+      "/src/net/conf.go": "ignore code",
+      "/rules_go_work-*": "ignore generated code",
+      "GOROOT/": "ignore code",
+      "/parser/": "ignore code",
+      ".*_/testmain\\.go$": "ignore code"
     }
   },
   "exportloopref": {

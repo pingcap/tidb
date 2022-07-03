@@ -1001,7 +1001,7 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 	}
 	defer s.Close()
 
-	ctx := s.(sessionctx.Context)
+	sctx := s.(sessionctx.Context)
 	condition := make([]string, 0)
 	params := make([]interface{}, 0)
 
@@ -1019,14 +1019,15 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 		sql += ` WHERE ` + strings.Join(condition, ` AND `)
 	}
 	var results sqlexec.RecordSet
-	if results, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, params...); err != nil {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	if results, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, params...); err != nil {
 		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
 	} else if results != nil {
 		messages = make([]*schemaTableStorage, 0)
 		defer terror.Call(results.Close)
 		for {
 			req := results.NewChunk(nil)
-			if err = results.Next(context.TODO(), req); err != nil {
+			if err = results.Next(ctx, req); err != nil {
 				break
 			}
 
