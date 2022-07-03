@@ -15,6 +15,7 @@
 package sessiontxn_test
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -246,6 +247,195 @@ func TestEnterNewTxn(t *testing.T) {
 			if c.check != nil {
 				c.check(t, se)
 			}
+		})
+	}
+}
+
+func TestGetSnapshot(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+
+	isSnapshotEqual := func(t *testing.T, snap1 kv.Snapshot, snap2 kv.Snapshot) bool {
+		require.NotNil(t, snap1)
+		require.NotNil(t, snap2)
+
+		iter1, err := snap1.Iter([]byte{}, []byte{})
+		require.NoError(t, err)
+		iter2, err := snap2.Iter([]byte{}, []byte{})
+		require.NoError(t, err)
+
+		for {
+			if iter1.Valid() && iter2.Valid() {
+				if iter1.Key().Cmp(iter2.Key()) != 0 {
+					return false
+				}
+				if !bytes.Equal(iter1.Value(), iter2.Value()) {
+					return false
+				}
+				err = iter1.Next()
+				require.NoError(t, err)
+				err = iter2.Next()
+				require.NoError(t, err)
+			} else if !iter1.Valid() && !iter2.Valid() {
+				return true
+			} else {
+				return false
+			}
+		}
+	}
+
+	mgr := sessiontxn.GetTxnManager(tk.Session())
+
+	cases := []struct {
+		isolation string
+		prepare   func(t *testing.T)
+		check     func(t *testing.T, sctx sessionctx.Context)
+	}{
+		{
+			isolation: "Pessimistic Repeatable Read",
+			prepare: func(t *testing.T) {
+				tk.MustExec("set @@tx_isolation='REPEATABLE-READ'")
+				tk.MustExec("begin pessimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3", "10"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.False(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetForUpdateSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.False(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+		{
+			isolation: "Pessimistic Read Committed",
+			prepare: func(t *testing.T) {
+				tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+				tk.MustExec("begin pessimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t").Check(testkit.Rows("1", "3", "10"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetForUpdateSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.False(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+		{
+			isolation: "Optimistic",
+			prepare: func(t *testing.T) {
+				tk.MustExec("begin optimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetForUpdateSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+		{
+			isolation: "Pessimistic Serializable",
+			prepare: func(t *testing.T) {
+				tk.MustExec("set tidb_skip_isolation_level_check = 1")
+				tk.MustExec("set tx_isolation = 'SERIALIZABLE'")
+				tk.MustExec("begin pessimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := sessiontxn.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetReadSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetForUpdateSnapshot()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.isolation, func(t *testing.T) {
+			se := tk.Session()
+			tk.MustExec("truncate t")
+			tk.MustExec("set @@tidb_txn_mode=''")
+			tk.MustExec("set @@autocommit=1")
+			tk.MustExec("insert into t values(1), (3)")
+			tk.MustExec("commit")
+
+			if c.prepare != nil {
+				c.prepare(t)
+			}
+
+			if c.check != nil {
+				c.check(t, se)
+			}
+			tk.MustExec("rollback")
 		})
 	}
 }

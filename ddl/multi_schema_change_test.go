@@ -338,7 +338,8 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	c.cancelErr = kv.RunInNewTxn(context.Background(), c.store, false,
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	c.cancelErr = kv.RunInNewTxn(ctx, c.store, false,
 		func(ctx context.Context, txn kv.Transaction) error {
 			errs, err := ddl.CancelJobs(txn, []int64{job.ID})
 			if errs[0] != nil {

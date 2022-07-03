@@ -234,7 +234,8 @@ func (alloc *allocator) End() int64 {
 func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 	var autoID int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
 		autoID, err1 = alloc.getIDAccessor(txn).Get()
 		if err1 != nil {
@@ -271,6 +272,7 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 	}
 	var newBase, newEnd uint64
 	startTime := time.Now()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
@@ -330,6 +332,7 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 	}
 	var newBase, newEnd int64
 	startTime := time.Now()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
@@ -370,7 +373,8 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
 	alreadySatisfied := false
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		currentEnd, err := acc.SequenceValue().Get()
 		if err != nil {
@@ -427,7 +431,8 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -758,6 +763,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			}()
 		}
 
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
@@ -847,6 +853,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 			}()
 		}
 
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
@@ -931,7 +938,8 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err = kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		var (
 			err1    error

@@ -58,10 +58,11 @@ func queryDeleteRangeCnt(sessPool *sessionPool, jobID int64) (int, error) {
 		sessPool.put(sctx)
 	}()
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	query := `select sum(cnt) from
 	(select count(1) cnt from mysql.gc_delete_range where job_id = %? union all
 	select count(1) cnt from mysql.gc_delete_range_done where job_id = %?) as gdr;`
-	rs, err := s.ExecuteInternal(context.TODO(), query, jobID, jobID)
+	rs, err := s.ExecuteInternal(ctx, query, jobID, jobID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -146,7 +147,7 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		totalExpectedCnt := 0
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			p := sub.ToProxyJob(job)
-			cnt, err := expectedDeleteRangeCnt(p)
+			cnt, err := expectedDeleteRangeCnt(&p)
 			if err != nil {
 				return 0, err
 			}
