@@ -118,11 +118,9 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
 
 	p.is = is
-	if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-		return err
-	}
+	err = p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, "")
 
-	return nil
+	return err
 }
 
 func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() error {

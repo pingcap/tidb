@@ -16,8 +16,6 @@ package sessiontxn
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -25,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // ConstantFuture implements oracle.Future
@@ -94,6 +94,7 @@ func CheckBeforeNewTxn(ctx context.Context, sctx sessionctx.Context) error {
 			zap.String("txnScope", txnScope))
 	}
 	return nil
+}
 
 // GetSnapshotWithTS returns a snapshot with ts.
 func GetSnapshotWithTS(s sessionctx.Context, ts uint64) kv.Snapshot {
