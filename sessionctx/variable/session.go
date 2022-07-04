@@ -1158,6 +1158,9 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

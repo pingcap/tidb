@@ -51,7 +51,8 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	m[serverID] = d.uuid
 	var ddlInfo *Info
 
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
 		ddlInfo, err1 = GetDDLInfo(txn)
 		if err1 != nil {

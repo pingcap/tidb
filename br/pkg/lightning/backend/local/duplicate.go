@@ -434,6 +434,7 @@ func NewDuplicateManager(
 
 // RecordDataConflictError records data conflicts to errorMgr. The key received from stream must be a row key.
 func (m *DuplicateManager) RecordDataConflictError(ctx context.Context, stream DupKVStream) error {
+	//nolint: errcheck
 	defer stream.Close()
 	var dataConflictInfos []errormanager.DataConflictInfo
 	for {
@@ -498,6 +499,7 @@ func (m *DuplicateManager) saveIndexHandles(ctx context.Context, handles pending
 
 // RecordIndexConflictError records index conflicts to errorMgr. The key received from stream must be an index key.
 func (m *DuplicateManager) RecordIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo) error {
+	//nolint: errcheck
 	defer stream.Close()
 	indexHandles := makePendingIndexHandlesWithCapacity(0)
 	for {
