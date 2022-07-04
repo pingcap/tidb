@@ -65,6 +65,12 @@ func (eqh *Handle) Run() {
 				if len(info.Info) == 0 {
 					continue
 				}
+
+				// Don't kill DDL jobs.
+				if info.StmtCtx.IsDDLJobInQueue {
+					continue
+				}
+
 				costTime := time.Since(info.Time)
 				if !info.ExceedExpensiveTimeThresh && costTime >= time.Second*time.Duration(threshold) && log.GetLevel() <= zapcore.WarnLevel {
 					logExpensiveQuery(costTime, info)
