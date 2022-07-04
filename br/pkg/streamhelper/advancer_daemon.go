@@ -20,8 +20,16 @@ const (
 	ownerPath   = "/tidb/br-stream/owner"
 )
 
-// AdvancerDaemon is a "high-avalibility" version of advancer.
+// AdvancerDaemon is a "high-availability" version of advancer.
 // It involved the manager for electing a owner and doing things.
+// You can embed it into your code by simply call:
+//
+// ad := NewAdvancerDaemon(adv, mgr)
+// loop, err := ad.Begin(ctx)
+// if err != nil {
+//	return err
+// }
+// loop()
 type AdvancerDaemon struct {
 	adv     *CheckpointAdvancer
 	manager owner.Manager
@@ -40,6 +48,7 @@ func OwnerManagerForLogBackup(ctx context.Context, etcdCli *clientv3.Client) own
 }
 
 // Begin starts the daemon.
+// It would do some bootstrap task, and return a closure that would begin the main loop.
 func (ad *AdvancerDaemon) Begin(ctx context.Context) (func(), error) {
 	log.Info("begin advancer daemon", zap.String("id", ad.manager.ID()))
 	if err := ad.manager.CampaignOwner(); err != nil {

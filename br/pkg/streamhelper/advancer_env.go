@@ -15,12 +15,18 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+// Env is the interface required by the advancer.
 type Env interface {
+	// The region scanner provides the region information.
 	RegionScanner
+	// LogBackupService connects to the TiKV, so we can collect the region checkpoints.
 	LogBackupService
+	// StreamMeta connects to the metadata service (normally PD).
 	StreamMeta
 }
 
+// PDRegionScanner is a simple wrapper over PD
+// to adapt the requirement of `RegionScan`.
 type PDRegionScanner struct {
 	pd.Client
 }
@@ -42,6 +48,7 @@ func (c PDRegionScanner) RegionScan(ctx context.Context, key []byte, endKey []by
 	return rls, nil
 }
 
+// clusterEnv is the environment for running in the real cluster.
 type clusterEnv struct {
 	clis *utils.StoreManager
 	*TaskEventClient
@@ -90,6 +97,8 @@ type LogBackupService interface {
 	GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error)
 }
 
+// StreamMeta connects to the metadata service (normally PD).
+// It provides the global checkpoint information.
 type StreamMeta interface {
 	// Begin begins listen the task event change.
 	Begin(ctx context.Context, ch chan<- TaskEvent) error

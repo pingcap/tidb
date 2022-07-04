@@ -44,7 +44,7 @@ import (
 //      │                                  └──────┘
 //      │
 //      │ UploadCheckpointV3   ┌──────────────────┐
-//      └─────────────────────►│ UploadCheckpoint │
+//      └─────────────────────►│  PD              │
 //                             └──────────────────┘
 type CheckpointAdvancer struct {
 	env Env
@@ -187,7 +187,7 @@ func (c *CheckpointAdvancer) UpdateGlobalCheckpointLight(ctx context.Context) (u
 	if len(rsts) == 0 {
 		return 0, nil
 	}
-	workers := utils.NewWorkerPool(config.DefaultMaxConcurrencyAdvance, "regions")
+	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "regions")
 	eg, cx := errgroup.WithContext(ctx)
 	for _, rst := range rsts {
 		rst := rst
@@ -382,6 +382,9 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	return nil
 }
 
+// OnTick advances the inner logic clock for the advancer.
+// It's synchronous: this would only return after the events triggered by the clock has all been done.
+// It's generally panic-free, you may not need to trying recover a panic here.
 func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	defer c.recordTimeCost("tick")()
 	defer func() {
@@ -440,7 +443,7 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 		}
 	case *updateSmallTree:
 		if err := c.onConsistencyCheckTick(s); err != nil {
-			return err 
+			return err
 		}
 		err := c.advanceCheckpointBy(ctx, func() (uint64, error) { return c.UpdateGlobalCheckpointLight(ctx) })
 		if err != nil {

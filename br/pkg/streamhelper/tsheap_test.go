@@ -111,3 +111,38 @@ func TestMergeRanges(t *testing.T) {
 	}
 
 }
+
+func TestInsertRanges(t *testing.T) {
+	r := func(a, b string) kv.KeyRange {
+		return kv.KeyRange{StartKey: []byte(a), EndKey: []byte(b)}
+	}
+	rs := func(ts uint64, ranges ...kv.KeyRange) streamhelper.RangesSharesTS {
+		return streamhelper.RangesSharesTS{TS: ts, Ranges: ranges}
+	}
+
+	type Case struct {
+		Expected   []streamhelper.RangesSharesTS
+		Parameters []streamhelper.RangesSharesTS
+	}
+
+	cases := []Case{
+		{
+			Parameters: []streamhelper.RangesSharesTS{
+				rs(1, r("0", "1"), r("1", "2")),
+				rs(1, r("2", "3"), r("3", "4")),
+			},
+			Expected: []streamhelper.RangesSharesTS{
+				rs(1, r("0", "1"), r("1", "2"), r("2", "3"), r("3", "4")),
+			},
+		},
+	}
+
+	for _, c := range cases {
+		theTree := streamhelper.NewCheckpoints()
+		for _, p := range c.Parameters {
+			theTree.InsertRanges(p)
+		}
+		ranges := theTree.PopRangesWithGapGT(0)
+		require.ElementsMatch(t, c.Expected, ranges)
+	}
+}

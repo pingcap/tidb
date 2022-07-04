@@ -215,7 +215,7 @@ type clusterCollector struct {
 
 	// The context for spawning sub collectors.
 	// Because the collectors are running lazily,
-	// keep the initial context for all subsquent goroutines,
+	// keep the initial context for all subsequent goroutines,
 	// so we can make sure we can cancel all subtasks.
 	masterCtx context.Context
 	cancel    context.CancelFunc
@@ -246,6 +246,7 @@ func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
 	if r.Leader.GetStoreId() == 0 {
 		log.Warn("there are regions without leader", zap.Uint64("region", r.Region.GetId()))
 		c.noLeaders = append(c.noLeaders, kv.KeyRange{StartKey: r.Region.StartKey, EndKey: r.Region.EndKey})
+		return nil
 	}
 	leader := r.Leader.StoreId
 	_, ok := c.collectors[leader]
