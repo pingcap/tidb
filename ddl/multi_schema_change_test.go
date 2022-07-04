@@ -1116,22 +1116,6 @@ func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
 	require.Equal(t, "create table", rs[0][3])
 }
 
-func composeHooks(dom *domain.Domain, cbs ...ddl.Callback) ddl.Callback {
-	return &ddl.TestDDLCallback{
-		Do: dom,
-		OnJobRunBeforeExported: func(job *model.Job) {
-			for _, c := range cbs {
-				c.OnJobRunBefore(job)
-			}
-		},
-		OnJobUpdatedExported: func(job *model.Job) {
-			for _, c := range cbs {
-				c.OnJobUpdated(job)
-			}
-		},
-	}
-}
-
 type cancelOnceHook struct {
 	store     kv.Storage
 	triggered bool
