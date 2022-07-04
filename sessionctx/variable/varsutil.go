@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -534,4 +535,15 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
+}
+
+func getRuntimeTLSVersion() string {
+	tlsVersion := config.GetGlobalConfig().Security.MinTLSVersion
+	for _, v := range tlsVersionString {
+		if v == tlsVersion {
+			return tlsVersion
+		}
+	}
+	// default
+	return "TLSv1.1"
 }

@@ -17,8 +17,6 @@ package variable
 import (
 	"bytes"
 	"crypto/tls"
-	"sort"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/util"
@@ -129,15 +127,6 @@ var tlsVersionString = map[uint16]string{
 	tls.VersionTLS11: "TLSv1.1",
 	tls.VersionTLS12: "TLSv1.2",
 	tls.VersionTLS13: "TLSv1.3",
-}
-
-func getAvailableTLSVersion() string {
-	res := make([]string, 0, len(tlsVersionString))
-	for _, v := range tlsVersionString {
-		res = append(res, v)
-	}
-	sort.Strings(res)
-	return strings.Join(res, ",")
 }
 
 var defaultStatus = map[string]*StatusVal{
