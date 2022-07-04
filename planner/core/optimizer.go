@@ -400,9 +400,11 @@ func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
 }
 
 func setupFineGrainedShuffle(streamCount uint64, plan PhysicalPlan) {
-	enableFineGrainedShuffle(streamCount, plan)
 	if tableReader, ok := plan.(*PhysicalTableReader); ok {
-		setupFineGrainedShuffle(streamCount, tableReader.tablePlan)
+		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+			helper := fineGrainedShuffleHelper{shuffleTarget: Unknown, plans: make([]*basePhysicalPlan, 1)}
+			setupFineGrainedShuffleInternal(tableReader.tablePlan, &helper, streamCount)
+		}
 	} else {
 		for _, child := range plan.Children() {
 			setupFineGrainedShuffle(streamCount, child)
@@ -410,55 +412,103 @@ func setupFineGrainedShuffle(streamCount uint64, plan PhysicalPlan) {
 	}
 }
 
-func enableFineGrainedShuffle(streamCount uint64, p PhysicalPlan) {
-	plans := isValidWindowForFineGrainedShuffle(p)
-	for _, plan := range plans {
-		plan.TiFlashFineGrainedShuffleStreamCount = streamCount
-	}
+type shuffleTarget uint8
+
+const (
+	Unknown shuffleTarget = iota
+	Window
+	Agg
+	JoinBuild
+	JoinProbe
+)
+
+type fineGrainedShuffleHelper struct {
+	shuffleTarget shuffleTarget
+	plans         []*basePhysicalPlan
 }
 
-// Valid window:
-// 1. Partition by hash.
-// 2. Its child is valid_Window/Sort/ExchangeReceiver. Cannot be Join or HashAgg.
-// Will return PhysicalPlan that needs to be tagged as enable fine grained shuffle.
-func isValidWindowForFineGrainedShuffle(p PhysicalPlan) []*basePhysicalPlan {
-	switch x := p.(type) {
+func (h *fineGrainedShuffleHelper) clear() {
+	h.shuffleTarget = Unknown
+	h.plans = h.plans[:0]
+}
+
+func (h *fineGrainedShuffleHelper) add(t shuffleTarget, p *basePhysicalPlan) {
+	h.shuffleTarget = t
+	h.plans = append(h.plans, p)
+}
+
+func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCount uint64) {
+	switch x := plan.(type) {
 	case *PhysicalWindow:
-		plans := []*basePhysicalPlan{&x.basePhysicalPlan}
-		if len(x.PartitionBy) <= 0 {
-			return nil
+		if len(x.PartitionBy) > 0 {
+			// Do not clear the plans because window executor will keep the data partition.
+			helper.add(Window, &x.basePhysicalPlan)
+		} else {
+			helper.clear()
 		}
-		child := x.Children()[0]
-		if sort, ok := child.(*PhysicalSort); ok {
-			if !sort.IsPartialSort {
-				return nil
-			}
-			plans = append(plans, &sort.basePhysicalPlan)
-			child = sort.Children()[0]
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalSort:
+		if x.IsPartialSort {
+			// Partial sort will keep the data partition.
+			helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		} else {
+			// Global sort will break the data partition.
+			helper.clear()
 		}
-		switch ch := child.(type) {
-		case *PhysicalWindow:
-			childPlans := isValidWindowForFineGrainedShuffle(child)
-			if len(childPlans) > 0 {
-				plans = append(plans, childPlans...)
-			} else {
-				// Child is not valid Window. So this Window is also not valid.
-				plans = nil
-			}
-			return plans
-		case *PhysicalExchangeReceiver:
-			plans := append(plans, &ch.basePhysicalPlan)
-			sender, isSender := ch.Children()[0].(*PhysicalExchangeSender)
-			if !isSender || sender.ExchangeType != tipb.ExchangeType_Hash {
-				return nil
-			}
-			plans = append(plans, &sender.basePhysicalPlan)
-			return plans
-		default:
-			return nil
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalSelection:
+		helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalProjection:
+		helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalExchangeReceiver:
+		helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalHashAgg:
+		// HashAgg is not implemented for now.
+		// helper.add(Agg, &x.basePhysicalPlan)
+		helper.clear()
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalHashJoin:
+		child0 := x.children[0]
+		child1 := x.children[1]
+		if x.InnerChildIdx == 0 {
+			// Child0 is build side.
+			child0Help := fineGrainedShuffleHelper{shuffleTarget: JoinBuild, plans: make([]*basePhysicalPlan, 1)}
+			setupFineGrainedShuffleInternal(child0, &child0Help, streamCount)
+
+			// HashJoin is not implemented for now.
+			helper.clear()
+			setupFineGrainedShuffleInternal(child1, helper, streamCount)
+		} else {
+			// Child1 is build side.
+			child1Help := fineGrainedShuffleHelper{shuffleTarget: JoinBuild, plans: make([]*basePhysicalPlan, 1)}
+			setupFineGrainedShuffleInternal(child1, &child1Help, streamCount)
+
+			// HashJoin is not implemented for now.
+			helper.clear()
+			setupFineGrainedShuffleInternal(child0, helper, streamCount)
 		}
+	case *PhysicalExchangeSender:
+		if x.ExchangeType == tipb.ExchangeType_Hash {
+			if helper.shuffleTarget == Window {
+				// Set up stream count for all plans based on shuffle target type.
+				// Currently, only enable fine grained shuffle if the shuffle target is window.
+				x.TiFlashFineGrainedShuffleStreamCount = streamCount
+				for _, p := range helper.plans {
+					p.TiFlashFineGrainedShuffleStreamCount = streamCount
+				}
+			}
+		}
+		// exchange sender will break the data partition.
+		helper.clear()
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
 	default:
-		return nil
+		for _, child := range x.Children() {
+			childHelper := fineGrainedShuffleHelper{shuffleTarget: Unknown, plans: make([]*basePhysicalPlan, 1)}
+			setupFineGrainedShuffleInternal(child, &childHelper, streamCount)
+		}
 	}
 }
 
