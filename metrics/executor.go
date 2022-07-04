@@ -46,4 +46,13 @@ var (
 			Name:      "statement_db_total",
 			Help:      "Counter of StmtNode by Database.",
 		}, []string{LblDb, LblType})
+
+	// ExecPhaseDuration records the duration of each execution phase.
+	ExecPhaseDuration = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "phase_duration_seconds",
+			Help:      "Summary of each execution phase duration.",
+		}, []string{LblPhase, LblInternal})
 )

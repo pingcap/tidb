@@ -217,6 +217,11 @@ type ExecStmt struct {
 	retryCount        uint
 	retryStartTime    time.Time
 
+	phaseBuildDurations [2]time.Duration
+	phaseOpenDurations  [2]time.Duration
+	phaseNextDurations  [2]time.Duration
+	phaseLockDurations  [2]time.Duration
+
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.CachedPrepareStmt
@@ -422,7 +427,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
-	if err = e.Open(ctx); err != nil {
+	if err = a.openExecutor(ctx, e); err != nil {
 		terror.Call(e.Close)
 		return nil, err
 	}
@@ -721,6 +726,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		a.phaseLockDurations[0] += time.Since(startLocking)
 		if lockKeyStats != nil {
 			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
 		}
@@ -786,6 +792,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointOnStmtRetryAfterLockError)
 
+	a.updateNextDuration()
+	a.resetPhaseDurations()
+
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
@@ -799,7 +808,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
 	})
 
-	if err = e.Open(ctx); err != nil {
+	if err = a.openExecutor(ctx, e); err != nil {
 		return nil, err
 	}
 	return e, nil
@@ -813,6 +822,7 @@ type pessimisticTxn interface {
 
 // buildExecutor build an executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor() (Executor, error) {
+	defer func(start time.Time) { a.phaseBuildDurations[0] += time.Since(start) }(time.Now())
 	ctx := a.Ctx
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
@@ -852,6 +862,31 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 	}
 	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt && !stmtCtx.InInsertStmt)
 	return e, nil
+}
+
+func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) error {
+	start := time.Now()
+	err := e.Open(ctx)
+	a.phaseOpenDurations[0] += time.Since(start)
+	return err
+}
+
+func (a *ExecStmt) updateNextDuration() {
+	if statsColl := a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl; statsColl != nil {
+		stats := statsColl.GetRootStats(a.Plan.ID())
+		a.phaseNextDurations[0] = time.Duration(stats.GetTime()) - a.phaseNextDurations[1]
+	}
+}
+
+func (a *ExecStmt) resetPhaseDurations() {
+	a.phaseBuildDurations[1] += a.phaseBuildDurations[0]
+	a.phaseBuildDurations[0] = 0
+	a.phaseOpenDurations[1] += a.phaseOpenDurations[0]
+	a.phaseOpenDurations[0] = 0
+	a.phaseNextDurations[1] += a.phaseNextDurations[0]
+	a.phaseNextDurations[0] = 0
+	a.phaseLockDurations[1] += a.phaseLockDurations[0]
+	a.phaseLockDurations[0] = 0
 }
 
 // QueryReplacer replaces new line and tab for grep result including query string.
@@ -896,7 +931,118 @@ var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
 	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK)
+
+	execBuildLocking = metrics.ExecPhaseDuration.WithLabelValues("build:locking", "0")
+	execOpenLocking  = metrics.ExecPhaseDuration.WithLabelValues("open:locking", "0")
+	execNextLocking  = metrics.ExecPhaseDuration.WithLabelValues("next:locking", "0")
+	execLockLocking  = metrics.ExecPhaseDuration.WithLabelValues("lock:locking", "0")
+	execBuildFinal   = metrics.ExecPhaseDuration.WithLabelValues("build:final", "0")
+	execOpenFinal    = metrics.ExecPhaseDuration.WithLabelValues("open:final", "0")
+	execNextFinal    = metrics.ExecPhaseDuration.WithLabelValues("next:final", "0")
+	execLockFinal    = metrics.ExecPhaseDuration.WithLabelValues("lock:final", "0")
+
+	execCommitPrewrite     = metrics.ExecPhaseDuration.WithLabelValues("commit:prewrite", "0")
+	execCommitCommit       = metrics.ExecPhaseDuration.WithLabelValues("commit:commit", "0")
+	execCommitWaitCommitTS = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:commit-ts", "0")
+	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:local-latch", "0")
+	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:prewrite-binlog", "0")
 )
+
+func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.CommitDetails) {
+	if d := a.phaseBuildDurations[0]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("build:final", "1").Observe(d.Seconds())
+		} else {
+			execBuildFinal.Observe(d.Seconds())
+		}
+	}
+	if d := a.phaseBuildDurations[1]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("build:locking", "1").Observe(d.Seconds())
+		} else {
+			execBuildLocking.Observe(d.Seconds())
+		}
+	}
+	if d := a.phaseOpenDurations[0]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("open:final", "1").Observe(d.Seconds())
+		} else {
+			execOpenFinal.Observe(d.Seconds())
+		}
+	}
+	if d := a.phaseOpenDurations[1]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("open:locking", "1").Observe(d.Seconds())
+		} else {
+			execOpenLocking.Observe(d.Seconds())
+		}
+	}
+	if d := a.phaseNextDurations[0]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("next:final", "1").Observe(d.Seconds())
+		} else {
+			execNextFinal.Observe(d.Seconds())
+		}
+	}
+	if d := a.phaseNextDurations[1]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("next:locking", "1").Observe(d.Seconds())
+		} else {
+			execNextLocking.Observe(d.Seconds())
+		}
+	}
+	if d := a.phaseLockDurations[0]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("lock:final", "1").Observe(d.Seconds())
+		} else {
+			execLockFinal.Observe(d.Seconds())
+		}
+	}
+	if d := a.phaseLockDurations[1]; d > 0 {
+		if internal {
+			metrics.ExecPhaseDuration.WithLabelValues("lock:locking", "1").Observe(d.Seconds())
+		} else {
+			execLockLocking.Observe(d.Seconds())
+		}
+	}
+	if commitDetails != nil {
+		if d := commitDetails.PrewriteTime; d > 0 {
+			if internal {
+				metrics.ExecPhaseDuration.WithLabelValues("commit:prewrite", "1").Observe(d.Seconds())
+			} else {
+				execCommitPrewrite.Observe(d.Seconds())
+			}
+		}
+		if d := commitDetails.CommitTime; d > 0 {
+			if internal {
+				metrics.ExecPhaseDuration.WithLabelValues("commit:commit", "1").Observe(d.Seconds())
+			} else {
+				execCommitCommit.Observe(d.Seconds())
+			}
+		}
+		if d := commitDetails.GetCommitTsTime; d > 0 {
+			if internal {
+				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:commit-ts", "1").Observe(d.Seconds())
+			} else {
+				execCommitWaitCommitTS.Observe(d.Seconds())
+			}
+		}
+		if d := commitDetails.LocalLatchTime; d > 0 {
+			if internal {
+				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:local-latch", "1").Observe(d.Seconds())
+			} else {
+				execCommitWaitLatch.Observe(d.Seconds())
+			}
+		}
+		if d := commitDetails.WaitPrewriteBinlogTime; d > 0 {
+			if internal {
+				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:prewrite-binlog", "1").Observe(d.Seconds())
+			} else {
+				execCommitWaitBinlog.Observe(d.Seconds())
+			}
+		}
+	}
+}
 
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
 // 1. record slow log if needed.
@@ -937,6 +1083,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
 
+	a.updateNextDuration()
+	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
 		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
