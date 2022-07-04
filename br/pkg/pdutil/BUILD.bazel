@@ -35,6 +35,7 @@ go_test(
         "pd_serial_test.go",
     ],
     embed = [":pdutil"],
+    flaky = True,
     deps = [
         "//store/pdtypes",
         "//testkit/testsetup",

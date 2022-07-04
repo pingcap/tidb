@@ -125,6 +125,7 @@ nogo(
                "//build/linter/exportloopref:exportloopref",
                "//build/linter/gofmt:gofmt",
                "//build/linter/gci:gci",
+               "//build/linter/gosec:gosec",
                "//build/linter/ineffassign:ineffassign",
                "//build/linter/misspell:misspell",
                "//build/linter/prealloc:prealloc",
