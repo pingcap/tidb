@@ -774,6 +774,10 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBDDLEnableFastReorg indicates whether use lighting to help acceleate adding index stmt.
+	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
+	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
+	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
@@ -996,6 +1000,8 @@ const (
 	DefTiDBGenerateBinaryPlan                      = true
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
+	DefTiDBDDLEnableFastReorg                      = false
+	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 )
 
 // Process global variables.
@@ -1044,6 +1050,10 @@ var (
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
+	// EnableFastDDL indicates whether to use lightning to enhance DDL reorg performance.
+	EnableFastDDL = atomic.NewBool(false)
+	// Temporary Variable for set dist quota for lightning add index, int type, GB as unit
+	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
 )
 
 var (
