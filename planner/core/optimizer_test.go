@@ -161,8 +161,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	sctx := MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
 
-	var start func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int)
-	start = func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
+	start := func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
 		handleFineGrainedShuffle(sctx, tableReader)
 		check(p, expStreamCount, expChildCount, curChildCount)
 		clear(plans)

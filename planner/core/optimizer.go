@@ -417,9 +417,7 @@ type shuffleTarget uint8
 const (
 	unknown shuffleTarget = iota
 	window
-	agg
 	joinBuild
-	joinProbe
 )
 
 type fineGrainedShuffleHelper struct {
