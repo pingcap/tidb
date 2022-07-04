@@ -31,6 +31,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -227,16 +228,16 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
-	// CacheIndexName caches the index name.
+	// CacheTableInfo caches the index name.
 	// PresumeKeyNotExists will use this to help decode error message.
 	CacheTableInfo(id int64, info *model.TableInfo)
-	// GetIndexName returns the cached index name.
+	// GetTableInfo returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
 
-	// set allowed options of current operation in each TiKV disk usage level.
+	// SetDiskFullOpt set allowed options of current operation in each TiKV disk usage level.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	// clear allowed flag
+	// ClearDiskFullOpt clear allowed flag
 	ClearDiskFullOpt()
 
 	// GetMemDBCheckpoint gets the transaction's memDB checkpoint.
@@ -365,6 +366,8 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+	// RequestSource indicates whether the request is an internal request.
+	RequestSource util.RequestSource
 }
 
 // PartitionIDAndRanges used by PartitionTableScan in tiflash.

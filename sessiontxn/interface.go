@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -120,15 +121,21 @@ type TxnContextProvider interface {
 	GetStmtReadTS() (uint64, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 	GetStmtForUpdateTS() (uint64, error)
+	// GetSnapshotWithStmtReadTS get snapshot with read ts
+	GetSnapshotWithStmtReadTS() (kv.Snapshot, error)
+	// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+	GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error)
 
 	// OnInitialize is the hook that should be called when enter a new txn with this provider
 	OnInitialize(ctx context.Context, enterNewTxnType EnterNewTxnType) error
 	// OnStmtStart is the hook that should be called when a new statement started
-	OnStmtStart(ctx context.Context) error
+	OnStmtStart(ctx context.Context, node ast.StmtNode) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement is retried internally.
 	OnStmtRetry(ctx context.Context) error
+	// ActivateTxn activates the transaction.
+	ActivateTxn() (kv.Transaction, error)
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -144,13 +151,17 @@ type TxnManager interface {
 	GetStmtForUpdateTS() (uint64, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
+	// GetReadSnapshot get snapshot with read ts
+	GetReadSnapshot() (kv.Snapshot, error)
+	// GetForUpdateSnapshot get snapshot with for update ts
+	GetForUpdateSnapshot() (kv.Snapshot, error)
 
 	// EnterNewTxn enters a new transaction.
 	EnterNewTxn(ctx context.Context, req *EnterNewTxnRequest) error
 	// OnTxnEnd is the hook that should be called after transaction commit or rollback
 	OnTxnEnd()
 	// OnStmtStart is the hook that should be called when a new statement started
-	OnStmtStart(ctx context.Context) error
+	OnStmtStart(ctx context.Context, node ast.StmtNode) error
 	// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 	// This method is not required to be called for every error in the statement,
 	// it is only required to be called for some errors handled in some specified points given by the parameter `point`.
@@ -158,6 +169,10 @@ type TxnManager interface {
 	OnStmtErrorForNextAction(point StmtErrorHandlePoint, err error) (StmtErrorAction, error)
 	// OnStmtRetry is the hook that should be called when a statement retry
 	OnStmtRetry(ctx context.Context) error
+	// ActivateTxn activates the transaction.
+	ActivateTxn() (kv.Transaction, error)
+	// GetCurrentStmt returns the current statement node
+	GetCurrentStmt() ast.StmtNode
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:
@@ -178,7 +193,8 @@ func NewTxnInStmt(ctx context.Context, sctx sessionctx.Context) error {
 	if err := NewTxn(ctx, sctx); err != nil {
 		return err
 	}
-	return GetTxnManager(sctx).OnStmtStart(ctx)
+	txnManager := GetTxnManager(sctx)
+	return txnManager.OnStmtStart(ctx, txnManager.GetCurrentStmt())
 }
 
 // GetTxnManager returns the TxnManager object from session context

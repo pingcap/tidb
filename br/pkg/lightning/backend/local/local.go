@@ -478,7 +478,7 @@ func (local *local) Close() {
 	local.engines = sync.Map{}
 
 	for _, engine := range allEngines {
-		engine.Close()
+		_ = engine.Close()
 		engine.unlock()
 	}
 
@@ -520,8 +520,7 @@ func (local *local) Close() {
 			local.logger.Warn("remove local db file failed", zap.Error(err))
 		}
 	}
-
-	local.tikvCli.Close()
+	_ = local.tikvCli.Close()
 	local.pdCtl.Close()
 }
 
@@ -763,6 +762,7 @@ func (local *local) WriteToTiKV(
 	regionRange := intersectRange(region.Region, Range{start: start, end: end})
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
 	iter := engine.newKVIter(ctx, opt)
+	//nolint: errcheck
 	defer iter.Close()
 
 	stats := rangeStats{}
@@ -1020,6 +1020,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 
 func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
 	iter := engine.newKVIter(ctx, &pebble.IterOptions{})
+	//nolint: errcheck
 	defer iter.Close()
 
 	iterError := func(e string) error {
@@ -1082,6 +1083,7 @@ func (local *local) writeAndIngestByRange(
 	}
 
 	iter := engine.newKVIter(ctxt, ito)
+	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
@@ -1392,8 +1394,32 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		return err
 	}
 
+	if len(ranges) > 0 && local.pdCtl.CanPauseSchedulerByKeyRange() {
+		subCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		var startKey, endKey []byte
+		if len(ranges[0].start) > 0 {
+			startKey = codec.EncodeBytes(nil, ranges[0].start)
+		}
+		if len(ranges[len(ranges)-1].end) > 0 {
+			endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].end)
+		}
+		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer func() {
+			cancel()
+			<-done
+		}()
+	}
+
 	log.FromContext(ctx).Info("start import engine", zap.Stringer("uuid", engineUUID),
 		zap.Int("ranges", len(ranges)), zap.Int64("count", lfLength), zap.Int64("size", lfTotalSize))
+
+	failpoint.Inject("ReadyForImportEngine", func() {})
+
 	for {
 		unfinishedRanges := lf.unfinishedRanges(ranges)
 		if len(unfinishedRanges) == 0 {
@@ -1480,7 +1506,6 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
 		return nil
 	case config.DupeResAlgRemove:
-		break
 	default:
 		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}

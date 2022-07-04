@@ -289,6 +289,16 @@
     ]
   },
   {
+    "name": "TestDecorrelateLimitInSubquery",
+    "cases": [
+      // Query with EXISTS and subquery with LIMIT should have the same plan, i.e, the Limit has been decorrelated.
+      "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1)",
+      "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id)",
+      "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2)",
+      "explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3)"
+    ]
+  },
+  {
     "name": "TestMultiColMaxOneRow",
     "cases": [
       "select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1",
