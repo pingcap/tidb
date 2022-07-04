@@ -70,9 +70,17 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
+		p.isTxnPrepared = false
+		if err := p.prepareTxn(false); err != nil {
+			return err
+		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
 		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
 			if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
+				return err
+			}
+			p.isTxnPrepared = false
+			if err := p.prepareTxn(false); err != nil {
 				return err
 			}
 		}
@@ -102,7 +110,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if err != nil {
 		return err
 	}
-	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture().GetPreparedTSFuture() != nil
 	if activeNow {
 		_, err = p.ActivateTxn()
 	}
@@ -172,7 +180,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return p.txn, nil
 	}
 
-	if err := p.prepareTxn(); err != nil {
+	if err := p.prepareTxn(true); err != nil {
 		return nil, err
 	}
 
@@ -219,13 +227,15 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	return txn, nil
 }
 
-func (p *baseTxnContextProvider) prepareTxn() error {
+func (p *baseTxnContextProvider) prepareTxn(considerSnapshotTS bool) error {
 	if p.isTxnPrepared {
 		return nil
 	}
 
-	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return p.prepareTxnWithTS(snapshotTS)
+	if considerSnapshotTS {
+		if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+			return p.prepareTxnWithTS(snapshotTS)
+		}
 	}
 
 	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
@@ -272,7 +282,7 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
-	return p.prepareTxn()
+	return p.prepareTxn(true)
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan

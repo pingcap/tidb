@@ -143,7 +143,7 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
-	// GetPreparedTxnFuture returns the prepared ts future
+	// GetPreparedTxnFuture returns the TxnFuture
 	GetPreparedTxnFuture() TxnFuture
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
@@ -172,6 +172,8 @@ type Context interface {
 type TxnFuture interface {
 	// Wait converts pending txn to valid
 	Wait(ctx context.Context, sctx Context) (kv.Transaction, error)
+	// GetPreparedTSFuture returns the prepared ts future
+	GetPreparedTSFuture() oracle.Future
 }
 
 type basicCtxType int

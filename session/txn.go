@@ -488,6 +488,14 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 	return txn, nil
 }
 
+// GetPreparedTSFuture returns the prepared ts future
+func (txn *LazyTxn) GetPreparedTSFuture() oracle.Future {
+	if future := txn.txnFuture; future != nil {
+		return future.future
+	}
+	return nil
+}
+
 func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {

@@ -223,7 +223,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 		return nil
 	}
 
-	if err := p.prepareTxn(); err != nil {
+	if err := p.prepareTxn(true); err != nil {
 		return err
 	}
 	p.prepareStmtTS()

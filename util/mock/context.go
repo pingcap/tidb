@@ -63,8 +63,22 @@ type wrapTxn struct {
 	kv.Transaction
 }
 
-func (txn *wrapTxn) Wait(_ context.Context, _ sessionctx.Context) (kv.Transaction, error) {
+// Wait converts pending txn to valid
+func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+	if txn.Transaction != nil {
+		return txn, nil
+	}
+	kvTxn, err := sctx.GetStore().Begin()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	txn.Transaction = kvTxn
 	return txn, nil
+}
+
+// GetPreparedTSFuture returns the prepared ts future
+func (txn *wrapTxn) GetPreparedTSFuture() oracle.Future {
+	return nil
 }
 
 func (txn *wrapTxn) Valid() bool {
@@ -369,7 +383,7 @@ func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	return nil
 }
 
-// GetPreparedTxnFuture returns the prepared ts future
+// GetPreparedTxnFuture returns the TxnFuture
 func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
 	return &c.txn
 }
