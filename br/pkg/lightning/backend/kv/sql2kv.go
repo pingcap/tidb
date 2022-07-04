@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
+	// Import tidb/planner/core to initialize expression.RewriteAstExpr
+	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -42,9 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	// Import tidb/planner/core to initialize expression.RewriteAstExpr
-	_ "github.com/pingcap/tidb/planner/core"
 )
 
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()
