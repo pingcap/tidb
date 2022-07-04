@@ -102,7 +102,7 @@ func (m *txnManager) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	return m.ctxProvider.GetSnapshotWithStmtReadTS()
 }
 
-// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (m *txnManager) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")

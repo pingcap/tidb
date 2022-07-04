@@ -174,7 +174,7 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	return snapshot, nil
 }
 
-// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }

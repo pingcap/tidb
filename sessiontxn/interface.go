@@ -123,7 +123,7 @@ type TxnContextProvider interface {
 	GetStmtForUpdateTS() (uint64, error)
 	// GetSnapshotWithStmtReadTS gets snapshot with read ts
 	GetSnapshotWithStmtReadTS() (kv.Snapshot, error)
-	// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+	// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 	GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error)
 
 	// OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -153,7 +153,7 @@ type TxnManager interface {
 	GetContextProvider() TxnContextProvider
 	// GetSnapshotWithStmtReadTS gets snapshot with read ts
 	GetSnapshotWithStmtReadTS() (kv.Snapshot, error)
-	// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+	// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 	GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error)
 
 	// EnterNewTxn enters a new transaction.

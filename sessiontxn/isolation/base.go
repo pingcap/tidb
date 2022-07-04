@@ -298,7 +298,7 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error
 	return p.getSnapshotByTS(ts)
 }
 
-// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	ts, err := p.GetStmtForUpdateTS()
 	if err != nil {
