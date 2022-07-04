@@ -1078,7 +1078,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8,
 			tipb.ScalarFuncSig_SubstringIndex,
-			tipb.ScalarFuncSig_ReverseUTF8:
+			tipb.ScalarFuncSig_ReverseUTF8,
+			tipb.ScalarFuncSig_Reverse:
 			return true
 		}
 	case ast.Cast:
