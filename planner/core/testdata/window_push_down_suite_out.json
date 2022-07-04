@@ -40,7 +40,7 @@
           "  └─Window_22 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid rows between current row and current row)",
           "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.deptid",
           "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
           "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -54,7 +54,7 @@
           "    └─Window_28 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#6 rows between current row and current row)",
           "      └─Sort_14 10000.00 mpp[tiflash]  Column#6",
           "        └─ExchangeReceiver_13 10000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary]",
+          "          └─ExchangeSender_12 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#6, collate: binary], stream_count: 8",
           "            └─Projection_10 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, 1)->Column#6",
           "              └─TableFullScan_11 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
@@ -68,7 +68,7 @@
           "  └─Window_22 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.employee.deptid order by test.employee.salary desc rows between current row and current row)",
           "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.deptid, test.employee.salary:desc",
           "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
           "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -81,7 +81,7 @@
           "  └─Window_22 10000.00 mpp[tiflash]  rank()->Column#7, dense_rank()->Column#8 over(partition by test.employee.deptid)",
           "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.deptid",
           "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
           "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -96,7 +96,7 @@
           "      └─Window_12 10000.00 mpp[tiflash]  rank()->Column#7 over(partition by test.employee.deptid)",
           "        └─Sort_17 10000.00 mpp[tiflash]  test.employee.deptid",
           "          └─ExchangeReceiver_16 10000.00 mpp[tiflash]  ",
-          "            └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "            └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
           "              └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -122,7 +122,7 @@
           "  └─Window_34 10000.00 mpp[tiflash]  rank()->Column#8 over(partition by test.employee.deptid)",
           "    └─Sort_20 10000.00 mpp[tiflash]  test.employee.deptid",
           "      └─ExchangeReceiver_19 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "        └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
           "          └─Window_14 10000.00 mpp[tiflash]  row_number()->Column#6 over(rows between current row and current row)",
           "            └─ExchangeReceiver_17 10000.00 mpp[tiflash]  ",
           "              └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
