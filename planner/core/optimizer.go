@@ -472,7 +472,7 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 		child1 := x.children[1]
 		if x.InnerChildIdx == 0 {
 			// Child0 is build side.
-			child0Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: make([]*basePhysicalPlan, 1)}
+			child0Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(child0, &child0Helper, streamCount)
 
 			// HashJoin is not implemented for now.
@@ -480,7 +480,7 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 			setupFineGrainedShuffleInternal(child1, helper, streamCount)
 		} else {
 			// Child1 is build side.
-			child1Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: make([]*basePhysicalPlan, 1)}
+			child1Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(child1, &child1Helper, streamCount)
 
 			// HashJoin is not implemented for now.
@@ -503,7 +503,7 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
 	default:
 		for _, child := range x.Children() {
-			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
+			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
 			setupFineGrainedShuffleInternal(child, &childHelper, streamCount)
 		}
 	}
