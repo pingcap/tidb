@@ -21,9 +21,11 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	field_types "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/types"
 
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -584,6 +586,215 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 	return nil
 }
 
+func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	oldColName := spec.OldColumnName.Name
+	newColName := spec.NewColumnName.Name
+
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
+	tbl := tables.MockTableFromMeta(tblInfo)
+
+	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
+	if oldCol == nil {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
+	}
+
+	if oldColName.L == newColName.L {
+		return nil
+	}
+	if newColName.L == model.ExtraHandleName.L {
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
+	}
+
+	allCols := tbl.Cols()
+	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
+	if colWithNewNameAlreadyExist {
+		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
+	}
+
+	if fkInfo := getColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
+		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
+	}
+
+	// Check generated expression.
+	for _, col := range allCols {
+		if col.GeneratedExpr == nil {
+			continue
+		}
+		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
+		for _, name := range dependedColNames {
+			if name.Name.L == oldColName.L {
+				if col.Hidden {
+					return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
+				}
+				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
+			}
+		}
+	}
+
+	oldCol.Name = newColName
+	return nil
+}
+
+func (d SchemaTracker) alterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
+	t := tables.MockTableFromMeta(tblInfo)
+
+	colName := specNewColumn.Name.Name
+	// Check whether alter column has existed.
+	oldCol := table.FindCol(t.Cols(), colName.L)
+	if oldCol == nil {
+		return dbterror.ErrBadField.GenWithStackByArgs(colName, ident.Name)
+	}
+
+	// Clean the NoDefaultValueFlag value.
+	oldCol.DelFlag(mysql.NoDefaultValueFlag)
+	if len(specNewColumn.Options) == 0 {
+		oldCol.DefaultIsExpr = false
+		err = oldCol.SetDefaultValue(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldCol.AddFlag(mysql.NoDefaultValueFlag)
+	} else {
+		if IsAutoRandomColumnID(t.Meta(), oldCol.ID) {
+			return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
+		}
+		hasDefaultValue, err := setDefaultValue(ctx, oldCol, specNewColumn.Options[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = checkDefaultValue(ctx, oldCol, hasDefaultValue); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (d SchemaTracker) modifyColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
+		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
+	}
+	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
+		return dbterror.ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
+	}
+	return d.handleModifyColumn(ctx, sctx, ident, specNewColumn.Name.Name, spec)
+}
+
+func (d SchemaTracker) changeColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
+		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
+	}
+	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
+		return dbterror.ErrWrongDBName.GenWithStackByArgs(spec.OldColumnName.Schema.O)
+	}
+	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
+		return dbterror.ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
+	}
+	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
+		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
+	}
+	return d.handleModifyColumn(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+}
+
+func (d SchemaTracker) handleModifyColumn(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	ident ast.Ident,
+	originalColName model.CIStr,
+	spec *ast.AlterTableSpec,
+) error {
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
+	schema := d.SchemaByName(ident.Schema)
+	t := tables.MockTableFromMeta(tblInfo)
+	job, err := getModifiableColumnJob(ctx, sctx, ident, originalColName, schema, t, spec)
+	if err != nil {
+		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
+			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	modifyInfo := &modifyingColInfo{
+		newCol:                job.Args[0].(*model.ColumnInfo),
+		oldColName:            job.Args[1].(*model.CIStr),
+		pos:                   job.Args[2].(*ast.ColumnPosition),
+		modifyColumnTp:        job.Args[3].(byte),
+		updatedAutoRandomBits: job.Args[4].(uint64),
+	}
+
+	tblInfo.AutoRandomBits = modifyInfo.updatedAutoRandomBits
+	oldCol := table.FindCol(t.Cols(), modifyInfo.oldColName.L).ColumnInfo
+
+	changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+	newColName := model.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
+	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
+		job.State = model.JobStateCancelled
+		msg := "this column has primary key flag"
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+
+	modifyInfo.changingCol = modifyInfo.newCol.Clone()
+	modifyInfo.changingCol.Name = newColName
+	modifyInfo.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
+	originDefVal, err := getOriginDefaultValueForModifyColumn(sctx, modifyInfo.changingCol, oldCol)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = modifyInfo.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
+		return errors.Trace(err)
+	}
+
+	_, _, _, err = createColumnInfoWithPosCheck(tblInfo, modifyInfo.changingCol, changingColPos)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	idxInfos, offsets := findIndexesByColName(tblInfo.Indices, oldCol.Name.L)
+	modifyInfo.changingIdxs = make([]*model.IndexInfo, 0, len(idxInfos))
+	for i, idxInfo := range idxInfos {
+		newIdxInfo := idxInfo.Clone()
+		newIdxInfo.Name = model.NewCIStr(genChangingIndexUniqueName(tblInfo, idxInfo))
+		newIdxInfo.ID = allocateIndexID(tblInfo)
+		newIdxChangingCol := newIdxInfo.Columns[offsets[i]]
+		newIdxChangingCol.Name = newColName
+		newIdxChangingCol.Offset = modifyInfo.changingCol.Offset
+		canPrefix := types.IsTypePrefixable(modifyInfo.changingCol.GetType())
+		if !canPrefix || (canPrefix && modifyInfo.changingCol.GetFlen() < newIdxChangingCol.Length) {
+			newIdxChangingCol.Length = types.UnspecifiedLength
+		}
+		modifyInfo.changingIdxs = append(modifyInfo.changingIdxs, newIdxInfo)
+	}
+	tblInfo.Indices = append(tblInfo.Indices, modifyInfo.changingIdxs...)
+
+	err = adjustTableInfoAfterModifyColumnWithData(
+		tblInfo,
+		modifyInfo.pos,
+		oldCol,
+		modifyInfo.changingCol,
+		modifyInfo.newCol.Name,
+		modifyInfo.changingIdxs,
+	)
+	if err != nil {
+		return err
+	}
+
+	updateChangingObjState(modifyInfo.changingCol, modifyInfo.changingIdxs, model.StatePublic)
+	return nil
+}
+
 func (d SchemaTracker) renameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
 	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tblInfo)
@@ -657,6 +868,76 @@ func (d SchemaTracker) dropTablePartition(ctx sessionctx.Context, ident ast.Iden
 	return nil
 }
 
+func (d SchemaTracker) createPrimaryKey(
+	ctx sessionctx.Context,
+	ti ast.Ident,
+	indexName model.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+) error {
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	indexName = model.NewCIStr(mysql.PrimaryKeyName)
+	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		tblInfo.PKIsHandle {
+		return infoschema.ErrMultiplePriKey
+	}
+
+	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
+	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Expr != nil {
+			return dbterror.ErrFunctionalIndexPrimaryKey
+		}
+	}
+
+	if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
+		return err
+	}
+
+	// May be truncate comment here, when index comment too long and sql_mode is't strict.
+	if indexOption != nil {
+		if _, err = validateCommentLength(ctx.GetSessionVars(), indexName.String(), &indexOption.Comment, dbterror.ErrTooLongIndexComment); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// TODO: provide a common function, to serve SchemaTracker.createIndex and ddl.
+	indexInfo, err := buildIndexInfo(nil, tblInfo, indexName, indexPartSpecifications, model.StatePublic)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if indexOption != nil {
+		indexInfo.Comment = indexOption.Comment
+		if indexOption.Visibility == ast.IndexVisibilityInvisible {
+			indexInfo.Invisible = true
+		}
+		if indexOption.Tp == model.IndexTypeInvalid {
+			// Use btree as default index type.
+			indexInfo.Tp = model.IndexTypeBtree
+		} else {
+			indexInfo.Tp = indexOption.Tp
+		}
+	} else {
+		// Use btree as default index type.
+		indexInfo.Tp = model.IndexTypeBtree
+	}
+	indexInfo.Primary = true
+	indexInfo.Unique = true
+	indexInfo.ID = allocateIndexID(tblInfo)
+	tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+	// Set column index flag.
+	addIndexColumnFlag(tblInfo, indexInfo)
+	if err = updateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
 	validSpecs, err := resolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
@@ -667,7 +948,7 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 	// https://github.com/mysql/mysql-server/blob/8d8c986e5716e38cb776b627a8eee9e92241b4ce/sql/sql_table.cc#L16698-L16714
 
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	// precheck about table existence?
+	// TODO: precheck about table existence?
 
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
@@ -696,7 +977,7 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, model.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintPrimaryKey:
-				err = d.CreatePrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = d.createPrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintForeignKey,
 				ast.ConstraintFulltext,
 				ast.ConstraintCheck:
@@ -704,13 +985,13 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 				// Nothing to do now.
 			}
 		case ast.AlterTableModifyColumn:
-			err = d.ModifyColumn(ctx, sctx, ident, spec)
+			err = d.modifyColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableChangeColumn:
-			err = d.ChangeColumn(ctx, sctx, ident, spec)
+			err = d.changeColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableRenameColumn:
-			err = d.RenameColumn(sctx, ident, spec)
+			err = d.renameColumn(sctx, ident, spec)
 		case ast.AlterTableAlterColumn:
-			err = d.AlterColumn(sctx, ident, spec)
+			err = d.alterColumn(sctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.renameTable(sctx, []ast.Ident{ident}, []ast.Ident{newIdent}, true)
@@ -949,7 +1230,7 @@ func (d SchemaTracker) OwnerManager() owner.Manager {
 }
 
 func (d SchemaTracker) GetID() string {
-	return "in-memory-ddl"
+	return "schema-tracker"
 }
 
 func (d SchemaTracker) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error) {
