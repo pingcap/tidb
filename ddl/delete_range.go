@@ -114,8 +114,8 @@ func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionc
 	var ea elementIDAlloc
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		proxyJob := sub.ToProxyJob(job)
-		if jobNeedGC(proxyJob) {
-			err := insertJobIntoDeleteRangeTable(ctx, sctx, proxyJob, &ea)
+		if jobNeedGC(&proxyJob) {
+			err := insertJobIntoDeleteRangeTable(ctx, sctx, &proxyJob, &ea)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -387,25 +387,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		var indexIDs []int64
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		if len(indexIDs) > 0 {
-			if len(partitionIDs) > 0 {
-				for _, pid := range partitionIDs {
-					if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pid, indexIDs, now, ea); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			} else {
-				return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
-			}
-		}
-	case model.ActionDropColumns:
-		var colNames []model.CIStr
-		var ifExists []bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(indexIDs) > 0 {

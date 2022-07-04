@@ -724,6 +724,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
 			// The same job will be put to the DDL queue twice.
+			job = job.Clone()
 			task1 := &limitJobTask{job, make(chan error)}
 			d.limitJobCh <- task1
 			<-task.err
@@ -818,7 +819,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			return errors.Trace(historyJob.Error)
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
-		if historyJob.IsCancelled() && (historyJob.Type == model.ActionAddColumns || historyJob.Type == model.ActionDropColumns || historyJob.Type == model.ActionDropIndexes) {
+		if historyJob.IsCancelled() && (historyJob.Type == model.ActionDropIndexes) {
 			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
 				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
