@@ -601,7 +601,6 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	if !needChangeColumnData(oldCol, modifyInfo.newCol) {
-		// here!!
 		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, modifyInfo.newCol, oldCol, modifyInfo.pos)
 	}
 
