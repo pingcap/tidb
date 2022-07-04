@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -598,6 +599,54 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 	for i := 0; i < c.N; i++ {
 		core.EncodePlan(p)
 	}
+}
+
+// Close issue 25729
+func (s *testPlanNormalize) TestIssue25729(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	// Case1
+	tk.MustExec("create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));")
+
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows(
+			"Projection 0.10 root  test.tt.a, test.tt.b",
+			"└─IndexLookUp 0.10 root  ",
+			"  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:tt, index:k1(`a` + 1, b) range:[5 3,5 3], keep order:false, stats:pseudo",
+			"  └─TableRowIDScan(Probe) 0.10 cop[tikv] table:tt keep order:false, stats:pseudo"))
+	}
+
+	tk.MustExec("insert into tt values(4, 3);")
+	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
+
+	// Case2
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (" +
+		"  `a` varchar(10) DEFAULT NULL," +
+		"  `b` varchar(10) DEFAULT NULL," +
+		"  KEY `expression_index` ((concat(`a`, `b`)))," +
+		"  KEY `expression_index_2` ((concat(`a`, `b`)))," +
+		"  KEY `idx` ((concat(`a`, `b`)),`a`)," +
+		"  KEY `idx1` (`a`,(concat(`a`, `b`)))," +
+		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
+		");")
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
+			"Projection 0.10 root  test.t1.a, test.t1.b",
+			"└─IndexReader 0.10 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
+
+		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
+			"Projection 33.33 root  test.t1.b",
+			"└─IndexReader 33.33 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 33.33 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"b\" \"aa\",\"b\" +inf], keep order:false, stats:pseudo"))
+	}
+	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
+	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
 }
 
 func TestBuildFinalModeAggregation(t *testing.T) {
