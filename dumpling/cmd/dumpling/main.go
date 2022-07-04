@@ -18,13 +18,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pingcap/tidb/dumpling/cli"
+	"github.com/pingcap/tidb/dumpling/export"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/dumpling/cli"
-	"github.com/pingcap/tidb/dumpling/export"
 )
 
 func main() {

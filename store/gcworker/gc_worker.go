@@ -111,6 +111,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 func (w *GCWorker) Start() {
 	var ctx context.Context
 	ctx, w.cancel = context.WithCancel(context.Background())
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnGC)
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go w.start(ctx, &wg)
@@ -276,7 +277,7 @@ func (w *GCWorker) Stats(vars *variable.SessionVars) (map[string]interface{}, er
 }
 
 func (w *GCWorker) tick(ctx context.Context) {
-	isLeader, err := w.checkLeader()
+	isLeader, err := w.checkLeader(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("[gc worker] check leader", zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("check_leader").Inc()
@@ -302,7 +303,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	ok, safePoint, err := w.prepare()
+	ok, safePoint, err := w.prepare(ctx)
 	if err != nil || !ok {
 		if err != nil {
 			metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
@@ -338,14 +339,13 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 // prepare checks preconditions for starting a GC job. It returns a bool
 // that indicates whether the GC job should start and the new safePoint.
-func (w *GCWorker) prepare() (bool, uint64, error) {
+func (w *GCWorker) prepare(ctx context.Context) (bool, uint64, error) {
 	// Add a transaction here is to prevent following situations:
 	// 1. GC check gcEnable is true, continue to do GC
 	// 2. The user sets gcEnable to false
 	// 3. The user gets `tikv_gc_safe_point` value is t1, then the user thinks the data after time t1 won't be clean by GC.
 	// 4. GC update `tikv_gc_safe_point` value to t2, continue do GC in this round.
 	// Then the data record that has been dropped between time t1 and t2, will be cleaned by GC, but the user thinks the data after t1 won't be clean by GC.
-	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
@@ -693,7 +693,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 
 	se := createSession(w.store)
 	defer se.Close()
-	ranges, err := util.LoadDeleteRanges(se, safePoint)
+	ranges, err := util.LoadDeleteRanges(ctx, se, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -765,7 +765,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64, concu
 	redoDeleteRangesTs := safePoint - oracle.ComposeTS(int64(gcRedoDeleteRangeDelay.Seconds())*1000, 0)
 
 	se := createSession(w.store)
-	ranges, err := util.LoadDoneDeleteRanges(se, redoDeleteRangesTs)
+	ranges, err := util.LoadDoneDeleteRanges(ctx, se, redoDeleteRangesTs)
 	se.Close()
 	if err != nil {
 		return errors.Trace(err)
@@ -1070,6 +1070,8 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 	req := tikvrpc.NewRequest(tikvrpc.CmdScanLock, &kvrpcpb.ScanLockRequest{
 		MaxVersion: safePoint,
 		Limit:      gcScanLockLimit,
+	}, kvrpcpb.Context{
+		RequestSource: tikvutil.RequestSourceFromCtx(ctx),
 	})
 
 	failpoint.Inject("lowScanLockLimit", func() {
@@ -1681,12 +1683,11 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 	return nil
 }
 
-func (w *GCWorker) checkLeader() (bool, error) {
+func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	metrics.GCWorkerCounter.WithLabelValues("check_leader").Inc()
 	se := createSession(w.store)
 	defer se.Close()
 
-	ctx := context.Background()
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1817,7 +1818,7 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 }
 
 func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
 	se := createSession(w.store)
 	defer se.Close()
 	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
@@ -1850,7 +1851,8 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 			       UPDATE variable_value = %?, comment = %?`
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.ExecuteInternal(context.Background(), stmt,
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
+	_, err := se.ExecuteInternal(ctx, stmt,
 		key, value, gcVariableComments[key],
 		value, gcVariableComments[key])
 	logutil.BgLogger().Debug("[gc worker] save kv",
@@ -2122,6 +2124,7 @@ func NewMockGCWorker(store kv.Storage) (*MockGCWorker, error) {
 // DeleteRanges calls deleteRanges internally, just for test.
 func (w *MockGCWorker) DeleteRanges(ctx context.Context, safePoint uint64) error {
 	logutil.Logger(ctx).Error("deleteRanges is called")
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnGC)
 	return w.worker.deleteRanges(ctx, safePoint, 1)
 }
 

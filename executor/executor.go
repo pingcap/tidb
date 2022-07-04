@@ -341,7 +341,8 @@ type CancelDDLJobsExec struct {
 // Open implements the Executor Open interface.
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
-	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	errInTxn := kv.RunInNewTxn(ctx, e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
 		return
 	})
@@ -1922,11 +1923,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
-		// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
-		// using read-consistency isolation level.
-		if NeedSetRCCheckTSFlag(ctx, stmt) {
-			sc.RCCheckTS = true
-		}
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -2064,14 +2060,4 @@ func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
-}
-
-// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
-func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
-	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
-		sessionVars.IsPessimisticReadConsistency() && !sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
-		return true
-	}
-	return false
 }

@@ -1158,6 +1158,9 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1682,6 +1685,11 @@ func (s *SessionVars) IsPessimisticReadConsistency() bool {
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
 	return s.preparedStmtID
+}
+
+// SetNextPreparedStmtID sets the next prepared statement id. It's only used in restoring session states.
+func (s *SessionVars) SetNextPreparedStmtID(preparedStmtID uint32) {
+	s.preparedStmtID = preparedStmtID
 }
 
 // Location returns the value of time_zone session variable. If it is nil, then return time.Local.

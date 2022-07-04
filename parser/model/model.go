@@ -1397,6 +1397,13 @@ type TableItemID struct {
 	IsIndex bool
 }
 
+// TableItemID is composed by table ID and column/index ID
+type TableItemID struct {
+	TableID int64
+	ID      int64
+	IsIndex bool
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`

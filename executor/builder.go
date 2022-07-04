@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -30,8 +29,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/legacy"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 var (
@@ -88,14 +89,11 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx              sessionctx.Context
-	is               infoschema.InfoSchema
-	snapshotTS       uint64 // The ts for snapshot-read. A select statement without for update will use this ts
-	forUpdateTS      uint64 // The ts should be used by insert/update/delete/select-for-update statement
-	snapshotTSCached bool
-	err              error // err is set when there is error happened during Executor building process.
-	hasLock          bool
-	Ti               *TelemetryInfo
+	ctx     sessionctx.Context
+	is      infoschema.InfoSchema
+	err     error // err is set when there is error happened during Executor building process.
+	hasLock bool
+	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
 	readReplicaScope string
@@ -121,26 +119,13 @@ type CTEStorages struct {
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *executorBuilder {
-	b := &executorBuilder{
+	return &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
 		isStaleness:      staleread.IsStmtStaleness(ctx),
 		readReplicaScope: replicaReadScope,
 	}
-
-	txnManager := sessiontxn.GetTxnManager(ctx)
-	if provider, ok := txnManager.GetContextProvider().(*legacy.SimpleTxnContextProvider); ok {
-		provider.GetReadTSFunc = b.getReadTS
-		provider.GetForUpdateTSFunc = func() (uint64, error) {
-			if b.forUpdateTS != 0 {
-				return b.forUpdateTS, nil
-			}
-			return b.getReadTS()
-		}
-	}
-
-	return b
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
@@ -657,9 +642,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		defer func() { b.inSelectLockStmt = false }()
 	}
 	b.hasLock = true
-
-	// Build 'select for update' using the 'for update' ts.
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -745,38 +728,6 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
-
-	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
-		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
-		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
-		if b.isStaleness != v.IsStaleness {
-			panic(fmt.Sprintf("%v != %v", b.isStaleness, v.IsStaleness))
-		}
-
-		if b.readReplicaScope != v.ReadReplicaScope {
-			panic(fmt.Sprintf("%s != %s", b.readReplicaScope, v.ReadReplicaScope))
-		}
-
-		if v.SnapshotTS != 0 {
-			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(v.SnapshotTS)
-			if err != nil {
-				panic(err)
-			}
-
-			if b.is.SchemaMetaVersion() != is.SchemaMetaVersion() {
-				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
-			}
-
-			ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
-			if err != nil {
-				panic(e)
-			}
-
-			if v.SnapshotTS != ts {
-				panic(fmt.Sprintf("%d != %d", ts, v.SnapshotTS))
-			}
-		}
-	})
 
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
@@ -865,8 +816,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	b.inInsertStmt = true
-
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -1581,42 +1531,37 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	return txnManager.GetStmtReadTS()
 }
 
-// getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
-// and some stale/historical read contexts. For example, it will return txn.StartTS in RR and return
-// the current timestamp in RC isolation
-func (b *executorBuilder) getReadTS() (uint64, error) {
-	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
-		// after refactoring stale read will use its own context provider
-		staleread.AssertStmtStaleness(b.ctx, false)
-	})
+// getSnapshot get the appropriate snapshot from txnManager and set
+// the relevant snapshot options before return.
+func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
+	var snapshot kv.Snapshot
+	var err error
 
-	if b.snapshotTSCached {
-		return b.snapshotTS, nil
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		snapshot, err = txnManager.GetForUpdateSnapshot()
+	} else {
+		snapshot, err = txnManager.GetReadSnapshot()
 	}
-
-	if snapshotTS := b.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		b.snapshotTS = snapshotTS
-		b.snapshotTSCached = true
-		return snapshotTS, nil
-	}
-
-	if b.snapshotTS != 0 {
-		b.snapshotTSCached = true
-		// Return the cached value.
-		return b.snapshotTS, nil
-	}
-
-	txn, err := b.ctx.Txn(true)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	b.snapshotTS = txn.StartTS()
-	if b.snapshotTS == 0 {
-		return 0, errors.Trace(ErrGetStartTS)
+	sessVars := b.ctx.GetSessionVars()
+	replicaReadType := sessVars.GetReplicaRead()
+	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+
+	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: b.readReplicaScope,
+			},
+		})
 	}
-	b.snapshotTSCached = true
-	return b.snapshotTS, nil
+
+	return snapshot, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -2119,8 +2064,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 			}
 		}
 	}
-
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -2178,7 +2122,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 	}
 
-	if b.forUpdateTS, b.err = b.getSnapshotTS(); b.err != nil {
+	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
 
@@ -2195,6 +2139,12 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		tblColPosInfos: v.TblColPosInfos,
 	}
 	return deleteExec
+}
+
+func (b *executorBuilder) updateForUpdateTS() error {
+	// GetStmtForUpdateTS will auto update the for update ts if it is necessary
+	_, err := sessiontxn.GetTxnManager(b.ctx).GetStmtForUpdateTS()
+	return err
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
@@ -2493,7 +2443,8 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	if task.PartitionName != "" {
 		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
 	}
-	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return 0, false
 	}
@@ -4635,7 +4586,8 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if err := b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
+	var err error
+	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4647,34 +4599,53 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}()
 	}
 
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
+	e := &BatchPointGetExec{
+		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		tblInfo:      plan.TblInfo,
+		idxInfo:      plan.IndexInfo,
+		rowDecoder:   decoder,
+		keepOrder:    plan.KeepOrder,
+		desc:         plan.Desc,
+		lock:         plan.Lock,
+		waitTime:     plan.LockWaitTime,
+		partExpr:     plan.PartitionExpr,
+		partPos:      plan.PartitionColPos,
+		singlePart:   plan.SinglePart,
+		partTblID:    plan.PartTblID,
+		columns:      plan.Columns,
+	}
+
+	e.snapshot, err = b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != b.readReplicaScope {
+			panic("batch point get replica option fail")
+		}
+	})
+
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-
-	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
-	e := &BatchPointGetExec{
-		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:          plan.TblInfo,
-		idxInfo:          plan.IndexInfo,
-		rowDecoder:       decoder,
-		snapshotTS:       snapshotTS,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
-		keepOrder:        plan.KeepOrder,
-		desc:             plan.Desc,
-		lock:             plan.Lock,
-		waitTime:         plan.LockWaitTime,
-		partExpr:         plan.PartitionExpr,
-		partPos:          plan.PartitionColPos,
-		singlePart:       plan.SinglePart,
-		partTblID:        plan.PartTblID,
-		columns:          plan.Columns,
-	}
-
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
+		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
+			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+		}
 	}
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {
