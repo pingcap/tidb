@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
@@ -115,16 +116,21 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 
-	var tempKey []byte
+	var (
+		tempKey []byte
+		keyVer  []byte = []byte("0")
+	)
 	if c.idxInfo.State == model.StateWriteReorganization && !c.Isbackfill {
 		switch c.idxInfo.SubState {
 		case model.StateNone:
 			// do nothing.
 		case model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
+			keyVer = []byte("1")
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, key)
 		case model.StateMergeSync, model.StateMerge:
 			// Double write
+			keyVer = []byte("2")
 			tempKey = append(tempKey, key...)
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
 		}
@@ -172,6 +178,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
 	if !distinct || skipCheck || opt.Untouched {
+		if !bytes.Equal(keyVer, []byte("0")) {
+			idxVal = append(idxVal, keyVer...)
+		}
 		err = txn.GetMemBuffer().Set(key, idxVal)
 		if err != nil {
 			return nil, err
@@ -216,6 +225,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+		if !bytes.Equal(keyVer, []byte("0")) {
+			idxVal = append(idxVal, keyVer...)
+		}
 		if lazyCheck {
 			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
@@ -289,24 +301,30 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	if err != nil {
 		return err
 	}
-	var tempKey []byte
+	var (
+		tempKey []byte
+		keyVer  []byte = []byte("0")
+		val     []byte
+	)
 	if c.idxInfo.State == model.StateWriteReorganization {
 		switch c.idxInfo.SubState {
 	    case model.StateNone:
 		    // Do nothing.
 		case model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
+			keyVer = []byte("1")
 			tempKey = append(tempKey, key...)
 			key = nil
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
 		case model.StateMergeSync, model.StateMerge:
 			// Double write
+			keyVer = []byte("2")
 			tempKey = append(tempKey, key...)
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
 		}
 	}
+
 	if distinct {
-		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 		if len(key) > 0 {
 			err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 			if err != nil {
@@ -314,7 +332,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 			}
 		}
 		if len(tempKey) > 0 {
-			err = txn.GetMemBuffer().Set(tempKey, []byte("deleteu"))
+			val = append(val, []byte("deleteu")...)
+			val = append(val, keyVer...)
+			err = txn.GetMemBuffer().Set(tempKey, val)
 			if err != nil {
 				return err
 			}
@@ -327,7 +347,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 			}
 		}
 		if len(tempKey) > 0 {
-			err = txn.GetMemBuffer().Set(tempKey, []byte("delete"))
+			val = append(val, []byte("delete")...)
+			val = append(val, keyVer...)
+			err = txn.GetMemBuffer().Set(tempKey, val)
 			if err != nil {
 				return err
 			}

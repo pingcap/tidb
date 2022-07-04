@@ -682,9 +682,6 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			if err != nil {
 				return false, ver, errors.Trace(err)
 			}
-			//Init reorg infor for merge task.
-			job.SnapshotVer = 0 
-			reorgInfo, err = getMergeReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, indexInfo.ID)
 			return false, ver, nil
 		case model.StateMerge:
 			if err != nil {
@@ -720,7 +717,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	if isLightningEnabled(reorgInfo.ID) || indexInfo.SubState != model.StateNone {
 		if err != nil {
 			logutil.BgLogger().Error("Lightning: Add index backfill processing:", zap.String("Error:", err.Error()))
-			return done, ver, err
+			return doReorg, ver, err
 		}
 		// Only when SubState is in BackFill state, then need start to start new backfill task.
 		if !doReorg {
@@ -773,14 +770,22 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return false, ver, errors.Trace(err)
 	}
 
-	// Cleanup lightning environment
+	done = false
 	if isLightningEnabled(job.ID) {
 		indexInfo.SubState = model.StateMergeSync
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-		done = false
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		//Init reorg infor for merge task.
+		job.SnapshotVer = 0 
+		reorgInfo, err = getMergeReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, indexInfo.ID)
 	} else {
-		done = true
+		if indexInfo.SubState == model.StateNone || indexInfo.SubState == model.StateMerge {
+			done = true
+		}
 	}
+	// Cleanup lightning environment
 	cleanUpLightningEnv(reorgInfo, false)
 	return done, ver, errors.Trace(err)
 }
@@ -1177,15 +1182,6 @@ type indexRecord struct {
 	vals   []types.Datum // It's the index values.
 	rsData []types.Datum // It's the restored data for handle.
 	skip   bool          // skip indicates that the index key is already exists, we should not add it.
-}
-
-// temporaryIndexRecord is the record information of an index.
-type temporaryIndexRecord struct {
-	key    []byte
-	vals   []byte
-	skip   bool // skip indicates that the index key is already exists, we should not add it.
-	delete bool
-	unique bool
 }
 
 type baseIndexWorker struct {

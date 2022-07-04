@@ -927,6 +927,28 @@ func getRangeEndKey(ctx *JobContext, store kv.Storage, priority int, t table.Tab
 	return it.Key(), nil
 }
 
+func getIndexRangeEndKey(ctx *JobContext, store kv.Storage, priority int, t table.Table, startKey, endKey kv.Key) (kv.Key, error) {
+	snap := store.GetSnapshot(kv.MaxVersion)
+	snap.SetOption(kv.Priority, priority)
+	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		snap.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+	it, err := snap.IterReverse(endKey.Next())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer it.Close()
+
+	if !it.Valid() || !it.Key().HasPrefix(t.IndexPrefix()) {
+		return startKey, nil
+	}
+	if it.Key().Cmp(startKey) < 0 {
+		return startKey, nil
+	}
+
+	return it.Key(), nil
+}
+
 func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
@@ -1157,7 +1179,7 @@ func (w *worker) sendRangeTaskToMergeWorkers(t table.Table, workers []*backfillW
 	// Build reorg tasks.
 	for _, keyRange := range kvRanges {
 		endKey := keyRange.EndKey
-		endK, err := getRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
+		endK, err := getIndexRangeEndKey(reorgInfo.d.jobContext(reorgInfo.Job), workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] send range task to workers, get reverse key failed", zap.Error(err))
 		} else {

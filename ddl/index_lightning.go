@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	trans "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -327,6 +328,43 @@ func (w *backFillIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, i
 	return nil
 }
 
+func (w *backFillIndexWorker) batchSkipKey(txn kv.Transaction, store kv.Storage, idxRecords []*temporaryIndexRecord) error {
+	if len(w.batchCheckTmpKeys) == 0 {
+		return nil
+	}
+
+	// Gen a current snapshot to get latest updated.
+	snapshot := store.GetSnapshot(kv.MaxVersion)
+	// Get duplicated key from temp index.
+	batchVals, err := trans.NewBufferBatchGetter(txn.GetMemBuffer(), nil, snapshot).BatchGet(context.Background(), w.batchCheckTmpKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for i, key := range w.batchCheckTmpKeys {
+		if val, found := batchVals[string(key)]; found {
+			var keyVer []byte
+			length := len(val)
+			keyVer = append(keyVer, val[length-1:]...)
+			if bytes.Equal(keyVer, []byte("2")) {
+				pos := w.tmpKeyPos[i]
+				idxRecords[pos].skip = true
+			}
+		}
+	}
+
+	return nil
+}
+
+// temporaryIndexRecord is the record information of an index.
+type temporaryIndexRecord struct {
+	key    []byte
+	vals   []byte
+	skip   bool // skip indicates that the index key is already exists, we should not add it.
+	delete bool
+	unique bool
+	keyVer []byte
+}
 type backFillIndexWorker struct {
 	*backfillWorker
 
@@ -336,6 +374,9 @@ type backFillIndexWorker struct {
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
+	tmpIdxRecords      []*temporaryIndexRecord
+	batchCheckTmpKeys  []kv.Key
+	tmpKeyPos          []int32
 }
 
 func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) *backFillIndexWorker {
@@ -369,6 +410,12 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 			return errors.Trace(err)
 		}
 
+		// Should be
+		err = w.batchSkipKey(txn, w.sessCtx.GetStore(), temporaryIndexRecords)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for _, idxRecord := range temporaryIndexRecords {
 			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
@@ -377,11 +424,9 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 				continue
 			}
 
-			// We need to add this lock to make sure pessimistic transaction can realize this operation.
-			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-			if err != nil {
-				return errors.Trace(err)
+			if !bytes.Equal(idxRecord.keyVer, []byte("1")) {
+				err = errors.New("Merge temp index should not merge version 2 index data.")
+				panic(err)
 			}
 
 			if idxRecord.delete {
@@ -441,7 +486,10 @@ func (w *worker) addPhysicalTempIndex(t table.PhysicalTable, indexInfo *model.In
 
 func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
 	startTime := time.Now()
-	temporaryIndexRecords := make([]*temporaryIndexRecord, 0, w.batchCnt)
+	w.tmpIdxRecords = w.tmpIdxRecords[:0]
+	w.batchCheckTmpKeys = w.batchCheckTmpKeys[:0]
+	w.tmpKeyPos = w.tmpKeyPos[:0]
+	var pos int32 = 0
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
@@ -452,42 +500,68 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 
 		taskDone := indexKey.Cmp(taskRange.endKey) > 0
 
-		if taskDone || len(temporaryIndexRecords) >= w.batchCnt {
+		if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
 			logutil.BgLogger().Info("return false")
 			return false, nil
 		}
 
 		isDelete := false
 		unique := false
+		skip := false
+		var keyVer []byte
+		length := len(rawValue)
+		keyVer = append(keyVer, rawValue[length-1:]...)
+		rawValue = rawValue[:length-1]
+		length--
+		if bytes.Equal(keyVer, []byte("2")) {
+			skip = true
+		}
 		if bytes.Equal(rawValue, []byte("delete")) {
 			isDelete = true
+			rawValue = rawValue[:length-6]
 		} else if bytes.Equal(rawValue, []byte("deleteu")) {
 			isDelete = true
 			unique = true
+			rawValue = rawValue[:length-7]
 		}
 		var convertedIndexKey []byte
 		convertedIndexKey = append(convertedIndexKey, indexKey...)
 		tablecodec.TempIndexKey2IndexKey(w.index.Meta().ID, convertedIndexKey)
-		idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique}
+		idxRecord := &temporaryIndexRecord{key: convertedIndexKey, delete: isDelete, unique: unique, keyVer: keyVer, skip: skip}
 		if !isDelete {
 			idxRecord.vals = rawValue
 		}
-		temporaryIndexRecords = append(temporaryIndexRecords, idxRecord)
+		w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
 
+		if bytes.Equal(keyVer, []byte("1")) {
+			// We need to add this lock to make sure pessimistic transaction can realize this operation.
+			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			w.batchCheckTmpKeys = append(w.batchCheckTmpKeys, indexKey)
+			w.tmpKeyPos = append(w.tmpKeyPos, pos)
+		}
+		pos++
 		return true, nil
 	})
 
-	if len(temporaryIndexRecords) == 0 {
+	if len(w.tmpIdxRecords) == 0 {
 		taskDone = true
 	}
-    var nextKey kv.Key
+	var nextKey kv.Key
 	if taskDone {
 		nextKey = taskRange.endKey
 	} else {
-		nextKey = temporaryIndexRecords[w.batchCnt-1].key
+		var convertedNextKey []byte
+		lastPos := len(w.tmpIdxRecords)
+		convertedNextKey = append(convertedNextKey, w.tmpIdxRecords[lastPos-1].key...)
+		tablecodec.IndexKey2TempIndexKey(w.index.Meta().ID, convertedNextKey)
+		nextKey = convertedNextKey
 	}
 
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
 		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
-	return temporaryIndexRecords, nextKey.Next(), taskDone, errors.Trace(err)
+	return w.tmpIdxRecords, nextKey.Next(), taskDone, errors.Trace(err)
 }
