@@ -15,6 +15,7 @@
 package analyzetest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -169,9 +170,10 @@ func TestAnalyzeRestrict(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	ctx := tk.Session().(sessionctx.Context)
-	ctx.GetSessionVars().InRestrictedSQL = true
-	tk.MustExec("analyze table t")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+	require.Nil(t, err)
+	require.Nil(t, rs)
 }
 
 func TestAnalyzeParameters(t *testing.T) {
@@ -732,6 +734,9 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 
 	// Test analyze incremental with feedback.
+	// paging is not compatible with feedback.
+	tk.MustExec("set @@tidb_enable_paging = off")
+
 	tk.MustExec("insert into t values (3,3)")
 	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount.Load()

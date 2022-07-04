@@ -33,7 +33,6 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -135,6 +134,8 @@ type Engine struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	errorMgr           *errormanager.ErrorManager
+
+	logger log.Logger
 }
 
 func (e *Engine) setError(err error) {
@@ -145,7 +146,7 @@ func (e *Engine) setError(err error) {
 }
 
 func (e *Engine) Close() error {
-	log.L().Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
+	e.logger.Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
 	if e.db == nil {
 		return nil
 	}
@@ -774,7 +775,7 @@ func (e *Engine) ingestSSTs(metas []*sstMeta) error {
 		totalCount += m.totalCount
 		fileSize += m.fileSize
 	}
-	log.L().Info("write data to local DB",
+	e.logger.Info("write data to local DB",
 		zap.Int64("size", totalSize),
 		zap.Int64("kvs", totalCount),
 		zap.Int("files", len(metas)),
@@ -861,7 +862,7 @@ func saveEngineMetaToDB(meta *engineMeta, db *pebble.DB) error {
 // saveEngineMeta saves the metadata about the DB into the DB itself.
 // This method should be followed by a Flush to ensure the data is actually synchronized
 func (e *Engine) saveEngineMeta() error {
-	log.L().Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
+	e.logger.Debug("save engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
 	return errors.Trace(saveEngineMetaToDB(&e.engineMeta, e.db))
 }
@@ -870,18 +871,19 @@ func (e *Engine) loadEngineMeta() error {
 	jsonBytes, closer, err := e.db.Get(engineMetaKey)
 	if err != nil {
 		if err == pebble.ErrNotFound {
-			log.L().Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
+			e.logger.Debug("local db missing engine meta", zap.Stringer("uuid", e.UUID), log.ShortError(err))
 			return nil
 		}
 		return err
 	}
+	//nolint: errcheck
 	defer closer.Close()
 
 	if err = json.Unmarshal(jsonBytes, &e.engineMeta); err != nil {
-		log.L().Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
+		e.logger.Warn("local db failed to deserialize meta", zap.Stringer("uuid", e.UUID), zap.ByteString("content", jsonBytes), zap.Error(err))
 		return err
 	}
-	log.L().Debug("load engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
+	e.logger.Debug("load engine meta", zap.Stringer("uuid", e.UUID), zap.Int64("count", e.Length.Load()),
 		zap.Int64("size", e.TotalSize.Load()))
 	return nil
 }
@@ -961,7 +963,7 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions) Iter {
 	if !e.duplicateDetection {
 		return pebbleIter{Iterator: e.db.NewIter(opts)}
 	}
-	logger := log.With(
+	logger := log.FromContext(ctx).With(
 		zap.String("table", common.UniqueTable(e.tableInfo.DB, e.tableInfo.Name)),
 		zap.Int64("tableID", e.tableInfo.ID),
 		zap.Stringer("engineUUID", e.UUID))
@@ -1001,21 +1003,6 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
-	prevRowID   int64 // only used for appendRowsSorted
-}
-
-func (w *Writer) flushAndNewWriter() error {
-	var err error
-	err = w.flush(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newWriter, err := w.createSSTWriter()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	w.writer = newWriter
-	return nil
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1025,17 +1012,6 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 			return errors.Trace(err)
 		}
 		w.writer = writer
-	}
-	if len(kvs) == 0 {
-		return nil
-	}
-	if w.prevRowID != 0 && kvs[0].RowID > w.prevRowID+1 {
-		// rowID leap. probably re-alloc id
-		// should write to different sst
-		err := w.flushAndNewWriter()
-		if err != nil {
-			return err
-		}
 	}
 
 	keyAdapter := w.engine.keyAdapter
@@ -1061,26 +1037,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	startIdx := 0
-	w.prevRowID = kvs[len(kvs)-1].RowID
-	for i := 1; i < len(kvs); i++ {
-		if kvs[i].RowID > kvs[i-1].RowID+1 {
-			// leap id
-			err := w.writer.writeKVs(kvs[startIdx:i])
-			if err != nil {
-				return err
-			}
-			err = w.flushAndNewWriter()
-			if err != nil {
-				return err
-			}
-			startIdx = i
-		}
-	}
-	if startIdx < len(kvs) {
-		return w.writer.writeKVs(kvs[startIdx:])
-	}
-	return nil
+	return w.writer.writeKVs(kvs)
 }
 
 func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
@@ -1147,9 +1104,6 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 }
 
 func (w *Writer) flush(ctx context.Context) error {
-	failpoint.Inject("MockFlushWriter", func() {
-		failpoint.Return(nil)
-	})
 	w.Lock()
 	defer w.Unlock()
 	if w.batchCount == 0 {
@@ -1247,7 +1201,7 @@ func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	if err != nil {
 		return nil, err
 	}
-	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer}
+	sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer, logger: w.engine.logger}
 	return sw, nil
 }
 
@@ -1256,6 +1210,7 @@ var errorUnorderedSSTInsertion = errors.New("inserting KVs into SST without orde
 type sstWriter struct {
 	*sstMeta
 	writer *sstable.Writer
+	logger log.Logger
 }
 
 func newSSTWriter(path string) (*sstable.Writer, error) {
@@ -1289,7 +1244,7 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 	var lastKey []byte
 	for _, p := range kvs {
 		if bytes.Equal(p.Key, lastKey) {
-			log.L().Warn("duplicated key found, skip write", logutil.Key("key", p.Key))
+			sw.logger.Warn("duplicated key found, skip write", logutil.Key("key", p.Key))
 			continue
 		}
 		internalKey.UserKey = p.Key
@@ -1467,7 +1422,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	lastKey := make([]byte, 0)
 	for {
 		if bytes.Equal(lastKey, key) {
-			log.L().Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
+			i.e.logger.Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
 			newMeta.totalCount--
 			newMeta.totalSize -= int64(len(key) + len(val))
 
@@ -1500,7 +1455,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	newMeta.fileSize = int64(meta.Size)
 
 	dur := time.Since(start)
-	log.L().Info("compact sst", zap.Int("fileCount", len(metas)), zap.Int64("size", newMeta.totalSize),
+	i.e.logger.Info("compact sst", zap.Int("fileCount", len(metas)), zap.Int64("size", newMeta.totalSize),
 		zap.Int64("count", newMeta.totalCount), zap.Duration("cost", dur), zap.String("file", name))
 
 	// async clean raw SSTs.
@@ -1509,7 +1464,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 		for _, m := range metas {
 			totalSize += m.fileSize
 			if err := os.Remove(m.path); err != nil {
-				log.L().Warn("async cleanup sst file failed", zap.Error(err))
+				i.e.logger.Warn("async cleanup sst file failed", zap.Error(err))
 			}
 		}
 		// decrease the pending size after clean up

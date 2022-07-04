@@ -33,13 +33,27 @@ const (
 	TxnIdle TxnRunningState = iota
 	// TxnRunning means the transaction is running, i.e. executing a statement
 	TxnRunning
-	// TxnLockWaiting means the transaction is blocked on a lock
-	TxnLockWaiting
-	// TxnCommitting means the transaction is (at least trying to) committing
+	// TxnLockAcquiring means the transaction is trying to acquire a lock
+	TxnLockAcquiring
+	// TxnCommitting means`` the transaction is (at least trying to) committing
 	TxnCommitting
 	// TxnRollingBack means the transaction is rolling back
 	TxnRollingBack
 )
+
+// StateLabel is used to translate TxnRunningState to its prometheus label name.
+var stateLabel map[TxnRunningState]string = map[TxnRunningState]string{
+	TxnIdle:          "idle",
+	TxnRunning:       "executing_sql",
+	TxnLockAcquiring: "acquiring_lock",
+	TxnCommitting:    "committing",
+	TxnRollingBack:   "rolling_back",
+}
+
+// StateLabel is used to translate TxnRunningState to its prometheus label name.
+func StateLabel(state TxnRunningState) string {
+	return stateLabel[state]
+}
 
 const (
 	// IDStr is the column name of the TIDB_TRX table's ID column.
@@ -90,7 +104,9 @@ type TxnInfo struct {
 
 	// Current execution state of the transaction.
 	State TxnRunningState
-	// Last trying to block start time. Invalid if State is not TxnLockWaiting.
+	// When last time `State` changes, for metrics
+	LastStateChangeTime time.Time
+	// Last trying to block start time. Invalid if State is not TxnLockAcquiring.
 	BlockStartTime struct {
 		Valid bool
 		time.Time

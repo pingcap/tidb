@@ -1396,6 +1396,13 @@ type TableColumnID struct {
 	ColumnID int64
 }
 
+// TableItemID is composed by table ID and column/index ID
+type TableItemID struct {
+	TableID int64
+	ID      int64
+	IsIndex bool
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`
@@ -1426,8 +1433,7 @@ type PolicyInfo struct {
 }
 
 func (p *PolicyInfo) Clone() *PolicyInfo {
-	var cloned PolicyInfo
-	cloned = *p
+	cloned := *p
 	cloned.PlacementSettings = p.PlacementSettings.Clone()
 	return &cloned
 }
@@ -1489,8 +1495,7 @@ func (p *PlacementSettings) String() string {
 }
 
 func (p *PlacementSettings) Clone() *PlacementSettings {
-	var cloned PlacementSettings
-	cloned = *p
+	cloned := *p
 	return &cloned
 }
 

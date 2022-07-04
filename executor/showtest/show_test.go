@@ -795,20 +795,32 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 
 	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
+	e := "[planner:1142]SHOW command denied to user 'show_stats'@'%' for table"
+	err := tk1.ExecToErr("show stats_meta")
+	require.ErrorContains(t, err, e)
+	err = tk1.ExecToErr("SHOW STATS_BUCKETS")
+	require.ErrorContains(t, err, e)
+	err = tk1.ExecToErr("SHOW STATS_HISTOGRAMS")
+	require.ErrorContains(t, err, e)
+
 	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
-	_, err := tk1.Exec("show stats_meta")
-	require.EqualError(t, err, eqErr.Error())
-	_, err = tk1.Exec("SHOW STATS_BUCKETS")
-	require.EqualError(t, err, eqErr.Error())
-	_, err = tk1.Exec("SHOW STATS_HEALTHY")
-	require.EqualError(t, err, eqErr.Error())
-	_, err = tk1.Exec("SHOW STATS_HISTOGRAMS")
+	err = tk1.ExecToErr("SHOW STATS_HEALTHY")
 	require.EqualError(t, err, eqErr.Error())
 	tk.MustExec("grant select on mysql.* to show_stats")
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
 	tk1.MustExec("SHOW STATS_HEALTHY")
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+
+	tk.MustExec("create user a@'%' identified by '';")
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "a", Hostname: "%"}, nil, nil))
+	tk.MustExec("grant select on mysql.stats_meta to a@'%';")
+	tk.MustExec("grant select on mysql.stats_buckets to a@'%';")
+	tk.MustExec("grant select on mysql.stats_histograms to a@'%';")
+	tk1.MustExec("show stats_meta")
+	tk1.MustExec("SHOW STATS_BUCKETS")
+	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+
 }
 
 func TestIssue18878(t *testing.T) {
@@ -1574,10 +1586,6 @@ func TestShowVar(t *testing.T) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if v.Hidden {
-			continue
-		}
-
 		if v.Scope == variable.ScopeSession {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
@@ -1601,10 +1609,6 @@ func TestShowVar(t *testing.T) {
 	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
-
-	// Test Hidden tx_read_ts
-	res = tk.MustQuery("show variables like '%tx_read_ts'")
-	require.Len(t, res.Rows(), 0)
 
 	// Test versions' related variables
 	res = tk.MustQuery("show variables like 'version%'")
