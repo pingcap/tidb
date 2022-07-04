@@ -257,3 +257,17 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 
 	return nil
 }
+
+// GetSnapshotWithStmtReadTS get snapshot with read ts
+func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+
+	if p.sctx.GetSessionVars().StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
+
+	return snapshot, nil
+}

@@ -228,6 +228,14 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		p.onTxnActive(txn, p.enterNewTxnType)
 	}
 
+	if p.sctx.GetSessionVars().InRestrictedSQL {
+		txn.SetOption(kv.RequestSourceInternal, true)
+	}
+
+	if tp := p.sctx.GetSessionVars().RequestSourceType; tp != "" {
+		txn.SetOption(kv.RequestSourceType, tp)
+	}
+
 	p.txn = txn
 	return txn, nil
 }
@@ -291,4 +299,48 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 // AdviseOptimizeWithPlan providers optimization according to the plan
 func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
+}
+
+// GetSnapshotWithStmtReadTS get snapshot with read ts
+func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	ts, err := p.GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	ts, err := p.GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+// getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related
+// options before return
+func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+		return txn.GetSnapshot(), nil
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS)
+
+	replicaReadType := sessVars.GetReplicaRead()
+	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	}
+
+	return snapshot, nil
 }

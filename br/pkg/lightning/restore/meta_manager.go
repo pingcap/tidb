@@ -165,6 +165,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -367,6 +368,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 	if err != nil {
 		return false, false, nil, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -638,6 +640,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -696,6 +699,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 		cancel()
 		return nil, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -831,6 +835,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	if err != nil {
 		return false, false, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,

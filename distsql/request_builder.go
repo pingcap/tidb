@@ -267,6 +267,8 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	if sv.EnablePaging {
 		builder.SetPaging(true)
 	}
+	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
+	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	return builder
 }
 

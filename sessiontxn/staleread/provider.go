@@ -161,3 +161,32 @@ func (p *StalenessTxnContextProvider) AdviseWarmup() error {
 func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
 }
+
+// GetSnapshotWithStmtReadTS get snapshot with read ts and set the transaction related options
+// before return
+func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	if txn.Valid() {
+		return txn.GetSnapshot(), nil
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, p.ts)
+
+	replicaReadType := sessVars.GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	}
+	snapshot.SetOption(kv.IsStalenessReadOnly, true)
+
+	return snapshot, nil
+}
+
+// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
+}

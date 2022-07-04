@@ -3088,7 +3088,6 @@ func allSupported(specs []*ast.AlterTableSpec) bool {
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-
 	validSpecs, err := resolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
 		return errors.Trace(err)
@@ -3613,81 +3612,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	return errors.Trace(err)
 }
 
-// AddColumns will add multi new columns to the table.
-func (d *ddl) AddColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Check all the columns at once.
-	addingColumnNames := make(map[string]bool)
-	dupColumnNames := make(map[string]bool)
-	for _, spec := range specs {
-		for _, specNewColumn := range spec.NewColumns {
-			if !addingColumnNames[specNewColumn.Name.Name.L] {
-				addingColumnNames[specNewColumn.Name.Name.L] = true
-				continue
-			}
-			if !spec.IfNotExists {
-				return errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O))
-			}
-			dupColumnNames[specNewColumn.Name.Name.L] = true
-		}
-	}
-	columns := make([]*table.Column, 0, len(addingColumnNames))
-	positions := make([]*ast.ColumnPosition, 0, len(addingColumnNames))
-	offsets := make([]int, 0, len(addingColumnNames))
-	ifNotExists := make([]bool, 0, len(addingColumnNames))
-	newColumnsCount := 0
-	// Check the columns one by one.
-	for _, spec := range specs {
-		for _, specNewColumn := range spec.NewColumns {
-			if spec.IfNotExists && dupColumnNames[specNewColumn.Name.Name.L] {
-				err = infoschema.ErrColumnExists.GenWithStackByArgs(specNewColumn.Name.Name.O)
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				continue
-			}
-			col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// Added column has existed and if_not_exists flag is true.
-			if col == nil && spec.IfNotExists {
-				continue
-			}
-			columns = append(columns, col)
-			positions = append(positions, spec.Position)
-			offsets = append(offsets, 0)
-			ifNotExists = append(ifNotExists, spec.IfNotExists)
-			newColumnsCount++
-		}
-	}
-	if newColumnsCount == 0 {
-		return nil
-	}
-	if err = checkAddColumnTooManyColumns(len(t.Cols()) + newColumnsCount); err != nil {
-		return errors.Trace(err)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionAddColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{columns, positions, offsets, ifNotExists},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
@@ -4126,82 +4050,6 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
-// DropColumns will drop multi-columns from the table, now we don't support drop the column with index covered.
-func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tblInfo := t.Meta()
-
-	dropingColumnNames := make(map[string]bool)
-	dupColumnNames := make(map[string]bool)
-	for _, spec := range specs {
-		if !dropingColumnNames[spec.OldColumnName.Name.L] {
-			dropingColumnNames[spec.OldColumnName.Name.L] = true
-		} else {
-			if spec.IfExists {
-				dupColumnNames[spec.OldColumnName.Name.L] = true
-				continue
-			}
-			return errors.Trace(dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.O))
-		}
-	}
-
-	ifExists := make([]bool, 0, len(specs))
-	colNames := make([]model.CIStr, 0, len(specs))
-	for _, spec := range specs {
-		if spec.IfExists && dupColumnNames[spec.OldColumnName.Name.L] {
-			err = dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", spec.OldColumnName.Name.L)
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			continue
-		}
-		isDropable, err := checkIsDroppableColumn(ctx, t, spec)
-		if err != nil {
-			return err
-		}
-		// Column can't drop and if_exists flag is true.
-		if !isDropable && spec.IfExists {
-			continue
-		}
-		colNames = append(colNames, spec.OldColumnName.Name)
-		ifExists = append(ifExists, spec.IfExists)
-	}
-	if len(colNames) == 0 {
-		return nil
-	}
-	if len(tblInfo.Columns) == len(colNames) {
-		return dbterror.ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
-			tblInfo.Name)
-	}
-	err = checkVisibleColumnCnt(t, 0, len(colNames))
-	if err != nil {
-		return err
-	}
-	var multiSchemaInfo *model.MultiSchemaInfo
-	if variable.EnableChangeMultiSchema.Load() {
-		multiSchemaInfo = &model.MultiSchemaInfo{}
-	}
-
-	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		TableName:       t.Meta().Name.L,
-		Type:            model.ActionDropColumns,
-		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: multiSchemaInfo,
-		Args:            []interface{}{colNames, ifExists},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -5443,7 +5291,8 @@ func (d *ddl) dropTableObject(
 					zap.String("table", fullti.Name.O),
 				)
 				exec := ctx.(sqlexec.RestrictedSQLExecutor)
-				_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 				if err != nil {
 					return err
 				}
@@ -7229,8 +7078,8 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error) {
+	schema, t, err := d.getSchemaAndTableByIdent(sctx, ti)
 	if err != nil {
 		return err
 	}
@@ -7258,17 +7107,18 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
 
-	ddlQuery, _ := ctx.Value(sessionctx.QueryString).(string)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	ddlQuery, _ := sctx.Value(sessionctx.QueryString).(string)
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
-	_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil,
+	_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil,
 		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	ctx.SetValue(sessionctx.QueryString, ddlQuery)
+	sctx.SetValue(sessionctx.QueryString, ddlQuery)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -7280,14 +7130,16 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		Args:       []interface{}{},
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJob(sctx, job)
 	return d.callHookOnChanged(job, err)
 }
 
 func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
 	const cacheTableSizeLimit = 64 * (1 << 20) // 64M
 	succ := true
-	err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		txn.SetOption(kv.RequestSourceType, kv.InternalTxnCacheTable)
 		prefix := tablecodec.GenTablePrefix(tableID)
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {
