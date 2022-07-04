@@ -125,7 +125,7 @@ func cmdList(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -203,7 +203,7 @@ func cmdRun(args ...string) bool {
 		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
-				fmt.Println("check test binary existance error", err)
+				fmt.Println("check test binary existence error", err)
 				return false
 			}
 			if !exist {
@@ -229,7 +229,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 
@@ -254,7 +254,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {

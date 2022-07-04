@@ -934,6 +934,13 @@ def go_deps():
         sum = "h1:iR3fYXUjHCR97qWS8ch1y9zPNsgXThGwjKPrYfqMPks=",
         version = "v0.0.0-20190930125516-244bba706f1a",
     )
+    go_repository(
+        name = "com_github_golangci_misspell",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/golangci/misspell",
+        sum = "h1:pLzmVdl3VxTOncgzHcvLOKirdvcx/TydsClUQXTehjo=",
+        version = "v0.3.5",
+    )
 
     go_repository(
         name = "com_github_golangci_prealloc",
