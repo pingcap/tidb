@@ -136,7 +136,8 @@ const (
 	// TiDBEnableChunkRPC enables TiDB to use Chunk format for coprocessor requests.
 	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
-	// TiDBEnableUnifiedSlowLog enables TiDB to use Chunk format for coprocessor requests.
+	// TiDBEnableUnifiedSlowLog enables TiDB's default system log to output slow logs.
+	// Note that the original slow logger is still in effect, and it will still print the logs.
 	TiDBEnableUnifiedSlowLog = "tidb_enable_unified_slow_log"
 
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
