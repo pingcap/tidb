@@ -64,7 +64,7 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	s := &tiflashContext{}
 	var err error
 
-	ddl.PollTiFlashInterval = 1000 * time.Millisecond
+	ddl.PollTiFlashInterval = time.Second
 	ddl.PullTiFlashPdTick.Store(60)
 	s.tiflash = infosync.NewMockTiFlash()
 	s.store, err = mockstore.NewMockStore(
@@ -383,6 +383,21 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestTiFlashReplicaAvailableUpdate(t *testing.T) {
+	ddl.PollTiFlashPeerInfoInterval = 1 * time.Second
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(5 * time.Second)
+
+	CheckTableNotAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
+}
+
 // Truncate partition shall not block.
 func TestTiFlashTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
@@ -446,6 +461,16 @@ func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count ui
 	replica := tb.Meta().TiFlashReplica
 	require.NotNil(t, replica)
 	require.True(t, replica.Available)
+	require.Equal(t, count, replica.Count)
+	require.ElementsMatch(t, labels, replica.LocationLabels)
+}
+
+func CheckTableNotAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, table string) {
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	require.NoError(t, err)
+	replica := tb.Meta().TiFlashReplica
+	require.NotNil(t, replica)
+	require.False(t, replica.Available)
 	require.Equal(t, count, replica.Count)
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }

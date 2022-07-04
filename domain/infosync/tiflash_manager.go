@@ -450,15 +450,15 @@ func (tiflash *MockTiFlash) HandleGetPDInvalidRegionsInfo() helper.RegionsInfo {
 		Regions: []helper.RegionInfo{
 			{
 				ID:       1,
-				StartKey: "7480000000000000015f72", // table 1 without index
-				EndKey:   "7480000000000000015f73",
+				StartKey: "7480000000000000FF4500000000000000F8", // table 69 without index
+				EndKey:   "7480000000000000FF4600000000000000F8",
 				Epoch: helper.RegionEpoch{
 					ConfVer: 1,
 					Version: 1,
 				},
 				Peers: []helper.RegionPeer{
 					{
-						ID:        50,
+						ID:        1,
 						StoreID:   20,
 						IsLearner: false,
 					},
@@ -472,7 +472,7 @@ func (tiflash *MockTiFlash) HandleGetPDInvalidRegionsInfo() helper.RegionsInfo {
 					{
 						DownSec: 1000,
 						Peer: helper.RegionPeer{
-							ID:        51,
+							ID:        1,
 							StoreID:   20,
 							IsLearner: false,
 						},
@@ -480,7 +480,7 @@ func (tiflash *MockTiFlash) HandleGetPDInvalidRegionsInfo() helper.RegionsInfo {
 				},
 				PendingPeers: []helper.RegionPeer{
 					{
-						ID:        52,
+						ID:        1,
 						StoreID:   20,
 						IsLearner: false,
 					},

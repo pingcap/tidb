@@ -483,3 +483,8 @@ func TestTableRange(t *testing.T) {
 	// t+(id+1)
 	require.Equal(t, "748000000000000002", endKey.String())
 }
+
+func TestGetTiFlashTableIDFromEndKey(t *testing.T) {
+	tableId := helper.GetTiFlashTableIDFromEndKey("7480000000000000FF4600000000000000F8")
+	require.Equal(t, int64(69), tableId)
+}

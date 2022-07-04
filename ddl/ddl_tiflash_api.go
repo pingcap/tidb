@@ -557,6 +557,18 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 		return reflect.DeepEqual(tiflashPeerIds, tiflashDownPeerIds)
 	}
 
+	removeDuplicate := func(peerIDs []int64) []int64 {
+		result := make([]int64, 0, len(peerIDs))
+		temp := map[int64]struct{}{}
+		for _, item := range peerIDs {
+			if _, ok := temp[item]; !ok {
+				temp[item] = struct{}{}
+				result = append(result, item)
+			}
+		}
+		return result
+	}
+
 	var invaildRegions helper.RegionsInfo
 
 	if err := infosync.GetTiFlashPDInvalidRegionsInfo(context.Background(), &invaildRegions); err != nil {
@@ -585,12 +597,15 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 		if len(invalidPeerIDs) != 0 {
 			sort.Slice(invalidPeerIDs, func(i, j int) bool { return invalidPeerIDs[i] < invalidPeerIDs[j] })
 
+			invalidPeerIDs = removeDuplicate(invalidPeerIDs)
 			if isTiflashAllPeerDown(tiflashStoreIds, invalidPeerIDs) {
 				invaildTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)
 				invalidTableIDs = append(invalidTableIDs, invaildTableID)
 			}
 		}
 	}
+
+	invalidTableIDs = removeDuplicate(invalidTableIDs)
 
 	for _, invalidTableID := range invalidTableIDs {
 		tableInfo, exist := tableMap[invalidTableID]
