@@ -839,30 +839,20 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	if !RunWorker {
 		return
 	}
-	if variable.EnableConcurrentDDL.Load() {
-		key := ""
-		if job.MayNeedReorg() {
-			key = addingDDLJobReorg
-		} else {
-			key = addingDDLJobGeneral
-		}
-		if d.ownerManager.IsOwner() {
-			asyncNotify(d.ddlJobCh)
-		} else {
-			d.asyncNotifyByEtcd(key, job)
-		}
+	key := ""
+	var ch chan struct{}
+	if job.MayNeedReorg() {
+		key = addingDDLJobReorg
+		ch = d.workers[addIdxWorker].ddlJobCh
 	} else {
-		var worker *worker
-		if job.MayNeedReorg() {
-			worker = d.workers[addIdxWorker]
-		} else {
-			worker = d.workers[generalWorker]
-		}
-		if d.ownerManager.IsOwner() {
-			asyncNotify(worker.ddlJobCh)
-		} else {
-			d.asyncNotifyByEtcd(worker.addingDDLJobKey, job)
-		}
+		key = addingDDLJobGeneral
+		ch = d.workers[generalWorker].ddlJobCh
+	}
+	if d.ownerManager.IsOwner() {
+		asyncNotify(d.ddlJobCh)
+		asyncNotify(ch)
+	} else {
+		d.asyncNotifyByEtcd(key, job)
 	}
 }
 
@@ -977,7 +967,12 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
 			continue
 		}
-		historyJob, err = getHistoryJobByID(sess, jobID, v == nil && variable.EnableConcurrentDDL.Load())
+		b, err := enableConcurrentDDL(d.store)
+		if err != nil {
+			logutil.BgLogger().Error("[ddl] check concurrent ddl meet error, check again", zap.Error(err))
+			continue
+		}
+		historyJob, err = getHistoryJobByID(sess, jobID, v == nil && b)
 		d.sessPool.put(sess)
 		if err != nil {
 			logutil.BgLogger().Error("[ddl] get history DDL job failed, check again", zap.Error(err))
@@ -1214,7 +1209,10 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	}
 	t := meta.NewMeta(txn)
 	var reorgJob *model.Job
-	enable := variable.EnableConcurrentDDL.Load()
+	enable, err := enableConcurrentDDL(sess.GetStore())
+	if err != nil {
+		return nil, err
+	}
 	if enable {
 		generalJobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
 		if err != nil {
@@ -1270,7 +1268,11 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(se sessionctx.Context, store kv.Storage, ids []int64) (errs []error, err error) {
-	if variable.EnableConcurrentDDL.Load() {
+	concurrentDDL, err := enableConcurrentDDL(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if concurrentDDL {
 		return cancelConcurrencyJobs(se, ids)
 	}
 
@@ -1458,7 +1460,11 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(sess sessionctx.Context, t *meta.Meta) ([]*model.Job, error) {
-	if variable.EnableConcurrentDDL.Load() {
+	b, err := enableConcurrentDDL(sess.GetStore())
+	if err != nil {
+		return nil, err
+	}
+	if b {
 		return getJobsBySQL(newSession(sess), JobTable, "1 order by job_id")
 	}
 
@@ -1537,7 +1543,11 @@ func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]
 
 // GetLastNHistoryDDLJobs get last n history ddl jobs.
 func GetLastNHistoryDDLJobs(sess *session, m *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
-	if variable.EnableConcurrentDDL.Load() {
+	b, err := enableConcurrentDDL(sess.GetStore())
+	if err != nil {
+		return nil, err
+	}
+	if b {
 		return getJobsBySQL(sess, "tidb_ddl_history", "1 order by job_id desc limit "+strconv.Itoa(maxNumJobs))
 	}
 	jobs, err := m.GetLastNHistoryDDLJobs(maxNumJobs)
@@ -1549,7 +1559,11 @@ func GetLastNHistoryDDLJobs(sess *session, m *meta.Meta, maxNumJobs int) ([]*mod
 
 // GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
 func GetLastHistoryDDLJobsIterator(sess sessionctx.Context, m *meta.Meta) (meta.LastJobIterator, error) {
-	if variable.EnableConcurrentDDL.Load() {
+	b, err := enableConcurrentDDL(sess.GetStore())
+	if err != nil {
+		return nil, err
+	}
+	if b {
 		return &ConcurrentDDLLastJobIterator{
 			sess:   newSession(sess),
 			offset: 0,
@@ -1638,7 +1652,11 @@ func (s *session) session() sessionctx.Context {
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
 func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
-	if variable.EnableConcurrentDDL.Load() {
+	b, err := enableConcurrentDDL(sess.GetStore())
+	if err != nil {
+		return nil, err
+	}
+	if b {
 		return getJobsBySQL(newSession(sess), "tidb_ddl_history", "1")
 	}
 
@@ -1647,7 +1665,11 @@ func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, 
 
 // GetHistoryJobByID return history DDL job by ID.
 func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
-	return getHistoryJobByID(sess, id, variable.EnableConcurrentDDL.Load())
+	b, err := enableConcurrentDDL(sess.GetStore())
+	if err != nil {
+		return nil, err
+	}
+	return getHistoryJobByID(sess, id, b)
 }
 
 func getHistoryJobByID(sess sessionctx.Context, id int64, fromTable bool) (*model.Job, error) {

@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -284,21 +283,40 @@ func (d *ddl) limitDDLJobs() {
 			for i := 0; i < jobLen; i++ {
 				tasks = append(tasks, <-d.limitJobCh)
 			}
-			if tasks[0].v == nil && variable.EnableConcurrentDDL.Load() {
-				d.addConcurrencyDDLJobs(tasks)
-			} else {
-				d.addBatchDDLJobs(tasks)
-			}
-
+			d.insertDDLJobs(tasks)
 		case <-d.ctx.Done():
 			return
 		}
 	}
 }
 
-// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
-func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
+func (d *ddl) insertDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
+	b, err := enableConcurrentDDL(d.store)
+	if err == nil {
+		if tasks[0].v == nil && b {
+			err = d.addConcurrencyDDLJobs(tasks)
+		} else {
+			err = d.addBatchDDLJobs(tasks)
+		}
+	}
+
+	var jobs string
+	for _, task := range tasks {
+		task.err <- err
+		jobs += task.job.String() + "; "
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
+			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	}
+}
+
+// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
+func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -332,18 +350,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		})
 		return nil
 	})
-	var jobs string
-	for _, task := range tasks {
-		task.err <- err
-		jobs += task.job.String() + "; "
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
-			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
-	}
+	return errors.Trace(err)
 }
 
 func injectModifyJobArgFailPoint(job *model.Job) {
@@ -371,8 +378,7 @@ func setJobStateToQueueing(job *model.Job) {
 }
 
 // addConcurrencyDDLJobs gets global job IDs and puts the DDL jobs in the DDL job table.
-func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
-	startTime := time.Now()
+func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) error {
 	var ids []int64
 	var err error
 	startTs := uint64(0)
@@ -405,19 +411,7 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 		}
 		err = err1
 	}
-	var jobs strings.Builder
-	for _, task := range tasks {
-		task.err <- err
-		jobs.WriteString(task.job.String())
-		jobs.WriteString("; ")
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
-			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs.String()), zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs.String()))
-	}
+	return errors.Trace(err)
 }
 
 func injectFailPointForGetJob(job *model.Job) {
@@ -696,10 +690,6 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job) error {
 	if err != nil {
 		return err
 	}
-	if !variable.EnableConcurrentDDL.Load() {
-		w.sess.rollback()
-		return nil
-	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(time.Duration(rand.Intn(5)) * time.Second) // #nosec G404
@@ -825,7 +815,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
 	waitDependencyJobCnt := 0
 	for {
-		if variable.EnableConcurrentDDL.Load() || isChanClosed(w.ctx.Done()) {
+		if isChanClosed(w.ctx.Done()) {
 			return nil
 		}
 
@@ -842,8 +832,16 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				return nil
 			}
 
-			var err error
 			t := newMetaWithQueueTp(txn, w.tp)
+
+			b, err := t.IsConcurrentDDL()
+			if err != nil {
+				return err
+			}
+
+			if b {
+				return nil
+			}
 
 			d.runningJobs.Lock()
 			// We become the owner. Get the first job and run it.

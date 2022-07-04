@@ -747,7 +747,12 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key, pool *sessionPool) (err err
 		sess.rollback()
 		return err
 	}
-	rh := newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load())
+	b, err := meta.NewMeta(txn).IsConcurrentDDL()
+	if err != nil {
+		sess.rollback()
+		return err
+	}
+	rh := newReorgHandler(meta.NewMeta(txn), sess, b)
 	err = errors.Trace(rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	return sess.commit()
 }
@@ -827,7 +832,12 @@ func RemoveDDLReorgHandle(pool *sessionPool, job *model.Job, elements []*meta.El
 		sess.rollback()
 		return err
 	}
-	err = newReorgHandler(meta.NewMeta(txn), sess, variable.EnableConcurrentDDL.Load()).RemoveReorgElements(job, elements)
+	b, err := meta.NewMeta(txn).IsConcurrentDDL()
+	if err != nil {
+		sess.rollback()
+		return err
+	}
+	err = newReorgHandler(meta.NewMeta(txn), sess, b).RemoveReorgElements(job, elements)
 	if err != nil {
 		sess.rollback()
 		return err

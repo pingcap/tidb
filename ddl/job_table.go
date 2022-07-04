@@ -170,6 +170,21 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(time.Second)
 			continue
 		}
+
+		b, err := enableConcurrentDDL(d.store)
+		if err != nil {
+			logutil.BgLogger().Error("check concurrent DDL status failed", zap.Error(err))
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if variable.EnableConcurrentDDL.Load() != b {
+			err := d.SwitchConcurrentDDL(b)
+			if err != nil {
+				logutil.BgLogger().Error("switch concurrent DDL status failed", zap.Error(err))
+				time.Sleep(1 * time.Second)
+				continue
+			}
+		}
 		select {
 		case <-d.ddlJobCh:
 		case <-ticker.C:
@@ -609,4 +624,13 @@ func runInTxn(se *session, f func(*session) error) (err error) {
 		return
 	}
 	return errors.Trace(se.commit())
+}
+
+func enableConcurrentDDL(store kv.Storage) (b bool, err error) {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		b, err = m.IsConcurrentDDL()
+		return err
+	})
+	return
 }
