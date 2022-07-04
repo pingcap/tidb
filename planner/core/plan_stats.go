@@ -156,7 +156,7 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 					continue
 				}
 				idxStats, ok := tblStats.Indices[idx.Meta().ID]
-				if !ok || !idxStats.IsEssentialStatsLoaded() {
+				if !ok || !idxStats.IsFullLoad() {
 					histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxStats.ID, IsIndex: true}] = struct{}{}
 				}
 			}
