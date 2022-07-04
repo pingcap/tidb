@@ -118,7 +118,6 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
-	// nonPartWindow := &PhysicalWindow {}
 	partialSort := &PhysicalSort{
 		IsPartialSort: true,
 	}
@@ -250,4 +249,44 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	recv.children = []PhysicalPlan{hashSender}
 	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, 0, 4, 0)
+
+	// Window <- Join(x) <- ExchangeReceiver <- ExchangeSender
+	//                   <- ExchangeReceiver <- ExchangeSender
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	hashJoin := &PhysicalHashJoin{}
+	recv1 := &PhysicalExchangeReceiver{}
+	tableScan1 := &PhysicalTableScan{}
+	partWindow.children = []PhysicalPlan{hashJoin}
+	hashSender1 := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	recv1.children = []PhysicalPlan{hashSender1}
+	hashSender.children = []PhysicalPlan{tableScan}
+	hashSender1.children = []PhysicalPlan{tableScan1}
+	start(partWindow, 0, 4, 0)
+
+	// Join <- ExchangeReceiver <- ExchangeSender <- Window <- ExchangeReceiver(2) <- ExchangeSender(2)
+	//      <- ExchangeReceiver(1) <- ExchangeSender(1)
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	hashJoin = &PhysicalHashJoin{}
+	recv1 = &PhysicalExchangeReceiver{}
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{partWindow}
+	recv2 := &PhysicalExchangeReceiver{}
+	hashSender2 := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	tableScan2 := &PhysicalTableScan{}
+	partWindow.children = []PhysicalPlan{recv2}
+	recv2.children = []PhysicalPlan{hashSender2}
+	hashSender2.children = []PhysicalPlan{tableScan2}
+	recv1.children = []PhysicalPlan{hashSender1}
+	tableScan1 = &PhysicalTableScan{}
+	hashSender1.children = []PhysicalPlan{tableScan1}
+	start(partWindow, expStreamCount, 3, 0)
 }
