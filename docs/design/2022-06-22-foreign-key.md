@@ -129,8 +129,34 @@ type FKChildTableInfo struct {
 
 #### Create Table with Foreign Key
 
+建表时，在生成 DDL job 前和在 DDL owner 收到 DDL job 后，执行以下检查：
+- 创建 Foreign Key 时，对引用的父表需要有 REFERENCES 权限。
+- Foreign Key 中的 columns 和引用父表中的 columns 的类型必须相同，对于 string 类型的列，其 character 和 collation 也必须相同。
+- Foreign Key 中的 columns 可以引用自己表中的其他 columns, 但不能引用 column 自己。
+- Foreign Key 中的 columns 需要有对应的索引，对于引用的父表中的 columns，也需要有对应的索引，否则会创建失败。
+- Foreign Key 中的 columns 不能是 BLOB 和 TEXT 类型。
+- 在分区表上不支持使用 Foreign Key。
+- Foreign Key 中的 columns 不能是 virtual generated column，但可以是 stored generated column。
+
+DDL Owner 在创建带有外键的表时，Schema change 的变更如下：
+- Option-1：
+```
+1. None -> Public.
+- create a new table.
+- update parent table info.
+- **notify multi-table's schema change in 1 schema version**.
+
+This will also need to to related change when TiDB to do `loadInfoSchema`.
+```
+- Option-2:
+```
 1. None -> Write Only(whatever): Update Parent Table info
 2. Write Only -> Done: Create Table
+```
+
+#### Alter Table Add Foreign Key.
+
+ing~
 
 ### DML
 
