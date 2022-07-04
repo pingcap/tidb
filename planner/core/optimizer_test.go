@@ -137,39 +137,39 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 			p.TiFlashFineGrainedShuffleStreamCount = 0
 		}
 	}
-	var check func(p PhysicalPlan, exp_stream_count int64, exp_child_count int, cur_child_count int)
-	check = func(p PhysicalPlan, exp_stream_count int64, exp_child_count int, cur_child_count int) {
+	var check func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int)
+	check = func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
 		if p == nil {
 			return
 		}
 		if len(p.Children()) == 0 {
-			require.Equal(t, exp_child_count, cur_child_count)
+			require.Equal(t, expChildCount, curChildCount)
 		}
 		val := reflect.ValueOf(p)
-		act_stream_count := reflect.Indirect(val).FieldByName("TiFlashFineGrainedShuffleStreamCount").Interface().(uint64)
-		require.Equal(t, uint64(exp_stream_count), act_stream_count)
+		actStreamCount := reflect.Indirect(val).FieldByName("TiFlashFineGrainedShuffleStreamCount").Interface().(uint64)
+		require.Equal(t, uint64(expStreamCount), actStreamCount)
 		for _, child := range p.Children() {
-			check(child, exp_stream_count, exp_child_count, cur_child_count+1)
+			check(child, expStreamCount, expChildCount, curChildCount+1)
 		}
 	}
 
-	const exp_stream_count int64 = 8
+	const expStreamCount int64 = 8
 	sctx := MockContext()
-	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = exp_stream_count
+	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
 
 	// Window <- Sort <- ExchangeReceiver <- ExchangeSender
 	partWindow.children = []PhysicalPlan{partialSort}
 	partialSort.children = []PhysicalPlan{recv}
 	recv.children = []PhysicalPlan{hashSender}
 	handleFineGrainedShuffle(sctx, partWindow)
-	check(partWindow, exp_stream_count, 4, 1)
+	check(partWindow, expStreamCount, 4, 1)
 	clear(plans)
 
 	// Window <- ExchangeReceiver <- ExchangeSender
 	partWindow.children = []PhysicalPlan{recv}
 	recv.children = []PhysicalPlan{hashSender}
 	handleFineGrainedShuffle(sctx, partWindow)
-	check(partWindow, exp_stream_count, 3, 1)
+	check(partWindow, expStreamCount, 3, 1)
 	clear(plans)
 
 	// Window <- Sort(x) <- ExchangeReceiver <- ExchangeSender
@@ -195,7 +195,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	partialSort1.children = []PhysicalPlan{recv}
 	recv.children = []PhysicalPlan{hashSender}
 	handleFineGrainedShuffle(sctx, partWindow)
-	check(partWindow, exp_stream_count, 6, 1)
+	check(partWindow, expStreamCount, 6, 1)
 	clear(plans)
 
 	// Window <- Sort <- Window(x) <- Sort <- ExchangeReceiver <- ExchangeSender
@@ -220,7 +220,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	recv.children = []PhysicalPlan{hashSender}
 	handleFineGrainedShuffle(sctx, partWindow)
 	require.Equal(t, uint64(0), hashAgg.TiFlashFineGrainedShuffleStreamCount)
-	check(partWindow, exp_stream_count, 3, 1)
+	check(partWindow, expStreamCount, 3, 1)
 	clear(plans)
 
 	// Window <- HashAgg <- ExchangeReceiver <- ExchangeSender
