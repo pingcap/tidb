@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
-
 	"github.com/stretchr/testify/assert"
 )
 
