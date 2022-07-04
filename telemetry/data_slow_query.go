@@ -62,8 +62,8 @@ var (
 	slowQueryLock  sync.Mutex
 )
 
-func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
-	slowQueryBucket, err := getSlowQueryBucket(ctx)
+func getSlowQueryStats(ctx context.Context, sctx sessionctx.Context) (*slowQueryStats, error) {
+	slowQueryBucket, err := getSlowQueryBucket(sctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
@@ -73,9 +73,9 @@ func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {
 }
 
 // getSlowQueryBucket generates the delta SlowQueryBucket to report
-func getSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
+func getSlowQueryBucket(sctx sessionctx.Context) (*SlowQueryBucket, error) {
 	// update currentSQBInfo first, then gen delta
-	if err := updateCurrentSQB(ctx); err != nil {
+	if err := updateCurrentSQB(sctx); err != nil {
 		return nil, err
 	}
 	delta := calculateDeltaSQB()
@@ -83,7 +83,7 @@ func getSlowQueryBucket(ctx sessionctx.Context) (*SlowQueryBucket, error) {
 }
 
 // updateCurrentSQB records current slow query buckets
-func updateCurrentSQB(ctx sessionctx.Context) (err error) {
+func updateCurrentSQB(sctx sessionctx.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = pingcapErrors.Errorf(fmt.Sprintln(r))
