@@ -692,6 +692,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statsReader, col model.Table
 	}
 	if len(rows) == 0 {
 		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
+		return errors.Trace(errors.New(fmt.Sprintf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", col.TableID, col.ID)))
 	}
 	colHist := &statistics.Column{
 		PhysicalID:        col.TableID,
@@ -753,10 +754,11 @@ func (h *Handle) loadNeededIndexHistograms(reader *statsReader, idx model.TableI
 	}
 	if len(rows) == 0 {
 		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID))
+		return errors.Trace(errors.New(fmt.Sprintf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", idx.TableID, idx.ID)))
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: index.Info, ErrorRate: index.ErrorRate, StatsVer: index.StatsVer, Flag: index.Flag,
-		PhysicalID:        idx.TableID,
+		Info: index.Info, ErrorRate: index.ErrorRate, StatsVer: rows[0].GetInt64(0),
+		Flag: index.Flag, PhysicalID: idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 

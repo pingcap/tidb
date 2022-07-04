@@ -1627,7 +1627,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 }
 
 func (idx *Index) checkStats() {
-	if idx.IsEssentialStatsLoaded() {
+	if idx.IsFullLoad() {
 		return
 	}
 	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
