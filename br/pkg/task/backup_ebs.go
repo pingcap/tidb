@@ -72,13 +72,26 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
+	// receive the volume info from TiDB deployment tools.
+	backupInfo := &backup.EBSBackupInfo{}
+	err := backupInfo.ConfigFromFile(cfg.VolumeFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("get backup info from file", zap.Any("info", backupInfo))
+	storeCount := backupInfo.GetStoreCount()
+	if storeCount == 0 {
+		log.Info("nothing to backup")
+		return nil
+	}
+
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("task.RunBackupEBS", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -96,7 +109,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
-	if err = client.SetStorage(ctx, u, &opts); err != nil {
+	if err = client.SetStorage(ctx, backend, &opts); err != nil {
 		return errors.Trace(err)
 	}
 	err = client.SetLockFile(ctx)
@@ -105,8 +118,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	}
 
 	// Step.1.1 get global resolved ts and stop gc until all volumes ebs snapshot starts.
-	// TODO: get resolved ts
-	resolvedTs, err = client.GetTS(ctx, 10*time.Minute, 0)
+	resolvedTs, err = mgr.GetMinResolvedTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sp := utils.BRServiceSafePoint{
 		BackupTS: resolvedTs,
 		TTL:      utils.DefaultBRGCSafePointTTL,
@@ -120,60 +135,42 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 
 	// Step.1.2 stop scheduler as much as possible.
 	log.Info("starting to remove some PD schedulers")
-	restore, e := mgr.RemoveSchedulers(ctx)
+	restoreFunc, e := mgr.RemoveSchedulers(ctx)
+	if e != nil {
+		return errors.Trace(err)
+	}
 	defer func() {
 		if ctx.Err() != nil {
 			log.Warn("context canceled, doing clean work with background context")
 			ctx = context.Background()
 		}
-		if restoreE := restore(ctx); restoreE != nil {
+		if restoreE := restoreFunc(ctx); restoreE != nil {
 			log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 		}
 	}()
-	if e != nil {
-		return errors.Trace(err)
-	}
 
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
-	pdCli := mgr.GetPDClient()
-	clusterID := pdCli.GetClusterID(ctx)
-	allocID, err := pdCli.GetAllocID(ctx)
+	allocID, err := mgr.GetBaseAllocID(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("get pd cluster info", zap.Uint64("cluster-id", clusterID), zap.Uint64("alloc-id", allocID))
+	log.Info("get pd cluster info", zap.Uint64("alloc-id", allocID))
 
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
-	// receive the volume info from TiDB deployment tools.
-	backupInfo := &backup.EBSBackupInfo{}
-	err = backupInfo.ConfigFromFile(cfg.VolumeFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	backupInfo.SetClusterID(clusterID)
-	backupInfo.SetAllocID(allocID)
-	log.Info("get backup info from file", zap.Any("info", backupInfo))
-	snapCount := backupInfo.GetSnapshotCount()
-	if snapCount == 0 {
-		log.Info("nothing to backup")
-		return nil
-	}
-
-	progress := g.StartProgress(ctx, cmdName, int64(snapCount), !cfg.LogProgress)
-
 	// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
 	// progress of ebs backup. and user can get the progress through `kubectl get job`
+	progress := g.StartProgress(ctx, cmdName, int64(storeCount), !cfg.LogProgress)
 	go func() {
 		fileName := "progress.txt"
 		// remove tmp file
 		defer os.Remove(fileName)
 
-		for progress.GetCurrent() < int64(snapCount) {
+		for progress.GetCurrent() < int64(storeCount) {
 			time.Sleep(500 * time.Millisecond)
 			cur := progress.GetCurrent()
-			p := float64(cur) / float64(snapCount)
+			p := float64(cur) / float64(storeCount)
 			p *= 100
 			err = os.WriteFile(fileName, []byte(fmt.Sprintf("%.2f", p)), 0644)
 			if err != nil {
@@ -182,24 +179,26 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		}
 	}()
 
-	sess, err := backup.NewEC2Session()
+	ec2Session, err := backup.NewEC2Session()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	snapIDMap := make(map[uint64]map[string]string)
 	if !cfg.DryRun {
-		allVolumes, err := sess.StartsEBSSnapshot(backupInfo)
+		log.Info("start async snapshots")
+		snapIDMap, err = ec2Session.StartsEBSSnapshot(backupInfo)
 		if err != nil {
 			// TODO maybe we should consider remove snapshots already exists in a failure
 			return errors.Trace(err)
 		}
-		log.Info("all ebs snapshots are starts.", zap.Int("count", len(allVolumes)))
-		totalSize, err = sess.WaitEBSSnapshotFinished(allVolumes, progress)
+		log.Info("wait async snapshots finish")
+		totalSize, err = ec2Session.WaitSnapshotFinished(snapIDMap, progress)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Info("all ebs snapshots are finished.", zap.Int("count", len(allVolumes)))
+		log.Info("async snapshots finished.")
 	} else {
-		for i := 0; i < int(snapCount); i++ {
+		for i := 0; i < int(storeCount); i++ {
 			progress.Inc()
 			totalSize = 1024
 			log.Info("mock snapshot finished.", zap.Int("index", i))
@@ -209,9 +208,19 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	progress.Close()
 
 	// Step.3 save backup meta file to s3.
-	externalStorage := client.GetStorage()
 	// NOTE: maybe define the meta file in kvproto in the future.
 	// but for now json is enough.
+	backupInfo.SetAllocID(allocID)
+	backupInfo.SetResolvedTS(resolvedTs)
+	backupInfo.SetSnapshotIDs(snapIDMap)
+	if err2 := saveMetaFile(c, backupInfo, client.GetStorage()); err2 != nil {
+		return err2
+	}
+	finished = true
+	return nil
+}
+
+func saveMetaFile(c context.Context, backupInfo *backup.EBSBackupInfo, externalStorage storage.ExternalStorage) error {
 	data, err := json.Marshal(backupInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -220,6 +229,5 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if err != nil {
 		return errors.Trace(err)
 	}
-	finished = true
 	return nil
 }

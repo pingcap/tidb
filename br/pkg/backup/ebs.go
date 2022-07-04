@@ -4,6 +4,11 @@ package backup
 
 import (
 	"encoding/json"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
@@ -11,21 +16,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"go.uber.org/zap"
-	"os"
-	"sort"
-	"strings"
-	"time"
-)
-
-const (
-	StateSuccess = "success"
 )
 
 // EBSVolume is passed by TiDB deployment tools: TiDB Operator and TiUP(in future)
 // we should do snapshot inside BR, because we need some logic to determine the order of snapshot starts.
 // TODO finish the info with TiDB Operator developer.
 type EBSVolume struct {
-	ID         string `json:"id" toml:"id"`
+	ID         string `json:"volume_id" toml:"volume_id"`
 	Type       string `json:"type" toml:"type"`
 	SnapshotID string `json:"snapshot_id" toml:"snapshot_id"`
 	Status     string `json:"status" toml:"status"`
@@ -39,7 +36,6 @@ type EBSStore struct {
 // ClusterInfo represents the tidb cluster level meta infos. such as
 // pd cluster id/alloc id, cluster resolved ts and tikv configuration.
 type ClusterInfo struct {
-	ID         uint64            `json:"cluster_id" toml:"cluster_id"`
 	Version    string            `json:"cluster_version" toml:"cluster_version"`
 	MaxAllocID uint64            `json:"max_alloc_id" toml:"max_alloc_id"`
 	ResolvedTS uint64            `json:"resolved_ts" toml:"resolved_ts"`
@@ -50,7 +46,7 @@ type Kubernetes struct {
 	PVs     []interface{}          `json:"pvs" toml:"pvs"`
 	PVCs    []interface{}          `json:"pvcs" toml:"pvcs"`
 	CRD     interface{}            `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
-	Options map[string]interface{} `json:"options" toml:"options""`
+	Options map[string]interface{} `json:"options" toml:"options"`
 }
 
 type TiKVComponent struct {
@@ -76,7 +72,7 @@ type EBSBackupInfo struct {
 	Region         string                 `json:"region" toml:"region"`
 }
 
-func (c *EBSBackupInfo) GetSnapshotCount() uint64 {
+func (c *EBSBackupInfo) GetStoreCount() uint64 {
 	if c.TiKVComponent == nil {
 		return 0
 	}
@@ -110,18 +106,26 @@ func (c *EBSBackupInfo) CheckClusterInfo() {
 	}
 }
 
-func (c *EBSBackupInfo) SetClusterID(id uint64) {
-	c.CheckClusterInfo()
-	c.ClusterInfo.ID = id
-}
-
 func (c *EBSBackupInfo) SetAllocID(id uint64) {
 	c.CheckClusterInfo()
 	c.ClusterInfo.MaxAllocID = id
 }
 
+func (c *EBSBackupInfo) SetResolvedTS(id uint64) {
+	c.CheckClusterInfo()
+	c.ClusterInfo.ResolvedTS = id
+}
+
+func (c *EBSBackupInfo) SetSnapshotIDs(idMap map[uint64]map[string]string) {
+	for _, store := range c.TiKVComponent.Stores {
+		for _, volume := range store.Volumes {
+			volume.SnapshotID = idMap[store.StoreID][volume.ID]
+		}
+	}
+}
+
 type EC2Session struct {
-	*ec2.EC2
+	ec2 *ec2.EC2
 }
 
 func NewEC2Session() (*EC2Session, error) {
@@ -134,18 +138,18 @@ func NewEC2Session() (*EC2Session, error) {
 		return nil, errors.Trace(err)
 	}
 	ec2Session := ec2.New(sess)
-	return &EC2Session{ec2Session}, nil
+	return &EC2Session{ec2: ec2Session}, nil
 }
 
 // StartsEBSSnapshot is the mainly steps to control the data volume snapshots.
 // It will do the following works.
 // 1. determine the order of volume snapshot.
 // 2. send snapshot requests to aws.
-func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) ([]*EBSVolume, error) {
-	allVolumes := make([]*EBSVolume, 0)
-
+func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) (map[uint64]map[string]string, error) {
+	snapIDMap := make(map[uint64]map[string]string)
 	for _, store := range backupInfo.TiKVComponent.Stores {
 		volumes := store.Volumes
+		snapIDMap[store.StoreID] = make(map[string]string)
 		if len(volumes) > 1 {
 			// if one store has multiple volume, we should respect the order
 			// raft log/engine first, then kv db. then wal
@@ -164,12 +168,11 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) ([]*EBSVolume,
 				}
 				return true
 			})
-
 		}
 		for _, volume := range volumes {
 			// TODO: build concurrent requests here.
 			log.Debug("starts snapshot", zap.Any("volume", volume))
-			resp, err := e.CreateSnapshot(&ec2.CreateSnapshotInput{
+			resp, err := e.ec2.CreateSnapshot(&ec2.CreateSnapshotInput{
 				VolumeId: &volume.ID,
 				TagSpecifications: []*ec2.TagSpecification{
 					{
@@ -180,30 +183,26 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) ([]*EBSVolume,
 			if err != nil {
 				// TODO: build an retry mechanism for EBS backup
 				// consider remove the exists starts snapshots outside.
-				return allVolumes, errors.Trace(err)
+				return snapIDMap, errors.Trace(err)
 			}
-			// record snapshot id here has two mainly reasons:
-			// 1. check the snapshot whether finished or not.
-			// 2. recover volume from snapshotID in EBS restoration.
-			volume.SnapshotID = *resp.SnapshotId
+			log.Info("snapshot creating", zap.Stringer("snap", resp))
+			snapIDMap[store.StoreID][volume.ID] = *resp.SnapshotId
 		}
-		// write back sorted volumes to EBSBackupInfo
-		allVolumes = append(allVolumes, volumes...)
 		store.Volumes = volumes
 	}
-	return allVolumes, nil
+	return snapIDMap, nil
 }
 
-// WaitEBSSnapshotFinished waits all snapshots finished.
+// WaitSnapshotFinished waits all snapshots finished.
 // according to EBS snapshot will do real snapshot background.
 // so we'll check whether all snapshots finished.
-func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume, progress glue.Progress) (int64, error) {
-	pendingSnapshots := make([]*string, 0, len(allVolumes))
-	// snapshot id -> status
-	pendingMap := make(map[string]bool)
-	for _, v := range allVolumes {
-		pendingSnapshots = append(pendingSnapshots, &v.SnapshotID)
-		pendingMap[v.SnapshotID] = false
+func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[uint64]map[string]string, progress glue.Progress) (int64, error) {
+	pendingSnapshots := make([]*string, 0, len(snapIDMap))
+	for _, s := range snapIDMap {
+		for volume := range s {
+			snapID := s[volume]
+			pendingSnapshots = append(pendingSnapshots, &snapID)
+		}
 	}
 	totalVolumeSize := int64(0)
 
@@ -218,27 +217,26 @@ func (e *EC2Session) WaitEBSSnapshotFinished(allVolumes []*EBSVolume, progress g
 		// check pending snapshots every 5 seconds
 		case <-time.After(5 * time.Second):
 			log.Info("check pending snapshots", zap.Int("count", len(pendingSnapshots)))
-			resp, err := e.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
+			resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
 				SnapshotIds: pendingSnapshots,
 			})
 			if err != nil {
 				// TODO build retry mechanism
 				return 0, errors.Trace(err)
 			}
+
+			var uncompletedSnapshots []*string
 			for _, s := range resp.Snapshots {
-				if *s.State == StateSuccess {
-					// this snapshot has finished.
-					pendingMap[*s.SnapshotId] = true
+				if *s.State == ec2.SnapshotStateCompleted {
+					log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
 					totalVolumeSize += *s.VolumeSize
 					progress.Inc()
+				} else {
+					log.Debug("snapshot creating...", zap.Stringer("snap", s))
+					uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
 				}
 			}
-			pendingSnapshots = nil
-			for snap, ok := range pendingMap {
-				if !ok {
-					pendingSnapshots = append(pendingSnapshots, &snap)
-				}
-			}
+			pendingSnapshots = uncompletedSnapshots
 		}
 	}
 }
