@@ -146,7 +146,8 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage) (kv.MemBuffer,
 	}
 	var startTS uint64
 	totalSize := int64(0)
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		prefix := tablecodec.GenTablePrefix(c.tableID)
 		if err != nil {
 			return errors.Trace(err)
