@@ -360,6 +360,8 @@ type Request struct {
 	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
+	// ClosestReplicaReadChecker used to check whether a copTask can be executed by the closest replica
+	ClosestReplicaReadChecker ClosestReadChecker
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTagger indicates the kv request task group tagger.
@@ -369,6 +371,11 @@ type Request struct {
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 }
+
+// ClosestReadChecker is used to check whether a copTask can be executed by a follower
+// the input is the number of cop tasks, return true means this copTask can be send to
+// a follower.
+type ClosestReadChecker func(*Request, int) bool
 
 // PartitionIDAndRanges used by PartitionTableScan in tiflash.
 type PartitionIDAndRanges struct {

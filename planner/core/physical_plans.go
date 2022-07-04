@@ -154,6 +154,11 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 	return tableScans[0], nil
 }
 
+// GetAvgRowSize return the average row size of this plan.
+func (p *PhysicalTableReader) GetAvgRowSize() float64 {
+	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+}
+
 // setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
 func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
@@ -364,6 +369,16 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 	return corCols
 }
 
+// GetIndexNetworkCost retrun the network cost of index reader.
+func (p *PhysicalIndexLookUpReader) GetIndexNetworkCost() float64 {
+	return getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
+}
+
+// GetDataAvgRowSize return the average row size of each final row.
+func (p *PhysicalIndexLookUpReader) GetDataAvgRowSize() float64 {
+	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+}
+
 // PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
 type PhysicalIndexMergeReader struct {
 	physicalSchemaProducer
@@ -379,6 +394,10 @@ type PhysicalIndexMergeReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+}
+
+func (p *PhysicalIndexMergeReader) GetAvgRowSize() float64 {
+	return getTblStats(p.TablePlans[len(p.TablePlans)-1]).GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.

@@ -972,6 +972,8 @@ type SessionVars struct {
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
+	// AdaptiveClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.
+	AdaptiveClosestReadThreshold int64
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}

@@ -60,4 +60,19 @@ var (
 			Name:      "copr_cache",
 			Help:      "coprocessor cache hit, evict and miss number",
 		}, []string{LblType})
+	DistSQLCoprClosestReadHitCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "distsql",
+			Name:      "copr_closest_read_hit_rate",
+			Help:      "counter of total copr read local read hit",
+		}, []string{LblType})
+	DistSQLCoprRespBodySize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "distsql",
+			Name:      "copr_resp_size",
+			Help:      "copr task wait wall time of ms",
+			Buckets:   prometheus.ExponentialBuckets(1024, 2, 20),
+		}, []string{LblStore})
 )

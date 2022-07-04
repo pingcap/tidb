@@ -164,6 +164,10 @@ const (
 	// TiDBReplicaRead is used for reading data from replicas, followers for example.
 	TiDBReplicaRead = "tidb_replica_read"
 
+	// TiDBAdaptiveClosestReadThreshold is used to determinate whether a scan request should
+	// adaptively read from local follower.
+	TiDBAdaptiveClosestReadThreshold = "tidb_adaptive_closest_read_threshold"
+
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.
 	TiDBAllowRemoveAutoInc = "tidb_allow_remove_auto_inc"
 
@@ -942,6 +946,7 @@ const (
 	DefTiDBEnableConcurrentDDL                   = true
 	DefTiDBSimplifiedMetrics                     = false
 	DefTiDBEnablePaging                          = true
+	DefAdaptiveClosestReadThreshold              = 8192
 )
 
 // Process global variables.

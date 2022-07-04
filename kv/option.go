@@ -103,6 +103,8 @@ const (
 	ReplicaReadMixed
 	// ReplicaReadClosest stands for 'read from leader and follower which locates with the same zone'
 	ReplicaReadClosest
+	// ReplicaReadClosestAdaptive stands for 'read from follower which locates in the same zone iff the response size exceed certain threshold'
+	ReplicaReadClosestAdaptive
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.

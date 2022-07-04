@@ -81,6 +81,8 @@ type TableReaderExecutor struct {
 	startTS          uint64
 	readReplicaScope string
 	isStaleness      bool
+	avgRowSize       float64
+	netCost          float64
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -338,7 +340,9 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
 			SetPaging(e.paging).
-			SetAllowBatchCop(e.batchCop).Build()
+			SetAllowBatchCop(e.batchCop).
+			SetClosestReplicaReadChecker(newClosestReadChecker(e.ctx, &reqBuilder.Request, e.netCost)).
+			Build()
 		if err != nil {
 			return nil, err
 		}
@@ -376,7 +380,9 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetPaging(e.paging).
-		SetAllowBatchCop(e.batchCop).Build()
+		SetAllowBatchCop(e.batchCop).
+		SetClosestReplicaReadChecker(newClosestReadChecker(e.ctx, &reqBuilder.Request, e.netCost)).
+		Build()
 	if err != nil {
 		return nil, err
 	}
@@ -434,6 +440,11 @@ func (e *TableReaderExecutor) buildVirtualColumnInfo() {
 			e.virtualColumnRetFieldTypes[i] = e.schema.Columns[idx].RetType
 		}
 	}
+}
+
+// updateRowsCount adjust the network cost based on the row count.
+func (e *TableReaderExecutor) updateRowsCount(count float64) {
+	e.netCost = e.avgRowSize * count
 }
 
 type tableResultHandler struct {

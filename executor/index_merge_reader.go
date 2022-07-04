@@ -107,8 +107,9 @@ type IndexMergeReaderExecutor struct {
 	partialPlans [][]plannercore.PhysicalPlan
 	tblPlans     []plannercore.PhysicalPlan
 
-	handleCols plannercore.HandleCols
-	stats      *IndexMergeRuntimeStat
+	handleCols     plannercore.HandleCols
+	stats          *IndexMergeRuntimeStat
+	dataAvgRowSize float64
 
 	// Indicates whether there is correlated column in filter or table/index range.
 	// We need to refresh dagPBs before send DAGReq to storage.
@@ -309,7 +310,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
-					SetFromInfoSchema(e.ctx.GetInfoSchema())
+					SetFromInfoSchema(e.ctx.GetInfoSchema()).
+					SetClosestReplicaReadChecker(newClosestReadChecker(e.ctx, &builder.Request, e.partialPlans[workID][0].GetNetworkCost()/float64(len(keyRanges))))
 
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
@@ -388,6 +390,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
+					netCost:          e.partialPlans[workID][0].GetNetworkCost(),
 				}
 
 				worker := &partialTableWorker{
@@ -608,6 +611,8 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		columns:          e.columns,
 		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:            e.tblPlans,
+		avgRowSize:       e.dataAvgRowSize,
+		netCost:          e.dataAvgRowSize * float64(len(handles)),
 	}
 	if e.isCorColInTableFilter {
 		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
