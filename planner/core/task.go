@@ -1594,15 +1594,11 @@ func BuildFinalModeAggregation(
 				sumAgg.TypeInfer4AvgSum(sumAgg.RetTp)
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
-			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
+			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
 				newAggFunc := aggFunc.Clone()
 				newAggFunc.Name = aggFunc.Name
 				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
-				if aggFunc.Name == ast.AggFuncGroupConcat {
-					// append the last separator arg
-					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
-				}
 			} else {
 				partialFuncDesc := aggFunc.Clone()
 				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
