@@ -3868,6 +3868,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
 	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
+	if !canReorderHandles {
+		// If we can't reorder handles, the kvRange maybe not ordered. The test case(see issue35831) for IndexMergeJoin will fail.
+		// Now IndexMergeJoin is not GA and not maintained temporarily.
+		// So we close paging protocol in IndexMergeJoin request, and use the non-paging logic to read data.
+		e.paging = false
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4066,6 +4072,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetPaging(e.paging).
 		Build()
 	if err != nil {
 		return nil, err
