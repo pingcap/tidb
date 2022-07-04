@@ -23,6 +23,7 @@ go_library(
 
 go_test(
     name = "implementation_test",
+    timeout = "short",
     srcs = [
         "base_test.go",
         "main_test.go",
