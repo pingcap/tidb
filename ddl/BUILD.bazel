@@ -12,6 +12,7 @@ go_library(
         "ddl_tiflash_api.go",
         "ddl_worker.go",
         "delete_range.go",
+        "delete_range_util.go",
         "foreign_key.go",
         "generated_column.go",
         "index.go",

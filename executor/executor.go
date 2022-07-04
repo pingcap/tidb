@@ -341,7 +341,8 @@ type CancelDDLJobsExec struct {
 // Open implements the Executor Open interface.
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
-	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	errInTxn := kv.RunInNewTxn(ctx, e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
 		return
 	})

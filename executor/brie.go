@@ -463,11 +463,13 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 // such as BACKUP and RESTORE have already been privilege checked.
 // NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	_, _, err := gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
 	return err
 }
 
 func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	exec := gs.se.(sqlexec.SQLExecutor)
 	_, err := exec.ExecuteInternal(ctx, sql, args...)
 	return err

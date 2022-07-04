@@ -105,6 +105,7 @@ type JobContext struct {
 	cacheSQL           string
 	cacheNormalizedSQL string
 	cacheDigest        *parser.Digest
+	tp                 string
 }
 
 // NewJobContext returns a new ddl job context.
@@ -114,6 +115,7 @@ func NewJobContext() *JobContext {
 		cacheSQL:           "",
 		cacheNormalizedSQL: "",
 		cacheDigest:        nil,
+		tp:                 "unknown",
 	}
 }
 
@@ -291,7 +293,8 @@ func (d *ddl) limitDDLJobs() {
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
@@ -591,6 +594,25 @@ func (w *worker) unlockSeqNum(err error) {
 	}
 }
 
+// DDLBackfillers contains the DDL need backfill step.
+var DDLBackfillers = map[model.ActionType]string{
+	model.ActionAddIndex:     "add_index",
+	model.ActionModifyColumn: "modify_column",
+	model.ActionDropIndex:    "drop_index",
+}
+
+func getDDLRequestSource(job *model.Job) string {
+	if tp, ok := DDLBackfillers[job.Type]; ok {
+		return kv.InternalTxnBackfillDDLPrefix + tp
+	}
+	return kv.InternalTxnDDL
+}
+
+func (w *JobContext) setDDLLabelForDiagnosis(job *model.Job) {
+	w.tp = getDDLRequestSource(job)
+	w.ddlJobCtx = kv.WithInternalSourceType(w.ddlJobCtx, w.ddlJobSourceType())
+}
+
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
@@ -602,6 +624,10 @@ func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
 	return tagger
+}
+
+func (w *JobContext) ddlJobSourceType() string {
+	return w.tp
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -619,7 +645,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			runJobErr error
 		)
 		waitTime := 2 * d.lease
-		err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() {
 				return nil
@@ -639,6 +666,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
+			w.setDDLSourceForDiagnosis(job)
+			jobContext := w.jobContext(job)
 			if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
@@ -664,6 +693,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
 
+			// set request source type to DDL type
+			txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)

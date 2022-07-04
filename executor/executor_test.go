@@ -5402,7 +5402,8 @@ func TestHistoryReadInTxn(t *testing.T) {
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
 				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
-				rows, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, int64(1), rows[0].GetInt64(0))
