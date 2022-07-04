@@ -3078,7 +3078,7 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 func allSupported(specs []*ast.AlterTableSpec) bool {
 	for _, s := range specs {
 		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey:
 		default:
 			return false
 		}
