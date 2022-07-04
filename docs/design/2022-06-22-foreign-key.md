@@ -109,6 +109,24 @@ mysql> SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, CONSTRAINT_NAME
 
 mysql 没有这个的说明，是 CRDB 文档中提到的：https://www.cockroachlabs.com/docs/v22.1/foreign-key.html#match-composite-foreign-keys-with-match-simple-and-match-full
 
+mysql test case
+```sql
+test> create table t1 (i int, a int,b int, index(a,b)) ;
+Query OK, 0 rows affected
+Time: 0.044s
+test> create table t (a int, b int, foreign key fk_a(a,b) references test.t1(a,b));
+Query OK, 0 rows affected
+Time: 0.045s
+test> insert into t values (null,1);
+Query OK, 1 row affected
+Time: 0.041s
+test> insert into t values (null,null);
+Query OK, 1 row affected
+Time: 0.040s
+test> insert into t values (1,null);
+Query OK, 1 row affected
+Time: 0.041s
+```
 
 ## Technical Design
 
@@ -160,20 +178,6 @@ ing~
 
 ### DML
 
-#### On Parent Table update/delete
-
-- check related child table row exist.
-
-1. get child table info by name(in parent table info).
-2. get the child table fk index info.
-3. build index reader and limit 1 to check child row exist.
-
-- update related child table row.
-
-1. get child table info by name(in parent table info).
-2. get the child table fk index's column info.
-3. build update executor to update child table rows.
-
 #### On Child Table Insert Or Update (Or Load data?), need to Find FK column value whether exist in Parent table:
 
 1. Get parent table info by table name.
@@ -194,26 +198,58 @@ ing~
 4. compact column value to make sure exist.
 5. put column value into parent fk column value cache.
 
+#### On Parent Table update/delete
+
+1. check related child table row exist.
+2. modify related child table row by referential action:
+  - `CASCADE`: update/delete related child table row.
+  - `SET NULL`: set related child row's foreign key columns value to NULL.
+  - `RESTRICT`, `NO ACTION`: If related row doesn't exit in child table, reject update/delete parent table.
+  - `SET DEFAULT`: just like `RESTRICT`.
+    ```sql
+    mysql>create table t1 (a int,b int, index(a,b)) ;
+    Query OK, 0 rows affected
+    Time: 0.022s
+    mysql>create table t (a int, b int, foreign key fk_a(a) references test.t1(a) ON DELETE SET DEFAULT);
+    Query OK, 0 rows affected
+    Time: 0.019s
+    mysql>insert into t1 values (1,1);
+    Query OK, 1 row affected
+    Time: 0.003s
+    mysql>insert into t values (1,1);
+    Query OK, 1 row affected
+    Time: 0.006s
+    mysql>delete from t1 where a=1;
+    (1451, 'Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`a`))')
+    mysql>select version();
+    +-----------+
+    | version() |
+    +-----------+
+    | 8.0.29    |
+    +-----------+
+    ```
+
+modify related child table row by following step:
+1. get child table info by name(in parent table info).
+2. get the child table fk index's column info.
+3. build update executor to update child table rows.
+
+cascade modification test case:
+
+```sql
+drop table if exists t3,t2,t1;
+create table t1 (id int key,a int, index(a)) ;
+create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
+create table t3 (id int key,a int, foreign key fk(a) references t2(id) ON DELETE CASCADE);
+insert into t1 values (1,1);
+insert into t2 values (2,1);
+insert into t3 values (3,2);
+delete from t1 where id = 1;  -- both t1, t2, t3 rows are deleted.
+```
+
+
 ```go
 buildPhysicalIndexLookUpReader
 
 ```
 
-mysql test case
-```sql
-test> create table t1 (i int, a int,b int, index(a,b)) ;
-Query OK, 0 rows affected
-Time: 0.044s
-test> create table t (a int, b int, foreign key fk_a(a,b) references test.t1(a,b));
-Query OK, 0 rows affected
-Time: 0.045s
-test> insert into t values (null,1);
-Query OK, 1 row affected
-Time: 0.041s
-test> insert into t values (null,null);
-Query OK, 1 row affected
-Time: 0.040s
-test> insert into t values (1,null);
-Query OK, 1 row affected
-Time: 0.041s
-```
