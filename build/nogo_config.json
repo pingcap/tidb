@@ -1,4 +1,11 @@
 {
+  "asciicheck": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
+    }
+  },
   "asmdecl": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -135,6 +142,18 @@
       ".*failpoint_binding__.go$": "ignore generated code"
     }
   },
+  "gci": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      ".*\\.pb\\.go$": "generated code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "util/printer/printer.go": "ignore util/printer code"
+    }
+  },
   "httpresponse": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -167,6 +186,13 @@
   },
   "lostcancel": {
     "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "misspell": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -641,6 +667,15 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "predeclared": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/yy_parser.go": "ignore generated code",
+      "parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }

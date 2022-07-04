@@ -22,9 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
