@@ -1052,6 +1052,14 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	return false
 }
 
+func (e *InsertValues) checkForeignKeyConstrain(ctx context.Context, rows [][]types.Datum) error {
+	fKeys := e.Table.Meta().ForeignKeys
+	if len(fKeys) == 0 {
+		return nil
+	}
+	return nil
+}
+
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum,
