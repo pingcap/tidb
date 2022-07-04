@@ -84,6 +84,8 @@ const (
 	DefExpensiveQueryTimeThreshold = 60
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
+	// DefLightningSortPath is the default sort dir for add index lightning solution
+	DefLightningSortPath = "/tmp/tidb"
 )
 
 // Valid config maps
@@ -271,6 +273,8 @@ type Config struct {
 	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
+	// LightningSortPath used to specific the lighting DDL local sort path.
+	LightningSortPath string `toml:"lightning-sort-path" json:"lightning-sort-path"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -821,6 +825,7 @@ var defaultConf = Config{
 	TiDBEdition:                  "",
 	VersionComment:               "",
 	TiDBReleaseVersion:           "",
+	LightningSortPath:            DefLightningSortPath,
 	Log: Log{
 		Level:               "info",
 		Format:              "text",

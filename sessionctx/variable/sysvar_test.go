@@ -1075,3 +1075,79 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	require.Equal(t, val, fmt.Sprintf("%d", expected))
 	require.NoError(t, err)
 }
+
+func TestSetTIDBFastDDL(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	fastDDL := GetSysVar(TiDBFastDDL)
+
+	// Default off
+	require.Equal(t, fastDDL.Value, Off)
+
+	// Set to On
+	err := mock.SetGlobalSysVar(TiDBFastDDL, On)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBFastDDL)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(TiDBFastDDL, Off)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBFastDDL)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+}
+
+func TestSetTIDBDiskQuota(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	diskQuota := GetSysVar(TiDBDiskQuota)
+	var (
+		gb  int64 = 1024 * 1024 * 1024
+		pb  int64 = 1024 * 1024 * 1024 * 1024 * 1024
+		err error
+		val string
+	)
+	// Default 100 GB
+	require.Equal(t, diskQuota.Value, strconv.FormatInt(100*gb, 10))
+
+	// MinValue is 100 GB, set to 50 Gb is not allowed
+	err = mock.SetGlobalSysVar(TiDBDiskQuota, strconv.FormatInt(50*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
+
+	// Set to 100 GB
+	err = mock.SetGlobalSysVar(TiDBDiskQuota, strconv.FormatInt(100*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(100*gb, 10), val)
+
+	// Set to 200 GB
+	err = mock.SetGlobalSysVar(TiDBDiskQuota, strconv.FormatInt(200*gb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(200*gb, 10), val)
+
+	// Set to 1 Pb
+	err = mock.SetGlobalSysVar(TiDBDiskQuota, strconv.FormatInt(pb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(pb, 10), val)
+
+	// MaxValue is 1 PB, set to 2 Pb is not allowed
+	err = mock.SetGlobalSysVar(TiDBDiskQuota, strconv.FormatInt(2*pb, 10))
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBDiskQuota)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(pb, 10), val)
+}
