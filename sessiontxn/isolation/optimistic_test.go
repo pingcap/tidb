@@ -22,9 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/config"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -49,7 +48,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	se := tk.Session()
 	compareTS := getOracleTS(t, se)
 	provider := initializeOptimisticProvider(t, tk, true)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	readTS, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	updateTS, err := provider.GetStmtForUpdateTS()
@@ -59,7 +58,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	compareTS = readTS
 
 	// for optimistic mode ts, ts should be the same for all statements
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	readTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	updateTS, err = provider.GetStmtForUpdateTS()
@@ -72,7 +71,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	require.NoError(t, err)
 	stmt := stmts[0]
 	provider = initializeOptimisticProvider(t, tk, false)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	plan, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
@@ -85,7 +84,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 
 	// if the oracle future is prepared fist, `math.MaxUint64` should still be used after plan
 	provider = initializeOptimisticProvider(t, tk, false)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	require.NoError(t, provider.AdviseWarmup())
 	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
@@ -100,7 +99,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	// when it is in explicit txn, we should not use `math.MaxUint64`
 	compareTS = getOracleTS(t, se)
 	provider = initializeOptimisticProvider(t, tk, true)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
@@ -115,7 +114,7 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	tk.MustExec("set @@autocommit=0")
 	compareTS = getOracleTS(t, se)
 	provider = initializeOptimisticProvider(t, tk, false)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	plan, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, provider.GetTxnInfoSchema())
 	require.NoError(t, err)
 	require.NoError(t, provider.AdviseOptimizeWithPlan(plan))
@@ -175,7 +174,7 @@ func TestOptimisticHandleError(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		require.NoError(t, provider.OnStmtStart(context.TODO()))
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		action, err := provider.OnStmtErrorForNextAction(c.point, c.err)
 		if c.point == sessiontxn.StmtErrAfterPessimisticLock {
 			require.Error(t, err)
@@ -183,7 +182,7 @@ func TestOptimisticHandleError(t *testing.T) {
 			require.Equal(t, sessiontxn.StmtActionError, action)
 
 			// next statement should not update ts
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkTS()
 		} else {
 			require.NoError(t, err)
@@ -194,13 +193,13 @@ func TestOptimisticHandleError(t *testing.T) {
 			checkTS()
 
 			// OnStmtErrorForNextAction again
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			action, err = provider.OnStmtErrorForNextAction(c.point, c.err)
 			require.NoError(t, err)
 			require.Equal(t, sessiontxn.StmtActionNoIdea, action)
 
 			// next statement should not update ts
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkTS()
 		}
 	}
@@ -234,6 +233,7 @@ func TestOptimisticProviderInitialize(t *testing.T) {
 	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
 	assert = activeOptimisticTxnAssert(t, se, true)
 	assert.causalConsistencyOnly = true
+	assert.couldRetry = true
 	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
 	assert.Check(t)
 
@@ -280,7 +280,7 @@ func TestOptimisticProviderInitialize(t *testing.T) {
 			assertAfterActive.couldRetry = c.autocommit || !c.disableTxnAutoRetry
 			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider := assert.CheckAndGetProvider(t)
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			ts, err := provider.GetStmtReadTS()
 			require.NoError(t, err)
 			assertAfterActive.Check(t)
@@ -343,12 +343,12 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	}
 
 	// information schema and ts should equal to snapshot when tidb_snapshot is set
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseSnapshot()
 
 	// information schema and ts will restore when set tidb_snapshot to empty
 	tk.MustExec("set @@tidb_snapshot=''")
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseTxn()
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
@@ -368,7 +368,7 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "")
 			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider = assert.CheckAndGetProvider(t)
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
 			assertAfterUseSnapshot.Check(t)
 		}()

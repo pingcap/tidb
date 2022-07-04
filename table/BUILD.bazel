@@ -37,6 +37,7 @@ go_library(
 
 go_test(
     name = "table_test",
+    timeout = "short",
     srcs = [
         "column_test.go",
         "main_test.go",
