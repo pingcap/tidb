@@ -1594,13 +1594,6 @@ func BuildFinalModeAggregation(
 				sumAgg.TypeInfer4AvgSum(sumAgg.RetTp)
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
-<<<<<<< HEAD
-			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct {
-				approxCountDistinctAgg := *aggFunc
-				approxCountDistinctAgg.Name = ast.AggFuncApproxCountDistinct
-				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
-=======
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
 				newAggFunc := aggFunc.Clone()
 				newAggFunc.Name = aggFunc.Name
@@ -1610,7 +1603,6 @@ func BuildFinalModeAggregation(
 					// append the last separator arg
 					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
 				}
->>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 			} else {
 				partialFuncDesc := aggFunc.Clone()
 				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)

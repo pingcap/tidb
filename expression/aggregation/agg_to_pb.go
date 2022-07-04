@@ -80,33 +80,6 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		}
 		children = append(children, pbArg)
 	}
-<<<<<<< HEAD
-	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct}
-=======
-	if tp == tipb.ExprType_GroupConcat {
-		orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
-		sc := sctx.GetSessionVars().StmtCtx
-		for _, arg := range aggFunc.OrderByItems {
-			pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
-			if pbArg == nil {
-				return nil
-			}
-			orderBy = append(orderBy, pbArg)
-		}
-		// encode GroupConcatMaxLen
-		GCMaxLen, err := variable.GetSessionOrGlobalSystemVar(sctx.GetSessionVars(), variable.GroupConcatMaxLen)
-		if err != nil {
-			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
-			return nil
-		}
-		maxLen, err := strconv.ParseUint(GCMaxLen, 10, 64)
-		// Should never happen
-		if err != nil {
-			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: %s", err.Error()))
-			return nil
-		}
-		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}
-	}
 	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, AggFuncMode: AggFunctionModeToPB(aggFunc.Mode)}
 }
 
@@ -147,7 +120,6 @@ func PBAggFuncModeToAggFuncMode(pbMode *tipb.AggFunctionMode) (mode AggFunctionM
 		}
 	}
 	return mode
->>>>>>> f949e01e0... planner, expression: pushdown AggFuncMode to coprocessor (#31392)
 }
 
 // PBExprToAggFuncDesc converts pb to aggregate function.
