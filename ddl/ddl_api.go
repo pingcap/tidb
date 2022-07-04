@@ -6268,21 +6268,32 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 
 // buildAddedPartitionInfo build alter table add partition info
 func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
-	switch meta.Partition.Type {
-	case model.PartitionTypeRange, model.PartitionTypeList:
-		if len(spec.PartDefinitions) == 0 {
-			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
-		}
-	default:
-		// we don't support ADD PARTITION for all other partition types yet.
-		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
-	}
-
 	part := &model.PartitionInfo{
 		Type:    meta.Partition.Type,
 		Expr:    meta.Partition.Expr,
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
+	}
+	switch meta.Partition.Type {
+	case model.PartitionTypeList:
+		if len(spec.PartDefinitions) == 0 {
+			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+		}
+	case model.PartitionTypeRange:
+		if spec.Tp == ast.AlterTableAddLastPartition {
+			err := buildAddedPartitionDefs(ctx, meta, spec, part)
+			if err != nil {
+				return nil, err
+			}
+			spec.PartDefinitions = spec.Partition.Definitions
+		} else {
+			if len(spec.PartDefinitions) == 0 {
+				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
+			}
+		}
+	default:
+		// we don't support ADD PARTITION for all other partition types yet.
+		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}
 
 	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta)
@@ -6292,6 +6303,16 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 
 	part.Definitions = defs
 	return part, nil
+}
+
+func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec, part *model.PartitionInfo) error {
+	if meta.Partition.IntervalMaxPart {
+		return errors.Trace(dbterror.ErrPartitionMaxvalue)
+	}
+	if len(spec.PartDefinitions) > 0 {
+		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+	}
+	return GeneratePartDefsFromInterval(ctx, meta, spec.Partition, part)
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {

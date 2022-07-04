@@ -3628,7 +3628,18 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	tk.MustExec("use IntervalPartition")
 	tk.MustExec("create table pt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) (partition first values less than (1000), partition last values less than (9000), partition `maxvalue` values less than (maxvalue))")
 	tk.MustExec("create table dpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) (partition first values less than ('2022-02-01'), partition second values less than ('2022-02-08'), PARTITION third VALUES LESS THAN ('2022-02-15'))")
-	tk.MustExec("create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) NULL PARTITION MAXVALUE PARTITION")
+	tk.MustExec("create table ipt (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90) MAXVALUE PARTITION")
+	tk.MustExec("insert into ipt values (0, '0'), (1, '1'), (2, '2')")
+	tk.MustExec("insert into ipt select id + 10, concat('1', val) FROM ipt")
+	tk.MustExec("insert into ipt select id + 20, concat('2', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 30, concat('3', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 40, concat('4', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 50, concat('5', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 60, concat('6', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 70, concat('7', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 80, concat('8', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 90, concat('9', val) FROM ipt where id < 10")
+	tk.MustExec("insert into ipt select id + 100, concat('10', val) FROM ipt where id < 10")
 	tk.MustQuery("SHOW CREATE TABLE ipt").Check(testkit.Rows(
 		"ipt CREATE TABLE `ipt` (\n" +
 			"  `id` bigint(20) unsigned NOT NULL,\n" +
@@ -3637,16 +3648,15 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  KEY `val` (`val`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE (`id`)\n" +
-			"(PARTITION `SYS_P_NULL` VALUES LESS THAN (0),\n" +
-			" PARTITION `SYS_P_LT_1000000000` VALUES LESS THAN (1000000000),\n" +
-			" PARTITION `SYS_P_LT_2000000000` VALUES LESS THAN (2000000000),\n" +
-			" PARTITION `SYS_P_LT_3000000000` VALUES LESS THAN (3000000000),\n" +
-			" PARTITION `SYS_P_LT_4000000000` VALUES LESS THAN (4000000000),\n" +
-			" PARTITION `SYS_P_LT_5000000000` VALUES LESS THAN (5000000000),\n" +
-			" PARTITION `SYS_P_LT_6000000000` VALUES LESS THAN (6000000000),\n" +
-			" PARTITION `SYS_P_LT_7000000000` VALUES LESS THAN (7000000000),\n" +
-			" PARTITION `SYS_P_LT_8000000000` VALUES LESS THAN (8000000000),\n" +
-			" PARTITION `SYS_P_LT_9000000000` VALUES LESS THAN (9000000000),\n" +
+			"(PARTITION `SYS_P_LT_10` VALUES LESS THAN (10),\n" +
+			" PARTITION `SYS_P_LT_20` VALUES LESS THAN (20),\n" +
+			" PARTITION `SYS_P_LT_30` VALUES LESS THAN (30),\n" +
+			" PARTITION `SYS_P_LT_40` VALUES LESS THAN (40),\n" +
+			" PARTITION `SYS_P_LT_50` VALUES LESS THAN (50),\n" +
+			" PARTITION `SYS_P_LT_60` VALUES LESS THAN (60),\n" +
+			" PARTITION `SYS_P_LT_70` VALUES LESS THAN (70),\n" +
+			" PARTITION `SYS_P_LT_80` VALUES LESS THAN (80),\n" +
+			" PARTITION `SYS_P_LT_90` VALUES LESS THAN (90),\n" +
 			" PARTITION `SYS_P_MAXVALUE` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustQuery("select @@tidb_extension_non_mysql_compatible").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
@@ -3658,7 +3668,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) CLUSTERED,\n" +
 			"  KEY `val` (`val`)\n" +
 			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`id`) INTERVAL (1000000000) FIRST PARTITION LESS THAN (1000000000) LAST PARTITION LESS THAN (9000000000) NULL PARTITION MAXVALUE PARTITION"))
+			"PARTITION BY RANGE (`id`) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90) MAXVALUE PARTITION"))
 	tk.MustExec("create table idpt (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 week) FIRST PARTITION LESS THAN ('2022-02-01') LAST PARTITION LESS THAN ('2022-03-29') NULL PARTITION MAXVALUE PARTITION")
 	tk.MustExec("set tidb_extension_non_mysql_compatible = 0")
 	tk.MustQuery("SHOW CREATE TABLE idpt").Check(testkit.Rows(
@@ -3697,6 +3707,56 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	// Test other offsets, including when first and last have different offset vs INTERVAL
 	// Test out-of-range?
 	// Test non integer/Date column types in RANGE COLUMNS
+	// Test float types in RANGE COLUMNS?
+	tk.MustExec("alter table ipt first partition less than (20)")
+	err := tk.ExecToErr("alter table ipt LAST partition less than (100)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1481]MAXVALUE can only be used in last partition definition", err.Error())
+	tk.MustExec("alter table ipt merge first partition less than (30)")
+	tk.MustExec("alter table ipt split MAX partition less than (100)")
+	tk.MustQuery("show create table ipt").Check(testkit.Rows(
+		"ipt CREATE TABLE `ipt` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) CLUSTERED,\n" +
+			"  KEY `val` (`val`)\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90) MAXVALUE PARTITION"))
+	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("33"))
+
+	tk.MustExec("create table t2 (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90)")
+	tk.MustExec("alter table t2 first partition less than (20)")
+	tk.MustExec("alter table t2 LAST partition less than (100)")
+	tk.MustExec("alter table t2 merge first partition less than (30)")
+	err = tk.ExecToErr("alter table t2 split MAX partition less than (100)")
+	tk.MustQuery("show create table t2").Check(testkit.Rows(
+		"t2 CREATE TABLE `t2` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) CLUSTERED,\n" +
+			"  KEY `val` (`val`)\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (100)"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+	tk.MustQuery("select @@tidb_extension_non_mysql_compatible").Check(testkit.Rows("0"))
+	tk.MustQuery("show create table t2").Check(testkit.Rows(
+		"t2 CREATE TABLE `t2` (\n" +
+			"  `id` bigint(20) unsigned NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `val` (`val`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `SYS_P_LT_10` VALUES LESS THAN (10),\n" +
+			" PARTITION `SYS_P_LT_20` VALUES LESS THAN (20),\n" +
+			" PARTITION `SYS_P_LT_30` VALUES LESS THAN (30),\n" +
+			" PARTITION `SYS_P_LT_40` VALUES LESS THAN (40),\n" +
+			" PARTITION `SYS_P_LT_50` VALUES LESS THAN (50),\n" +
+			" PARTITION `SYS_P_LT_60` VALUES LESS THAN (60),\n" +
+			" PARTITION `SYS_P_LT_70` VALUES LESS THAN (70),\n" +
+			" PARTITION `SYS_P_LT_80` VALUES LESS THAN (80),\n" +
+			" PARTITION `SYS_P_LT_90` VALUES LESS THAN (90),\n" +
+			" PARTITION `SYS_P_LT_100` VALUES LESS THAN (100))"))
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {

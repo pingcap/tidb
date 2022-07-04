@@ -1013,6 +1013,53 @@ func (unit TimeUnitType) String() string {
 	}
 }
 
+func ToTimeUnit(s string) TimeUnitType {
+	switch strings.ToUpper(s) {
+	case "MICROSECOND":
+		return TimeUnitMicrosecond
+	case "SECOND":
+		return TimeUnitSecond
+	case "MINUTE":
+		return TimeUnitMinute
+	case "HOUR":
+		return TimeUnitHour
+	case "DAY":
+		return TimeUnitDay
+	case "WEEK":
+		return TimeUnitWeek
+	case "MONTH":
+		return TimeUnitMonth
+	case "QUARTER":
+		return TimeUnitQuarter
+	case "YEAR":
+		return TimeUnitYear
+	case "SECOND_MICROSECOND":
+		return TimeUnitSecondMicrosecond
+	case "MINUTE_MICROSECOND":
+		return TimeUnitMinuteMicrosecond
+	case "MINUTE_SECOND":
+		return TimeUnitMinuteSecond
+	case "HOUR_MICROSECOND":
+		return TimeUnitHourMicrosecond
+	case "HOUR_SECOND":
+		return TimeUnitHourSecond
+	case "HOUR_MINUTE":
+		return TimeUnitHourMinute
+	case "DAY_MICROSECOND":
+		return TimeUnitDayMicrosecond
+	case "DAY_SECOND":
+		return TimeUnitDaySecond
+	case "DAY_MINUTE":
+		return TimeUnitDayMinute
+	case "DAY_HOUR":
+		return TimeUnitDayHour
+	case "YEAR_MONTH":
+		return TimeUnitYearMonth
+	default:
+		return TimeUnitInvalid
+	}
+}
+
 // Duration represented by this unit.
 // Returns error if the time unit is not a fixed time interval (such as MONTH)
 // or a composite unit (such as MINUTE_SECOND).
