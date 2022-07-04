@@ -65,9 +65,6 @@ type wrapTxn struct {
 
 // Wait converts pending txn to valid
 func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
-	if txn.Transaction != nil {
-		return txn, nil
-	}
 	kvTxn, err := sctx.GetStore().Begin()
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -223,6 +223,14 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		p.onTxnActive(txn, p.enterNewTxnType)
 	}
 
+	if p.sctx.GetSessionVars().InRestrictedSQL {
+		txn.SetOption(kv.RequestSourceInternal, true)
+	}
+
+	if tp := p.sctx.GetSessionVars().RequestSourceType; tp != "" {
+		txn.SetOption(kv.RequestSourceType, tp)
+	}
+
 	p.txn = txn
 	return txn, nil
 }
