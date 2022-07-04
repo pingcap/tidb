@@ -368,7 +368,8 @@ func TestTruncateTable2(t *testing.T) {
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
-		err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)
 			if err1 != nil {
 				return err1
