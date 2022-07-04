@@ -56,6 +56,15 @@ type baseTxnContextProvider struct {
 	enterNewTxnType sessiontxn.EnterNewTxnType
 }
 
+// prepareTxnNotConsiderSnapshotTS is used to prepare an oracle ts future even when SnapshotTS is set.
+func (p *baseTxnContextProvider) prepareTxnNotConsiderSnapshotTS() error {
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS == 0 {
+		return nil
+	}
+	p.isTxnPrepared = false
+	return p.prepareTxn(false)
+}
+
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
 	if p.getStmtReadTSFunc == nil || p.getStmtForUpdateTSFunc == nil {
@@ -70,8 +79,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
-		p.isTxnPrepared = false
-		if err := p.prepareTxn(false); err != nil {
+		if err := p.prepareTxnNotConsiderSnapshotTS(); err != nil {
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
@@ -79,8 +87,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 			if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
 				return err
 			}
-			p.isTxnPrepared = false
-			if err := p.prepareTxn(false); err != nil {
+			if err := p.prepareTxnNotConsiderSnapshotTS(); err != nil {
 				return err
 			}
 		}
