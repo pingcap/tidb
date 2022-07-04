@@ -82,24 +82,3 @@ func TestClamp(t *testing.T) {
 	require.Equal(t, "xy", Clamp("yy", "ab", "xy"))
 	require.Equal(t, "ab", Clamp("ab", "ab", "ab"))
 }
-
-func BenchmarkMaxMin(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		Min(i, i+1)
-		Min(i, i)
-		Min(i, i-1)
-		Max(i, i+1)
-		Max(i, i)
-		Max(i, i-1)
-		Min("short_string", "long_string:123456789012345678901234567890123456789012345678901234567890")
-		Max("short_string", "long_string:123456789012345678901234567890123456789012345678901234567890")
-	}
-}
-func BenchmarkClamp(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		Clamp(i, 1, i+1)
-		Clamp(i, 1, i)
-		Clamp(i, 1, i-1)
-		Clamp("target", "short_string", "long_string:123456789012345678901234567890123456789012345678901234567890")
-	}
-}
