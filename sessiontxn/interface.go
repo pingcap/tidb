@@ -121,7 +121,7 @@ type TxnContextProvider interface {
 	GetStmtReadTS() (uint64, error)
 	// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 	GetStmtForUpdateTS() (uint64, error)
-	// GetSnapshotWithStmtReadTS get snapshot with read ts
+	// GetSnapshotWithStmtReadTS gets snapshot with read ts
 	GetSnapshotWithStmtReadTS() (kv.Snapshot, error)
 	// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
 	GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error)
@@ -151,7 +151,7 @@ type TxnManager interface {
 	GetStmtForUpdateTS() (uint64, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
-	// GetSnapshotWithStmtReadTS get snapshot with read ts
+	// GetSnapshotWithStmtReadTS gets snapshot with read ts
 	GetSnapshotWithStmtReadTS() (kv.Snapshot, error)
 	// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
 	GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error)

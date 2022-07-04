@@ -150,7 +150,7 @@ func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) erro
 	return nil
 }
 
-// GetSnapshotWithStmtReadTS get snapshot with read ts and set the transaction related options
+// GetSnapshotWithStmtReadTS gets snapshot with read ts and set the transaction related options
 // before return
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	txn, err := p.sctx.Txn(false)
