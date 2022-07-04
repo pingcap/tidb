@@ -96,14 +96,14 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 
 func (m *txnManager) GetTxnScope() string {
 	if m.ctxProvider == nil {
-		return ""
+		return kv.GlobalTxnScope
 	}
 	return m.ctxProvider.GetTxnScope()
 }
 
 func (m *txnManager) GetReadReplicaScope() string {
 	if m.ctxProvider == nil {
-		return ""
+		return kv.GlobalReplicaScope
 	}
 	return m.ctxProvider.GetReadReplicaScope()
 }
