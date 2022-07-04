@@ -487,10 +487,11 @@ func TestIssue35911(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_parallel_apply = 1;")
 	rows = tk.MustQuery("explain analyze select * from t1 where exists (select tt1.* from (select * from t2 where a = t1.b) as tt1 join (select * from t2 where a = t1.b) as tt2 on tt1.b = tt2.b);").Rows()
 
-	extractConcurrency, err := regexp.Compile("table_task: [{].*concurrency: (\\d+)[}]")
+	extractConcurrency, err := regexp.Compile(`table_task: [{].*concurrency: (\d+)[}]`)
 	require.NoError(t, err)
 	concurrencyStr := extractConcurrency.FindStringSubmatch(rows[4][5].(string))[1]
 	concurrency, err := strconv.ParseInt(concurrencyStr, 10, 64)
+	require.NoError(t, err)
 	// To be consistent with other operators, we should not aggregate the concurrency in the runtime stats.
 	require.EqualValues(t, 5, concurrency)
 }
