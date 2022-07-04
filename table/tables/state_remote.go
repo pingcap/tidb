@@ -453,6 +453,7 @@ func (h *stateRemoteHandle) updateRow(ctx context.Context, tid int64, lockType s
 func (h *stateRemoteHandle) execSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	rs, err := h.exec.ExecuteInternal(ctx, sql, args...)
 	if rs != nil {
+		//nolint: errcheck
 		defer rs.Close()
 	}
 	if err != nil {

@@ -15,6 +15,7 @@ go_library(
         "//parser/ast",
         "//sessionctx",
         "//sessionctx/variable",
+        "//table/temptable",
         "//util/stringutil",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
