@@ -113,6 +113,37 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	return nil
 }
 
+//func (e *BatchPointGetExec) verifyTxnScope() error {
+//	if e.txnScope == "" || e.txnScope == kv.GlobalTxnScope {
+//		return nil
+//	}
+//
+//	var tblID int64
+//	var tblName string
+//	var partName string
+//	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+//	if e.partInfo != nil {
+//		tblID = e.partInfo.ID
+//		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
+//		tblName = tblInfo.Meta().Name.String()
+//		partName = partInfo.Name.String()
+//	} else {
+//		tblID = e.tblInfo.ID
+//		tblInfo, _ := is.TableByID(tblID)
+//		tblName = tblInfo.Meta().Name.String()
+//	}
+//	valid := distsql.VerifyTxnScope(e.txnScope, tblID, is)
+//	if valid {
+//		return nil
+//	}
+//	if len(partName) > 0 {
+//		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+//			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, e.txnScope))
+//	}
+//	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+//		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, e.txnScope))
+//}
+
 // CacheTable always use memBuffer in session as snapshot.
 // cacheTableSnapshot inherits kv.Snapshot and override the BatchGet methods and Get methods.
 type cacheTableSnapshot struct {

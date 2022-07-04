@@ -123,11 +123,18 @@ func (p *baseTxnContextProvider) GetTxnScope() string {
 }
 
 func (p *baseTxnContextProvider) GetReadReplicaScope() string {
-	sessVars := p.sctx.GetSessionVars()
-	if sessVars.GetReplicaRead().IsClosestRead() {
+	if txnScope := p.GetTxnScope(); txnScope != kv.GlobalTxnScope && txnScope != "" {
+		// In local txn, we should use txnScope as the readReplicaScope
+		return txnScope
+	}
+
+	if p.sctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
+		// If closest read is set, we should use the scope where instance located.
 		return config.GetTxnScopeFromConfig()
 	}
-	return sessVars.TxnCtx.TxnScope
+
+	// When it is not local txn or closet read, we should use global scope
+	return kv.GlobalReplicaScope
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
