@@ -587,13 +587,13 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 }
 
 func TestTxnContextForStaleReadInPrepare(t *testing.T) {
-	store, _, deferFunc := setupTxnContextTest(t)
+	store, do, deferFunc := setupTxnContextTest(t)
 	defer deferFunc()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
 
-	is1 := se.GetDomainInfoSchema()
+	is1 := do.InfoSchema()
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
@@ -660,32 +660,6 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("execute s3")
 	})
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
-
-	// stale read should not use plan cache
-	is2 := se.GetDomainInfoSchema()
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
-	tk.MustExec("set @@tx_read_ts=''")
-	tk.MustExec("do sleep(0.1)")
-	tk.MustExec("set @b=now(6)")
-	tk.MustExec("do sleep(0.1)")
-	tk.MustExec("update t1 set v=v+1 where id=1")
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, path, func() {
-		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 12"))
-	})
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
-	tk.MustExec("set @@tx_read_ts=@b")
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, path, func() {
-		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
-	})
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
-	tk.MustExec("set @@tx_read_ts=''")
 }
 
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {

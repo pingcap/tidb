@@ -2235,20 +2235,19 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
 
-func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStmt, prepareStmt *plannercore.CachedPrepareStmt) (sqlexec.RecordSet, error) {
+func (s *session) preparedStmtExec(ctx context.Context,
+	is infoschema.InfoSchema, snapshotTS uint64,
+	execStmt *ast.ExecuteStmt, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, error) {
+
 	failpoint.Inject("assertTxnManagerInPreparedStmtExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInPreparedStmtExec", true)
-		if prepareStmt.SnapshotTSEvaluator != nil {
-			staleread.AssertStmtStaleness(s, true)
-			ts, err := prepareStmt.SnapshotTSEvaluator(s)
-			if err != nil {
-				panic(err)
-			}
-			sessiontxn.AssertTxnManagerReadTS(s, ts)
+		sessiontxn.AssertTxnManagerInfoSchema(s, is)
+		if snapshotTS != 0 {
+			sessiontxn.AssertTxnManagerReadTS(s, snapshotTS)
 		}
 	})
 
-	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt)
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is, snapshotTS, replicaReadScope, args)
 	if err != nil {
 		return nil, err
 	}
@@ -2268,17 +2267,18 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 
 // cachedPointPlanExec is a short path currently ONLY for cached "point select plan" execution
 func (s *session) cachedPointPlanExec(ctx context.Context,
-	execAst *ast.ExecuteStmt, prepareStmt *plannercore.CachedPrepareStmt) (sqlexec.RecordSet, bool, error) {
+	is infoschema.InfoSchema, execAst *ast.ExecuteStmt, prepareStmt *plannercore.CachedPrepareStmt, replicaReadScope string, args []types.Datum) (sqlexec.RecordSet, bool, error) {
 
 	prepared := prepareStmt.PreparedAst
 
 	failpoint.Inject("assertTxnManagerInCachedPlanExec", func() {
 		sessiontxn.RecordAssert(s, "assertTxnManagerInCachedPlanExec", true)
+		sessiontxn.AssertTxnManagerInfoSchema(s, is)
 		// stale read should not reach here
 		staleread.AssertStmtStaleness(s, false)
 	})
 
-	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+	execAst.BinaryArgs = args
 	execPlan, err := planner.OptimizeExecStmt(ctx, s, execAst, is)
 	if err != nil {
 		return nil, false, err
@@ -2324,7 +2324,7 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 	var resultSet sqlexec.RecordSet
 	switch execPlan.(type) {
 	case *plannercore.PointGetPlan:
-		resultSet, err = stmt.PointGet(ctx)
+		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
 		stmtCtx.Priority = kv.PriorityHigh
@@ -2341,9 +2341,9 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
 // Be careful with the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func (s *session) IsCachedExecOk(preparedStmt *plannercore.CachedPrepareStmt) (bool, error) {
+func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, isStaleness bool) (bool, error) {
 	prepared := preparedStmt.PreparedAst
-	if prepared.CachedPlan == nil || staleread.IsStmtStaleness(s) {
+	if prepared.CachedPlan == nil || isStaleness {
 		return false, nil
 	}
 	// check auto commit
@@ -2396,25 +2396,22 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
-	execStmt := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
-	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
-		return nil, err
-	}
+	var snapshotTS uint64
+	replicaReadScope := oracle.GlobalTxnScope
 
 	staleReadProcessor := staleread.NewStaleReadProcessor(s)
 	if err = staleReadProcessor.OnExecutePreparedStmt(preparedStmt.SnapshotTSEvaluator); err != nil {
 		return nil, err
 	}
 
+	txnManager := sessiontxn.GetTxnManager(s)
 	if staleReadProcessor.IsStaleness() {
-		s.sessionVars.StmtCtx.IsStaleness = true
-		err = sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnWithReplaceProvider,
-			Provider: staleread.NewStalenessTxnContextProvider(
-				s,
-				staleReadProcessor.GetStalenessReadTS(),
-				staleReadProcessor.GetStalenessInfoSchema(),
-			),
+		snapshotTS = staleReadProcessor.GetStalenessReadTS()
+		is := staleReadProcessor.GetStalenessInfoSchema()
+		replicaReadScope = config.GetTxnScopeFromConfig()
+		err = txnManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+			Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+			Provider: staleread.NewStalenessTxnContextProvider(s, snapshotTS, is),
 		})
 
 		if err != nil {
@@ -2422,13 +2419,19 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		}
 	}
 
+	staleness := snapshotTS > 0
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	cacheExecOk, err := s.IsCachedExecOk(preparedStmt)
+	ok, err = s.IsCachedExecOk(ctx, preparedStmt, staleness)
 	if err != nil {
 		return nil, err
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
+
+	execStmt := &ast.ExecuteStmt{ExecID: stmtID}
+	if err := executor.ResetContextOfStmt(s, execStmt); err != nil {
+		return nil, err
+	}
 
 	if err = s.onTxnManagerStmtStartOrRetry(ctx, execStmt); err != nil {
 		return nil, err
@@ -2437,8 +2440,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	// even the txn is valid, still need to set session variable for coprocessor usage.
 	s.sessionVars.RequestSourceType = preparedStmt.PreparedAst.StmtType
 
-	if cacheExecOk {
-		rs, ok, err := s.cachedPointPlanExec(ctx, execStmt, preparedStmt)
+	if ok {
+		rs, ok, err := s.cachedPointPlanExec(ctx, txnManager.GetTxnInfoSchema(), execStmt, preparedStmt, replicaReadScope, args)
 		if err != nil {
 			return nil, err
 		}
@@ -2446,7 +2449,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 			return rs, nil
 		}
 	}
-	return s.preparedStmtExec(ctx, execStmt, preparedStmt)
+	return s.preparedStmtExec(ctx, txnManager.GetTxnInfoSchema(), snapshotTS, execStmt, preparedStmt, replicaReadScope, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {

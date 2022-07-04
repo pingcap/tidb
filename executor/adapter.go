@@ -227,7 +227,7 @@ func (a ExecStmt) GetStmtNode() ast.StmtNode {
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
-func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
+func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("ExecStmt.PointGet", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", a.OriginText())
@@ -238,7 +238,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
 		// stale read should not reach here
 		staleread.AssertStmtStaleness(a.Ctx, false)
-		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, a.InfoSchema)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
 	})
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -262,7 +262,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -315,7 +315,6 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
 		staleread.AssertStmtStaleness(a.Ctx, ret.IsStaleness)
-		sessiontxn.AssertTxnManagerReadTS(a.Ctx, ret.LastSnapshotTS)
 	})
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
