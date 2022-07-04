@@ -178,7 +178,7 @@ ing~
 
 1. Get parent table info by table name.
 2. Get related fk index of parent table.
-3. tiny optimize, check fk column value exist in parent table cache(map[string][][]Datum).
+3. tiny optimize, check fk column value exist in parent table cache(map[string(index_key)]struct).
 3. get related row in parent, maybe option-c is better.
   - option-a. use SQL string and use `ExecRestrictedSQL` API to check row exist.
     - drawback: 
