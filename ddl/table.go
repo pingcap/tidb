@@ -1118,10 +1118,6 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 			Count:          replicaInfo.Count,
 			LocationLabels: replicaInfo.Labels,
 		}
-		// check table tiflash mode, if mode is "", set the normal mode as default mode
-		if tblInfo.TiFlashMode == "" {
-			tblInfo.TiFlashMode = model.TiFlashModeNormal
-		}
 	} else {
 		tblInfo.TiFlashReplica = nil
 	}
