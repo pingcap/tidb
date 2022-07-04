@@ -1867,41 +1867,47 @@ func buildTableInfo(
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
 			continue
 		}
-		// build index info.
-		idxInfo, err := buildIndexInfo(ctx, tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(hiddenCols) > 0 {
-			addIndexColumnFlag(tbInfo, idxInfo)
-		}
+
+		var (
+			indexName       = constr.Name
+			primary, unique bool
+		)
+
 		// check if the index is primary or unique.
 		switch constr.Tp {
 		case ast.ConstraintPrimaryKey:
-			idxInfo.Primary = true
-			idxInfo.Unique = true
-			idxInfo.Name = model.NewCIStr(mysql.PrimaryKeyName)
+			primary = true
+			unique = true
+			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			idxInfo.Unique = true
+			unique = true
 		}
-		// set index type.
-		if constr.Option != nil {
-			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &constr.Option.Comment, dbterror.ErrTooLongIndexComment)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				idxInfo.Invisible = true
-			}
-			if constr.Option.Tp == model.IndexTypeInvalid {
-				// Use btree as default index type.
-				idxInfo.Tp = model.IndexTypeBtree
-			} else {
-				idxInfo.Tp = constr.Option.Tp
-			}
-		} else {
-			// Use btree as default index type.
-			idxInfo.Tp = model.IndexTypeBtree
+
+		// build index info.
+		idxInfo, err := buildIndexInfo(
+			ctx,
+			tbInfo.Columns,
+			model.NewCIStr(indexName),
+			primary,
+			unique,
+			false,
+			constr.Keys,
+			constr.Option,
+			model.StatePublic,
+		)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// TODO: in old code, flags like Primary of idxInfo is changed after addIndexColumnFlag. But now we change them
+		// earlier.
+		if len(hiddenCols) > 0 {
+			addIndexColumnFlag(tbInfo, idxInfo)
+		}
+
+		_, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 		idxInfo.ID = allocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)

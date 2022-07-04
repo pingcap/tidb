@@ -3,6 +3,7 @@
 package ddl
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -137,7 +138,7 @@ func mustCreateTable(t *testing.T, ddl SchemaTracker, sctx sessionctx.Context, s
 func TestTrackerCreateDropTable(t *testing.T) {
 	sctx := mock.NewContext()
 
-	testDDL := NewInMemoryDDL(2)
+	testDDL := NewSchemaTracker(2)
 	mustCreateDatabase(t, testDDL, sctx, "test")
 
 	sql := "CREATE TABLE test.t1 (c INT PRIMARY KEY)"
@@ -158,7 +159,7 @@ func TestTrackRenameTable(t *testing.T) {
 	sctx := mock.NewContext()
 	p := parser.New()
 
-	testDDL := NewInMemoryDDL(2)
+	testDDL := NewSchemaTracker(2)
 	mustCreateDatabase(t, testDDL, sctx, "test")
 
 	sql := "CREATE TABLE test.t1 (c INT PRIMARY KEY)"
@@ -202,7 +203,7 @@ func TestTrackIndex(t *testing.T) {
 	sctx := mock.NewContext()
 	p := parser.New()
 
-	testDDL := NewInMemoryDDL(2)
+	testDDL := NewSchemaTracker(2)
 	mustCreateDatabase(t, testDDL, sctx, "test")
 
 	sql := "CREATE TABLE test.t1 (c INT)"
@@ -228,4 +229,38 @@ func TestTrackIndex(t *testing.T) {
 	tbl, err = testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Len(t, tbl.Indices, 0)
+}
+
+func TestAlterTableChangeColumn(t *testing.T) {
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	p := parser.New()
+
+	testDDL := NewSchemaTracker(2)
+	mustCreateDatabase(t, testDDL, sctx, "test")
+
+	sql := "CREATE TABLE test.t1 (a INT)"
+	mustCreateTable(t, testDDL, sctx, sql)
+
+	sql = "ALTER TABLE test.t1 ADD b TEXT(100)"
+	alterAST, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = testDDL.AlterTable(ctx, sctx, alterAST.(*ast.AlterTableStmt))
+	require.NoError(t, err)
+
+	tblInfo, err := testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	sql = "ALTER TABLE test.t1 CHANGE COLUMN b b TEXT(10000000)"
+	alterAST, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	err = testDDL.AlterTable(ctx, sctx, alterAST.(*ast.AlterTableStmt))
+	require.NoError(t, err)
+
+	tblInfo, err = testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	// CHANGE COLUMN b b TEXT(10000000) will generate LONGTEXT
+	require.Equal(t, "longtext", tblInfo.Columns[1].GetTypeDesc())
 }

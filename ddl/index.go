@@ -235,12 +235,25 @@ func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
 }
 
-func buildIndexInfo(ctx sessionctx.Context, tblInfo *model.TableInfo, indexName model.CIStr, indexPartSpecifications []*ast.IndexPartSpecification, state model.SchemaState) (*model.IndexInfo, error) {
+// buildIndexInfo return an IndexInfo to be added to TableInfo.
+// nil session context will be treated as strict SQL mode.
+// Caller may need to validateCommentLength.
+func buildIndexInfo(
+	ctx sessionctx.Context,
+	allTableColumns []*model.ColumnInfo,
+	indexName model.CIStr,
+	isPrimary bool,
+	isUnique bool,
+	isGlobal bool,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+) (*model.IndexInfo, error) {
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	idxColumns, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications)
+	idxColumns, err := buildIndexColumns(ctx, allTableColumns, indexPartSpecifications)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -250,7 +263,27 @@ func buildIndexInfo(ctx sessionctx.Context, tblInfo *model.TableInfo, indexName 
 		Name:    indexName,
 		Columns: idxColumns,
 		State:   state,
+		Primary: isPrimary,
+		Unique:  isUnique,
+		Global:  isGlobal,
 	}
+
+	if indexOption != nil {
+		idxInfo.Comment = indexOption.Comment
+		if indexOption.Visibility == ast.IndexVisibilityInvisible {
+			idxInfo.Invisible = true
+		}
+		if indexOption.Tp == model.IndexTypeInvalid {
+			// Use btree as default index type.
+			idxInfo.Tp = model.IndexTypeBtree
+		} else {
+			idxInfo.Tp = indexOption.Tp
+		}
+	} else {
+		// Use btree as default index type.
+		idxInfo.Tp = model.IndexTypeBtree
+	}
+
 	return idxInfo, nil
 }
 
@@ -481,36 +514,27 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		indexInfo, err = buildIndexInfo(nil, tblInfo, indexName, indexPartSpecifications, model.StateNone)
+		indexInfo, err = buildIndexInfo(
+			nil,
+			tblInfo.Columns,
+			indexName,
+			isPK,
+			unique,
+			global,
+			indexPartSpecifications,
+			indexOption,
+			model.StateNone,
+		)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		if indexOption != nil {
-			indexInfo.Comment = indexOption.Comment
-			if indexOption.Visibility == ast.IndexVisibilityInvisible {
-				indexInfo.Invisible = true
-			}
-			if indexOption.Tp == model.IndexTypeInvalid {
-				// Use btree as default index type.
-				indexInfo.Tp = model.IndexTypeBtree
-			} else {
-				indexInfo.Tp = indexOption.Tp
-			}
-		} else {
-			// Use btree as default index type.
-			indexInfo.Tp = model.IndexTypeBtree
-		}
-		indexInfo.Primary = false
 		if isPK {
 			if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, err
 			}
-			indexInfo.Primary = true
 		}
-		indexInfo.Unique = unique
-		indexInfo.Global = global
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
