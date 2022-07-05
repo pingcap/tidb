@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -594,6 +595,13 @@ type sqlMeta struct {
 	isInternal    bool
 }
 
+// planMeta contains a binaryNormalizedPlan and a bool field isLarge to indicate
+// whether that binaryNormalizedPlan is too large to decode quickly
+type planMeta struct {
+	binaryNormalizedPlan string
+	isLarge              bool
+}
+
 // normalizedSQLMap is a wrapped map used to register normalizedSQL.
 type normalizedSQLMap struct {
 	data   atomic.Value // *sync.Map
@@ -654,6 +662,10 @@ func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
 // normalizedPlanMap to protobuf representation.
 type planBinaryDecodeFunc func(string) (string, error)
 
+// planBinaryCompressFunc is used to compress large normalized plan
+// into encoded format
+type planBinaryCompressFunc func([]byte) string
+
 // normalizedSQLMap is a wrapped map used to register normalizedPlan.
 type normalizedPlanMap struct {
 	data   atomic.Value // *sync.Map
@@ -668,13 +680,16 @@ func newNormalizedPlanMap() *normalizedPlanMap {
 
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
-func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string) {
+func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, isLarge bool) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedPlanCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)
-	_, loaded := data.LoadOrStore(string(planDigest), normalizedPlan)
+	_, loaded := data.LoadOrStore(string(planDigest), planMeta{
+		binaryNormalizedPlan: normalizedPlan,
+		isLarge:              isLarge,
+	})
 	if !loaded {
 		m.length.Add(1)
 	}
@@ -693,18 +708,26 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 }
 
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
-func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc) []tipb.PlanMeta {
+func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
 	m.data.Load().(*sync.Map).Range(func(k, v interface{}) bool {
-		planDecoded, errDecode := decodePlan(v.(string))
-		if errDecode != nil {
-			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
-			return true
+		originalMeta := v.(planMeta)
+		protoMeta := tipb.PlanMeta{
+			PlanDigest: hack.Slice(k.(string)),
 		}
-		metas = append(metas, tipb.PlanMeta{
-			PlanDigest:     []byte(k.(string)),
-			NormalizedPlan: planDecoded,
-		})
+
+		if originalMeta.isLarge {
+			protoMeta.EncodedNormalizedPlan = compressPlan(hack.Slice(originalMeta.binaryNormalizedPlan))
+		} else {
+			planDecoded, errDecode := decodePlan(originalMeta.binaryNormalizedPlan)
+			if errDecode != nil {
+				logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
+				return true
+			}
+			protoMeta.NormalizedPlan = planDecoded
+		}
+
+		metas = append(metas, protoMeta)
 		return true
 	})
 	return metas
