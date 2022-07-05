@@ -362,6 +362,7 @@ func generateOptimizerTraceFile() (*os.File, string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
+	//nolint: gosec
 	_, err = rand.Read(b)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
