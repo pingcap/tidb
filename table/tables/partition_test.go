@@ -539,7 +539,7 @@ func TestRangePartitionUnderNoUnsigned(t *testing.T) {
 							PARTITION p1 VALUES LESS THAN (0),
 							PARTITION p2 VALUES LESS THAN (5),
 							PARTITION p3 VALUES LESS THAN (10),
-							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrPartitionConstDomain)
+							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrUnsignedNotLessThanZero)
 }
 
 func TestIntUint(t *testing.T) {

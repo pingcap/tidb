@@ -490,6 +490,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPartitionSubpartMix:                      mysql.Message("Must define subpartitions on all partitions if on one partition", nil),
 	ErrPartitionWrongNoPart:                     mysql.Message("Wrong number of partitions defined, mismatch with previous setting", nil),
 	ErrPartitionWrongNoSubpart:                  mysql.Message("Wrong number of subpartitions defined, mismatch with previous setting", nil),
+	ErrUnsignedNotLessThanZero:                  mysql.Message("Unsigned data type cannot be assigned to a number less than 0", nil),
 	ErrWrongExprInPartitionFunc:                 mysql.Message("Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed", nil),
 	ErrNoConstExprInRangeOrList:                 mysql.Message("Expression in RANGE/LIST VALUES must be constant", nil),
 	ErrFieldNotFoundPart:                        mysql.Message("Field in list of fields for partition function not found in table", nil),

@@ -227,6 +227,8 @@ var (
 	// ErrViewSelectClause returns error for create view with select into clause
 	ErrViewSelectClause = ClassDDL.NewStd(mysql.ErrViewSelectClause)
 
+	// ErrUnsignedNotLessThanZero returnsq unsigned data type cannot be assigned to a number less than 0.
+	ErrUnsignedNotLessThanZero = ClassDDL.NewStd(mysql.ErrUnsignedNotLessThanZero)
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partition with unsupported expression type.
 	ErrNotAllowedTypeInPartition = ClassDDL.NewStd(mysql.ErrFieldTypeNotAllowedAsPartitionField)
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.

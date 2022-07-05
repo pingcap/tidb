@@ -822,6 +822,7 @@ const (
 	ErrMustChangePasswordLogin                               = 1862
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
+	ErrUnsignedNotLessThanZero                               = 1865
 	ErrMaxExecTimeExceeded                                   = 1907
 	ErrInvalidFieldSize                                      = 3013
 	ErrInvalidArgumentForLogarithm                           = 3020

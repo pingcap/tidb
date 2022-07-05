@@ -944,6 +944,9 @@ func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (interface
 			return 0, false, err1
 		}
 		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if res < 0 && err2 == nil {
+			return 0, false, dbterror.ErrUnsignedNotLessThanZero
+		}
 		if err2 == nil && !isNull {
 			return uint64(res), true, nil
 		}
