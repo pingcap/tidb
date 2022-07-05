@@ -213,30 +213,28 @@ func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[uint64]map[string]string
 			return totalVolumeSize, nil
 		}
 
-		select {
 		// check pending snapshots every 5 seconds
-		case <-time.After(5 * time.Second):
-			log.Info("check pending snapshots", zap.Int("count", len(pendingSnapshots)))
-			resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
-				SnapshotIds: pendingSnapshots,
-			})
-			if err != nil {
-				// TODO build retry mechanism
-				return 0, errors.Trace(err)
-			}
-
-			var uncompletedSnapshots []*string
-			for _, s := range resp.Snapshots {
-				if *s.State == ec2.SnapshotStateCompleted {
-					log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
-					totalVolumeSize += *s.VolumeSize
-					progress.Inc()
-				} else {
-					log.Debug("snapshot creating...", zap.Stringer("snap", s))
-					uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
-				}
-			}
-			pendingSnapshots = uncompletedSnapshots
+		time.Sleep(5 * time.Second)
+		log.Info("check pending snapshots", zap.Int("count", len(pendingSnapshots)))
+		resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
+			SnapshotIds: pendingSnapshots,
+		})
+		if err != nil {
+			// TODO build retry mechanism
+			return 0, errors.Trace(err)
 		}
+
+		var uncompletedSnapshots []*string
+		for _, s := range resp.Snapshots {
+			if *s.State == ec2.SnapshotStateCompleted {
+				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
+				totalVolumeSize += *s.VolumeSize
+				progress.Inc()
+			} else {
+				log.Debug("snapshot creating...", zap.Stringer("snap", s))
+				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
+			}
+		}
+		pendingSnapshots = uncompletedSnapshots
 	}
 }

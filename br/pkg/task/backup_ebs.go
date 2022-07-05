@@ -172,7 +172,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 			cur := progress.GetCurrent()
 			p := float64(cur) / float64(storeCount)
 			p *= 100
-			err = os.WriteFile(fileName, []byte(fmt.Sprintf("%.2f", p)), 0644)
+			err = os.WriteFile(fileName, []byte(fmt.Sprintf("%.2f", p)), 0600)
 			if err != nil {
 				log.Warn("failed to update tmp progress file", zap.Error(err))
 			}
