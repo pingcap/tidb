@@ -1136,12 +1136,13 @@ type Info struct {
 
 // GetDDLInfoWithNewTxn returns DDL information using a new txn.
 func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
-	err := sessiontxn.NewTxn(context.Background(), s)
+	sess := newSession(s)
+	err := sess.begin()
 	if err != nil {
 		return nil, err
 	}
 	info, err := GetDDLInfo(s)
-	s.RollbackTxn(context.Background())
+	sess.rollback()
 	return info, err
 }
 
@@ -1149,37 +1150,41 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
-	txn, err := s.Txn(true)
+	sess := newSession(s)
+	txn, err := sess.txn()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	t := meta.NewMeta(txn)
-
 	info.Jobs = make([]*model.Job, 0, 2)
-	job, err := t.GetDDLJobByIdx(0)
+	enable := variable.EnableConcurrentDDL.Load()
+	var generalJob, reorgJob *model.Job
+	if enable {
+		generalJob, reorgJob, err = get2JobsFromTable(sess)
+	} else {
+		generalJob, reorgJob, err = get2JobsFromQueue(t)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if job != nil {
-		info.Jobs = append(info.Jobs, job)
+
+	if generalJob != nil {
+		info.Jobs = append(info.Jobs, generalJob)
 	}
-	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if addIdxJob != nil {
-		info.Jobs = append(info.Jobs, addIdxJob)
+
+	if reorgJob != nil {
+		info.Jobs = append(info.Jobs, reorgJob)
 	}
 
 	info.SchemaVer, err = t.GetSchemaVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if addIdxJob == nil {
+	if reorgJob == nil {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = newReorgHandler(t).GetDDLReorgHandle(addIdxJob)
+	_, info.ReorgHandle, _, _, err = newReorgHandler(t, sess, enable).GetDDLReorgHandle(reorgJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil
@@ -1188,6 +1193,39 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	}
 
 	return info, nil
+}
+
+func get2JobsFromQueue(t *meta.Meta) (*model.Job, *model.Job, error) {
+	generalJob, err := t.GetDDLJobByIdx(0)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	reorgJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	return generalJob, reorgJob, nil
+}
+
+func get2JobsFromTable(sess *session) (*model.Job, *model.Job, error) {
+	var generalJob, reorgJob *model.Job
+	jobs, err := getJobsBySQL(sess, JobTable, "not reorg order by job_id limit 1")
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	if len(jobs) != 0 {
+		generalJob = jobs[0]
+	}
+	jobs, err = getJobsBySQL(sess, JobTable, "reorg order by job_id limit 1")
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if len(jobs) != 0 {
+		reorgJob = jobs[0]
+	}
+	return generalJob, reorgJob, nil
 }
 
 // CancelJobs cancels the DDL jobs.

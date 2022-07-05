@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -24,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -116,7 +119,7 @@ func TestGetDDLInfo(t *testing.T) {
 		RowCount: 0,
 	}
 
-	err = addDDLJobs(txn, job)
+	err = addDDLJobs(sess, txn, job)
 	require.NoError(t, err)
 
 	info, err := ddl.GetDDLInfo(sess)
@@ -126,7 +129,7 @@ func TestGetDDLInfo(t *testing.T) {
 	require.Nil(t, info.ReorgHandle)
 
 	// two jobs
-	err = addDDLJobs(txn, job1)
+	err = addDDLJobs(sess, txn, job1)
 	require.NoError(t, err)
 
 	info, err = ddl.GetDDLInfo(sess)
@@ -140,12 +143,27 @@ func TestGetDDLInfo(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func addDDLJobs(txn kv.Transaction, job *model.Job) error {
+func addDDLJobs(sess session.Session, txn kv.Transaction, job *model.Job) error {
+	if variable.EnableConcurrentDDL.Load() {
+		b, err := job.Encode(true)
+		if err != nil {
+			return err
+		}
+		_, err = sess.Execute(context.Background(), fmt.Sprintf("insert into mysql.tidb_ddl_job values (%d, %t, %d, %d, %s, %t)", job.ID, job.MayNeedReorg(), job.SchemaID, job.TableID, wrapKey2String(b), job.Type == model.ActionDropSchema))
+		return err
+	}
 	m := meta.NewMeta(txn)
 	if job.MayNeedReorg() {
 		return m.EnQueueDDLJob(job, meta.AddIndexJobListKey)
 	}
 	return m.EnQueueDDLJob(job)
+}
+
+func wrapKey2String(key []byte) string {
+	if len(key) == 0 {
+		return "''"
+	}
+	return fmt.Sprintf("0x%x", key)
 }
 
 func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
