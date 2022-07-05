@@ -629,6 +629,7 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 	default:
 		panic(fmt.Sprintf("unknown file type '%s'", dataFileMeta.Type))
 	}
+	//nolint: errcheck
 	defer parser.Close()
 
 	err = parser.ReadRow()
@@ -995,6 +996,7 @@ func (rc *Controller) sampleDataFromTable(
 	default:
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", sampleFile.Path, sampleFile.Type.String()))
 	}
+	//nolint: errcheck
 	defer parser.Close()
 	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
 	igCols, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, rc.cfg.Mydumper.CaseSensitive)

@@ -2118,7 +2118,7 @@ func newChunkRestore(
 }
 
 func (cr *chunkRestore) close() {
-	cr.parser.Close()
+	_ = cr.parser.Close()
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
