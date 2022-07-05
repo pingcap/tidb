@@ -4031,21 +4031,16 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	if err != nil {
 		return err
 	}
-	var multiSchemaInfo *model.MultiSchemaInfo
-	if variable.EnableChangeMultiSchema.Load() {
-		multiSchemaInfo = &model.MultiSchemaInfo{}
-	}
 
 	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		SchemaState:     model.StatePublic,
-		TableName:       t.Meta().Name.L,
-		Type:            model.ActionDropColumn,
-		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: multiSchemaInfo,
-		Args:            []interface{}{colName, spec.IfExists},
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionDropColumn,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{colName, spec.IfExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6128,55 +6123,6 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		Type:        jobTp,
 		BinlogInfo:  &model.HistoryInfo{},
 		Args:        []interface{}{indexName, ifExists},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
-func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return err
-	}
-
-	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Indexes"))
-	}
-	indexNames := make([]model.CIStr, 0, len(specs))
-	ifExists := make([]bool, 0, len(specs))
-	for _, spec := range specs {
-		var indexName model.CIStr
-		if spec.Tp == ast.AlterTableDropPrimaryKey {
-			indexName = model.NewCIStr(mysql.PrimaryKeyName)
-		} else {
-			indexName = model.NewCIStr(spec.Name)
-		}
-
-		indexInfo := t.Meta().FindIndexByName(indexName.L)
-		if indexInfo != nil {
-			_, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
-			if err != nil {
-				return err
-			}
-			if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		indexNames = append(indexNames, indexName)
-		ifExists = append(ifExists, spec.IfExists)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionDropIndexes,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexNames, ifExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
