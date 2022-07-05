@@ -54,7 +54,6 @@ require (
 	github.com/pingcap/parser v0.0.0-20210831085004-b5390aa83f65
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
-	github.com/pingcap/tidb/parser v0.0.0-20220704065302-e50b9430fc65
 	github.com/pingcap/tipb v0.0.0-20220413031846-c26c0efa9127
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
