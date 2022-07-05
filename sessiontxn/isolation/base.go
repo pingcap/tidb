@@ -126,6 +126,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	return err
 }
 
+// GetTxnInfoSchema returns the information schema used by txn
 func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
 		return is.(infoschema.InfoSchema)
@@ -133,10 +134,12 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.infoSchema
 }
 
+// GetTxnScope returns the current txn scope
 func (p *baseTxnContextProvider) GetTxnScope() string {
 	return p.sctx.GetSessionVars().TxnCtx.TxnScope
 }
 
+// GetReadReplicaScope returns the read replica scope
 func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 	if txnScope := p.GetTxnScope(); txnScope != kv.GlobalTxnScope && txnScope != "" {
 		// In local txn, we should use txnScope as the readReplicaScope
@@ -152,6 +155,7 @@ func (p *baseTxnContextProvider) GetReadReplicaScope() string {
 	return kv.GlobalReplicaScope
 }
 
+//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
@@ -163,6 +167,7 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	return p.getStmtReadTSFunc()
 }
 
+// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
@@ -174,16 +179,19 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.getStmtForUpdateTSFunc()
 }
 
+// OnStmtStart is the hook that should be called when a new statement started
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
 	return nil
 }
 
+// OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
 	return nil
 }
 
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
@@ -202,6 +210,7 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 	return txn.StartTS(), nil
 }
 
+// ActivateTxn activates the transaction and set the relevant context variables.
 func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
@@ -267,6 +276,7 @@ func (p *baseTxnContextProvider) prepareTxn(considerSnapshotTS bool) error {
 		return nil
 	}
 
+	// Sometimes, we need to prepare a latest oracle ts future even the SnapshotTS is set.
 	if considerSnapshotTS {
 		if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 			return p.prepareTxnWithTS(snapshotTS)

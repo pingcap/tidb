@@ -85,6 +85,8 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 	}
 }
 
+// activateStaleTxn first commit old transaction if needed, and then prepare and activate a transaction
+// with the staleness snapshot ts. After that, it sets the relevant context variables.
 func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	var err error
 	if err = sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
