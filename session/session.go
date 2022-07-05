@@ -537,6 +537,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetInTxn(false)
 		s.ClearDiskFullOpt()
+		sessiontxn.GetTxnManager(s).OnTxnEnd()
 	}()
 	// check if the transaction is read-only
 	if s.txn.IsReadOnly() {
@@ -1067,6 +1068,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			s.RollbackTxn(ctx)
 		}
 		s.txn.changeToInvalid()
+		sessiontxn.GetTxnManager(s).OnTxnEnd()
 	}()
 
 	connID := s.sessionVars.ConnectionID
@@ -1164,6 +1166,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetInTxn(false)
+		sessiontxn.GetTxnManager(s).OnTxnEnd()
 	}
 	return err
 }
@@ -2326,6 +2329,7 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 	case *plannercore.PointGetPlan:
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
+		sessiontxn.GetTxnManager(s).OnTxnEnd()
 	case *plannercore.Update:
 		stmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)

@@ -254,6 +254,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		//
 		// Reset txn state to invalid to dispose the pending start ts.
 		se.txn.changeToInvalid()
+		sessiontxn.GetTxnManager(se).OnTxnEnd()
 	}
 	if err != nil {
 		return err
