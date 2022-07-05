@@ -613,6 +613,25 @@ func TestLoadStats(t *testing.T) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	require.Greater(t, hg.Len(), 0)
+
+	// assert index LoadNeededHistograms
+	idx := stat.Indices[tableInfo.Indices[0].ID]
+	idx.EvictAllStats()
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.False(t, idx.IsEssentialStatsLoaded())
+	idx.IsInvalid(false)
+	require.NoError(t, h.LoadNeededHistograms())
+	stat = h.GetTableStats(tableInfo)
+	idx = stat.Indices[tableInfo.Indices[0].ID]
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.True(t, idx.IsFullLoad())
+
 	// Following test tests whether the LoadNeededHistograms would panic.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
@@ -2552,18 +2571,6 @@ func TestHideIndexUsageSyncLease(t *testing.T) {
 	for _, r := range rs {
 		require.False(t, strings.Contains(strings.ToLower(r[0].(string)), "index-usage-sync-lease"))
 	}
-}
-
-func TestHideExtendedStatsSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	// NOTICE: remove this test when this extended-stats reaches GA state.
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_enable_extended_stats", strings.ToLower(r[0].(string)))
-	}
-	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
 }
 
 func TestRepetitiveAddDropExtendedStats(t *testing.T) {

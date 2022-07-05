@@ -79,16 +79,14 @@ func isClusterTableByName(dbName, tableName string) bool {
 	dbName = strings.ToUpper(dbName)
 	switch dbName {
 	case util.InformationSchemaName.O, util.PerformanceSchemaName.O:
-		break
-	default:
-		return false
-	}
-	tableName = strings.ToUpper(tableName)
-	for _, name := range memTableToClusterTables {
-		name = strings.ToUpper(name)
-		if name == tableName {
-			return true
+		tableName = strings.ToUpper(tableName)
+		for _, name := range memTableToClusterTables {
+			name = strings.ToUpper(name)
+			if name == tableName {
+				return true
+			}
 		}
+	default:
 	}
 	return false
 }

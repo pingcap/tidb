@@ -2261,6 +2261,11 @@ error = '''
 non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
 '''
 
+["session:8146"]
+error = '''
+cannot migrate the current session: %s
+'''
+
 ["structure:8217"]
 error = '''
 invalid encoded hash key flag

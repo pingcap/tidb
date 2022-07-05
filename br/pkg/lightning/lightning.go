@@ -209,6 +209,14 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
+	// Enable failpoint http API for testing.
+	failpoint.Inject("EnableTestAPI", func() {
+		mux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
+			new(failpoint.HttpHandler).ServeHTTP(w, r)
+		})
+	})
+
 	handleTasks := http.StripPrefix("/tasks", http.HandlerFunc(l.handleTask))
 	mux.Handle("/tasks", httpHandleWrapper(handleTasks.ServeHTTP))
 	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
@@ -904,6 +912,7 @@ func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	// try to remove the metadata first.

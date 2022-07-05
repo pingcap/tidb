@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/breakpoint"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
@@ -196,8 +197,6 @@ type TelemetryInfo struct {
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
 	GoCtx context.Context
-	// ReplicaReadScope indicates the scope the store selector scope the request visited
-	ReplicaReadScope string
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -220,6 +219,11 @@ type ExecStmt struct {
 	OutputNames []*types.FieldName
 	PsStmt      *plannercore.CachedPrepareStmt
 	Ti          *TelemetryInfo
+}
+
+// GetStmtNode returns the stmtNode inside Statement
+func (a ExecStmt) GetStmtNode() ast.StmtNode {
+	return a.StmtNode
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -253,12 +257,12 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
-			exec.Init(pointGetPlan, startTs)
+			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.ReplicaReadScope)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -314,8 +318,8 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	})
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
-	a.ReplicaReadScope = ret.ReadReplicaScope
-	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && a.ReplicaReadScope == kv.GlobalReplicaScope {
+	replicaReadScope := sessiontxn.GetTxnManager(a.Ctx).GetReadReplicaScope()
+	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && replicaReadScope == kv.GlobalReplicaScope {
 		logutil.BgLogger().Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
 	}
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
@@ -350,7 +354,7 @@ func IsFastPlan(p plannercore.Plan) bool {
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
-// like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
+// like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	defer func() {
@@ -415,10 +419,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
-	failpoint.Inject("hookBeforeFirstRunExecutor", func() {
-		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookBeforeFirstRunExecutorKey)
-	})
-
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, err
@@ -710,7 +711,10 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout, len(keys))
+		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
+		if err != nil {
+			return err
+		}
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
@@ -732,43 +736,18 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	}
 }
 
-// UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
-func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
-	txn, err := seCtx.Txn(false)
-	if err != nil {
-		return err
-	}
-	if !txn.Valid() {
-		return errors.Trace(kv.ErrInvalidTxn)
-	}
-
-	// The Oracle serializable isolation is actually SI in pessimistic mode.
-	// Do not update ForUpdateTS when the user is using the Serializable isolation level.
-	// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
-	// Support for this does not mean that TiDB supports serializable isolation of MySQL.
-	// tidb_skip_isolation_level_check should still be disabled by default.
-	if seCtx.GetSessionVars().IsIsolation(ast.Serializable) {
-		return nil
-	}
-	if newForUpdateTS == 0 {
-		// Because the ForUpdateTS is used for the snapshot for reading data in DML.
-		// We can avoid allocating a global TSO here to speed it up by using the local TSO.
-		version, err := seCtx.GetStore().CurrentVersion(seCtx.GetSessionVars().TxnCtx.TxnScope)
-		if err != nil {
-			return err
-		}
-		newForUpdateTS = version.Ver
-	}
-	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
-	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
-	return nil
-}
-
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (_ Executor, err error) {
 	if lockErr == nil {
 		return nil, nil
 	}
+	failpoint.Inject("assertPessimisticLockErr", func() {
+		if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errWriteConflict")
+		} else if terror.ErrorEqual(kv.ErrKeyExists, lockErr) {
+			sessiontxn.AddAssertEntranceForLockError(a.Ctx, "errDuplicateKey")
+		}
+	})
 
 	defer func() {
 		if _, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
@@ -776,7 +755,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		}
 	}()
 
-	action, err := sessiontxn.GetTxnManager(a.Ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
+	txnManager := sessiontxn.GetTxnManager(a.Ctx)
+	action, err := txnManager.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 	if err != nil {
 		return nil, err
 	}
@@ -791,14 +771,18 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.retryCount++
 	a.retryStartTime = time.Now()
 
-	err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx)
+	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	failpoint.Inject("hookAfterOnStmtRetryWithLockError", func() {
-		sessiontxn.ExecTestHook(a.Ctx, sessiontxn.HookAfterOnStmtRetryWithLockErrorKey)
-	})
+	// Without this line of code, the result will still be correct. But it can ensure that the update time of for update read
+	// is determined which is beneficial for testing.
+	if _, err = txnManager.GetStmtForUpdateTS(); err != nil {
+		return nil, err
+	}
+
+	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointOnStmtRetryAfterLockError)
 
 	e, err := a.buildExecutor()
 	if err != nil {
@@ -838,7 +822,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.ReplicaReadScope)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
