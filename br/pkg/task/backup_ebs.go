@@ -155,11 +155,16 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if err != nil {
 		return errors.Trace(err)
 	}
+	normalizedVer := version.NormalizeBackupVersion(clusterVersion)
+	if normalizedVer == nil {
+		return errors.New("invalid cluster version")
+	}
 	allocID, err := mgr.GetBaseAllocID(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("get pd cluster info", zap.Uint64("alloc-id", allocID))
+	log.Info("get pd cluster info", zap.Stringer("cluster version", normalizedVer),
+		zap.Uint64("alloc-id", allocID))
 
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
@@ -215,7 +220,6 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// Step.3 save backup meta file to s3.
 	// NOTE: maybe define the meta file in kvproto in the future.
 	// but for now json is enough.
-	normalizedVer := version.NormalizeBackupVersion(clusterVersion)
 	backupInfo.SetClusterVersion(normalizedVer.String())
 	backupInfo.SetAllocID(allocID)
 	backupInfo.SetResolvedTS(resolvedTs)
