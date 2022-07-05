@@ -65,6 +65,7 @@ func NewTableRestore(
 	tableInfo *checkpoints.TidbTableInfo,
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
+	logger log.Logger,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
@@ -79,7 +80,7 @@ func NewTableRestore(
 		tableMeta:     tableMeta,
 		encTable:      tbl,
 		alloc:         idAlloc,
-		logger:        log.With(zap.String("table", tableName)),
+		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
 }
@@ -116,7 +117,11 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 				Timestamp:         timestamp,
 			}
 			if len(chunk.Chunk.Columns) > 0 {
-				perms, err := parseColumnPermutations(tr.tableInfo.Core, chunk.Chunk.Columns, tr.ignoreColumns)
+				perms, err := parseColumnPermutations(
+					tr.tableInfo.Core,
+					chunk.Chunk.Columns,
+					tr.ignoreColumns,
+					log.FromContext(ctx))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -161,7 +166,7 @@ func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowID
 //
 // The argument `columns` _must_ be in lower case.
 func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.ChunkCheckpoint) error {
-	colPerm, err := createColumnPermutation(columns, tr.ignoreColumns, tr.tableInfo.Core)
+	colPerm, err := createColumnPermutation(columns, tr.ignoreColumns, tr.tableInfo.Core, tr.logger)
 	if err != nil {
 		return err
 	}
@@ -169,7 +174,12 @@ func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.Chu
 	return nil
 }
 
-func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}, tableInfo *model.TableInfo) ([]int, error) {
+func createColumnPermutation(
+	columns []string,
+	ignoreColumns map[string]struct{},
+	tableInfo *model.TableInfo,
+	logger log.Logger,
+) ([]int, error) {
 	var colPerm []int
 	if len(columns) == 0 {
 		colPerm = make([]int, 0, len(tableInfo.Columns)+1)
@@ -190,7 +200,7 @@ func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}
 		}
 	} else {
 		var err error
-		colPerm, err = parseColumnPermutations(tableInfo, columns, ignoreColumns)
+		colPerm, err = parseColumnPermutations(tableInfo, columns, ignoreColumns, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -457,6 +467,8 @@ func (tr *TableRestore) restoreEngine(
 		cancel()
 	}
 
+	metrics, _ := metric.FromContext(ctx)
+
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
@@ -501,7 +513,9 @@ func (tr *TableRestore) restoreEngine(
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
 			remainChunkCnt = float64(chunk.Chunk.EndOffset-chunk.Chunk.Offset) / float64(chunk.Chunk.EndOffset-chunk.Key.Offset)
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
+			if metrics != nil {
+				metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
+			}
 		}
 
 		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
@@ -528,7 +542,9 @@ func (tr *TableRestore) restoreEngine(
 				wg.Done()
 				rc.regionWorkers.Recycle(w)
 			}()
-			metric.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
+			if metrics != nil {
+				metrics.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
+			}
 			err := cr.restore(ctx, tr, engineID, dataWriter, indexWriter, rc)
 			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
 			if err == nil {
@@ -538,8 +554,10 @@ func (tr *TableRestore) restoreEngine(
 				indexFlushStaus, err = indexWriter.Close(ctx)
 			}
 			if err == nil {
-				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-				metric.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+				if metrics != nil {
+					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
+					metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+				}
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
 						saveCheckpoint(rc, tr, engineID, cr.chunk)
@@ -554,7 +572,9 @@ func (tr *TableRestore) restoreEngine(
 					}
 				}
 			} else {
-				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Add(remainChunkCnt)
+				if metrics != nil {
+					metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Add(remainChunkCnt)
+				}
 				setError(err)
 			}
 		}(restoreWorker, cr)
@@ -605,11 +625,11 @@ func (tr *TableRestore) restoreEngine(
 		if rc.isLocalBackend() && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
 			if _, err2 := dataEngine.Close(context.Background(), dataEngineCfg); err2 != nil {
-				log.L().Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
 			if err2 := trySavePendingChunks(context.Background()); err2 != nil {
-				log.L().Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 			}
 		}
 		return nil, errors.Trace(err)
@@ -849,7 +869,12 @@ func (tr *TableRestore) postProcess(
 	return true, nil
 }
 
-func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns map[string]struct{}) ([]int, error) {
+func parseColumnPermutations(
+	tableInfo *model.TableInfo,
+	columns []string,
+	ignoreColumns map[string]struct{},
+	logger log.Logger,
+) ([]int, error) {
 	colPerm := make([]int, 0, len(tableInfo.Columns)+1)
 
 	columnMap := make(map[string]int)
@@ -881,7 +906,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			if _, ignore := ignoreColumns[colInfo.Name.L]; !ignore {
 				colPerm = append(colPerm, i)
 			} else {
-				log.L().Debug("column ignored by user requirements",
+				logger.Debug("column ignored by user requirements",
 					zap.Stringer("table", tableInfo.Name),
 					zap.String("colName", colInfo.Name.O),
 					zap.Stringer("colType", &colInfo.FieldType),
@@ -890,7 +915,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			}
 		} else {
 			if len(colInfo.GeneratedExprString) == 0 {
-				log.L().Warn("column missing from data file, going to fill with default value",
+				logger.Warn("column missing from data file, going to fill with default value",
 					zap.Stringer("table", tableInfo.Name),
 					zap.String("colName", colInfo.Name.O),
 					zap.Stringer("colType", &colInfo.FieldType),
@@ -955,7 +980,9 @@ func (tr *TableRestore) importKV(
 		return errors.Trace(err)
 	}
 
-	metric.ImportSecondsHistogram.Observe(dur.Seconds())
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ImportSecondsHistogram.Observe(dur.Seconds())
+	}
 
 	failpoint.Inject("SlowDownImport", func() {})
 

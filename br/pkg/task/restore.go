@@ -182,14 +182,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	tsString, err = flags.GetString(FlagStreamRestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -265,7 +265,7 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.Config.Concurrency == 0 {
-		cfg.Config.Concurrency = 32
+		cfg.Config.Concurrency = 16
 	}
 }
 

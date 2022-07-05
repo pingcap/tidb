@@ -12,10 +12,12 @@ go_library(
         "ddl_tiflash_api.go",
         "ddl_worker.go",
         "delete_range.go",
+        "delete_range_util.go",
         "foreign_key.go",
         "generated_column.go",
         "index.go",
         "mock.go",
+        "multi_schema_change.go",
         "options.go",
         "partition.go",
         "placement_policy.go",
@@ -111,6 +113,7 @@ go_library(
 
 go_test(
     name = "ddl_test",
+    timeout = "short",
     srcs = [
         "attributes_sql_test.go",
         "callback_test.go",
@@ -129,6 +132,7 @@ go_test(
         "db_table_test.go",
         "db_test.go",
         "ddl_algorithm_test.go",
+        "ddl_api_test.go",
         "ddl_error_test.go",
         "ddl_test.go",
         "ddl_tiflash_test.go",
@@ -141,6 +145,7 @@ go_test(
         "integration_test.go",
         "main_test.go",
         "modify_column_test.go",
+        "multi_schema_change_test.go",
         "options_test.go",
         "partition_test.go",
         "placement_policy_ddl_test.go",

@@ -175,36 +175,8 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, columnInfos, _, _, _, _, err := checkAddColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if len(columnInfos) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-
-	colNames := make([]model.CIStr, len(columnInfos))
-	originalState := columnInfos[0].State
-	for i, columnInfo := range columnInfos {
-		columnInfos[i].State = model.StateDeleteOnly
-		colNames[i] = columnInfo.Name
-	}
-	ifExists := make([]bool, len(columnInfos))
-
-	job.SchemaState = model.StateDeleteOnly
-	job.Args = []interface{}{colNames, ifExists}
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfos[0].State)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.State = model.JobStateRollingback
-	return ver, dbterror.ErrCancelledDDLJob
-}
-
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, err := checkDropColumn(t, job)
+	_, colInfo, idxInfos, _, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -231,38 +203,6 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	}
 	// In the state of drop column `write only -> delete only -> reorganization`,
 	// We can not rollback now, so just continue to drop column.
-	job.State = model.JobStateRunning
-	return ver, nil
-}
-
-func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfos, _, idxInfos, err := checkDropColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	for _, indexInfo := range idxInfos {
-		switch indexInfo.State {
-		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
-			// We can not rollback now, so just continue to drop index.
-			// In function isJobRollbackable will let job rollback when state is StateNone.
-			// When there is no index related to the drop columns job it is OK, but when there has indices, we should
-			// make sure the job is not rollback.
-			job.State = model.JobStateRunning
-			return ver, nil
-		case model.StatePublic:
-		default:
-			return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-		}
-	}
-
-	// StatePublic means when the job is not running yet.
-	if colInfos[0].State == model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-	// In the state of drop columns `write only -> delete only -> reorganization`,
-	// We can not rollback now, so just continue to drop columns.
 	job.State = model.JobStateRunning
 	return ver, nil
 }
@@ -444,8 +384,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(d, t, job)
-	case model.ActionAddColumns:
-		ver, err = rollingbackAddColumns(d, t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddIndex(w, d, t, job, false)
 	case model.ActionAddPrimaryKey:
@@ -454,8 +392,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddTablePartition(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
-	case model.ActionDropColumns:
-		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionDropIndexes:
@@ -481,6 +417,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
+	case model.ActionMultiSchemaChange:
+		err = rollingBackMultiSchemaChange(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob

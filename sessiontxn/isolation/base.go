@@ -19,19 +19,21 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
 // It provides some common functions below:
 //   - Provides a default `OnInitialize` method to initialize its inner state.
-//   - Provides some methods like `activeTxn` and `prepareTxn` to manage the inner transaction.
+//   - Provides some methods like `activateTxn` and `prepareTxn` to manage the inner transaction.
 //   - Provides default methods `GetTxnInfoSchema`, `GetStmtReadTS` and `GetStmtForUpdateTS` and return the snapshot information schema or ts when `tidb_snapshot` is set.
 //   - Provides other default methods like `Advise`, `OnStmtStart`, `OnStmtRetry` and `OnStmtErrorForNextAction`
 // The subclass can set some inner property of `baseTxnContextProvider` when it is constructed.
@@ -42,15 +44,16 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction)
+	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
-	ctx           context.Context
-	infoSchema    infoschema.InfoSchema
-	txn           kv.Transaction
-	isTxnPrepared bool
+	ctx             context.Context
+	infoSchema      infoschema.InfoSchema
+	txn             kv.Transaction
+	isTxnPrepared   bool
+	enterNewTxnType sessiontxn.EnterNewTxnType
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -59,25 +62,29 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.New("ts functions should not be nil")
 	}
 
-	activeNow := false
+	p.ctx = ctx
+	sessVars := p.sctx.GetSessionVars()
+	activeNow := true
 	switch tp {
-	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		shouldReuseTxn := tp == sessiontxn.EnterNewTxnWithBeginStmt && sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx)
-		if !shouldReuseTxn {
+	case sessiontxn.EnterNewTxnDefault:
+		if err = p.sctx.NewTxn(ctx); err != nil {
+			return err
+		}
+	case sessiontxn.EnterNewTxnWithBeginStmt:
+		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
 			if err = p.sctx.NewTxn(ctx); err != nil {
 				return err
 			}
 		}
-		activeNow = true
+		sessVars.SetInTxn(true)
 	case sessiontxn.EnterNewTxnBeforeStmt:
 		activeNow = false
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
-	p.ctx = ctx
-	p.infoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, domain.GetDomain(p.sctx).InfoSchema())
-	sessVars := p.sctx.GetSessionVars()
+	p.enterNewTxnType = tp
+	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -90,8 +97,14 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		p.onInitializeTxnCtx(txnCtx)
 	}
 	sessVars.TxnCtx = txnCtx
+
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		_, err = p.activeTxn()
+		_, err = p.ActivateTxn()
 	}
 
 	return err
@@ -105,6 +118,10 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	if _, err := p.ActivateTxn(); err != nil {
+		return 0, err
+	}
+
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
@@ -112,21 +129,17 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 }
 
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
+	if _, err := p.ActivateTxn(); err != nil {
+		return 0, err
+	}
+
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return snapshotTS, nil
 	}
 	return p.getStmtForUpdateTSFunc()
 }
 
-func (p *baseTxnContextProvider) Advise(tp sessiontxn.AdviceType) error {
-	switch tp {
-	case sessiontxn.AdviceWarmUp:
-		return p.warmUp()
-	}
-	return nil
-}
-
-func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context) error {
+func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
 	return nil
 }
@@ -147,14 +160,14 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
-	txn, err := p.activeTxn()
+	txn, err := p.ActivateTxn()
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
 }
 
-func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
+func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -163,7 +176,12 @@ func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	txn, err := p.sctx.Txn(true)
+	txnFuture := p.sctx.GetPreparedTxnFuture()
+	if txnFuture == nil {
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
+	}
+
+	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -171,12 +189,38 @@ func (p *baseTxnContextProvider) activeTxn() (kv.Transaction, error) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 
+	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+		sessVars.SetInTxn(true)
+	}
+
+	txn.SetVars(sessVars.KVVars)
+
+	readReplicaType := sessVars.GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, readReplicaType)
+	}
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if sessVars.StmtCtx.WeakConsistency {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+	}
+
+	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
 	if p.onTxnActive != nil {
-		p.onTxnActive(txn)
+		p.onTxnActive(txn, p.enterNewTxnType)
+	}
+
+	if p.sctx.GetSessionVars().InRestrictedSQL {
+		txn.SetOption(kv.RequestSourceInternal, true)
+	}
+
+	if tp := p.sctx.GetSessionVars().RequestSourceType; tp != "" {
+		txn.SetOption(kv.RequestSourceType, tp)
 	}
 
 	p.txn = txn
@@ -188,7 +232,33 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return nil
 	}
 
-	p.sctx.PrepareTSFuture(p.ctx)
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return p.prepareTxnWithTS(snapshotTS)
+	}
+
+	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	return p.replaceTxnTsFuture(future)
+}
+
+func (p *baseTxnContextProvider) prepareTxnWithTS(ts uint64) error {
+	return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(ts))
+}
+
+func (p *baseTxnContextProvider) replaceTxnTsFuture(future oracle.Future) error {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+
+	if txn.Valid() {
+		return nil
+	}
+
+	txnScope := p.sctx.GetSessionVars().TxnCtx.TxnScope
+	if err = p.sctx.PrepareTSFuture(p.ctx, future, txnScope); err != nil {
+		return err
+	}
+
 	p.isTxnPrepared = true
 	return nil
 }
@@ -197,9 +267,67 @@ func (p *baseTxnContextProvider) isTidbSnapshotEnabled() bool {
 	return p.sctx.GetSessionVars().SnapshotTS != 0
 }
 
-func (p *baseTxnContextProvider) warmUp() error {
-	if p.isTidbSnapshotEnabled() {
+// isBeginStmtWithStaleRead indicates whether the current statement is `BeginStmt` type with stale read
+// Because stale read will use `staleread.StalenessTxnContextProvider` for query, so if `staleread.IsStmtStaleness()`
+// returns true in other providers, it means the current statement is `BeginStmt` with stale read
+func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
+	return staleread.IsStmtStaleness(p.sctx)
+}
+
+// AdviseWarmup provides warmup for inner state
+func (p *baseTxnContextProvider) AdviseWarmup() error {
+	if p.isBeginStmtWithStaleRead() {
+		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
 	return p.prepareTxn()
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
+}
+
+// GetSnapshotWithStmtReadTS get snapshot with read ts
+func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	ts, err := p.GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	ts, err := p.GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+// getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related
+// options before return
+func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+		return txn.GetSnapshot(), nil
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS)
+
+	replicaReadType := sessVars.GetReplicaRead()
+	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	}
+
+	return snapshot, nil
 }

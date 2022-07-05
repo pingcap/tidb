@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -117,6 +118,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	}
 	e.retrieved = true
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	// Some data of cluster-level memory tables will be retrieved many times in different inspection rules,
 	// and the cost of retrieving some data is expensive. We use the `TableSnapshot` to cache those data
 	// and obtain them lazily, and provide a consistent view of inspection tables for each inspection rules.
@@ -727,6 +729,7 @@ func (c thresholdCheckInspection) inspect(ctx context.Context, sctx sessionctx.C
 		c.inspectThreshold3,
 		c.inspectForLeaderDrop,
 	}
+	//nolint: prealloc
 	var results []inspectionResult
 	for _, inspect := range inspects {
 		re := inspect(ctx, sctx, filter)
