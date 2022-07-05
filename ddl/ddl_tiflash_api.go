@@ -537,7 +537,6 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 	tiflashStoreIds := make([]int64, len(pollTiFlashContext.TiFlashStores))
 
 	for i, store := range pollTiFlashContext.TiFlashStores {
-		// TBD: not sure it is peer id or store id
 		tiflashStoreIds[i-1] = store.Store.ID
 	}
 
