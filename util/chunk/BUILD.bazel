@@ -55,6 +55,7 @@ go_test(
         "row_container_test.go",
     ],
     embed = [":chunk"],
+    race = "on",
     deps = [
         "//config",
         "//parser/mysql",

@@ -16,10 +16,9 @@ package ast_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDDLVisitorCover(t *testing.T) {

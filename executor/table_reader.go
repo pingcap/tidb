@@ -79,6 +79,7 @@ type TableReaderExecutor struct {
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
+	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	// columns are only required by union scan and virtual column.
@@ -96,7 +97,6 @@ type TableReaderExecutor struct {
 
 	keepOrder bool
 	desc      bool
-	streaming bool
 	paging    bool
 	storeType kv.StoreType
 	// corColInFilter tells whether there's correlated column in filter.
@@ -143,13 +143,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInFilter {
 		if e.storeType == kv.TiFlash {
-			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			execs, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
 			if err != nil {
 				return err
 			}
 			e.dagPB.RootExecutor = execs[0]
 		} else {
-			e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+			e.dagPB.Executors, err = constructDistExec(e.ctx, e.plans)
 			if err != nil {
 				return err
 			}
@@ -333,7 +333,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
-			SetStreaming(e.streaming).
+			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -372,7 +372,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -403,7 +403,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
-		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).

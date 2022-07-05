@@ -850,9 +850,9 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 	}
 	for i := 1; i <= 5; i++ {
 		statsTbl.Columns[int64(i)] = &statistics.Column{
-			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
-			Info:      tbl.Columns[i-1],
-			Loaded:    true,
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tbl.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 		}
 	}
 

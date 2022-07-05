@@ -1,16 +1,16 @@
-//// Copyright 2015 PingCAP, Inc.
-////
-//// Licensed under the Apache License, Version 2.0 (the "License");
-//// you may not use this file except in compliance with the License.
-//// You may obtain a copy of the License at
-////
-////     http://www.apache.org/licenses/LICENSE-2.0
-////
-//// Unless required by applicable law or agreed to in writing, software
-//// distributed under the License is distributed on an "AS IS" BASIS,
-//// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//// See the License for the specific language governing permissions and
-//// limitations under the License.
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 package ddl_test
 
@@ -113,7 +113,8 @@ func TestParallelDDL(t *testing.T) {
 			qLen2 := int64(0)
 			var err error
 			for {
-				checkErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+				checkErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 					m := meta.NewMeta(txn)
 					qLen1, err = m.DDLJobQueueLen()
 					if err != nil {
@@ -231,7 +232,7 @@ func TestParallelDDL(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	wg.Run(func() {
 		tk := testkit.NewTestKit(t, store)
-		_, err := tk.Exec("alter table test_parallel_ddl_2.t3 add index db3_idx1(c2)")
+		err := tk.ExecToErr("alter table test_parallel_ddl_2.t3 add index db3_idx1(c2)")
 		require.Error(t, err)
 		rs := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.seq_num')")
 		seqIDs[10], _ = strconv.Atoi(rs.Rows()[0][0].(string))
@@ -264,4 +265,40 @@ func TestParallelDDL(t *testing.T) {
 	require.Less(t, seqIDs[2], seqIDs[5])
 	require.Less(t, seqIDs[5], seqIDs[8])
 	require.Less(t, seqIDs[8], seqIDs[10])
+}
+
+func TestJobNeedGC(t *testing.T) {
+	job := &model.Job{Type: model.ActionAddIndex, State: model.JobStateCancelled}
+	require.False(t, ddl.JobNeedGCForTest(job))
+
+	job = &model.Job{Type: model.ActionAddIndex, State: model.JobStateDone}
+	require.False(t, ddl.JobNeedGCForTest(job))
+	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateDone}
+	require.False(t, ddl.JobNeedGCForTest(job))
+	job = &model.Job{Type: model.ActionAddIndex, State: model.JobStateRollbackDone}
+	require.True(t, ddl.JobNeedGCForTest(job))
+	job = &model.Job{Type: model.ActionAddPrimaryKey, State: model.JobStateRollbackDone}
+	require.True(t, ddl.JobNeedGCForTest(job))
+
+	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
+		SubJobs: []*model.SubJob{
+			{Type: model.ActionAddIndex, State: model.JobStateDone},
+			{Type: model.ActionAddColumn, State: model.JobStateDone},
+			{Type: model.ActionRebaseAutoID, State: model.JobStateDone},
+		}}}
+	require.False(t, ddl.JobNeedGCForTest(job))
+	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateDone, MultiSchemaInfo: &model.MultiSchemaInfo{
+		SubJobs: []*model.SubJob{
+			{Type: model.ActionAddIndex, State: model.JobStateDone},
+			{Type: model.ActionDropColumn, State: model.JobStateDone},
+			{Type: model.ActionRebaseAutoID, State: model.JobStateDone},
+		}}}
+	require.True(t, ddl.JobNeedGCForTest(job))
+	job = &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateRollbackDone, MultiSchemaInfo: &model.MultiSchemaInfo{
+		SubJobs: []*model.SubJob{
+			{Type: model.ActionAddIndex, State: model.JobStateRollbackDone},
+			{Type: model.ActionAddColumn, State: model.JobStateRollbackDone},
+			{Type: model.ActionRebaseAutoID, State: model.JobStateCancelled},
+		}}}
+	require.True(t, ddl.JobNeedGCForTest(job))
 }

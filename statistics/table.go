@@ -128,6 +128,19 @@ func (t *TableMemoryUsage) TotalIdxTrackingMemUsage() (sum int64) {
 	return sum
 }
 
+// TotalColTrackingMemUsage returns total columns' tracking memory usage
+func (t *TableMemoryUsage) TotalColTrackingMemUsage() (sum int64) {
+	for _, col := range t.ColumnsMemUsage {
+		sum += col.TrackingMemUsage()
+	}
+	return sum
+}
+
+// TotalTrackingMemUsage return total tracking memory usage
+func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
+	return t.TotalIdxTrackingMemUsage() + t.TotalColTrackingMemUsage()
+}
+
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64
@@ -338,42 +351,37 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
-type tableColumnID struct {
-	TableID  int64
-	ColumnID int64
+type neededStatsMap struct {
+	m     sync.RWMutex
+	items map[model.TableItemID]struct{}
 }
 
-type neededColumnMap struct {
-	m    sync.RWMutex
-	cols map[tableColumnID]struct{}
-}
-
-func (n *neededColumnMap) AllCols() []tableColumnID {
+func (n *neededStatsMap) AllItems() []model.TableItemID {
 	n.m.RLock()
-	keys := make([]tableColumnID, 0, len(n.cols))
-	for key := range n.cols {
+	keys := make([]model.TableItemID, 0, len(n.items))
+	for key := range n.items {
 		keys = append(keys, key)
 	}
 	n.m.RUnlock()
 	return keys
 }
 
-func (n *neededColumnMap) insert(col tableColumnID) {
+func (n *neededStatsMap) insert(col model.TableItemID) {
 	n.m.Lock()
-	n.cols[col] = struct{}{}
+	n.items[col] = struct{}{}
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Delete(col tableColumnID) {
+func (n *neededStatsMap) Delete(col model.TableItemID) {
 	n.m.Lock()
-	delete(n.cols, col)
+	delete(n.items, col)
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Length() int {
+func (n *neededStatsMap) Length() int {
 	n.m.RLock()
 	defer n.m.RUnlock()
-	return len(n.cols)
+	return len(n.items)
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
@@ -885,8 +893,9 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			t.Indices[idx.ID] = &Index{
-				Info:      idx,
-				Histogram: *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
+				PhysicalID: fakePhysicalID,
+				Info:       idx,
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
 		}
 	}
 	return t

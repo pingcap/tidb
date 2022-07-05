@@ -29,7 +29,7 @@ func (impl *HashJoinImpl) CalcCost(outCount float64, children ...memo.Implementa
 	hashJoin := impl.plan.(*plannercore.PhysicalHashJoin)
 	// The children here are only used to calculate the cost.
 	hashJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
-	selfCost := hashJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount())
+	selfCost := hashJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount(), false, 0)
 	impl.cost = selfCost + children[0].GetCost() + children[1].GetCost()
 	return impl.cost
 }
@@ -56,7 +56,7 @@ func (impl *MergeJoinImpl) CalcCost(outCount float64, children ...memo.Implement
 	mergeJoin := impl.plan.(*plannercore.PhysicalMergeJoin)
 	// The children here are only used to calculate the cost.
 	mergeJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
-	selfCost := mergeJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount())
+	selfCost := mergeJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount(), 0)
 	impl.cost = selfCost + children[0].GetCost() + children[1].GetCost()
 	return impl.cost
 }

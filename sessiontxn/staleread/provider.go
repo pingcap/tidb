@@ -18,18 +18,22 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/table/temptable"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
 type StalenessTxnContextProvider struct {
+	ctx  context.Context
 	sctx sessionctx.Context
 	is   infoschema.InfoSchema
 	ts   uint64
+	txn  kv.Transaction
 }
 
 // NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider
@@ -46,6 +50,16 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
+// GetTxnScope returns the current txn scope
+func (p *StalenessTxnContextProvider) GetTxnScope() string {
+	return p.sctx.GetSessionVars().TxnCtx.TxnScope
+}
+
+// GetReadReplicaScope returns the read replica scope
+func (p *StalenessTxnContextProvider) GetReadReplicaScope() string {
+	return config.GetTxnScopeFromConfig()
+}
+
 // GetStmtReadTS returns the read timestamp
 func (p *StalenessTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	return p.ts, nil
@@ -58,25 +72,24 @@ func (p *StalenessTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) error {
+	p.ctx = ctx
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault, sessiontxn.EnterNewTxnWithBeginStmt:
-		if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
-			return err
-		}
-		p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-		if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-			return err
-		}
+		return p.activateStaleTxn()
 	case sessiontxn.EnterNewTxnWithReplaceProvider:
-		if p.is == nil {
-			is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
-			if err != nil {
-				return err
-			}
-			p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
-		}
+		return p.enterNewStaleTxnWithReplaceProvider()
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
+	}
+}
+
+func (p *StalenessTxnContextProvider) activateStaleTxn() error {
+	if err := p.sctx.NewStaleTxnWithStartTS(p.ctx, p.ts); err != nil {
+		return err
+	}
+	p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	if err := p.sctx.GetSessionVars().SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+		return err
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
@@ -85,9 +98,47 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 	return nil
 }
 
-// OnStmtStart is the hook that should be called when a new statement started
-func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
+func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() error {
+	if p.is == nil {
+		is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
+		if err != nil {
+			return err
+		}
+		p.is = is
+	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	txnCtx.TxnScope = kv.GlobalTxnScope
+	txnCtx.IsStaleness = true
+	txnCtx.InfoSchema = p.is
 	return nil
+}
+
+// OnStmtStart is the hook that should be called when a new statement starte
+func (p *StalenessTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
+	p.ctx = ctx
+	return nil
+}
+
+// ActivateTxn activates the transaction.
+func (p *StalenessTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
+	if p.txn != nil {
+		return p.txn, nil
+	}
+
+	err := p.activateStaleTxn()
+	if err != nil {
+		return nil, err
+	}
+
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	p.txn = txn
+
+	return p.txn, nil
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
@@ -96,11 +147,46 @@ func (p *StalenessTxnContextProvider) OnStmtErrorForNextAction(_ sessiontxn.Stmt
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry
-func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
+func (p *StalenessTxnContextProvider) OnStmtRetry(ctx context.Context) error {
+	p.ctx = ctx
 	return nil
 }
 
-// Advise is used to give advice to provider
-func (p *StalenessTxnContextProvider) Advise(_ sessiontxn.AdviceType) error {
+// AdviseWarmup provides warmup for inner state
+func (p *StalenessTxnContextProvider) AdviseWarmup() error {
 	return nil
+}
+
+// AdviseOptimizeWithPlan providers optimization according to the plan
+func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+	return nil
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts and set the transaction related options
+// before return
+func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	if txn.Valid() {
+		return txn.GetSnapshot(), nil
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, p.ts)
+
+	replicaReadType := sessVars.GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	}
+	snapshot.SetOption(kv.IsStalenessReadOnly, true)
+
+	return snapshot, nil
+}
+
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
+func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }

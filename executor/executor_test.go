@@ -2069,42 +2069,6 @@ func TestCheckTableClusterIndex(t *testing.T) {
 	tk.MustExec("admin check table admin_test;")
 }
 
-func TestCoprocessorStreamingFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, value int, index idx(id))")
-	// Add some data to make statistics work.
-	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
-
-	tests := []struct {
-		sql    string
-		expect bool
-	}{
-		{"select * from t", true},                         // TableReader
-		{"select * from t where id = 5", true},            // IndexLookup
-		{"select * from t where id > 5", true},            // Filter
-		{"select * from t limit 3", false},                // Limit
-		{"select avg(id) from t", false},                  // Aggregate
-		{"select * from t order by value limit 3", false}, // TopN
-	}
-
-	ctx := context.Background()
-	for _, test := range tests {
-		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
-			comment := fmt.Sprintf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
-			require.Equal(t, test.expect, req.Streaming, comment)
-		})
-		rs, err := tk.Session().Execute(ctx1, test.sql)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs[0], fmt.Sprintf("sql: %v", test.sql))
-	}
-}
-
 func TestIncorrectLimitArg(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3506,10 +3470,10 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
 
-		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
@@ -5453,7 +5417,8 @@ func TestHistoryReadInTxn(t *testing.T) {
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
 				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
-				rows, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, int64(1), rows[0].GetInt64(0))

@@ -75,9 +75,7 @@ type IndexMergeReaderExecutor struct {
 	startTS      uint64
 	tableRequest *tipb.DAGRequest
 	// columns are only required by union scan.
-	columns           []*model.ColumnInfo
-	partialStreamings []bool
-	tableStreaming    bool
+	columns []*model.ColumnInfo
 	*dataReaderBuilder
 
 	// fields about accessing partition tables
@@ -295,7 +293,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error
-					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						worker.syncErr(e.resultCh, err)
 						return
 					}
@@ -306,7 +304,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
-					SetStreaming(e.partialStreamings[workID]).
+					SetTxnScope(e.txnScope).
 					SetReadReplicaScope(e.readReplicaScope).
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -386,9 +384,9 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:            e.dagPBs[workID],
 					startTS:          e.startTS,
+					txnScope:         e.txnScope,
 					readReplicaScope: e.readReplicaScope,
 					isStaleness:      e.isStaleness,
-					streaming:        e.partialStreamings[workID],
 					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
@@ -404,7 +402,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				if e.isCorColInPartialFilters[workID] {
-					if e.dagPBs[workID].Executors, _, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
+					if e.dagPBs[workID].Executors, err = constructDistExec(e.ctx, e.partialPlans[workID]); err != nil {
 						worker.syncErr(e.resultCh, err)
 						return
 					}
@@ -607,15 +605,15 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		table:            tbl,
 		dagPB:            e.tableRequest,
 		startTS:          e.startTS,
+		txnScope:         e.txnScope,
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,
-		streaming:        e.tableStreaming,
 		columns:          e.columns,
 		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:            e.tblPlans,
 	}
 	if e.isCorColInTableFilter {
-		if tableReaderExec.dagPB.Executors, _, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
+		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
 			return nil, err
 		}
 	}
@@ -825,6 +823,9 @@ func (w *partialIndexWorker) fetchHandles(
 			return count, err
 		}
 		if len(handles) == 0 {
+			if basicStats != nil {
+				basicStats.Record(time.Since(start), chk.NumRows())
+			}
 			return count, nil
 		}
 		count += int64(len(handles))
