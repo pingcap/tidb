@@ -120,6 +120,7 @@ type DDL interface {
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
+	UpdateTableReplicaInfos(ctx sessionctx.Context, physicalIDs []int64, available bool) error
 	RepairTable(ctx sessionctx.Context, table *ast.TableName, createStmt *ast.CreateTableStmt) error
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 	DropSequence(ctx sessionctx.Context, tableIdent ast.Ident, ifExists bool) (err error)
@@ -193,6 +194,15 @@ type DDL interface {
 type limitJobTask struct {
 	job *model.Job
 	err chan error
+}
+
+type TiFlashReplicaDDLArg struct {
+	SchemaID   int64  `json:"schema_id"`
+	TableID    int64  `json:"table_id"`
+	SchemaName string `json:"schema_name"`
+	TableName  string `json:"table_name"`
+	PhysicalID int64  `json:"physical_id"`
+	Available  bool   `json:"available"`
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.

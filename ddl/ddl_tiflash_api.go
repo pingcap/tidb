@@ -606,25 +606,8 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 
 	invalidTableIDs = removeDuplicate(invalidTableIDs)
 
-	for _, invalidTableID := range invalidTableIDs {
-		tableInfo, exist := tableMap[invalidTableID]
-		if !exist {
-			logutil.BgLogger().Info("No exist table info in Tiflash", zap.Int64("tableId", invalidTableID))
-			continue
-		}
-
-		if !tableInfo.Available {
-			continue
-		}
-
-		// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
-		if err := d.UpdateTableReplicaInfo(ctx, invalidTableID, false); err != nil {
-			if infoschema.ErrTableNotExists.Equal(err) && tableInfo.IsPartition {
-				logutil.BgLogger().Info("updating TiFlash replica status err, maybe false alarm by blocking add", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
-			} else {
-				logutil.BgLogger().Error("updating TiFlash replica status err", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
-			}
-		}
+	if err := d.UpdateTableReplicaInfos(ctx, invalidTableIDs, false); err != nil {
+		logutil.BgLogger().Error("updating TiFlash replica status err.", zap.Error(err))
 	}
 
 	return allReplicaReady, nil

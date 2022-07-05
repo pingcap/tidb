@@ -5153,14 +5153,66 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
 	}
 
+	singleDDLArg := [1]TiFlashReplicaDDLArg{
+		{
+			SchemaID:   db.ID,
+			TableID:    tb.Meta().ID,
+			SchemaName: db.Name.L,
+			TableName:  tb.Meta().Name.L,
+			PhysicalID: physicalID,
+			Available:  available,
+		},
+	}
+
 	job := &model.Job{
-		SchemaID:   db.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: db.Name.L,
-		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionUpdateTiFlashReplicaStatus,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{available, physicalID},
+		Args:       []interface{}{singleDDLArg},
+	}
+	err := d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// UpdateTableReplicaInfo updates the tables flash replica infos.
+func (d *ddl) UpdateTableReplicaInfos(ctx sessionctx.Context, physicalIDs []int64, available bool) error {
+	is := d.infoCache.GetLatest()
+
+	var ddlArg []TiFlashReplicaDDLArg
+
+	for _, physicalID := range physicalIDs {
+		tb, ok := is.TableByID(physicalID)
+		if !ok {
+			tb, _, _ = is.FindTableByPartitionID(physicalID)
+			if tb == nil {
+				return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
+			}
+		}
+
+		tbInfo := tb.Meta()
+		if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Available == available) ||
+			(tbInfo.ID != physicalID && available == tbInfo.TiFlashReplica.IsPartitionAvailable(physicalID)) {
+			continue
+		}
+
+		db, ok := is.SchemaByTable(tbInfo)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
+		}
+		ddlArg = append(ddlArg, TiFlashReplicaDDLArg{
+			SchemaID:   db.ID,
+			TableID:    tb.Meta().ID,
+			SchemaName: db.Name.L,
+			TableName:  tb.Meta().Name.L,
+			PhysicalID: physicalID,
+			Available:  available,
+		})
+	}
+
+	job := &model.Job{
+		Type:       model.ActionUpdateTiFlashReplicaStatus,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{ddlArg},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
