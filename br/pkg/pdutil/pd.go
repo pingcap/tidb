@@ -38,8 +38,6 @@ const (
 	regionCountPrefix    = "pd/api/v1/stats/region"
 	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
-	// resetTSPrefix        = "pd/api/v1/admin/reset-ts"
-	// recoveringMarkPrefix = "pd/api/v1/admin/recovering-mark"
 	baseAllocIDPrefix    = "pd/api/v1/admin/base-alloc-id"
 	minResolvedTSPrefix  = "pd/api/v1/min-resolved-ts"
 	regionLabelPrefix    = "pd/api/v1/config/region-label/rule"
