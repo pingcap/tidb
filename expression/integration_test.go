@@ -7455,5 +7455,6 @@ func TestShowVariableOfTlsVersion(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tls_version';").
-		Check(testkit.Rows("tls_version TLSv1.1"))
+		Check(testkit.Rows("tls_version TLSv1.1,TLSv1.2,TLSv1.3"))
+
 }
