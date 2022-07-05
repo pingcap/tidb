@@ -176,6 +176,21 @@ This will also need to to related change when TiDB to do `loadInfoSchema`.
 
 ing~
 
+#### DDL on parent table
+
+rename table/column should check and update related child table.
+
+modify column problem: https://www.percona.com/blog/2019/06/04/ddl-queries-foreign-key-columns-mysql-pxc/
+
+drop parent table should return error.
+
+```sql
+test> drop table if exists t1;
+(3730, "Cannot drop table 't1' referenced by a foreign key constraint 't2_ibfk_1' on table 't2'.")
+```
+
+drop index which used by foreign key should be rejected.
+
 ### DML
 
 #### On Child Table Insert Or Update (Or Load data?), need to Find FK column value whether exist in Parent table:
@@ -199,6 +214,9 @@ ing~
 5. put column value into parent fk column value cache.
 
 #### On Parent Table update/delete
+
+Problems:
+- How the execution plan look like? MySQL 的 plan 无法看出有 foreign key 的修改，返回的 affect row 也不包括看到 child table 的影响行数。 https://www.percona.com/blog/hidden-cost-of-foreign-key-constraints-in-mysql/
 
 1. check related child table row exist.
 2. modify related child table row by referential action:
