@@ -159,7 +159,8 @@ func TestPrepared(t *testing.T) {
 
 		execStmt := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: []types.Datum{types.NewDatum(1)}}
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), execStmt, tk.Session().GetInfoSchema().(infoschema.InfoSchema))
+		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), execStmt,
+			tk.Session().GetInfoSchema().(infoschema.InfoSchema))
 		require.NoError(t, err)
 		require.Equal(t, query, stmt.OriginText())
 

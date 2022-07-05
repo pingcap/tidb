@@ -1810,11 +1810,12 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	}
 
 	args := []types.Datum{types.NewDatum(3401544)}
+	is := se.GetInfoSchema()
 
 	b.ResetTimer()
 	stmtExec := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, se.GetInfoSchema().(infoschema.InfoSchema))
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
 		if err != nil {
 			b.Fatal(err)
 		}
