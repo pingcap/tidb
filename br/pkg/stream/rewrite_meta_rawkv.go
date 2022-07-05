@@ -16,6 +16,7 @@ package stream
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/tablecodec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 )
@@ -432,9 +434,21 @@ func (sr *SchemasReplace) rewriteValue(
 }
 
 // RewriteKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
-func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
+func (sr *SchemasReplace) RewriteKvEntry(ctx context.Context, e *kv.Entry, cf string, insertDeleteRange InsertDeleteRange) (*kv.Entry, error) {
 	// skip mDDLJob
+
+	// job.type -> action type
+	// job.state -> [8 (queue) -> 1 (running) -> 4 (done) -> 6 (sync)]
+	// job.start_ts -> TSO of putting job into TiKV
+	// job.dependency_id -> dependent job
 	if !strings.HasPrefix(string(e.Key), "mDB") {
+		if strings.HasPrefix(string(e.Key), "mDDLJobH") { // mDDLJobHistory
+			job := &model.Job{}
+			job.Decode(e.Value)
+			if job.State == model.JobStateSynced {
+				return nil, sr.deleteRange(ctx, job, insertDeleteRange)
+			}
+		}
 		return nil, nil
 	}
 
@@ -461,3 +475,104 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 		return nil, nil
 	}
 }
+
+type InsertDeleteRange func(context.Context, int64, int64, string, string, uint64) error
+
+func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, insertDeleteRange InsertDeleteRange) error {
+	switch job.Type {
+	case model.ActionDropTable, model.ActionTruncateTable:
+		oldDBID := job.SchemaID
+		oldTableID := job.TableID
+		dbReplace, exist := sr.DbMap[oldDBID]
+		if !exist {
+			return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldDBID")
+		}
+
+		tableReplace, exist := dbReplace.TableMap[oldTableID]
+		if !exist {
+			return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldTableID")
+		}
+
+		log.Info("deleteRange", zap.Int64("newDBID", dbReplace.NewDBID), zap.Int64("newDBID", tableReplace.NewTableID))
+		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
+		var startKey kv.Key // unused
+		var physicalTableIDs []int64
+		var ruleIDs []string // unused
+		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+			return errors.Trace(err)
+		}
+		if len(physicalTableIDs) > 0 {
+			var elementID int64 = 0
+			for _, oldPid := range physicalTableIDs {
+				newPid, exist := tableReplace.PartitionMap[oldPid]
+				if !exist {
+					return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldPartitionID")
+				}
+				startKey = tablecodec.EncodeTablePrefix(newPid)
+				endKey := tablecodec.EncodeTablePrefix(newPid + 1)
+				newJobID, err := sr.genGenGlobalID(context.Background())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if err := insertDeleteRange(ctx, newJobID, elementID, hex.EncodeToString(startKey), hex.EncodeToString(endKey), sr.RewriteTS); err != nil {
+					return errors.Trace(err)
+				}
+				elementID++
+			}
+			return nil
+		}
+		startKey = tablecodec.EncodeTablePrefix(tableReplace.NewTableID)
+		endKey := tablecodec.EncodeTablePrefix(tableReplace.NewTableID + 1)
+		newJobID, err := sr.genGenGlobalID(context.Background())
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := insertDeleteRange(ctx, newJobID, 0, hex.EncodeToString(startKey), hex.EncodeToString(endKey), sr.RewriteTS); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
+	return nil
+}
+
+/*
+func jobNeedGC(job *model.Job) bool {
+	if !job.IsCancelled() {
+		switch job.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			return true
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+			return true
+		}
+	}
+	return false
+}
+*/
+/*
+	// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
+	var startKey kv.Key
+	var physicalTableIDs []int64
+	var ruleIDs []string
+	if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+		return errors.Trace(err)
+	}
+	if len(physicalTableIDs) > 0 {
+		for _, pid := range physicalTableIDs {
+			startKey = tablecodec.EncodeTablePrefix(pid)
+			endKey := tablecodec.EncodeTablePrefix(pid + 1)
+			if err := doInsert(ctx, s, job.ID, ea.alloc(), startKey, endKey, now, fmt.Sprintf("partition ID is %d", pid)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+	startKey = tablecodec.EncodeTablePrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	return
+	//return doInsert(ctx, s, job.ID, ea.alloc(), startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
+*/

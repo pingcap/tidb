@@ -1877,7 +1877,7 @@ func (rc *Client) RestoreMetaKVFile(
 		}
 		log.Debug("txn entry", zap.Uint64("key-ts", ts), zap.Int("txnKey-len", len(txnEntry.Key)),
 			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
-		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
+		newEntry, err := sr.RewriteKvEntry(ctx, &txnEntry, file.Cf, rc.db.InsertDeleteRange)
 		if err != nil {
 			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
 				logutil.Key("txn-key", txnEntry.Key))

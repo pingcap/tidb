@@ -20,6 +20,12 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
+	insertDeleteRangeSQLValue  = `(%?, %?, %?, %?, %?)`
+	insertDeleteRangeSQL       = insertDeleteRangeSQLPrefix + insertDeleteRangeSQLValue
+)
+
 // DB is a TiDB instance, not thread-safe.
 type DB struct {
 	se glue.Session
@@ -331,6 +337,12 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	}
 
 	return err
+}
+
+// InsertDeleteRange insert entry into table `gc_delete_range`.
+func (db *DB) InsertDeleteRange(ctx context.Context, jobID int64, elementID int64, startKeyEncoded string, endKeyEncoded string, ts uint64) error {
+	db.se.ExecuteInternal(ctx, insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+	return nil
 }
 
 // Close closes the connection.
