@@ -225,7 +225,7 @@ var (
 	PollTiFlashBackoffCapacity int = 1000
 	// PollTiFlashBackoffRate is growth rate of exponential backoff threshold.
 	PollTiFlashBackoffRate TiFlashTick = 1.5
-	// PollTiFlashUpdateInterval is the interval between every pollTiFlashPeerInfo call.
+	// PollTiFlashPeerInfoInterval is the interval between every pollTiFlashPeerInfo call.
 	PollTiFlashPeerInfoInterval = 2 * time.Minute
 	// LastTimeSyncTiFlashPeerInfo indicates the time of the last call pollTiFlashPeerInfo
 	LastTimeSyncTiFlashPeerInfo = time.Now()
@@ -293,6 +293,7 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplica
 	}
 }
 
+// GetTiFlashReplicaMapInfo parses tableID + model.TableInfo into map[int64]TiFlashReplicaStatus
 func GetTiFlashReplicaMapInfo(tblInfo *model.TableInfo, tableMap *map[int64]TiFlashReplicaStatus) {
 	if tblInfo.TiFlashReplica == nil {
 		// reject tables that has no tiflash replica such like `INFORMATION_SCHEMA`
