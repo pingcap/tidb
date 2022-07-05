@@ -693,7 +693,7 @@ func TestSessionStatesSystemVar(t *testing.T) {
 	require.Equal(t, true, keep)
 }
 
-func TestShowVariableOfTlsVersion(t *testing.T) {
+func TestGetRuntimeTLSVersion(t *testing.T) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.MinTLSVersion = "TLSv1.2"
