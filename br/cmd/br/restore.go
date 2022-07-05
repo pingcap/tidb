@@ -65,6 +65,26 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func runEBSMetaRestoreCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.RestoreEBSConfig{}
+	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+	if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+		log.Error("failed to restore EBS meta", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // NewRestoreCommand returns a restore subcommand.
 func NewRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -90,6 +110,7 @@ func NewRestoreCommand() *cobra.Command {
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
 		newStreamRestoreCommand(),
+		newEBSMetaRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -160,6 +181,20 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
+	command.Hidden = true
+	return command
+}
+
+func newEBSMetaRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "ebs",
+		Short: "phase 1 of EBS-based restore to restore volumes and other info",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runEBSMetaRestoreCommand(command, task.EBSMetaRestoreCmd)
+		},
+	}
+	task.DefineRestoreEBSMetaFlags(command)
 	command.Hidden = true
 	return command
 }

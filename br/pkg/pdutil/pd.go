@@ -38,6 +38,8 @@ const (
 	regionCountPrefix    = "pd/api/v1/stats/region"
 	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
+	resetTSPrefix        = "pd/api/v1/admin/reset-ts"
+	recoveringMarkPrefix = "pd/api/v1/admin/recovering-mark"
 	baseAllocIDPrefix    = "pd/api/v1/admin/base-alloc-id"
 	minResolvedTSPrefix  = "pd/api/v1/min-resolved-ts"
 	regionLabelPrefix    = "pd/api/v1/config/region-label/rule"
@@ -765,6 +767,71 @@ func (p *PdController) GetBaseAllocID(ctx context.Context) (uint64, error) {
 		return d.Id, nil
 	}
 	return 0, errors.Trace(err)
+}
+
+func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error {
+	reqData, _ := json.Marshal(&struct {
+		Id uint64 `json:"id"`
+	}{
+		Id: id,
+	})
+	var err error
+	for _, addr := range p.addrs {
+		_, e := pdRequest(ctx, addr, baseAllocIDPrefix, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+		if e != nil {
+			log.Warn("failed to recover base alloc id", zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		return nil
+	}
+	return errors.Trace(err)
+}
+
+func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
+	// reset-ts of PD will never set ts < current pd ts
+	// we set force-use-larger=true to allow ts > current pd ts + 24h(on default)
+	reqData, _ := json.Marshal(&struct {
+		Tso            uint64 `json:"tso"`
+		ForceUseLarger bool   `json:"force-use-larger"`
+	}{
+		Tso:            ts,
+		ForceUseLarger: true,
+	})
+	var err error
+	for _, addr := range p.addrs {
+		_, e := pdRequest(ctx, addr, resetTSPrefix, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+		if e != nil {
+			log.Warn("failed to reset ts", zap.Uint64("ts", ts), zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		return nil
+	}
+	return errors.Trace(err)
+}
+
+func (p *PdController) MarkRecovering(ctx context.Context) error {
+	return p.operateRecoveringMark(ctx, http.MethodPost)
+}
+
+func (p *PdController) UnmarkRecovering(ctx context.Context) error {
+	return p.operateRecoveringMark(ctx, http.MethodDelete)
+}
+
+func (p *PdController) operateRecoveringMark(ctx context.Context, method string) error {
+	var err error
+	for _, addr := range p.addrs {
+		_, e := pdRequest(ctx, addr, recoveringMarkPrefix, p.cli, method, nil)
+		if e != nil {
+			log.Warn("failed to operate recovering mark", zap.String("method", method),
+				zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		return nil
+	}
+	return errors.Trace(err)
 }
 
 // RegionLabel is the label of a region. This struct is partially copied from

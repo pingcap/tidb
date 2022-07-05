@@ -5,13 +5,13 @@ package task
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/aws"
 	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -26,7 +26,6 @@ import (
 
 const (
 	flagBackupVolumeFile = "volume-file"
-	flagBackupDryRun     = "dry-run"
 )
 
 // BackupEBSConfig is the configuration specific for backup tasks.
@@ -55,7 +54,7 @@ func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
-	flags.Bool(flagBackupDryRun, false, "don't access to aws environment if set to true")
+	flags.Bool(flagDryRun, false, "don't access to aws environment if set to true")
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -74,7 +73,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	defer cancel()
 
 	// receive the volume info from TiDB deployment tools.
-	backupInfo := &backup.EBSBackupInfo{}
+	backupInfo := &config.EBSBasedBRMeta{}
 	err := backupInfo.ConfigFromFile(cfg.VolumeFile)
 	if err != nil {
 		return errors.Trace(err)
@@ -169,27 +168,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
 
-	// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
-	// progress of ebs backup. and user can get the progress through `kubectl get job`
 	progress := g.StartProgress(ctx, cmdName, int64(storeCount), !cfg.LogProgress)
-	go func() {
-		fileName := "progress.txt"
-		// remove tmp file
-		defer os.Remove(fileName)
+	go progressFileWriterRoutine(ctx, progress, int64(storeCount))
 
-		for progress.GetCurrent() < int64(storeCount) {
-			time.Sleep(500 * time.Millisecond)
-			cur := progress.GetCurrent()
-			p := float64(cur) / float64(storeCount)
-			p *= 100
-			err = os.WriteFile(fileName, []byte(fmt.Sprintf("%.2f", p)), 0600)
-			if err != nil {
-				log.Warn("failed to update tmp progress file", zap.Error(err))
-			}
-		}
-	}()
-
-	ec2Session, err := backup.NewEC2Session()
+	ec2Session, err := aws.NewEC2Session()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -231,7 +213,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	return nil
 }
 
-func saveMetaFile(c context.Context, backupInfo *backup.EBSBackupInfo, externalStorage storage.ExternalStorage) error {
+func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage storage.ExternalStorage) error {
 	data, err := json.Marshal(backupInfo)
 	if err != nil {
 		return errors.Trace(err)

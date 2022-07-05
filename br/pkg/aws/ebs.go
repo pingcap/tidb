@@ -1,10 +1,8 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package backup
+package aws
 
 import (
-	"encoding/json"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -14,120 +12,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"go.uber.org/zap"
 )
-
-// EBSVolume is passed by TiDB deployment tools: TiDB Operator and TiUP(in future)
-// we should do snapshot inside BR, because we need some logic to determine the order of snapshot starts.
-// TODO finish the info with TiDB Operator developer.
-type EBSVolume struct {
-	ID         string `json:"volume_id" toml:"volume_id"`
-	Type       string `json:"type" toml:"type"`
-	SnapshotID string `json:"snapshot_id" toml:"snapshot_id"`
-	Status     string `json:"status" toml:"status"`
-}
-
-type EBSStore struct {
-	StoreID uint64       `json:"store_id" toml:"store_id"`
-	Volumes []*EBSVolume `json:"volumes" toml:"volumes"`
-}
-
-// ClusterInfo represents the tidb cluster level meta infos. such as
-// pd cluster id/alloc id, cluster resolved ts and tikv configuration.
-type ClusterInfo struct {
-	Version    string            `json:"cluster_version" toml:"cluster_version"`
-	MaxAllocID uint64            `json:"max_alloc_id" toml:"max_alloc_id"`
-	ResolvedTS uint64            `json:"resolved_ts" toml:"resolved_ts"`
-	Replicas   map[string]uint64 `json:"replicas" toml:"replicas"`
-}
-
-type Kubernetes struct {
-	PVs     []interface{}          `json:"pvs" toml:"pvs"`
-	PVCs    []interface{}          `json:"pvcs" toml:"pvcs"`
-	CRD     interface{}            `json:"crd_tidb_cluster" toml:"crd_tidb_cluster"`
-	Options map[string]interface{} `json:"options" toml:"options"`
-}
-
-type TiKVComponent struct {
-	Replicas int         `json:"replicas"`
-	Stores   []*EBSStore `json:"stores"`
-}
-
-type PDComponent struct {
-	Replicas int `json:"replicas"`
-}
-
-type TiDBComponent struct {
-	Replicas int `json:"replicas"`
-}
-
-type EBSBackupInfo struct {
-	ClusterInfo    *ClusterInfo           `json:"cluster_info" toml:"cluster_info"`
-	TiKVComponent  *TiKVComponent         `json:"tikv" toml:"tikv"`
-	TiDBComponent  *TiDBComponent         `json:"tidb" toml:"tidb"`
-	PDComponent    *PDComponent           `json:"pd" toml:"pd"`
-	KubernetesMeta *Kubernetes            `json:"kubernetes" toml:"kubernetes"`
-	Options        map[string]interface{} `json:"options" toml:"options"`
-	Region         string                 `json:"region" toml:"region"`
-}
-
-func (c *EBSBackupInfo) GetStoreCount() uint64 {
-	if c.TiKVComponent == nil {
-		return 0
-	}
-	return uint64(len(c.TiKVComponent.Stores))
-}
-
-func (c *EBSBackupInfo) String() string {
-	cfg, err := json.Marshal(c)
-	if err != nil {
-		return "<nil>"
-	}
-	return string(cfg)
-}
-
-// ConfigFromFile loads config from file.
-func (c *EBSBackupInfo) ConfigFromFile(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = json.Unmarshal(data, c)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (c *EBSBackupInfo) CheckClusterInfo() {
-	if c.ClusterInfo == nil {
-		c.ClusterInfo = &ClusterInfo{}
-	}
-}
-
-func (c *EBSBackupInfo) SetAllocID(id uint64) {
-	c.CheckClusterInfo()
-	c.ClusterInfo.MaxAllocID = id
-}
-
-func (c *EBSBackupInfo) SetResolvedTS(id uint64) {
-	c.CheckClusterInfo()
-	c.ClusterInfo.ResolvedTS = id
-}
-
-func (c *EBSBackupInfo) SetClusterVersion(version string) {
-	c.CheckClusterInfo()
-	c.ClusterInfo.Version = version
-}
-
-func (c *EBSBackupInfo) SetSnapshotIDs(idMap map[uint64]map[string]string) {
-	for _, store := range c.TiKVComponent.Stores {
-		for _, volume := range store.Volumes {
-			volume.SnapshotID = idMap[store.StoreID][volume.ID]
-		}
-	}
-}
 
 type EC2Session struct {
 	ec2 *ec2.EC2
@@ -150,7 +38,7 @@ func NewEC2Session() (*EC2Session, error) {
 // It will do the following works.
 // 1. determine the order of volume snapshot.
 // 2. send snapshot requests to aws.
-func (e *EC2Session) StartsEBSSnapshot(backupInfo *EBSBackupInfo) (map[uint64]map[string]string, error) {
+func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[uint64]map[string]string, error) {
 	snapIDMap := make(map[uint64]map[string]string)
 	for _, store := range backupInfo.TiKVComponent.Stores {
 		volumes := store.Volumes
