@@ -808,6 +808,9 @@ func (d SchemaTracker) handleModifyColumn(
 // renameIndex is used by AlterTable.
 func (d SchemaTracker) renameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
 	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tblInfo)
 	if duplicate {
 		return nil

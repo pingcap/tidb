@@ -250,6 +250,7 @@ func TestAlterTableChangeColumn(t *testing.T) {
 
 	tblInfo, err := testDDL.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
+	require.Equal(t, "text", tblInfo.Columns[1].GetTypeDesc())
 
 	sql = "ALTER TABLE test.t1 CHANGE COLUMN b b TEXT(10000000)"
 	alterAST, err = p.ParseOneStmt(sql, "", "")
