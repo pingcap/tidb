@@ -119,7 +119,7 @@ func handleTimeout(stmtCtx *stmtctx.StatementContext) error {
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsEssentialStatsLoaded, which means its stats was evicted previously
 func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableItemID) map[model.TableItemID]struct{} {
-	var histNeededIndices map[model.TableItemID]struct{}
+	histNeededIndices := make(map[model.TableItemID]struct{})
 	stats := domain.GetDomain(ctx).StatsHandle()
 	for _, column := range histNeededColumns {
 		if column.IsIndex {
