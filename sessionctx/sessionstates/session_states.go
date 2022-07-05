@@ -29,6 +29,8 @@ type SessionStateType int
 const (
 	// StatePrepareStmt represents prepared statements.
 	StatePrepareStmt SessionStateType = iota
+	// StateBinding represents session SQL bindings.
+	StateBinding
 )
 
 // PreparedStmtInfo contains the information about prepared statements, both text and binary protocols.
@@ -74,4 +76,6 @@ type SessionStates struct {
 	LastAffectedRows     int64                        `json:"affected-rows,omitempty"`
 	LastInsertID         uint64                       `json:"last-insert-id,omitempty"`
 	Warnings             []stmtctx.SQLWarn            `json:"warnings,omitempty"`
+	// Define it as string to avoid cycle import.
+	Bindings string `json:"bindings,omitempty"`
 }

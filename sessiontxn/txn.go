@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -69,6 +70,19 @@ func CanReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
 	// initialized with snapshot ts.
 	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
+}
+
+// GetSnapshotWithTS returns a snapshot with ts.
+func GetSnapshotWithTS(s sessionctx.Context, ts uint64) kv.Snapshot {
+	snap := s.GetStore().GetSnapshot(kv.Version{Ver: ts})
+	snap.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(s))
+	if s.GetSessionVars().InRestrictedSQL {
+		snap.SetOption(kv.RequestSourceInternal, true)
+	}
+	if tp := s.GetSessionVars().RequestSourceType; tp != "" {
+		snap.SetOption(kv.RequestSourceType, tp)
+	}
+	return snap
 }
 
 // SetTxnAssertionLevel sets assertion level of a transactin. Note that assertion level should be set only once just

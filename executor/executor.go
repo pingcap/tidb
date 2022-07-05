@@ -68,7 +68,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -341,7 +340,8 @@ type CancelDDLJobsExec struct {
 // Open implements the Executor Open interface.
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
-	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	errInTxn := kv.RunInNewTxn(ctx, e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
 		e.errs, err = ddl.CancelJobs(txn, e.jobIDs)
 		return
 	})
@@ -1298,7 +1298,7 @@ func init() {
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
 
-		e := newExecutorBuilder(sctx, is, nil, oracle.GlobalTxnScope)
+		e := newExecutorBuilder(sctx, is, nil)
 		exec := e.build(p)
 		if e.err != nil {
 			return nil, e.err

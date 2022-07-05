@@ -12,6 +12,7 @@ go_library(
         "ddl_tiflash_api.go",
         "ddl_worker.go",
         "delete_range.go",
+        "delete_range_util.go",
         "foreign_key.go",
         "generated_column.go",
         "index.go",
@@ -112,6 +113,7 @@ go_library(
 
 go_test(
     name = "ddl_test",
+    timeout = "short",
     srcs = [
         "attributes_sql_test.go",
         "callback_test.go",
