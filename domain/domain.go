@@ -371,6 +371,11 @@ func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
 }
 
+// SetDDL sets DDL to domain, it's only used in tests.
+func (do *Domain) SetDDL(d ddl.DDL) {
+	do.ddl = d
+}
+
 // InfoSyncer gets infoSyncer from domain.
 func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
