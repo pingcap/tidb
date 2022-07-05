@@ -987,10 +987,25 @@ type Info struct {
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
+// GetDDLInfoWithNewTxn returns DDL information using a new txn.
+func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
+	err := sessiontxn.NewTxn(context.Background(), s)
+	if err != nil {
+		return nil, err
+	}
+	info, err := GetDDLInfo(s)
+	s.RollbackTxn(context.Background())
+	return info, err
+}
+
 // GetDDLInfo returns DDL information.
-func GetDDLInfo(txn kv.Transaction) (*Info, error) {
+func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
+	txn, err := s.Txn(true)
+	if err != nil {
+		return nil, err
+	}
 	t := meta.NewMeta(txn)
 
 	info.Jobs = make([]*model.Job, 0, 2)
