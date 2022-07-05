@@ -568,7 +568,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		tbInfo.Partition.IntervalNullPart = true
 	}
 
-	err := GeneratePartDefsFromInterval(ctx, tbInfo, partOptions, nil)
+	err := GeneratePartDefsFromInterval(ctx, ast.AlterTablePartition, tbInfo, partOptions, nil)
 	if err != nil {
 		return err
 	}
@@ -586,52 +586,86 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	return nil
 }
 
-func GeneratePartDefsFromInterval(ctx sessionctx.Context, tbInfo *model.TableInfo, spec *ast.PartitionOptions, partInfo *model.PartitionInfo) error {
+func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions, partInfo *model.PartitionInfo) error {
+	if partitionOptions == nil {
+		return nil
+	}
 	var firstVal, currVal types.Datum
 	var intervalExpr, startExpr, lastExpr, currExpr, partExpr ast.ExprNode
-	var isAlter bool
 	var timeUnit ast.TimeUnitType
 	if partInfo != nil {
-		isAlter = true
-		timeUnit = ast.ToTimeUnit(tbInfo.Partition.IntervalUnit)
-		lastExpr = spec.Expr
-		if len(tbInfo.Partition.Columns) == 0 {
-			// TODO: Add checks for bigint unsigned, float, decimal etc.
-			i, err := strconv.Atoi(tbInfo.Partition.IntervalLast)
-			if err != nil {
-				return err
-			}
-			startExpr = ast.NewValueExpr(i, "", "")
-			i, err = strconv.Atoi(tbInfo.Partition.IntervalExpr)
-			if err != nil {
-				return err
-			}
-			intervalExpr = ast.NewValueExpr(i, "", "")
-		} else {
-			// TODO: fix for RANGE COLUMNS (int_col)?
-			startExpr = ast.NewValueExpr(tbInfo.Partition.IntervalLast, "", "")
-			intervalExpr = ast.NewValueExpr(tbInfo.Partition.IntervalExpr, "", "")
+		if tp == ast.AlterTablePartition {
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions")
 		}
+		timeUnit = ast.ToTimeUnit(tbInfo.Partition.IntervalUnit)
+		lastExpr = partitionOptions.Expr
+		switch tp {
+		case ast.AlterTableDropFirstPartition:
+			if len(tbInfo.Partition.Columns) == 0 {
+				// TODO: Add checks for bigint unsigned, float, decimal etc.
+				i, err := strconv.Atoi(tbInfo.Partition.IntervalFirst)
+				if err != nil {
+					return err
+				}
+				startExpr = ast.NewValueExpr(i, "", "")
+				i, err = strconv.Atoi(tbInfo.Partition.IntervalExpr)
+				if err != nil {
+					return err
+				}
+				intervalExpr = ast.NewValueExpr(i, "", "")
+			} else {
+				// TODO: fix for RANGE COLUMNS (int_col)?
+				startExpr = ast.NewValueExpr(tbInfo.Partition.IntervalFirst, "", "")
+				intervalExpr = ast.NewValueExpr(tbInfo.Partition.IntervalExpr, "", "")
+			}
+		case ast.AlterTableAddLastPartition:
+			if len(tbInfo.Partition.Columns) == 0 {
+				// TODO: Add checks for bigint unsigned, float, decimal etc.
+				i, err := strconv.Atoi(tbInfo.Partition.IntervalLast)
+				if err != nil {
+					return err
+				}
+				startExpr = ast.NewValueExpr(i, "", "")
+				i, err = strconv.Atoi(tbInfo.Partition.IntervalExpr)
+				if err != nil {
+					return err
+				}
+				intervalExpr = ast.NewValueExpr(i, "", "")
+			} else {
+				// TODO: fix for RANGE COLUMNS (int_col)?
+				startExpr = ast.NewValueExpr(tbInfo.Partition.IntervalLast, "", "")
+				intervalExpr = ast.NewValueExpr(tbInfo.Partition.IntervalExpr, "", "")
+			}
+		default:
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions, no known alter type")
+		}
+		partInfo.IntervalUnit = tbInfo.Partition.IntervalUnit
+		partInfo.IntervalNullPart = tbInfo.Partition.IntervalNullPart
+		partInfo.IntervalMaxPart = tbInfo.Partition.IntervalMaxPart
+		partInfo.IntervalExpr = tbInfo.Partition.IntervalExpr
 	} else {
-		startExpr = *spec.Interval.FirstRangeEnd
-		lastExpr = *spec.Interval.LastRangeEnd
-		intervalExpr = spec.Interval.IntervalExpr.Expr
-		timeUnit = spec.Interval.IntervalExpr.TimeUnit
+		if tp != ast.AlterTablePartition {
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating INTERVAL partitions")
+		}
+		startExpr = *partitionOptions.Interval.FirstRangeEnd
+		lastExpr = *partitionOptions.Interval.LastRangeEnd
+		intervalExpr = partitionOptions.Interval.IntervalExpr.Expr
+		timeUnit = partitionOptions.Interval.IntervalExpr.TimeUnit
 	}
 	lastVal, err := expression.EvalAstExpr(ctx, lastExpr)
 	if err != nil {
 		return err
 	}
 	var partDefs []*ast.PartitionDefinition
-	if spec.Definitions != nil {
-		partDefs = spec.Definitions
+	if partitionOptions.Definitions != nil {
+		partDefs = partitionOptions.Definitions
 	} else {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
 	for i := 0; i < PartitionCountLimit; i++ {
 		if i == 0 {
 			currExpr = startExpr
-			if isAlter {
+			if tp == ast.AlterTableAddLastPartition {
 				// ALTER TABLE LAST PARTITION ...
 				// Current LAST PARTITION/start already exists, skip to next partition
 				continue
@@ -698,7 +732,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tbInfo *model.TableInf
 	if len(tbInfo.Partition.Definitions)+len(partDefs) > PartitionCountLimit {
 		return errors.Trace(dbterror.ErrTooManyPartitions)
 	}
-	spec.Definitions = partDefs
+	partitionOptions.Definitions = partDefs
 	if partInfo == nil {
 		tbInfo.Partition.IntervalFirst, err = firstVal.ToString()
 		if err != nil {
@@ -722,16 +756,22 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tbInfo *model.TableInf
 			return err
 		}
 	} else {
-		partInfo.IntervalExpr = tbInfo.Partition.IntervalExpr
-		partInfo.IntervalFirst = tbInfo.Partition.IntervalFirst
-		partInfo.IntervalLast = tbInfo.Partition.IntervalLast
-		partInfo.IntervalLast, err = lastVal.ToString()
-		if err != nil {
-			return err
+		switch tp {
+		case ast.AlterTableDropFirstPartition:
+			partInfo.IntervalLast = tbInfo.Partition.IntervalLast
+			partInfo.IntervalFirst, err = lastVal.ToString()
+			if err != nil {
+				return err
+			}
+		case ast.AlterTableAddLastPartition:
+			partInfo.IntervalFirst = tbInfo.Partition.IntervalFirst
+			partInfo.IntervalLast, err = lastVal.ToString()
+			if err != nil {
+				return err
+			}
+		default:
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions, no known alter type")
 		}
-		partInfo.IntervalUnit = tbInfo.Partition.IntervalUnit
-		partInfo.IntervalNullPart = tbInfo.Partition.IntervalNullPart
-		partInfo.IntervalMaxPart = tbInfo.Partition.IntervalMaxPart
 	}
 	return nil
 }
@@ -1337,7 +1377,8 @@ func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string)
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
-	if err := job.DecodeArgs(&partNames); err != nil {
+	var partInfo *model.PartitionInfo
+	if err := job.DecodeArgs(&partNames, &partInfo); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -1445,6 +1486,13 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			}
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
+		// Handle INTERVAL table partitioning
+		// TODO: Also adjust INTERVAL on normal DROP PARTITION list_of_partitions (adjust if possible, remove INTERVAL otherwise)
+		// TODO: Also check for NULL partition and adjust INTERVAL
+		if tblInfo.Partition.IntervalExpr != "" {
+			// TODO: validate that the interval is really the same as for the first non-null partition?
+			tblInfo.Partition.IntervalFirst = partInfo.IntervalFirst
+		}
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)

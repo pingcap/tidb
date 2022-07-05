@@ -3785,6 +3785,43 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	var partInfo *model.PartitionInfo
+	if spec.Tp == ast.AlterTableDropFirstPartition {
+		partInfo = &model.PartitionInfo{}
+		if len(spec.Partition.Definitions) != 0 {
+			// TODO: Fix the error
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+				"Internal error during generating altered INTERVAL partitions, table info already contains partition definitions")
+		}
+		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition, partInfo)
+		if err != nil {
+			return err
+		}
+		pNullOffset := 0
+		if meta.Partition.IntervalNullPart {
+			pNullOffset = 1
+		}
+		if len(spec.Partition.Definitions) == 0 ||
+			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
+			// TODO: Fix the error
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+				"Internal error during generating altered INTERVAL partitions, number of partitions does not match")
+		}
+		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+				"Internal error during generating altered INTERVAL partitions, number of partition names does not match")
+		}
+		for i, part := range spec.Partition.Definitions {
+			if part.Name.L != meta.Partition.Definitions[i+pNullOffset].Name.L {
+				// TODO: Fix the error
+				return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+					"Internal error during generating altered INTERVAL partitions, names does not match")
+			}
+			spec.PartitionNames = append(spec.PartitionNames, part.Name)
+		}
+		// Use the last generated partition as First, i.e. do not drop the last name in the slice
+		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+	}
 	partNames := make([]string, len(spec.PartitionNames))
 	for i, partCIName := range spec.PartitionNames {
 		partNames[i] = partCIName.L
@@ -3798,6 +3835,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
+	// TODO, what happens during upgrade/downgrade if there is a drop partition job in the queue?
 	job := &model.Job{
 		SchemaID:    schema.ID,
 		TableID:     meta.ID,
@@ -3806,7 +3844,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		TableName:   meta.Name.L,
 		Type:        model.ActionDropTablePartition,
 		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{partNames},
+		Args:        []interface{}{partNames, partInfo},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6312,7 +6350,7 @@ func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec
 	if len(spec.PartDefinitions) > 0 {
 		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}
-	return GeneratePartDefsFromInterval(ctx, meta, spec.Partition, part)
+	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition, part)
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
