@@ -276,7 +276,7 @@ func (p *baseTxnContextProvider) prepareTxn(considerSnapshotTS bool) error {
 		return nil
 	}
 
-	// Sometimes, we need to prepare a latest oracle ts future even the SnapshotTS is set.
+	// Sometimes, we need to prepare the latest oracle ts future even the SnapshotTS is set.
 	if considerSnapshotTS {
 		if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 			return p.prepareTxnWithTS(snapshotTS)
