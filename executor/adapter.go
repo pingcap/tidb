@@ -315,7 +315,9 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
 		staleread.AssertStmtStaleness(a.Ctx, ret.IsStaleness)
-		sessiontxn.AssertTxnManagerReadTS(a.Ctx, ret.LastSnapshotTS)
+		if ret.IsStaleness {
+			sessiontxn.AssertTxnManagerReadTS(a.Ctx, ret.LastSnapshotTS)
+		}
 	})
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
