@@ -385,6 +385,7 @@ func getRange(start, end int64) []*ranger.Range {
 func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int unsigned)")
@@ -927,6 +928,7 @@ func (s *testStatsSuite) TestRangeStepOverflow(c *C) {
 func (s *testStatsSuite) TestSmallRangeEstimation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int)")

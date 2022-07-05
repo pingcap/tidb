@@ -424,6 +424,7 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 		dom.Close()
 		store.Close()
 	}()
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
 	for i := 0; i < 10; i++ {
