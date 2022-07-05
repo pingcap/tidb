@@ -7133,7 +7133,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+          "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
       {
@@ -7146,7 +7146,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+          "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
       {
@@ -7159,7 +7159,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+          "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
       {
@@ -7172,7 +7172,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+          "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
       {
@@ -7185,7 +7185,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+          "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
       {
@@ -7198,7 +7198,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:true, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"
+          "[planner:1815]Join hints are conflict, you can only specify one type of join"
         ]
       },
       {
@@ -7476,7 +7476,7 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ ORDERED_HASH_JOIN(s, t) */. Maybe you can use the table alias name"
+          "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ ORDERED_HASH_JOIN(t) */. Maybe you can use the table alias name"
         ]
       },
       {

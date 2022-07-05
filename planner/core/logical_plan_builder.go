@@ -574,12 +574,23 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferHashJoin
 	}
-	if hintInfo.ifPreferOrderedHashJoin(lhsAlias) {
+
+	// Check the ordered_hash_join hint. Do not merge them together because when we use the function,
+	// it can check whether the table in hint is used or not.
+	if hintInfo.ifPreferBuildSideHashJoin(lhsAlias) {
 		p.preferJoinType |= preferLeftAsHashJoinBuild
 	}
-	if hintInfo.ifPreferOrderedHashJoin(rhsAlias) {
+	if hintInfo.ifPreferProbeSideHashJoin(rhsAlias) {
+		p.preferJoinType |= preferLeftAsHashJoinBuild
+	}
+
+	if hintInfo.ifPreferBuildSideHashJoin(rhsAlias) {
 		p.preferJoinType |= preferRightAsHashJoinBuild
 	}
+	if hintInfo.ifPreferProbeSideHashJoin(lhsAlias) {
+		p.preferJoinType |= preferRightAsHashJoinBuild
+	}
+
 	if hintInfo.ifPreferINLJ(lhsAlias) {
 		p.preferJoinType |= preferLeftAsINLJInner
 	}
@@ -3519,15 +3530,15 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
-		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables, orderedHashJoinTables, BCTables []hintTableInfo
-		indexHintList, indexMergeHintList                                                                      []indexHintInfo
-		tiflashTables, tikvTables                                                                              []hintTableInfo
-		aggHints                                                                                               aggHintInfo
-		timeRangeHint                                                                                          ast.HintTimeRange
-		limitHints                                                                                             limitHintInfo
-		leadingJoinOrder                                                                                       []hintTableInfo
-		leadingHintCnt                                                                                         int
-		orderedHJHintCnt                                                                                       int
+		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables, BCTables []hintTableInfo
+		buildSideHJTables, probeSideHJTables                                            []hintTableInfo
+		indexHintList, indexMergeHintList                                               []indexHintInfo
+		tiflashTables, tikvTables                                                       []hintTableInfo
+		aggHints                                                                        aggHintInfo
+		timeRangeHint                                                                   ast.HintTimeRange
+		limitHints                                                                      limitHintInfo
+		leadingJoinOrder                                                                []hintTableInfo
+		leadingHintCnt                                                                  int
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -3554,10 +3565,13 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintOrderedHJ:
-			if orderedHJHintCnt == 0 {
-				orderedHashJoinTables = append(orderedHashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			if len(hint.Tables) > 1 {
+				buildSideHJTables = append(buildSideHJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables[:1], b.hintProcessor, currentLevel)...)
+				probeSideHJTables = append(probeSideHJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables[1:], b.hintProcessor, currentLevel)...)
+			} else {
+				buildSideHJTables = append(buildSideHJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 			}
-			orderedHJHintCnt++
+
 		case HintHashAgg:
 			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -3653,16 +3667,13 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
 	}
-	if orderedHJHintCnt > 1 {
-		orderedHashJoinTables = orderedHashJoinTables[:0]
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one ordered_hash_join hint in one query block at most, when multiple ordered_hash_join hints are used, all ordered_hash_join hints will be invalid"))
-	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,
 		broadcastJoinTables:       BCTables,
 		indexNestedLoopJoinTables: indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
 		hashJoinTables:            hashJoinTables,
-		orderedHashJoinTables:     orderedHashJoinTables,
+		buildSideHJTables:         buildSideHJTables,
+		probeSideHJTables:         probeSideHJTables,
 		indexHintList:             indexHintList,
 		tiflashTables:             tiflashTables,
 		tikvTables:                tikvTables,
@@ -3691,7 +3702,8 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintBCJ, TiDBBroadCastJoin, hintInfo.broadcastJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
-	b.appendUnmatchedJoinHintWarning(HintOrderedHJ, "", hintInfo.orderedHashJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintOrderedHJ, "", hintInfo.buildSideHJTables)
+	b.appendUnmatchedJoinHintWarning(HintOrderedHJ, "", hintInfo.probeSideHJTables)
 	b.appendUnmatchedJoinHintWarning(HintLeading, "", hintInfo.leadingJoinOrder)
 	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
@@ -4965,12 +4977,23 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		if b.TableHints().ifPreferHashJoin(outerAlias, innerAlias) {
 			joinPlan.preferJoinType |= preferHashJoin
 		}
-		if b.TableHints().ifPreferOrderedHashJoin(outerAlias) {
+
+		// Check the ordered_hash_join hint. Do not merge them together because when we use the function,
+		// it can check whether the table in hint is used or not.
+		if b.TableHints().ifPreferBuildSideHashJoin(outerAlias) {
 			joinPlan.preferJoinType |= preferLeftAsHashJoinBuild
 		}
-		if b.TableHints().ifPreferOrderedHashJoin(innerAlias) {
+		if b.TableHints().ifPreferProbeSideHashJoin(innerAlias) {
+			joinPlan.preferJoinType |= preferLeftAsHashJoinBuild
+		}
+
+		if b.TableHints().ifPreferBuildSideHashJoin(innerAlias) {
 			joinPlan.preferJoinType |= preferRightAsHashJoinBuild
 		}
+		if b.TableHints().ifPreferProbeSideHashJoin(outerAlias) {
+			joinPlan.preferJoinType |= preferRightAsHashJoinBuild
+		}
+
 		if b.TableHints().ifPreferINLJ(innerAlias) {
 			joinPlan.preferJoinType = preferRightAsINLJInner
 		}
@@ -4981,7 +5004,8 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			joinPlan.preferJoinType = preferRightAsINLMJInner
 		}
 		// If there're multiple join hints, they're conflict.
-		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
+		if containDifferentJoinTypes(joinPlan.preferJoinType) {
+			joinPlan.preferJoinType = 0
 			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
 		}
 	}

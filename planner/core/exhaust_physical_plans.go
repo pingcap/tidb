@@ -368,35 +368,42 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) ([]PhysicalP
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return nil, false
 	}
-	useLeftToBuild := (p.preferJoinType & preferLeftAsHashJoinBuild) > 0
-	useRightToBuild := (p.preferJoinType & preferRightAsHashJoinBuild) > 0
-	forced := useLeftToBuild || useRightToBuild || (p.preferJoinType&preferHashJoin > 0)
+	forceLeftToBuild := (p.preferJoinType & preferLeftAsHashJoinBuild) > 0
+	forceRightToBuild := (p.preferJoinType & preferRightAsHashJoinBuild) > 0
+	forceHashJoin := (p.preferJoinType & preferHashJoin) > 0
+	if forceLeftToBuild && forceRightToBuild {
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some ORDERED_HASH_JOIN hints are conflicts, please check the hints"))
+		forceLeftToBuild = false
+		forceRightToBuild = false
+	}
+	forced := forceLeftToBuild || forceRightToBuild || forceHashJoin
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
-		if useLeftToBuild || useRightToBuild {
+		if forceLeftToBuild || forceRightToBuild {
 			// Do not support specifying the build side.
-			forced = false
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(fmt.Sprintf("We can't use the ORDERED_HASH_JOIN hint for %s, please check the hint", p.JoinType)))
+			forced = forceHashJoin
 		}
 	case LeftOuterJoin:
-		if !useLeftToBuild {
+		if !forceLeftToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		}
-		if !useRightToBuild {
+		if !forceRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		}
 	case RightOuterJoin:
-		if !useLeftToBuild {
+		if !forceLeftToBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		}
-		if !useRightToBuild {
+		if !forceRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
 		}
 	case InnerJoin:
-		if useLeftToBuild {
+		if forceLeftToBuild {
 			joins = append(joins, p.getHashJoin(prop, 0, false))
-		} else if useRightToBuild {
+		} else if forceRightToBuild {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
 			joins = append(joins, p.getHashJoin(prop, 1, false))

@@ -87,18 +87,19 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
-	sortMergeJoinTables   []hintTableInfo
-	broadcastJoinTables   []hintTableInfo
-	hashJoinTables        []hintTableInfo
-	orderedHashJoinTables []hintTableInfo
-	indexHintList         []indexHintInfo
-	tiflashTables         []hintTableInfo
-	tikvTables            []hintTableInfo
-	aggHints              aggHintInfo
-	indexMergeHintList    []indexHintInfo
-	timeRangeHint         ast.HintTimeRange
-	limitHints            limitHintInfo
-	leadingJoinOrder      []hintTableInfo
+	sortMergeJoinTables []hintTableInfo
+	broadcastJoinTables []hintTableInfo
+	hashJoinTables      []hintTableInfo
+	buildSideHJTables   []hintTableInfo
+	probeSideHJTables   []hintTableInfo
+	indexHintList       []indexHintInfo
+	tiflashTables       []hintTableInfo
+	tikvTables          []hintTableInfo
+	aggHints            aggHintInfo
+	indexMergeHintList  []indexHintInfo
+	timeRangeHint       ast.HintTimeRange
+	limitHints          limitHintInfo
+	leadingJoinOrder    []hintTableInfo
 }
 
 type limitHintInfo struct {
@@ -212,12 +213,12 @@ func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.hashJoinTables)
 }
 
-func (info *tableHintInfo) ifPreferOrderedHashJoin(tableNames ...*hintTableInfo) bool {
-	if len(info.orderedHashJoinTables) == 0 {
-		return false
-	}
-	info.matchTableName(tableNames, info.orderedHashJoinTables[1:])
-	return info.matchTableName(tableNames, info.orderedHashJoinTables[:1])
+func (info *tableHintInfo) ifPreferBuildSideHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.buildSideHJTables)
+}
+
+func (info *tableHintInfo) ifPreferProbeSideHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.probeSideHJTables)
 }
 
 func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
