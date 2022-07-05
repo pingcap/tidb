@@ -98,7 +98,9 @@ require (
 require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/charithe/durationcheck v0.0.9
+	github.com/daixiang0/gci v0.3.4
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
+	github.com/golangci/misspell v0.3.5
 	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
 	github.com/kisielk/errcheck v1.6.1
@@ -108,7 +110,10 @@ require (
 	honnef.co/go/tools v0.0.1-2020.1.4
 )
 
-require github.com/kisielk/gotool v1.0.0 // indirect
+require (
+	github.com/hexops/gotextdiff v1.0.3 // indirect
+	github.com/kisielk/gotool v1.0.0 // indirect
+)
 
 require (
 	cloud.google.com/go v0.100.2 // indirect
