@@ -579,28 +579,31 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 		return true, nil
 	}
 
-	var invalidTableIDs []int64
+	invalidTableWithPeerIDs := make(map[int64][]int64)
 	for _, invaildRegion := range invaildRegions.Regions {
-		var invalidPeerIDs []int64
 		for _, downPeer := range invaildRegion.DownPeers {
 			if isTiflashPeer(tiflashStoreIDs, downPeer.Peer.ID) {
-				invalidPeerIDs = append(invalidPeerIDs, downPeer.Peer.ID)
+				invalidTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)
+				invalidTableWithPeerIDs[invalidTableID] = append(invalidTableWithPeerIDs[invalidTableID], downPeer.Peer.ID)
 			}
 		}
 
 		for _, pendingPeer := range invaildRegion.PendingPeers {
 			if isTiflashPeer(tiflashStoreIDs, pendingPeer.ID) {
-				invalidPeerIDs = append(invalidPeerIDs, pendingPeer.ID)
+				invalidTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)
+				invalidTableWithPeerIDs[invalidTableID] = append(invalidTableWithPeerIDs[invalidTableID], pendingPeer.ID)
 			}
 		}
+	}
 
-		if len(invalidPeerIDs) != 0 {
+	var invalidTableIDs []int64
+	if len(invalidTableWithPeerIDs) != 0 {
+
+		for invalidTableID, invalidPeerIDs := range invalidTableWithPeerIDs {
 			sort.Slice(invalidPeerIDs, func(i, j int) bool { return invalidPeerIDs[i] < invalidPeerIDs[j] })
-
 			invalidPeerIDs = removeDuplicate(invalidPeerIDs)
 			if isTiflashAllPeerDown(tiflashStoreIDs, invalidPeerIDs) {
-				invaildTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)
-				invalidTableIDs = append(invalidTableIDs, invaildTableID)
+				invalidTableIDs = append(invalidTableIDs, invalidTableID)
 			}
 		}
 	}

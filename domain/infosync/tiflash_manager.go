@@ -203,6 +203,7 @@ func (m *TiFlashPDPlacementManager) GetPDInvalidRegionsInfo(ctx context.Context,
 	}
 
 	regionInfo = (*regionInfo).Merge(&tempRegionInfo)
+	logutil.BgLogger().Info("Got down|pending", zap.Int64("region counts", regionInfo.Count))
 	return nil
 }
 
