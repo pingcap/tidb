@@ -586,6 +586,14 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	return nil
 }
 
+// GeneratePartDefsFromInterval generates range partitions from INTERVAL partitioning.
+// Handles
+// - CREATE TABLE: all partitions are generated
+// - ALTER TABLE FIRST PARTITION (expr): Drops all partitions before the partition matching the expr (i.e. sets that partition as the new first partition)
+//                                       i.e. will return the partitions from old FIRST partition to (and including) new FIRST partition
+// - ALTER TABLE LAST PARTITION (expr): Creates new partitions from (excluding) old LAST partition to (including) new LAST partition
+// The various Interval options are updated and set in partitionInfo (if given, i.e. for all except the CREATE TABLE scenario)
+// And the partition definitions will be set on partitionOptions
 func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions, partInfo *model.PartitionInfo) error {
 	if partitionOptions == nil {
 		return nil
