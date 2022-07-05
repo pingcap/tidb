@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1813,7 +1814,7 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	b.ResetTimer()
 	stmtExec := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec)
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, se.GetInfoSchema().(infoschema.InfoSchema))
 		if err != nil {
 			b.Fatal(err)
 		}

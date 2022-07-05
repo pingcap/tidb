@@ -331,12 +331,12 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, execStmt *ast.ExecuteStmt) (*ExecStmt, bool, bool, error) {
+func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
+	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err
@@ -344,6 +344,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ex
 
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
+		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
 	})
 
 	stmt := &ExecStmt{

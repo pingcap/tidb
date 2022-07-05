@@ -2248,7 +2248,8 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 		}
 	})
 
-	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt)
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
 	if err != nil {
 		return nil, err
 	}
