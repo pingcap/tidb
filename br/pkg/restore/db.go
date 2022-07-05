@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -448,6 +449,24 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 // DDLJobBlockListRule rule for filter ddl job with type in block list.
 func DDLJobBlockListRule(ddlJob *model.Job) bool {
 	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
+// GetExistedUserDBs get dbs created or modified by users
+func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
+	databases := dom.InfoSchema().AllSchemas()
+	existedDatabases := make([]*model.DBInfo, 0, 16)
+	for _, db := range databases {
+		dbName, _ := utils.GetSysDBName(db.Name)
+		if utils.IsInSysDBs(dbName) {
+			continue
+		} else if dbName == "test" && len(db.Tables) == 0 {
+			continue
+		} else {
+			existedDatabases = append(existedDatabases, db)
+		}
+	}
+
+	return existedDatabases
 }
 
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {

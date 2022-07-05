@@ -17,6 +17,14 @@ import (
 // temporaryDBNamePrefix is the prefix name of system db, e.g. mysql system db will be rename to __TiDB_BR_Temporary_mysql
 const temporaryDBNamePrefix = "__TiDB_BR_Temporary_"
 
+var sysDBMap = map[string]struct{}{
+	"INFORMATION_SCHEMA": {},
+	"PERFORMANCE_SCHEMA": {},
+	"METRICS_SCHEMA":     {},
+	"INSPECTION_SCHEMA":  {},
+	"MYSQL":              {},
+}
+
 // NeedAutoID checks whether the table needs backing up with an autoid.
 func NeedAutoID(tblInfo *model.TableInfo) bool {
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
@@ -100,6 +108,11 @@ func EncloseDBAndTable(database, table string) string {
 // Currently, the only system DB is mysql.
 func IsSysDB(dbLowerName string) bool {
 	return dbLowerName == mysql.SystemDB
+}
+
+func IsInSysDBs(dbName string) bool {
+	_, ok := sysDBMap[strings.ToUpper(dbName)]
+	return ok
 }
 
 // TemporaryDBName makes a 'private' database name.
