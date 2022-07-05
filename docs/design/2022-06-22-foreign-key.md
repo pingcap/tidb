@@ -54,6 +54,8 @@ stored generated column 上的外键约束不能使用 CASCADE、SET NULL 或 SE
 
 Foreign Key 的约束检测由 [foreign_key_checks](https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_foreign_key_checks) 控制，其默认值是 `ON`，有 `GLOBAL` 和 `SESSION` 两种作用域。
 
+设置这个变量 global 作用域需要检查 `SUPER` or `SYSTEM_VARIABLES_ADMIN ` 权限. 设置 session 作用域则不需要。
+
 以下场景可能会用到 `foreign_key_checks`：
 - Drop 被外键引用的父表失败时，关闭 `foreign_key_checks` 后就能成功删除了，以及其子表中的外键定义也会被删除。
 - 用 mysqldump 导入数据时，如果启用外键约束检测，则必须按顺序先导入父表，再导入子表。关闭 `foreign_key_checks` 后就能按任意顺序导入了。
@@ -128,27 +130,52 @@ Query OK, 1 row affected
 Time: 0.041s
 ```
 
-## Technical Design
+## DDL Technical Design
+
+### Table Information Changes
+Table's foreign key information will be stored in `model.TableInfo`:
 
 ```go
-// in table info
-
-// FKChildInfo provides refered child table info.
-type FKChildTableInfo struct {
-       TableName   CIStr
-       FKIndexName CIStr
-       Cols        []CIStr
+// TableInfo provides meta data describing a DB table.
+type TableInfo struct {
+	...
+	ForeignKeys      []*FKInfo         `json:"fk_info"`
+	CitedForeignKeys []*CitedFKInfo    `json:"cited_fk_info"`
+	...
 }
 
+// FKInfo provides meta data describing a foreign key constraint.
+type FKInfo struct {
+    ID        int64       `json:"id"`
+    Name      CIStr       `json:"fk_name"`
+    RefSchema CIStr       `json:"ref_schema"`
+    RefTable  CIStr       `json:"ref_table"`
+    RefCols   []CIStr     `json:"ref_cols"`
+    Cols      []CIStr     `json:"cols"`
+    OnDelete  int         `json:"on_delete"`
+    OnUpdate  int         `json:"on_update"`
+    State     SchemaState `json:"state"`
+}
 
+// CitedFKInfo provides the cited foreign key in the child table.
+type CitedFKInfo struct {
+    Cols         []CIStr `json:"cols"`
+    ChildSchema  CIStr   `json:"child_schema"`
+    ChildTable   CIStr   `json:"child_table"`
+    ChildFKIndex CIStr   `json:"child_fk_index"`
+}
 ```
 
-### DDL
+Struct `FKInfo` uses for child table to record the referenced parent table.
+Struct `CitedFKInfo` uses for parent table to record the child table which referenced me.
 
-#### Create Table with Foreign Key
+### Create Table with Foreign Key
 
-建表时，在生成 DDL job 前和在 DDL owner 收到 DDL job 后，执行以下检查：
-- 创建 Foreign Key 时，对引用的父表需要有 REFERENCES 权限。
+Create a table with foreign key, do following check when build DDL job and DDL owner received DDL job(aka Double-Check):
+- whether the user have `REFERENCES` privilege to the foreign key references table.
+- 
+
+
 - Foreign Key 中的 columns 和引用父表中的 columns 的类型必须相同，对于 string 类型的列，其 character 和 collation 也必须相同。
 - Foreign Key 中的 columns 可以引用自己表中的其他 columns, 但不能引用 column 自己。
 - Foreign Key 中的 columns 需要有对应的索引，对于引用的父表中的 columns，也需要有对应的索引，否则会创建失败。
@@ -191,7 +218,7 @@ test> drop table if exists t1;
 
 drop index which used by foreign key should be rejected.
 
-### DML
+## DML Technical Design
 
 #### On Child Table Insert Or Update (Or Load data?), need to Find FK column value whether exist in Parent table:
 
@@ -212,6 +239,19 @@ drop index which used by foreign key should be rejected.
     - Need manual decode index key by index schema.
 4. compact column value to make sure exist.
 5. put column value into parent fk column value cache.
+
+check order should check unique/primary key constrain first:
+
+```sql
+test> create table t1 (id int key,a int, index(a));
+test> create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
+test> insert into t1 values (1, 1);
+test> insert into t2 values (1, 1);
+test> insert into t2 values (1, 2);
+(1062, "Duplicate entry '1' for key 't2.PRIMARY'")
+test> insert ignore into t2 values (1, 2);
+Query OK, 0 rows affected
+```
 
 #### On Parent Table update/delete
 
@@ -256,7 +296,7 @@ cascade modification test case:
 
 ```sql
 drop table if exists t3,t2,t1;
-create table t1 (id int key,a int, index(a)) ;
+create table t1 (id int key,a int, index(a));
 create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
 create table t3 (id int key,a int, foreign key fk(a) references t2(id) ON DELETE CASCADE);
 insert into t1 values (1,1);
@@ -265,9 +305,75 @@ insert into t3 values (3,2);
 delete from t1 where id = 1;  -- both t1, t2, t3 rows are deleted.
 ```
 
+### Some special case
+
+#### Self-Referencing Tables
+
+```sql
+test> create table t (id int key,a int, foreign key fk(a) references t(id) ON DELETE CASCADE);
+test> insert into t values (1,1);
+test> insert into t values (2,1);
+test> delete from t where id=1;
+Query OK, 1 row affected
+test> select * from t;
++----+---+
+| id | a |
++----+---+
+0 rows in set
+```
+
+```sql
+test> create table t (id int key,a int, foreign key fk_a(a) references t(id) ON DELETE CASCADE, foreign key fk_id(id) references t(a) ON DELETE CASCADE);
+Query OK, 0 rows affected
+Time: 0.045s
+test> insert into t values (1,1);
+(1452, 'Cannot add or update a child row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_2` FOREIGN KEY (`id`) REFERENCES `t` (`a`) ON DELETE CASCADE)')
+```
+
+#### Cyclical Dependencies
+
+```sql
+create table t1 (id int key,a int, index(a));
+create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
+insert into t1 values (1,1);
+ALTER TABLE t1 ADD foreign key fk(a) references t2(id) ON DELETE CASCADE;
+(1452, 'Cannot add or update a child row: a foreign key constraint fails (`test`.`#sql-298_8`, CONSTRAINT `t1_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t2` (`id`) ON DELETE CASCADE)')
+```
+
+```sql
+set @@foreign_key_checks=0;
+create table t1 (id int key,a int, foreign key fk(a) references t2(id) ON DELETE CASCADE);
+create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
+insert into t1 values (1, 2);
+insert into t2 values (2, 1);
+set @@foreign_key_checks=1;   -- add test case without this.
+delete from t1 where id=1;
+test> select * from t2;
++----+---+
+| id | a |
++----+---+
+0 rows in set
+Time: 0.004s
+test> select * from t1;
++----+---+
+| id | a |
++----+---+
+0 rows in set
+```
+
+## Impact
+
+### Impact of data replication
+
+### reference
+
+- [3 Common Foreign Key Mistakes (And How to Avoid Them)](https://www.cockroachlabs.com/blog/common-foreign-key-mistakes/)
+
+
+
+##### 代码碎片
 
 ```go
 buildPhysicalIndexLookUpReader
 
 ```
-
