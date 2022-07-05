@@ -52,6 +52,16 @@ func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
+// GetTxnScope returns the current txn scope
+func (p *StalenessTxnContextProvider) GetTxnScope() string {
+	return p.sctx.GetSessionVars().TxnCtx.TxnScope
+}
+
+// GetReadReplicaScope returns the read replica scope
+func (p *StalenessTxnContextProvider) GetReadReplicaScope() string {
+	return config.GetTxnScopeFromConfig()
+}
+
 // GetStmtReadTS returns the read timestamp
 func (p *StalenessTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	return p.ts, nil
@@ -133,6 +143,7 @@ func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() erro
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	txnCtx.TxnScope = kv.GlobalTxnScope
 	txnCtx.IsStaleness = true
 	txnCtx.InfoSchema = p.is
 	return nil
@@ -186,7 +197,7 @@ func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) erro
 	return nil
 }
 
-// GetSnapshotWithStmtReadTS get snapshot with read ts and set the transaction related options
+// GetSnapshotWithStmtReadTS gets snapshot with read ts and set the transaction related options
 // before return
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	txn, err := p.sctx.Txn(false)
@@ -210,7 +221,7 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	return snapshot, nil
 }
 
-// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }

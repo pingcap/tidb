@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -130,6 +131,25 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 		return is.(infoschema.InfoSchema)
 	}
 	return p.infoSchema
+}
+
+func (p *baseTxnContextProvider) GetTxnScope() string {
+	return p.sctx.GetSessionVars().TxnCtx.TxnScope
+}
+
+func (p *baseTxnContextProvider) GetReadReplicaScope() string {
+	if txnScope := p.GetTxnScope(); txnScope != kv.GlobalTxnScope && txnScope != "" {
+		// In local txn, we should use txnScope as the readReplicaScope
+		return txnScope
+	}
+
+	if p.sctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
+		// If closest read is set, we should use the scope where instance located.
+		return config.GetTxnScopeFromConfig()
+	}
+
+	// When it is not local txn or closet read, we should use global scope
+	return kv.GlobalReplicaScope
 }
 
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
@@ -305,7 +325,7 @@ func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
 }
 
-// GetSnapshotWithStmtReadTS get snapshot with read ts
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
 func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	ts, err := p.GetStmtReadTS()
 	if err != nil {
@@ -315,7 +335,7 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error
 	return p.getSnapshotByTS(ts)
 }
 
-// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	ts, err := p.GetStmtForUpdateTS()
 	if err != nil {
