@@ -55,6 +55,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockRangePartitionTable(),
 		MockHashPartitionTable(),
 		MockListPartitionTable(),
+		MockStateNoneColumnTable(),
 	}
 	id := int64(0)
 	for _, tblInfo := range tblInfos {
@@ -909,6 +910,10 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select a+1 from t having t.a",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "update T_StateNoneColumn set c = 1 where a = 1",
 			err: ErrUnknownColumn,
 		},
 	}
