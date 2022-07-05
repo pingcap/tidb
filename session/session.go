@@ -2290,15 +2290,14 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 
 	stmtCtx := s.GetSessionVars().StmtCtx
 	stmt := &executor.ExecStmt{
-		GoCtx:            ctx,
-		InfoSchema:       is,
-		Plan:             execPlan,
-		StmtNode:         execAst,
-		Ctx:              s,
-		OutputNames:      execPlan.OutputNames(),
-		PsStmt:           prepareStmt,
-		Ti:               &executor.TelemetryInfo{},
-		ReplicaReadScope: replicaReadScope,
+		GoCtx:       ctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execAst,
+		Ctx:         s,
+		OutputNames: execPlan.OutputNames(),
+		PsStmt:      prepareStmt,
+		Ti:          &executor.TelemetryInfo{},
 	}
 	compileDuration := time.Since(s.sessionVars.StartTime)
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
@@ -2540,7 +2539,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	if err := s.checkBeforeNewTxn(ctx); err != nil {
 		return err
 	}
-	txnScope := config.GetTxnScopeFromConfig()
+	txnScope := kv.GlobalTxnScope
 	txn, err := s.store.Begin(tikv.WithTxnScope(txnScope), tikv.WithStartTS(startTS))
 	if err != nil {
 		return err

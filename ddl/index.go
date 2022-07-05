@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -47,6 +46,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -781,9 +781,7 @@ func removeDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.Index
 		}
 	}
 	// Sort the offset in descending order.
-	sort.Slice(hiddenColOffs, func(i, j int) bool {
-		return hiddenColOffs[i] > hiddenColOffs[j]
-	})
+	slices.SortFunc(hiddenColOffs, func(a, b int) bool { return a > b })
 	// Move all the dependent hidden columns to the end.
 	endOffset := len(tblInfo.Columns) - 1
 	for _, offset := range hiddenColOffs {
@@ -805,9 +803,8 @@ func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 		// The target index has been removed.
 		return
 	}
-	// Swap the target index to the end and remove it.
-	indices[offset], indices[len(indices)-1] = indices[len(indices)-1], indices[offset]
-	tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-1]
+	// Remove the target index.
+	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
 }
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, bool /* ifExists */, error) {

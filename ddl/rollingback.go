@@ -60,7 +60,7 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		}
 	}
 
-	// the second args will be used in onDropIndex.
+	// the second and the third args will be used in onDropIndex.
 	job.Args = []interface{}{indexInfo.Name, false /* ifExists */, getPartitionIDs(tblInfo)}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
