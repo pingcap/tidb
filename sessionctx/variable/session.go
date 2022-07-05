@@ -835,6 +835,9 @@ type SessionVars struct {
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
+	// OptimizerEnableNewNameResolution enables the new name resolution framework.
+	OptimizerEnableNewNameResolution bool
+
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
 

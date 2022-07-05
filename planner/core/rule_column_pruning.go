@@ -192,9 +192,10 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 		_, hashMatch := seen[hash]
 		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
+		cCols := expression.ExtractCorColumns(byItem.Expr)
 		if hashMatch {
 			// do nothing, should be filtered
-		} else if len(cols) == 0 {
+		} else if len(cols) == 0 && len(cCols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				pruned = false
 				byItems = append(byItems, byItem)

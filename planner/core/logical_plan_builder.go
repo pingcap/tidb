@@ -334,7 +334,18 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 			cte.recursiveRef = false
 		}
 	}()
-	return b.buildResultSetNode(ctx, from.TableRefs)
+	if p, err = b.buildResultSetNode(ctx, from.TableRefs); err == nil && b.ctx.GetSessionVars().OptimizerEnableNewNameResolution {
+		// build join will add additional scope col into curScope, fullSchema is merged from bottom join up.
+		// eg: select * from (select * from t t1 join t t2 using(a)) as t3; we don't need to keep the fullSchema
+		// from sub-query, fullSchema logic is only used and validated inside a single select query block.
+		join, isJoin := p.(*LogicalJoin)
+		if isJoin && join.fullSchema != nil {
+			b.curScope.Add(join.fullSchema, join.fullNames)
+		} else {
+			b.curScope.Add(p.Schema(), p.OutputNames())
+		}
+	}
+	return p, err
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
@@ -1162,6 +1173,11 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	if expr == nil {
 		return nil, name, nil
 	}
+	newCol := b.allocateNewCol(expr)
+	return newCol, name, nil
+}
+
+func (b *PlanBuilder) allocateNewCol(expr expression.Expression) *expression.Column {
 	// invalid unique id
 	correlatedColUniqueID := int64(0)
 	if cc, ok := expr.(*expression.CorrelatedColumn); ok {
@@ -1180,7 +1196,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode(b.ctx.GetSessionVars().StmtCtx))] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
-	return newCol, name, nil
+	return newCol
 }
 
 type userVarTypeProcessor struct {
@@ -1249,6 +1265,7 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
@@ -1277,14 +1294,21 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			newNames = append(newNames, p.OutputNames()[i])
 			continue
 		} else if !considerWindow && isWindowFuncField {
-			expr := expression.NewZero()
-			proj.Exprs = append(proj.Exprs, expr)
-			col, name, err := b.buildProjectionField(ctx, p, field, expr)
-			if err != nil {
-				return nil, nil, 0, err
+			if !eNNR {
+				expr := expression.NewZero()
+				proj.Exprs = append(proj.Exprs, expr)
+				col, name, err := b.buildProjectionField(ctx, p, field, expr)
+				if err != nil {
+					return nil, nil, 0, err
+				}
+				schema.Append(col)
+				newNames = append(newNames, name)
+			} else {
+				// already occupied a position in current scope in analyzing projection phase.
+				proj.Exprs = append(proj.Exprs, b.curScope.projExpr[i])
+				schema.Append(b.curScope.projColumn[i])
+				newNames = append(newNames, b.curScope.projNames[i])
 			}
-			schema.Append(col)
-			newNames = append(newNames, name)
 			continue
 		}
 		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
@@ -1301,14 +1325,34 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 
 		p = np
-		proj.Exprs = append(proj.Exprs, newExpr)
+		if !eNNR {
+			proj.Exprs = append(proj.Exprs, newExpr)
 
-		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
-		if err != nil {
-			return nil, nil, 0, err
+			col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			schema.Append(col)
+			newNames = append(newNames, name)
+		} else {
+			if i >= len(b.curScope.projExpr) {
+				// only some appended col from resolveWindowFunc
+				proj.Exprs = append(proj.Exprs, newExpr)
+				col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
+				if err != nil {
+					return nil, nil, 0, err
+				}
+				schema.Append(col)
+				newNames = append(newNames, name)
+				continue
+			}
+			proj.Exprs = append(proj.Exprs, b.curScope.projExpr[i])
+			schema.Append(b.curScope.projColumn[i])
+			newNames = append(newNames, b.curScope.projNames[i])
 		}
-		schema.Append(col)
-		newNames = append(newNames, name)
+	}
+	if eNNR {
+		proj, schema, newNames = b.buildReservedCols(p, proj, schema, newNames)
 	}
 	proj.SetSchema(schema)
 	proj.names = newNames
@@ -2190,6 +2234,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
 			return node, false
 		}
+		// 这里不允许 having clause 中的 window，但是可以允许 order-by 语句中的 window，注意和 projection 中的 window 去重
 		if a.curClause == orderByClause {
 			a.selectFields = append(a.selectFields, &ast.SelectField{
 				Auxiliary: true,
@@ -3732,6 +3777,11 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -3785,6 +3835,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
+		if eNNR {
+			// don't let scope elements in with clause pollute main clause.
+			b.cleanCurScope()
+		}
+	}
+
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select (select sum((select count(a)))) from t") {
+		fmt.Println(1)
 	}
 
 	p, err = b.buildTableRefs(ctx, sel.From)
@@ -3806,49 +3864,87 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		originalFields = sel.Fields.Fields
 	}
 
-	if sel.GroupBy != nil {
-		p, gbyCols, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
-		if err != nil {
-			return nil, err
-		}
+	// move building windows spec here for latter usage in analyzing phase if eNNR is true.
+	b.windowSpecs, err = buildWindowSpecs(sel.WindowSpecs)
+	if err != nil {
+		return nil, err
 	}
-
-	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
-		err = b.checkOnlyFullGroupBy(p, sel)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	// todo：change window function resolution as the newer one. 2022/06/30.
 	hasWindowFuncField := b.detectSelectWindow(sel)
-	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
-	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
-	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
-	if hasWindowFuncField || sel.WindowSpecs != nil {
-		if b.buildingRecursivePartForCTE {
-			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
+	resolveWindowFunc := func() error {
+		// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
+		// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
+		// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
+		if hasWindowFuncField || sel.WindowSpecs != nil {
+			if b.buildingRecursivePartForCTE {
+				return ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
+			}
+
+			windowAggMap, err = b.resolveWindowFunction(sel, p)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if eNNR {
+		// analyzing phase.
+		b.analyzingPhase = true
+		if err = b.analyzeProjectionList(ctx, p, sel.Fields.Fields); err != nil {
+			return nil, err
+		}
+		if err = b.analyzeSelectionList(ctx, p, sel.Where); err != nil {
+			return nil, err
+		}
+		if err = b.analyzeGroupByList(ctx, p, sel.GroupBy); err != nil {
+			return nil, err
+		}
+		if err = b.analyzeHavingList(ctx, p, sel.Having); err != nil {
+			return nil, err
+		}
+		if err = b.analyzeOrderByList(ctx, p, sel.OrderBy); err != nil {
+			return nil, err
+		}
+		b.analyzingPhase = false
+
+		if err := resolveWindowFunc(); err != nil {
+			return nil, err
+		}
+	} else {
+		// old resolver phase.
+		if sel.GroupBy != nil {
+			p, gbyCols, err = b.resolveGbyExprs(ctx, p, sel.GroupBy, sel.Fields.Fields)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
+			err = b.checkOnlyFullGroupBy(p, sel)
+			if err != nil {
+				return nil, err
+			}
 		}
 
-		windowAggMap, err = b.resolveWindowFunction(sel, p)
+		if err := resolveWindowFunc(); err != nil {
+			return nil, err
+		}
+		// We must resolve having and order by clause before build projection,
+		// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
+		// which only can be done before building projection and extracting Agg functions.
+		havingMap, orderMap, err = b.resolveHavingAndOrderBy(ctx, sel, p)
 		if err != nil {
 			return nil, err
 		}
-	}
-	// We must resolve having and order by clause before build projection,
-	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
-	// which only can be done before building projection and extracting Agg functions.
-	havingMap, orderMap, err = b.resolveHavingAndOrderBy(ctx, sel, p)
-	if err != nil {
-		return nil, err
-	}
 
-	// We have to resolve correlated aggregate inside sub-queries before building aggregation and building projection,
-	// for instance, count(a) inside the sub-query of "select (select count(a)) from t" should be evaluated within
-	// the context of the outer query. So we have to extract such aggregates from sub-queries and put them into
-	// SELECT field list.
-	correlatedAggMap, err = b.resolveCorrelatedAggregates(ctx, sel, p)
-	if err != nil {
-		return nil, err
+		// We have to resolve correlated aggregate inside sub-queries before building aggregation and building projection,
+		// for instance, count(a) inside the sub-query of "select (select count(a)) from t" should be evaluated within
+		// the context of the outer query. So we have to extract such aggregates from sub-queries and put them into
+		// SELECT field list.
+		correlatedAggMap, err = b.resolveCorrelatedAggregates(ctx, sel, p)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
@@ -3887,30 +3983,56 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)
 
-	hasAgg := b.detectSelectAgg(sel)
+	var hasAgg bool
+	if eNNR {
+		hasAgg = len(b.curScope.aggFuncs) != 0
+	} else {
+		hasAgg = b.detectSelectAgg(sel)
+	}
 	needBuildAgg := hasAgg
 	if hasAgg {
 		if b.buildingRecursivePartForCTE {
 			return nil, ErrCTERecursiveForbidsAggregation.GenWithStackByArgs(b.genCTETableNameForError())
 		}
-
-		aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
-		// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
-		// are actually correlated aggregates from the outer query, which have already been built in the outer query.
-		// The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
-		if len(aggFuncs) == 0 && sel.GroupBy == nil {
-			needBuildAgg = false
+		if eNNR {
+			if len(b.curScope.aggFuncs) == 0 && sel.GroupBy == nil {
+				needBuildAgg = false
+			}
+		} else {
+			aggFuncs, totalMap = b.extractAggFuncsInSelectFields(sel.Fields.Fields)
+			// len(aggFuncs) == 0 and sel.GroupBy == nil indicates that all the aggregate functions inside the SELECT fields
+			// are actually correlated aggregates from the outer query, which have already been built in the outer query.
+			// The only thing we need to do is to find them from b.correlatedAggMap in buildProjection.
+			if len(aggFuncs) == 0 && sel.GroupBy == nil {
+				needBuildAgg = false
+			}
 		}
 	}
 	if needBuildAgg {
-		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
-		if err != nil {
-			return nil, err
+		if !eNNR {
+			var aggIndexMap map[int]int
+			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
+			if err != nil {
+				return nil, err
+			}
+			for agg, idx := range totalMap {
+				totalMap[agg] = aggIndexMap[idx]
+			}
+		} else {
+			if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select (select count(a)) from t") {
+				fmt.Println(1)
+			}
+			// new name resolution will collect all the aggregate func in analyzing phase and build them instantly.
+			// in building phase, the rewriter will try to seek them in scope stack when encountering agg instead of using aggMapper.
+			p, err = b.buildAggregation4NNR(ctx, p)
+			if err != nil {
+				return nil, err
+			}
 		}
-		for agg, idx := range totalMap {
-			totalMap[agg] = aggIndexMap[idx]
-		}
+	}
+
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select (select cnt from (select count(a) as cnt) n) from t") {
+		fmt.Println(1)
 	}
 
 	var oldLen int
@@ -3929,11 +4051,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	b.windowSpecs, err = buildWindowSpecs(sel.WindowSpecs)
-	if err != nil {
-		return nil, err
-	}
-
+	// 先保留 window function 这部分的原来做法吧，不然 scope 太多，等这边稳定了，再来把 windows function 也改成新的 resolution 模式
 	var windowMapper map[*ast.WindowFuncExpr]int
 	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowFuncs := extractWindowFuncs(sel.Fields.Fields)
@@ -4181,7 +4299,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	sessionVars := b.ctx.GetSessionVars()
 
 	if dbName.L == "" {
-		// Try CTE.
 		p, err := b.tryBuildCTE(ctx, tn, asName)
 		if err != nil || p != nil {
 			return p, err

@@ -356,6 +356,11 @@ func (m SQLMode) HasANSIQuotesMode() bool {
 	return m&ModeANSIQuotes == ModeANSIQuotes
 }
 
+// HasANSIMode detects if 'ANSI' mode is set in SQLMode
+func (m SQLMode) HasANSIMode() bool {
+	return m&ModeANSI == ModeANSI
+}
+
 // HasRealAsFloatMode detects if 'REAL_AS_FLOAT' mode is set in SQLMode
 func (m SQLMode) HasRealAsFloatMode() bool {
 	return m&ModeRealAsFloat == ModeRealAsFloat
