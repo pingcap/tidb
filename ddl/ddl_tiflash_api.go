@@ -596,21 +596,19 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 		}
 	}
 
-	var invalidTableIDs []int64
+	invalidTableIDs := make(map[int64]int)
 	if len(invalidTableWithPeerIDs) != 0 {
 
 		for invalidTableID, invalidPeerIDs := range invalidTableWithPeerIDs {
 			sort.Slice(invalidPeerIDs, func(i, j int) bool { return invalidPeerIDs[i] < invalidPeerIDs[j] })
 			invalidPeerIDs = removeDuplicate(invalidPeerIDs)
 			if isTiflashAllPeerDown(tiflashStoreIDs, invalidPeerIDs) {
-				invalidTableIDs = append(invalidTableIDs, invalidTableID)
+				invalidTableIDs[invalidTableID] = 0
 			}
 		}
 	}
 
-	invalidTableIDs = removeDuplicate(invalidTableIDs)
-
-	for _, invalidTableID := range invalidTableIDs {
+	for invalidTableID := range invalidTableIDs {
 		tableInfo, exist := tableMap[invalidTableID]
 		if !exist {
 			logutil.BgLogger().Info("No exist table info in Tiflash", zap.Int64("tableId", invalidTableID))
