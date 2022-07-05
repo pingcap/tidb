@@ -347,7 +347,7 @@ func buildBinaryObject(keys [][]byte, elems []BinaryJSON) (BinaryJSON, error) {
 // Modify modifies a JSON object by insert, replace or set.
 // All path expressions cannot contain * or ** wildcard.
 // If any error occurs, the input won't be changed.
-func (bj BinaryJSON) Modify(pathExprList []PathExpression, values []BinaryJSON, mt ModifyType) (retj BinaryJSON, err error) {
+func (bj *BinaryJSON) Modify(pathExprList []PathExpression, values []BinaryJSON, mt ModifyType) (retj BinaryJSON, err error) {
 	if len(pathExprList) != len(values) {
 		// TODO: should return 1582(42000)
 		return retj, errors.New("Incorrect parameter count")
@@ -360,38 +360,38 @@ func (bj BinaryJSON) Modify(pathExprList []PathExpression, values []BinaryJSON, 
 	}
 	for i := 0; i < len(pathExprList); i++ {
 		pathExpr, value := pathExprList[i], values[i]
-		modifier := &binaryModifier{bj: bj}
+		modifier := &binaryModifier{bj: *bj}
 		switch mt {
 		case ModifyInsert:
-			bj = modifier.insert(pathExpr, value)
+			*bj = modifier.insert(pathExpr, value)
 		case ModifyReplace:
-			bj = modifier.replace(pathExpr, value)
+			*bj = modifier.replace(pathExpr, value)
 		case ModifySet:
-			bj = modifier.set(pathExpr, value)
+			*bj = modifier.set(pathExpr, value)
 		}
 		if modifier.err != nil {
 			return BinaryJSON{}, modifier.err
 		}
 	}
-	return bj, nil
+	return *bj, nil
 }
 
 // ArrayInsert insert a BinaryJSON into the given array cell.
 // All path expressions cannot contain * or ** wildcard.
 // If any error occurs, the input won't be changed.
-func (bj BinaryJSON) ArrayInsert(pathExpr PathExpression, value BinaryJSON) (res BinaryJSON, err error) {
+func (bj *BinaryJSON) ArrayInsert(pathExpr PathExpression, value BinaryJSON) (res BinaryJSON, err error) {
 	// Check the path is a index
 	if len(pathExpr.legs) < 1 {
-		return bj, ErrInvalidJSONPathArrayCell
+		return *bj, ErrInvalidJSONPathArrayCell
 	}
 	parentPath, lastLeg := pathExpr.popOneLastLeg()
 	if lastLeg.typ != pathLegIndex {
-		return bj, ErrInvalidJSONPathArrayCell
+		return *bj, ErrInvalidJSONPathArrayCell
 	}
 	// Find the target array
 	obj, exists := bj.Extract([]PathExpression{parentPath})
 	if !exists || obj.TypeCode != TypeCodeArray {
-		return bj, nil
+		return *bj, nil
 	}
 
 	idx := lastLeg.arrayIndex
@@ -412,31 +412,31 @@ func (bj BinaryJSON) ArrayInsert(pathExpr PathExpression, value BinaryJSON) (res
 	}
 	obj = buildBinaryArray(newArray)
 
-	bj, err = bj.Modify([]PathExpression{parentPath}, []BinaryJSON{obj}, ModifySet)
+	*bj, err = bj.Modify([]PathExpression{parentPath}, []BinaryJSON{obj}, ModifySet)
 	if err != nil {
-		return bj, err
+		return *bj, err
 	}
-	return bj, nil
+	return *bj, nil
 }
 
 // Remove removes the elements indicated by pathExprList from JSON.
-func (bj BinaryJSON) Remove(pathExprList []PathExpression) (BinaryJSON, error) {
+func (bj *BinaryJSON) Remove(pathExprList []PathExpression) (BinaryJSON, error) {
 	for _, pathExpr := range pathExprList {
 		if len(pathExpr.legs) == 0 {
 			// TODO: should return 3153(42000)
-			return bj, errors.New("Invalid path expression")
+			return *bj, errors.New("Invalid path expression")
 		}
 		if pathExpr.flags.containsAnyAsterisk() {
 			// TODO: should return 3149(42000)
-			return bj, errors.New("Invalid path expression")
+			return *bj, errors.New("Invalid path expression")
 		}
-		modifer := &binaryModifier{bj: bj}
-		bj = modifer.remove(pathExpr)
+		modifer := &binaryModifier{bj: *bj}
+		*bj = modifer.remove(pathExpr)
 		if modifer.err != nil {
 			return BinaryJSON{}, modifer.err
 		}
 	}
-	return bj, nil
+	return *bj, nil
 }
 
 type binaryModifier struct {
@@ -1103,7 +1103,6 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	default:
 		return CreateBinary(result), false, nil
 	}
-
 }
 
 // extractCallbackFn the type of CALLBACK function for extractToCallback

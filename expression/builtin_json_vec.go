@@ -92,7 +92,8 @@ func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator colum
 		if isNull {
 			result.AppendNull()
 		} else {
-			res, err := jsonBuf.GetJSON(i).Modify(pathExprs, values, mt)
+			b := jsonBuf.GetJSON(i)
+			res, err := b.Modify(pathExprs, values, mt)
 			if err != nil {
 				return err
 			}
@@ -908,7 +909,8 @@ func (b *builtinJSONRemoveSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 		if isNull {
 			result.AppendNull()
 		} else {
-			res, err := jsonBuf.GetJSON(i).Remove(pathExprs)
+			b := jsonBuf.GetJSON(i)
+			res, err := b.Remove(pathExprs)
 			if err != nil {
 				return err
 			}

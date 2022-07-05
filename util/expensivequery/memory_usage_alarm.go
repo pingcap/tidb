@@ -229,24 +229,26 @@ func (record *memoryUsageAlarm) recordProfile() {
 		{name: "goroutine", debug: 2},
 	}
 	for i, item := range items {
-		fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
-		record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
-		f, err := os.Create(fileName)
-		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
-			return
-		}
-		defer func() {
-			err := f.Close()
+		func() {
+			fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
+			record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
+			f, err := os.Create(fileName)
 			if err != nil {
-				logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
+				logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
+				return
+			}
+			defer func() {
+				err := f.Close()
+				if err != nil {
+					logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
+				}
+			}()
+			p := rpprof.Lookup(item.name)
+			err = p.WriteTo(f, item.debug)
+			if err != nil {
+				logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
+				return
 			}
 		}()
-		p := rpprof.Lookup(item.name)
-		err = p.WriteTo(f, item.debug)
-		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
-			return
-		}
 	}
 }

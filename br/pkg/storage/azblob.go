@@ -30,6 +30,7 @@ const (
 	azblobAccountKey       = "azblob.account-key"
 )
 
+// AzblobBackendOptions is the options for Azure Blob storage.
 type AzblobBackendOptions struct {
 	Endpoint    string `json:"endpoint" toml:"endpoint"`
 	AccountName string `json:"account-name" toml:"account-name"`
@@ -83,6 +84,7 @@ func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error 
 	return nil
 }
 
+// ClientBuilder implements the StorageReader interface.
 type ClientBuilder interface {
 	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
 	GetServiceClient() (azblob.ServiceClient, error)
@@ -119,7 +121,7 @@ func (b *tokenClientBuilder) GetAccountName() string {
 	return b.accountName
 }
 
-func getAuthorizerFromEnvironment() (clientId, tenantId, clientSecret string) {
+func getAuthorizerFromEnvironment() (clientID, tenantID, clientSecret string) {
 	return os.Getenv("AZURE_CLIENT_ID"),
 		os.Getenv("AZURE_TENANT_ID"),
 		os.Getenv("AZURE_CLIENT_SECRET")
@@ -149,11 +151,11 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 
 	accountName := options.AccountName
 	if len(accountName) == 0 {
-		if val := os.Getenv("AZURE_STORAGE_ACCOUNT"); len(val) > 0 {
-			accountName = val
-		} else {
+		val := os.Getenv("AZURE_STORAGE_ACCOUNT")
+		if len(val) <= 0 {
 			return nil, errors.New("account name cannot be empty to access azure blob storage")
 		}
+		accountName = val
 	}
 
 	serviceURL := options.Endpoint
@@ -161,11 +163,9 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 		serviceURL = fmt.Sprintf("https://%s.blob.core.windows.net", accountName)
 	}
 
-	if clientId, tenantId, clientSecret := getAuthorizerFromEnvironment(); len(clientId) > 0 && len(tenantId) > 0 && len(clientSecret) > 0 {
-		cred, err := azidentity.NewClientSecretCredential(tenantId, clientId, clientSecret, nil)
-		if err != nil {
-			log.Warn("Failed to get azure token credential but environment variables exist, try to use shared key.", zap.String("tenantId", tenantId), zap.String("clientId", clientId), zap.String("clientSecret", "?"))
-		} else {
+	if clientID, tenantID, clientSecret := getAuthorizerFromEnvironment(); len(clientID) > 0 && len(tenantID) > 0 && len(clientSecret) > 0 {
+		cred, err := azidentity.NewClientSecretCredential(tenantID, clientID, clientSecret, nil)
+		if err == nil {
 			// send account-name to TiKV
 			if opts != nil && opts.SendCredentials {
 				options.AccountName = accountName
@@ -176,15 +176,16 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 				serviceURL,
 			}, nil
 		}
+		log.Warn("Failed to get azure token credential but environment variables exist, try to use shared key.", zap.String("tenantId", tenantID), zap.String("clientId", clientID), zap.String("clientSecret", "?"))
 	}
 
 	var sharedKey string
-	if val := os.Getenv("AZURE_STORAGE_KEY"); len(val) > 0 {
-		log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
-		sharedKey = val
-	} else {
+	val := os.Getenv("AZURE_STORAGE_KEY")
+	if len(val) <= 0 {
 		return nil, errors.New("cannot find any credential info to access azure blob storage")
 	}
+	log.Info("Get azure sharedKey from environment variable $AZURE_STORAGE_KEY")
+	sharedKey = val
 
 	cred, err := azblob.NewSharedKeyCredential(accountName, sharedKey)
 	if err != nil {
@@ -203,6 +204,7 @@ func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Exte
 	}, nil
 }
 
+// AzureBlobStorage is a storage engine that stores data in Azure Blob Storage.
 type AzureBlobStorage struct {
 	options *backuppb.AzureBlobStorage
 
@@ -221,7 +223,6 @@ func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage
 }
 
 func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb.AzureBlobStorage, clientBuilder ClientBuilder) (*AzureBlobStorage, error) {
-
 	serviceClient, err := clientBuilder.GetServiceClient()
 	if err != nil {
 		return nil, errors.Annotate(err, "Failed to create azure service client")
@@ -231,12 +232,11 @@ func newAzureBlobStorageWithClientBuilder(ctx context.Context, options *backuppb
 	_, err = containerClient.Create(ctx, nil)
 	if err != nil {
 		var errResp *azblob.StorageError
-		if internalErr, ok := err.(*azblob.InternalError); ok && internalErr.As(&errResp) {
-			if errResp.ErrorCode != azblob.StorageErrorCodeContainerAlreadyExists {
-				return nil, errors.Annotate(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode))
-			}
-		} else {
+		if internalErr, ok := err.(*azblob.InternalError); !(ok && internalErr.As(&errResp)) {
 			return nil, errors.Annotate(err, "Failed to create the container: error can not be parsed")
+		}
+		if errResp.ErrorCode != azblob.StorageErrorCodeContainerAlreadyExists {
+			return nil, errors.Annotate(err, fmt.Sprintf("Failed to create the container: %s", errResp.ErrorCode))
 		}
 	}
 
@@ -266,6 +266,7 @@ func (s *AzureBlobStorage) withPrefix(name string) string {
 	return path.Join(s.options.Prefix, name)
 }
 
+// WriteFile writes a file to Azure Blob Storage.
 func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.UploadBufferToBlockBlob(ctx, data, azblob.HighLevelUploadToBlockBlobOption{AccessTier: &s.accessTier})
@@ -276,6 +277,7 @@ func (s *AzureBlobStorage) WriteFile(ctx context.Context, name string, data []by
 	return nil
 }
 
+// ReadFile reads a file from Azure Blob Storage.
 func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.Download(ctx, nil)
@@ -290,6 +292,7 @@ func (s *AzureBlobStorage) ReadFile(ctx context.Context, name string) ([]byte, e
 	return data, err
 }
 
+// FileExists checks if a file exists in Azure Blob Storage.
 func (s *AzureBlobStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	_, err := client.GetProperties(ctx, nil)
@@ -305,6 +308,7 @@ func (s *AzureBlobStorage) FileExists(ctx context.Context, name string) (bool, e
 	return true, nil
 }
 
+// DeleteFile deletes the file with the given name.
 func (s *AzureBlobStorage) DeleteFile(ctx context.Context, name string) error {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	_, err := client.Delete(ctx, nil)
@@ -314,6 +318,7 @@ func (s *AzureBlobStorage) DeleteFile(ctx context.Context, name string) error {
 	return nil
 }
 
+// Open implements the StorageReader interface.
 func (s *AzureBlobStorage) Open(ctx context.Context, name string) (ExternalFileReader, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	return &azblobObjectReader{
@@ -325,6 +330,7 @@ func (s *AzureBlobStorage) Open(ctx context.Context, name string) (ExternalFileR
 	}, nil
 }
 
+// WalkDir implements the StorageReader interface.
 func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error {
 	if opt == nil {
 		opt = &WalkOption{}
@@ -371,11 +377,13 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 	return nil
 }
 
+// URI implements the StorageReader interface.
 func (s *AzureBlobStorage) URI() string {
 	return "azure://" + s.options.Bucket + "/" + s.options.Prefix
 }
 
-func (s *AzureBlobStorage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
+// Create implements the StorageWriter interface.
+func (s *AzureBlobStorage) Create(_ context.Context, name string) (ExternalFileWriter, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	uploader := &azblobUploader{
 		blobClient: client,
@@ -389,6 +397,7 @@ func (s *AzureBlobStorage) Create(ctx context.Context, name string) (ExternalFil
 	return uploaderWriter, nil
 }
 
+//Rename is that Remove implements the StorageWriter interface.
 func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	data, err := s.ReadFile(ctx, oldFileName)
 	if err != nil {
@@ -425,7 +434,7 @@ func (r *azblobObjectReader) Read(p []byte) (n int, err error) {
 }
 
 // Close implement the io.Closer interface.
-func (r *azblobObjectReader) Close() error {
+func (*azblobObjectReader) Close() error {
 	return nil
 }
 
@@ -476,7 +485,7 @@ func newNopCloser(r io.ReadSeeker) nopCloser {
 	return nopCloser{r}
 }
 
-func (r nopCloser) Close() error {
+func (nopCloser) Close() error {
 	return nil
 }
 
@@ -489,17 +498,17 @@ type azblobUploader struct {
 }
 
 func (u *azblobUploader) Write(ctx context.Context, data []byte) (int, error) {
-	generatedUuid, err := uuid.NewUUID()
+	generatedUUID, err := uuid.NewUUID()
 	if err != nil {
 		return 0, errors.Annotate(err, "Fail to generate uuid")
 	}
-	blockId := base64.StdEncoding.EncodeToString([]byte(generatedUuid.String()))
+	blockID := base64.StdEncoding.EncodeToString([]byte(generatedUUID.String()))
 
-	_, err = u.blobClient.StageBlock(ctx, blockId, newNopCloser(bytes.NewReader(data)), nil)
+	_, err = u.blobClient.StageBlock(ctx, blockID, newNopCloser(bytes.NewReader(data)), nil)
 	if err != nil {
 		return 0, errors.Annotate(err, "Failed to upload block to azure blob")
 	}
-	u.blockIDList = append(u.blockIDList, blockId)
+	u.blockIDList = append(u.blockIDList, blockID)
 
 	return len(data), nil
 }

@@ -25,7 +25,9 @@ import (
 )
 
 var (
-	ErrUnknownCollation         = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
+	// ErrUnknownCollation is unknown collation.
+	ErrUnknownCollation = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
+	// ErrCollationCharsetMismatch is collation charset mismatch.
 	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
 )
 
@@ -140,7 +142,7 @@ func GetDefaultCollation(charset string) (string, error) {
 }
 
 // GetDefaultCharsetAndCollate returns the default charset and collation.
-func GetDefaultCharsetAndCollate() (string, string) {
+func GetDefaultCharsetAndCollate() (defaultCharset string, defaultCollationName string) {
 	return mysql.DefaultCharset, mysql.DefaultCollationName
 }
 

@@ -47,6 +47,7 @@ type Config struct {
 	FileMaxBackups int `toml:"max-backups" json:"max-backups"`
 }
 
+// Adjust adjusts the log level of the logger.
 func (cfg *Config) Adjust() {
 	if len(cfg.Level) == 0 {
 		cfg.Level = defaultLogLevel
@@ -75,7 +76,7 @@ var (
 )
 
 // InitLogger initializes Lightning's and also the TiDB library's loggers.
-func InitLogger(cfg *Config, tidbLoglevel string) error {
+func InitLogger(cfg *Config, _ string) error {
 	tidbLogCfg := logutil.LogConfig{}
 	// Disable annoying TiDB Log.
 	// TODO: some error logs outputs randomly, we need to fix them in TiDB.

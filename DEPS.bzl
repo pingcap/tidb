@@ -2140,6 +2140,14 @@ def go_deps():
         version = "v3.3.0",
     )
     go_repository(
+        name = "com_github_mgechev_dots",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/mgechev/dots",
+        sum = "h1:zpIH83+oKzcpryru8ceC6BxnoG8TBrhgAvRg8obzup0=",
+        version = "v0.0.0-20210922191527-e955255bf517",
+    )
+
+    go_repository(
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable",
         importpath = "github.com/mgechev/revive",

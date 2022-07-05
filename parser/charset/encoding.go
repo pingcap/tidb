@@ -112,6 +112,7 @@ const (
 )
 
 const (
+	// OpReplaceNoErr is used to replace invalid bytes with '?'.
 	OpReplaceNoErr  = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
 	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom
 	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo

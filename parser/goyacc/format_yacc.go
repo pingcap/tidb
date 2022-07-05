@@ -50,10 +50,8 @@ func Format(inputFilename string, goldenFilename string) (err error) {
 		return err
 	}
 
-	if err = printRules(yFmt, spec.Rules); err != nil {
-		return err
-	}
-	return nil
+	err = printRules(yFmt, spec.Rules)
+	return err
 }
 
 func parseFileToSpec(inputFilename string) (*parser.Specification, error) {

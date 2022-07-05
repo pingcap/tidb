@@ -894,7 +894,6 @@ func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-
 	if cond := accessesCond[1]; cond != nil {
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			switch f.FuncName.L {
