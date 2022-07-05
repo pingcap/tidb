@@ -148,7 +148,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog()), zap.Stack("stack"))
 	}()
 
-	err = Next(ctx, a.executor, req)
+	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErr = err
 		return err
@@ -627,7 +627,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e Executor
 	var err error
 	req := newFirstChunk(e)
 	for {
-		err = Next(ctx, e, req)
+		err = a.next(ctx, e, req)
 		if err != nil {
 			// Handle 'write conflict' error.
 			break
@@ -673,7 +673,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		}
 	}
 
-	err = Next(ctx, e, newFirstChunk(e))
+	err = a.next(ctx, e, newFirstChunk(e))
 	if err != nil {
 		return nil, err
 	}
@@ -792,7 +792,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointOnStmtRetryAfterLockError)
 
-	a.updateNextDuration()
+	a.updateNextDurationFromRuntimeStats()
 	a.resetPhaseDurations()
 
 	e, err := a.buildExecutor()
@@ -871,9 +871,21 @@ func (a *ExecStmt) openExecutor(ctx context.Context, e Executor) error {
 	return err
 }
 
-func (a *ExecStmt) updateNextDuration() {
-	if statsColl := a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl; statsColl != nil {
-		stats := statsColl.GetRootStats(a.Plan.ID())
+func (a *ExecStmt) next(ctx context.Context, e Executor, req *chunk.Chunk) error {
+	if a.Plan.ID() > 0 {
+		return Next(ctx, e, req)
+	}
+	// `newBaseExecutor` only set runtime stats for plans with positive ids,
+	// so we record the next duration here for stmts whose plan ids are 0 (eg. begin).
+	start := time.Now()
+	err := Next(ctx, e, req)
+	a.phaseNextDurations[0] += time.Since(start)
+	return err
+}
+
+func (a *ExecStmt) updateNextDurationFromRuntimeStats() {
+	if planID, statsColl := a.Plan.ID(), a.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl; planID > 0 && statsColl != nil {
+		stats := statsColl.GetRootStats(planID)
 		a.phaseNextDurations[0] = time.Duration(stats.GetTime()) - a.phaseNextDurations[1]
 	}
 }
@@ -1083,7 +1095,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog())
 
-	a.updateNextDuration()
+	a.updateNextDurationFromRuntimeStats()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
