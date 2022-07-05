@@ -3078,7 +3078,7 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 func allSupported(specs []*ast.AlterTableSpec) bool {
 	for _, s := range specs {
 		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey:
 		default:
 			return false
 		}
@@ -3118,10 +3118,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	if len(validSpecs) > 1 {
 		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn,
+			ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
 			useMultiSchemaChange = true
-		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-			err = d.DropIndexes(sctx, ident, validSpecs)
 		default:
 			return dbterror.ErrRunMultiSchemaChanges
 		}
@@ -6126,19 +6125,14 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		SchemaID:    schema.ID,
 		TableID:     t.Meta().ID,
 		SchemaName:  schema.Name.L,
+		SchemaState: indexInfo.State,
 		TableName:   t.Meta().Name.L,
 		Type:        jobTp,
 		BinlogInfo:  &model.HistoryInfo{},
-		SchemaState: indexInfo.State,
-		Args:        []interface{}{indexName},
+		Args:        []interface{}{indexName, ifExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
-	// index not exists, but if_exists flags is true, so we ignore this error.
-	if dbterror.ErrCantDropFieldOrKey.Equal(err) && ifExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
