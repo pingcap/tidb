@@ -1562,6 +1562,37 @@ func (rc *Client) ReadStreamDataFiles(
 	return dFiles, mFiles, nil
 }
 
+func (rc *Client) CalcuateShiftTS(
+	metas []*backuppb.Metadata,
+) (uint64, bool) {
+	var (
+		min_begin_ts uint64
+		isExist      bool
+	)
+
+	for _, m := range metas {
+		if len(m.Files) == 0 || m.MinTs > rc.restoreTS || m.MaxTs < rc.startTS {
+			continue
+		}
+
+		for _, d := range m.Files {
+			if d.Cf == stream.WriteCF {
+				continue
+			}
+			if d.MinTs > rc.restoreTS || d.MaxTs < rc.startTS {
+				continue
+			}
+
+			if d.MinBeginTsInDefaultCf < min_begin_ts || isExist == false {
+				isExist = true
+				min_begin_ts = d.MinBeginTsInDefaultCf
+			}
+		}
+	}
+
+	return min_begin_ts, isExist
+}
+
 // FixIndex tries to fix a single index.
 func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1785,6 +1816,10 @@ func (rc *Client) RestoreMetaKVFiles(
 	schemasReplace *stream.SchemasReplace,
 	progressInc func(),
 ) error {
+	// sort files firstly.
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].MinTs < files[j].MaxTs
+	})
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
 	// The k-v events in default CF should be restored firstly. The reason is that:

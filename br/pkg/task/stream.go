@@ -1083,7 +1083,6 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, ShiftTS(cfg.StartTS))
 	client.SetCurrentTS(currentTS)
 
 	restoreSchedulers, err := restorePreWork(ctx, client, mgr, false)
@@ -1103,6 +1102,12 @@ func restoreStream(
 		log.Info("nothing to restore.")
 		return nil
 	}
+
+	shiftStartTS, exist := calcuateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
+	if !exist {
+		shiftStartTS = cfg.StartTS
+	}
+	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
 
 	// read data file by given ts.
 	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
@@ -1268,6 +1273,38 @@ func getLogRange(
 	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
+}
+
+func calcuateShiftTS(
+	metas []*backuppb.Metadata,
+	startTS uint64,
+	restoreTS uint64,
+) (uint64, bool) {
+	var (
+		min_begin_ts uint64
+		isExist      bool
+	)
+
+	for _, m := range metas {
+		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+			continue
+		}
+
+		for _, d := range m.Files {
+			if d.Cf == stream.WriteCF {
+				continue
+			}
+			if d.MinTs > restoreTS || d.MaxTs < startTS {
+				continue
+			}
+			if d.MinBeginTsInDefaultCf < min_begin_ts || isExist == false {
+				isExist = true
+				min_begin_ts = d.MinBeginTsInDefaultCf
+			}
+		}
+	}
+
+	return min_begin_ts, isExist
 }
 
 // getFullBackupTS gets the snapshot-ts of full bakcup
