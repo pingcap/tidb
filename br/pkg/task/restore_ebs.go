@@ -128,9 +128,9 @@ func (h *restoreEBSMetaHelper) restore() error {
 	)
 	defer func() {
 		if finished {
-			summary.Log("restore EBS success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs))
+			summary.Log("EBS restore success", zap.Int64("size", totalSize), zap.Uint64("resolved_ts", resolvedTs))
 		} else {
-			summary.Log("restore EBS failed, please check the log for details.")
+			summary.Log("EBS restore failed, please check the log for details.")
 		}
 	}()
 	ctx, cancel := context.WithCancel(h.rootCtx)
