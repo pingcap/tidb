@@ -62,7 +62,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	stmtCtx := &stmtctx.StatementContext{}
 	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ColumnID: col.ID})
+		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
 	}
 	timeout := time.Nanosecond * mathutil.MaxInt
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
@@ -108,7 +108,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	stmtCtx := &stmtctx.StatementContext{}
 	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ColumnID: col.ID})
+		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
 	}
 	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
 	rs := h.SyncWaitStatsLoad(stmtCtx)
@@ -161,7 +161,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	h := dom.StatsHandle()
 
 	neededColumns := make([]model.TableItemID, 1)
-	neededColumns[0] = model.TableItemID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[2].ID}
+	neededColumns[0] = model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}
 	timeout := time.Nanosecond * mathutil.MaxInt
 
 	failpoints := []struct {
