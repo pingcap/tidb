@@ -1021,6 +1021,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrNonTransactionalJobFailure:    mysql.Message("non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v", []int{2, 3, 4}),
 	ErrSettingNoopVariable:           mysql.Message("setting %s has no effect in TiDB", nil),
 	ErrGettingNoopVariable:           mysql.Message("variable %s has no effect in TiDB", nil),
+	ErrCannotMigrateSession:          mysql.Message("cannot migrate the current session: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

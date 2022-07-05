@@ -776,3 +776,83 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		}
 	})
 }
+
+func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
+	store, _, deferFunc := setupTxnContextTest(t)
+	defer deferFunc()
+
+	queries := []string{
+		"update t1 set v=v+1",
+		"update t1 set v=v+1 where id=1",
+		"update t1 set v=v+1 where id=1 and v>0",
+		"update t1 set v=v+1 where id in (1, 2, 3)",
+		"update t1 set v=v+1 where id in (1, 2, 3) and v>0",
+	}
+
+	testfork.RunTest(t, func(t *testfork.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("truncate table t1")
+		tk.MustExec("insert into t1 values(1, 10)")
+		tk2 := testkit.NewSteppedTestKit(t, store)
+		defer tk2.MustExec("rollback")
+
+		tk2.MustExec("use test")
+		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set autocommit = 1")
+
+		// When autocommit meets write conflict, it will retry in pessimistic mode.
+		// conflictAfterTransfer being true means we encounter a write-conflict again during
+		// the pessimistic mode.
+		// doubleConflictAfterTransfer being true means we encounter a write-conflict again
+		// during the pessimistic retry phase.
+		// And only conflictAfterTransfer being true allows doubleConflictAfterTransfer being true.
+		conflictAfterTransfer := testfork.PickEnum(t, true, false)
+		doubleConflictAfterTransfer := testfork.PickEnum(t, true, false)
+		if !conflictAfterTransfer && doubleConflictAfterTransfer {
+			return
+		}
+
+		tk2.SetBreakPoints(
+			sessiontxn.BreakPointBeforeExecutorFirstRun,
+			sessiontxn.BreakPointOnStmtRetryAfterLockError,
+		)
+
+		query := testfork.Pick(t, queries)
+
+		tk2.SteppedMustExec(query)
+
+		// Pause the session before the executor first run and then update the record in another session
+		tk2.ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+		// After this update, tk2's statement will encounter write conflict. As it's an autocommit transaction,
+		// it will transfer to pessimistic transaction mode.
+		tk.MustExec("update t1 set v=v+1")
+
+		if conflictAfterTransfer {
+			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+			tk.MustExec("update t1 set v=v+1")
+
+			if doubleConflictAfterTransfer {
+				// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
+				// and then update the record in another session again.
+				tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+				tk.MustExec("update t1 set v=v+1")
+			}
+
+			// Because the record is updated by another session again, when this session continues, it will get a lock error again.
+			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+			tk2.Continue().ExpectIdle()
+
+			if doubleConflictAfterTransfer {
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 14"))
+			} else {
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
+			}
+		} else {
+			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+			tk2.Continue().ExpectIdle()
+
+			tk2.MustQuery("select * from t1").Check(testkit.Rows("1 12"))
+		}
+	})
+}

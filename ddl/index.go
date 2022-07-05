@@ -46,6 +46,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -634,19 +635,23 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 }
 
 func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, indexInfo, err := checkDropIndex(t, job)
+	tblInfo, indexInfo, ifExists, err := checkDropIndex(t, job)
 	if err != nil {
+		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
+			job.Warning = toTError(err)
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			return ver, nil
+		}
 		return ver, errors.Trace(err)
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
 	}
 
-	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexColumn := range indexInfo.Columns {
-		if tblInfo.Columns[indexColumn.Offset].Hidden {
-			dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
-		}
+	if job.MultiSchemaInfo != nil && !job.IsRollingback() && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		job.SchemaState = indexInfo.State
+		return updateVersionAndTableInfo(d, t, job, tblInfo, false)
 	}
 
 	originalState := indexInfo.State
@@ -675,24 +680,11 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		indexInfo.State = model.StateNone
-		if len(dependentHiddenCols) > 0 {
-			firstHiddenOffset := dependentHiddenCols[0].Offset
-			for i := 0; i < len(dependentHiddenCols); i++ {
-				// Set this column's offset to the last and reset all following columns' offsets.
-				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
-			}
-		}
-		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-		for _, idx := range tblInfo.Indices {
-			if idx.Name.L != indexInfo.Name.L {
-				newIndices = append(newIndices, idx)
-			}
-		}
-		tblInfo.Indices = newIndices
 		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
+		removeDependentHiddenColumns(tblInfo, indexInfo)
+		removeIndexInfo(tblInfo, indexInfo)
 
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 			if val.(bool) {
 				panic("panic test in cancelling add index")
@@ -721,38 +713,75 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
+func removeDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	hiddenColOffs := make([]int, 0)
+	for _, indexColumn := range idxInfo.Columns {
+		col := tblInfo.Columns[indexColumn.Offset]
+		if col.Hidden {
+			hiddenColOffs = append(hiddenColOffs, col.Offset)
+		}
+	}
+	// Sort the offset in descending order.
+	slices.SortFunc(hiddenColOffs, func(a, b int) bool { return a > b })
+	// Move all the dependent hidden columns to the end.
+	endOffset := len(tblInfo.Columns) - 1
+	for _, offset := range hiddenColOffs {
+		tblInfo.MoveColumnInfo(offset, endOffset)
+	}
+	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(hiddenColOffs)]
+}
+
+func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	indices := tblInfo.Indices
+	offset := -1
+	for i, idx := range indices {
+		if idxInfo.ID == idx.ID {
+			offset = i
+			break
+		}
+	}
+	if offset == -1 {
+		// The target index has been removed.
+		return
+	}
+	// Remove the target index.
+	tblInfo.Indices = append(tblInfo.Indices[:offset], tblInfo.Indices[offset+1:]...)
+}
+
+func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, false, errors.Trace(err)
 	}
 
 	var indexName model.CIStr
-	if err = job.DecodeArgs(&indexName); err != nil {
+	var ifExists bool
+	if err = job.DecodeArgs(&indexName, &ifExists); err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		return nil, nil, false, errors.Trace(err)
 	}
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		return nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	// Double check for drop index on auto_increment column.
 	err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, autoid.ErrWrongAutoKey
+		return nil, nil, false, autoid.ErrWrongAutoKey
 	}
 
 	// Check that drop primary index will not cause invisible implicit primary index.
 	if err := checkInvisibleIndexesOnPK(tblInfo, []*model.IndexInfo{indexInfo}, job); err != nil {
-		return nil, nil, errors.Trace(err)
+		job.State = model.JobStateCancelled
+		return nil, nil, false, errors.Trace(err)
 	}
 
-	return tblInfo, indexInfo, nil
+	return tblInfo, indexInfo, false, nil
 }
 
 func onDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -1039,7 +1068,8 @@ type baseIndexWorker struct {
 	rowMap      map[int64]types.Datum
 	rowDecoder  *decoder.RowDecoder
 
-	sqlMode mysql.SQLMode
+	sqlMode    mysql.SQLMode
+	jobContext *JobContext
 }
 
 type addIndexWorker struct {
@@ -1052,7 +1082,7 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &addIndexWorker{
@@ -1064,6 +1094,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_rate"),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
+			jobContext:     jc,
 		},
 		index: index,
 	}
@@ -1312,7 +1343,8 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	})
 
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -1497,7 +1529,7 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo) *cleanUpIndexWorker {
+func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
@@ -1514,6 +1546,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("cleanup_idx_rate"),
 			sqlMode:        reorgInfo.ReorgMeta.SQLMode,
+			jobContext:     jc,
 		},
 	}
 }
@@ -1526,7 +1559,8 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	})
 
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)

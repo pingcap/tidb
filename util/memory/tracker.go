@@ -22,10 +22,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
 )
+
+// TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
+const TrackMemWhenExceeds = 104857600 // 100MB
 
 // Tracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
@@ -388,7 +390,7 @@ func (t *Tracker) Consume(bytes int64) {
 // BufferedConsume is used to buffer memory usage and do late consume
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
-	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
+	if *bufferedMemSize > int64(TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
 	}

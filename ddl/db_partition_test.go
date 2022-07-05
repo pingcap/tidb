@@ -2395,7 +2395,8 @@ func checkPartitionDelRangeDone(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	}
 
 	hasOldPartitionData := true
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		it, err := txn.Iter(partitionPrefix, nil)
 		if err != nil {
 			return err

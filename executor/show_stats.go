@@ -439,7 +439,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowHistogramsInFlight() {
-	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
+	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus() error {
