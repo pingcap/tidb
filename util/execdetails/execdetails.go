@@ -484,7 +484,7 @@ type RootRuntimeStats struct {
 	groupRss [][]RuntimeStats
 }
 
-// GetActRows returns total rows of RootRuntimeStats.
+// GetActRows return total rows of RootRuntimeStats.
 func (e *RootRuntimeStats) GetActRows() int64 {
 	num := int64(0)
 	for _, basic := range e.basics {
