@@ -3111,7 +3111,10 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) error {
 	s.currentCtx = ctx
-	if s.txn.validOrPending() {
+	txnManager := sessiontxn.GetTxnManager(s)
+
+	if txnManager.GetContextProvider() != nil {
+		// If the current txn context is already initialized, we need to skip `EnterNewTxn`
 		return nil
 	}
 
@@ -3123,7 +3126,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		}
 	}
 
-	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
+	return txnManager.EnterNewTxn(ctx, &sessiontxn.EnterNewTxnRequest{
 		Type:    sessiontxn.EnterNewTxnBeforeStmt,
 		TxnMode: txnMode,
 	})

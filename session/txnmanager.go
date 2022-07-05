@@ -129,6 +129,10 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 }
 
 func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnRequest) error {
+	if r.Type == sessiontxn.EnterNewTxnBeforeStmt && m.ctxProvider != nil {
+		return errors.New("Cannot enter a new txn with type 'EnterNewTxnBeforeStmt' when context is already initialized")
+	}
+
 	ctxProvider, err := m.newProviderWithRequest(r)
 	if err != nil {
 		return err
