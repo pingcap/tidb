@@ -1291,7 +1291,7 @@ func calcuateShiftTS(
 		}
 
 		for _, d := range m.Files {
-			if d.Cf == stream.WriteCF {
+			if d.Cf == stream.DefaultCF {
 				continue
 			}
 			if d.MinTs > restoreTS || d.MaxTs < startTS {

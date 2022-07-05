@@ -1522,6 +1522,10 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
 
 	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
+		if metadata.MinTs > restoreTS {
+			return nil
+		}
+
 		streamBackupMetaFiles.Lock()
 		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
 		streamBackupMetaFiles.Unlock()
