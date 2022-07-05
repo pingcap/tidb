@@ -784,22 +784,6 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	return tblInfo, indexInfo, false, nil
 }
 
-func getSchemaInfos(t *meta.Meta, job *model.Job) (*model.TableInfo, []model.CIStr, []bool, error) {
-	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-
-	var indexNames []model.CIStr
-	var ifExists []bool
-	if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-
-	return tblInfo, indexNames, ifExists, nil
-}
-
 func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, job *model.Job) error {
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, oidx := range tblInfo.Indices {
