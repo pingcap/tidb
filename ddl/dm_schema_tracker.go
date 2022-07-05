@@ -114,24 +114,28 @@ func (i *infoStore) deleteTable(schema, table model.CIStr) error {
 
 // infoSchemaAdaptor convert infoStore to infoschema.InfoSchema, it only implements a part of InfoSchema interface to be
 // used by DDL interface.
+// nolint:unused
 type infoSchemaAdaptor struct {
 	infoschema.InfoSchema
 	inner *infoStore
 }
 
 // SchemaByName implements the InfoSchema interface.
+// nolint:unused
 func (i infoSchemaAdaptor) SchemaByName(schema model.CIStr) (*model.DBInfo, bool) {
 	dbInfo := i.inner.SchemaByName(schema)
 	return dbInfo, dbInfo != nil
 }
 
 // TableExists implements the InfoSchema interface.
+// nolint:unused
 func (i infoSchemaAdaptor) TableExists(schema, table model.CIStr) bool {
 	tableInfo, _ := i.inner.TableByName(schema, table)
 	return tableInfo != nil
 }
 
 // TableIsView implements the InfoSchema interface.
+// nolint:unused
 func (i infoSchemaAdaptor) TableIsView(schema, table model.CIStr) bool {
 	tableInfo, _ := i.inner.TableByName(schema, table)
 	if tableInfo == nil {
@@ -141,6 +145,7 @@ func (i infoSchemaAdaptor) TableIsView(schema, table model.CIStr) bool {
 }
 
 // TableByName implements the InfoSchema interface.
+// nolint:unused
 func (i infoSchemaAdaptor) TableByName(schema, table model.CIStr) (t table.Table, err error) {
 	tableInfo, err := i.inner.TableByName(schema, table)
 	if err != nil {
