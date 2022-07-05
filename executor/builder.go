@@ -1542,9 +1542,9 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 
 	txnManager := sessiontxn.GetTxnManager(b.ctx)
 	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
-		snapshot, err = txnManager.GetForUpdateSnapshot()
+		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
 	} else {
-		snapshot, err = txnManager.GetReadSnapshot()
+		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()
 	}
 	if err != nil {
 		return nil, err
