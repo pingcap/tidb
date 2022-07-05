@@ -57,6 +57,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
@@ -115,6 +116,7 @@ type PointGetExecutor struct {
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
+	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
@@ -433,15 +435,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	// Stale Read uses the calculated TSO for the read,
-	// so there is no need to check the TxnScope here.
-	if e.isStaleness {
+	if e.txnScope == "" || e.txnScope == kv.GlobalTxnScope {
 		return nil
 	}
-	txnScope := e.readReplicaScope
-	if txnScope == "" || txnScope == kv.GlobalTxnScope {
-		return nil
-	}
+
 	var tblID int64
 	var tblName string
 	var partName string
@@ -456,16 +453,16 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		tblInfo, _ := is.TableByID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 	}
-	valid := distsql.VerifyTxnScope(txnScope, tblID, is)
+	valid := distsql.VerifyTxnScope(e.txnScope, tblID, is)
 	if valid {
 		return nil
 	}
 	if len(partName) > 0 {
 		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
+			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, e.txnScope))
 	}
 	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
+		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, e.txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.

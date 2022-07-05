@@ -356,14 +356,13 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	})
 
 	stmt := &ExecStmt{
-		GoCtx:            ctx,
-		InfoSchema:       is,
-		Plan:             execPlan,
-		StmtNode:         execStmt,
-		Ctx:              sctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
-		ReplicaReadScope: replicaReadScope,
+		GoCtx:       ctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         sctx,
+		OutputNames: names,
+		Ti:          &TelemetryInfo{},
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
