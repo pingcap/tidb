@@ -1057,8 +1057,8 @@ type Column struct {
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
-	// ColLoadedStatus indicates the status of column statistics
-	ColLoadedStatus
+	// StatsLoadedStatus indicates the status of column statistics
+	StatsLoadedStatus
 }
 
 func (c *Column) String() string {
@@ -1114,9 +1114,9 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	return columnMemUsage
 }
 
-// HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
+// HistogramNeededItems stores the columns/indices whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
-var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
+var HistogramNeededItems = neededStatsMap{items: map[model.TableItemID]struct{}{}}
 
 // IsInvalid checks if this column is invalid. If this column has histogram but not loaded yet, then we mark it
 // as need histogram.
@@ -1136,7 +1136,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
 			if c.Info != nil {
-				HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
 	}
@@ -1332,6 +1332,8 @@ type Index struct {
 	Info           *model.IndexInfo
 	Flag           int64
 	LastAnalyzePos types.Datum
+	PhysicalID     int64
+	StatsLoadedStatus
 }
 
 // ItemID implements TableCacheItem
@@ -1361,6 +1363,7 @@ func (idx *Index) String() string {
 
 // TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
+	idx.checkStats()
 	if idx.StatsVer >= Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
@@ -1369,7 +1372,19 @@ func (idx *Index) TotalRowCount() float64 {
 
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(collPseudo bool) bool {
+	if !collPseudo {
+		idx.checkStats()
+	}
 	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+}
+
+// EvictAllStats evicts all stats
+// Note that this function is only used for test
+func (idx *Index) EvictAllStats() {
+	idx.Buckets = nil
+	idx.CMSketch = nil
+	idx.TopN = nil
+	idx.StatsLoadedStatus.evictedStatus = allEvicted
 }
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
@@ -1431,6 +1446,7 @@ func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
 
 // QueryBytes is used to query the count of specified bytes.
 func (idx *Index) QueryBytes(d []byte) uint64 {
+	idx.checkStats()
 	h1, h2 := murmur3.Sum128(d)
 	if count, ok := idx.TopN.QueryTopN(d); ok {
 		return count
@@ -1441,6 +1457,7 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 // GetRowCount returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
 func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount int64) (float64, error) {
+	idx.checkStats()
 	sc := sctx.GetSessionVars().StmtCtx
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
@@ -1609,6 +1626,13 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 	return singleColumnEstResults[0] * math.Sqrt(singleColumnEstResults[1]) * math.Sqrt(math.Sqrt(singleColumnEstResults[2])) * math.Sqrt(math.Sqrt(math.Sqrt(singleColumnEstResults[3]))), true, nil
 }
 
+func (idx *Index) checkStats() {
+	if idx.IsFullLoad() {
+		return
+	}
+	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
+}
+
 type countByRangeFunc = func(sessionctx.Context, int64, []*ranger.Range) (float64, error)
 
 // newHistogramBySelectivity fulfills the content of new histogram by the given selectivity result.
@@ -1659,7 +1683,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 		ranLowEncode, ranHighEncode []byte
 		err                         error
 	)
-	newIndexHist := &Index{Info: idx.Info, StatsVer: idx.StatsVer, CMSketch: idx.CMSketch}
+	newIndexHist := &Index{Info: idx.Info, StatsVer: idx.StatsVer, CMSketch: idx.CMSketch, PhysicalID: idx.PhysicalID}
 	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 
 	lowBucketIdx, highBucketIdx := 0, 0
@@ -1766,7 +1790,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
-		newCol.ColLoadedStatus = oldCol.ColLoadedStatus
+		newCol.StatsLoadedStatus = oldCol.StatsLoadedStatus
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
@@ -2282,29 +2306,29 @@ const (
 	allEvicted
 )
 
-// ColLoadedStatus indicates the status of column statistics
-type ColLoadedStatus struct {
+// StatsLoadedStatus indicates the status of statistics
+type StatsLoadedStatus struct {
 	statsInitialized bool
 	evictedStatus    int
 }
 
-// NewColFullLoadStatus returns the status that the column fully loaded
-func NewColFullLoadStatus() ColLoadedStatus {
-	return ColLoadedStatus{
+// NewStatsFullLoadStatus returns the status that the column/index fully loaded
+func NewStatsFullLoadStatus() StatsLoadedStatus {
+	return StatsLoadedStatus{
 		statsInitialized: true,
 		evictedStatus:    allLoaded,
 	}
 }
 
-// IsStatsInitialized indicates whether the column's statistics was loaded from storage before.
+// IsStatsInitialized indicates whether the column/index's statistics was loaded from storage before.
 // Note that `IsStatsInitialized` only can be set in initializing
-func (s ColLoadedStatus) IsStatsInitialized() bool {
+func (s StatsLoadedStatus) IsStatsInitialized() bool {
 	return s.statsInitialized
 }
 
 // IsLoadNeeded indicates whether it needs load statistics during LoadNeededHistograms or sync stats
-// If the column was loaded and any statistics of it is evicting, it also needs re-load statistics.
-func (s ColLoadedStatus) IsLoadNeeded() bool {
+// If the column/index was loaded and any statistics of it is evicting, it also needs re-load statistics.
+func (s StatsLoadedStatus) IsLoadNeeded() bool {
 	if s.statsInitialized {
 		return s.evictedStatus > allLoaded
 	}
@@ -2312,12 +2336,17 @@ func (s ColLoadedStatus) IsLoadNeeded() bool {
 }
 
 // IsEssentialStatsLoaded indicates whether the essential statistics is loaded.
-// If the column was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
-func (s ColLoadedStatus) IsEssentialStatsLoaded() bool {
+// If the column/index was loaded, and at least histogram and topN still exists, the necessary statistics is still loaded.
+func (s StatsLoadedStatus) IsEssentialStatsLoaded() bool {
 	return s.statsInitialized && (s.evictedStatus < allEvicted)
 }
 
 // IsCMSEvicted indicates whether the cms got evicted now.
-func (s ColLoadedStatus) IsCMSEvicted() bool {
+func (s StatsLoadedStatus) IsCMSEvicted() bool {
 	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
+}
+
+// IsFullLoad indicates whether the stats are full loaded
+func (s StatsLoadedStatus) IsFullLoad() bool {
+	return s.statsInitialized && s.evictedStatus == allLoaded
 }
