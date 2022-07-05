@@ -1145,15 +1145,16 @@ const MaxHistoryJobs = 10
 // DefNumHistoryJobs is default value of the default number of history job
 const DefNumHistoryJobs = 10
 
-// GetHistoryDDLJobs returns the DDL history jobs and an error.
+const batchNumHistoryJobs = 128
+
+// GetLastNHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
-func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
-	t := meta.NewMeta(txn)
-	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
+func GetLastNHistoryDDLJobs(t *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
+	iterator, err := t.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return jobs, nil
+	return iterator.GetLastJobs(maxNumJobs, nil)
 }
 
 // IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
@@ -1193,7 +1194,22 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
 func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
-	return m.GetAllHistoryDDLJobs()
+	iterator, err := m.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	allJobs := make([]*model.Job, 0, batchNumHistoryJobs)
+	for {
+		jobs, err := iterator.GetLastJobs(batchNumHistoryJobs, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(jobs) == 0 {
+			break
+		}
+		allJobs = append(allJobs, jobs...)
+	}
+	return allJobs, nil
 }
 
 // GetHistoryJobByID return history DDL job by ID.
