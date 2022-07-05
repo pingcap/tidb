@@ -1016,6 +1016,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo implements Plan interface.
 func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
 	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
 		res = fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
