@@ -396,6 +396,7 @@ type PhysicalIndexMergeReader struct {
 	PartitionInfo PartitionInfo
 }
 
+// GetAvgRowSize return the average row size of this plan.
 func (p *PhysicalIndexMergeReader) GetAvgRowSize() float64 {
 	return getTblStats(p.TablePlans[len(p.TablePlans)-1]).GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
 }

@@ -1240,6 +1240,7 @@ func (p *PointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uint64) 
 	return p.planCost, nil
 }
 
+// GetNetworkCost calculates the cost of the plan in network data transfer.
 func (p *PointGetPlan) GetNetworkCost() float64 {
 	cols := p.accessCols
 	if cols == nil {
