@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -352,6 +354,9 @@ func init() {
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
+	}
+	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {
+		return MockInfoSchema(tbList)
 	}
 }
 
