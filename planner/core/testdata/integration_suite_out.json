@@ -7085,20 +7085,6 @@
         ]
       },
       {
-        "SQL": "explain format = 'brief' select row_number() over w1, row_number() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (order by c1);",
-        "Plan": [
-          "TableReader 10000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 10000.00 mpp[tiflash]  Column#6, Column#7",
-          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(order by test.t1.c1 rows between current row and current row)",
-          "      └─Window 10000.00 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
-          "        └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
-          "          └─ExchangeReceiver 10000.00 mpp[tiflash]  , stream_count: 8",
-          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "SQL": "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c2 order by c2);",
         "Plan": [
           "TableReader 2666.67 root  data:ExchangeSender",
