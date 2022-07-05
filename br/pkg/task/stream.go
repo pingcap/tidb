@@ -919,10 +919,16 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 	readMetaDone()
 
-	fileCount := 0
-	shiftUntilTS := ShiftTS(cfg.Until)
+	var (
+		fileCount    uint64 = 0
+		kvPairCount  int64  = 0
+		totalSize    uint64 = 0
+		shiftUntilTS        = ShiftTS(cfg.Until)
+	)
 	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		fileCount++
+		totalSize += d.Length
+		kvPairCount += d.NumberOfEntries
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
@@ -935,6 +941,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	removed := metas.RemoveDataBefore(shiftUntilTS)
 
+	// remove metadata
 	removeMetaDone := console.StartTask("Removing metadata... ")
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
@@ -942,7 +949,10 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 	removeMetaDone()
-	clearDataFileDone := console.StartTask("Clearing data files... ")
+
+	// remove log
+	clearDataFileDone := console.StartTask(
+		fmt.Sprintf("Clearing data files done. kv-count = %v, totalSize = %v", kvPairCount, totalSize))
 	worker := utils.NewWorkerPool(128, "delete files")
 	wg := new(sync.WaitGroup)
 	for _, f := range removed {
