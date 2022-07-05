@@ -1970,6 +1970,7 @@ func (rc *Client) GenGlobalID(ctx context.Context) (int64, error) {
 	var id int64
 	storage := rc.GetDomain().Store()
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(
 		ctx,
 		storage,
@@ -1989,6 +1990,7 @@ func (rc *Client) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
 	ids := make([]int64, 0)
 	storage := rc.GetDomain().Store()
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(
 		ctx,
 		storage,
@@ -2008,6 +2010,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 	storage := rc.GetDomain().Store()
 	var schemaVersion int64
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	if err := kv.RunInNewTxn(
 		ctx,
 		storage,

@@ -246,16 +246,15 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	tk1.MustExec("update no_retry set id = 5")
 
 	// RestrictedSQL should retry.
-	tk1.Session().GetSessionVars().InRestrictedSQL = true
-	tk1.MustExec("begin")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	tk1.Session().ExecuteInternal(ctx, "begin")
 
 	tk2.MustExec("update no_retry set id = 6")
 
-	tk1.MustExec("update no_retry set id = 7")
-	tk1.MustExec("commit")
+	tk1.Session().ExecuteInternal(ctx, "update no_retry set id = 7")
+	tk1.Session().ExecuteInternal(ctx, "commit")
 
 	// test for disable transaction local latch
-	tk1.Session().GetSessionVars().InRestrictedSQL = false
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TxnLocalLatches.Enabled = false
