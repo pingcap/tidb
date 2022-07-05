@@ -308,7 +308,7 @@ func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
 }
 
-// GetSnapshotWithStmtReadTS get snapshot with read ts
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
 func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	ts, err := p.GetStmtReadTS()
 	if err != nil {
@@ -318,7 +318,7 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error
 	return p.getSnapshotByTS(ts)
 }
 
-// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	ts, err := p.GetStmtForUpdateTS()
 	if err != nil {
