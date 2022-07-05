@@ -10,10 +10,9 @@ import (
 	"net/url"
 	"testing"
 
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
