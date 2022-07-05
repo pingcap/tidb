@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/spf13/pflag"
 
 	"github.com/opentracing/opentracing-go"
@@ -150,6 +151,10 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	}()
 
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
+	clusterVersion, err := mgr.GetClusterVersion(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	allocID, err := mgr.GetBaseAllocID(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -210,6 +215,8 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	// Step.3 save backup meta file to s3.
 	// NOTE: maybe define the meta file in kvproto in the future.
 	// but for now json is enough.
+	normalizedVer := version.NormalizeBackupVersion(clusterVersion)
+	backupInfo.SetClusterVersion(normalizedVer.String())
 	backupInfo.SetAllocID(allocID)
 	backupInfo.SetResolvedTS(resolvedTs)
 	backupInfo.SetSnapshotIDs(snapIDMap)

@@ -116,6 +116,11 @@ func (c *EBSBackupInfo) SetResolvedTS(id uint64) {
 	c.ClusterInfo.ResolvedTS = id
 }
 
+func (c *EBSBackupInfo) SetClusterVersion(version string) {
+	c.CheckClusterInfo()
+	c.ClusterInfo.Version = version
+}
+
 func (c *EBSBackupInfo) SetSnapshotIDs(idMap map[uint64]map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
