@@ -162,7 +162,7 @@ func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) erro
 	return nil
 }
 
-// GetSnapshotWithStmtReadTS get snapshot with read ts and set the transaction related options
+// GetSnapshotWithStmtReadTS gets snapshot with read ts and set the transaction related options
 // before return
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	txn, err := p.sctx.Txn(false)
@@ -186,7 +186,7 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	return snapshot, nil
 }
 
-// GetSnapshotWithStmtForUpdateTS get snapshot with for update ts
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }
