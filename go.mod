@@ -229,3 +229,5 @@ replace github.com/pingcap/tidb/parser => ./parser
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.2
+
+replace github.com/tikv/client-go/v2 => github.com/sticnarf/client-go/v2 v2.0.0-20220705074421-1e626b6f40f7
