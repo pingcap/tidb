@@ -430,7 +430,7 @@ func (h *fineGrainedShuffleHelper) clear() {
 	h.plans = h.plans[:0]
 }
 
-func (h *fineGrainedShuffleHelper) addTarget(t shuffleTarget, p *basePhysicalPlan) {
+func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
 	h.shuffleTarget = t
 	h.plans = append(h.plans, p)
 }
@@ -441,7 +441,7 @@ func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuff
 		// Do not clear the plans because window executor will keep the data partition.
 		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
 		// which will break data partition.
-		helper.addTarget(window, &x.basePhysicalPlan)
+		helper.updateTarget(window, &x.basePhysicalPlan)
 		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
 	case *PhysicalSort:
 		if x.IsPartialSort {

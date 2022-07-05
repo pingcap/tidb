@@ -212,20 +212,20 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, expStreamCount, 6, 0)
 
-	// Window <- Sort <- Window(x) <- Sort <- ExchangeReceiver <- ExchangeSender
+	// Window <- Sort <- Window(x) <- Sort <- ExchangeReceiver <- ExchangeSender(x)
 	// Fine-grained shuffle is disabled because Window is not hash partition.
-	partWindow1 = &PhysicalWindow{}
+	nonPartWindow := &PhysicalWindow{}
 	partialSort1 = &PhysicalSort{
 		IsPartialSort: true,
 	}
 	tableReader.tablePlan = passSender
 	passSender.children = []PhysicalPlan{partWindow}
 	partWindow.children = []PhysicalPlan{partialSort}
-	partialSort.children = []PhysicalPlan{partWindow1}
-	partWindow1.children = []PhysicalPlan{partialSort1}
+	partialSort.children = []PhysicalPlan{nonPartWindow}
+	nonPartWindow.children = []PhysicalPlan{partialSort1}
 	partialSort1.children = []PhysicalPlan{recv}
-	recv.children = []PhysicalPlan{hashSender}
-	hashSender.children = []PhysicalPlan{tableScan}
+	recv.children = []PhysicalPlan{passSender}
+	passSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, 0, 6, 0)
 
 	// HashAgg <- Window <- ExchangeReceiver <- ExchangeSender
