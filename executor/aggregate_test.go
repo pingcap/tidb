@@ -1470,3 +1470,171 @@ func (s *testSuiteAgg) TestAvgDecimal(c *C) {
 	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table td;")
 }
+<<<<<<< HEAD
+=======
+
+// https://github.com/pingcap/tidb/issues/23314
+func TestIssue23314(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
+	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
+	res := tk.MustQuery("select col1 from t1 group by col1")
+	res.Check(testkit.Rows("16:40:20.01"))
+}
+
+func TestAggInDisk(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_hashagg_final_concurrency = 1;")
+	tk.MustExec("set tidb_hashagg_partial_concurrency = 1;")
+	tk.MustExec("set tidb_mem_quota_query = 4194304")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int)")
+	sql := "insert into t values (0)"
+	for i := 1; i <= 200; i++ {
+		sql += fmt.Sprintf(",(%v)", i)
+	}
+	sql += ";"
+	tk.MustExec(sql)
+	rows := tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a;").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "HashAgg") {
+			require.False(t, strings.Contains(disk, "0 Bytes"))
+			require.True(t, strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"))
+		}
+	}
+
+	// Add code cover
+	// Test spill chunk. Add a line to avoid tmp spill chunk is always full.
+	tk.MustExec("insert into t values(0)")
+	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4040100.0000"))
+	// Test no groupby and no data.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(c int, c1 int);")
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
+}
+
+func TestRandomPanicAggConsume(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i <= 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v),(%v),(%v)", i, i, i))
+	}
+
+	fpName := "github.com/pingcap/tidb/executor/ConsumeRandomPanic"
+	require.NoError(t, failpoint.Enable(fpName, "5%panic(\"ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+
+	// Test 10 times panic for each AggExec.
+	var res sqlexec.RecordSet
+	for i := 1; i <= 10; i++ {
+		var err error
+		for err == nil {
+			// Test paralleled hash agg.
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(a) from t group by a")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
+				require.NoError(t, res.Close())
+			}
+		}
+		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test unparalleled hash agg.
+			res, err = tk.Exec("select /*+ HASH_AGG() */ count(distinct a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
+				require.NoError(t, res.Close())
+			}
+		}
+		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+
+		err = nil
+		for err == nil {
+			// Test stream agg.
+			res, err = tk.Exec("select /*+ STREAM_AGG() */ count(a) from t")
+			if err == nil {
+				_, err = session.GetRows4Test(context.Background(), tk.Session(), res)
+				require.NoError(t, res.Close())
+			}
+		}
+		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+	}
+}
+
+func TestIssue35295(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t100")
+	// This bug only happens on partition prune mode = 'static'
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`CREATE TABLE t100 (
+ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+col1 int(10) NOT NULL DEFAULT '0' COMMENT 'test',
+money bigint(20) NOT NULL COMMENT 'test',
+logtime datetime NOT NULL COMMENT '记录时间',
+PRIMARY KEY (ID,logtime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=1 COMMENT='test'
+PARTITION BY RANGE COLUMNS(logtime) (
+PARTITION p20220608 VALUES LESS THAN ("20220609"),
+PARTITION p20220609 VALUES LESS THAN ("20220610"),
+PARTITION p20220610 VALUES LESS THAN ("20220611"),
+PARTITION p20220611 VALUES LESS THAN ("20220612"),
+PARTITION p20220612 VALUES LESS THAN ("20220613"),
+PARTITION p20220613 VALUES LESS THAN ("20220614"),
+PARTITION p20220614 VALUES LESS THAN ("20220615"),
+PARTITION p20220615 VALUES LESS THAN ("20220616"),
+PARTITION p20220616 VALUES LESS THAN ("20220617"),
+PARTITION p20220617 VALUES LESS THAN ("20220618"),
+PARTITION p20220618 VALUES LESS THAN ("20220619"),
+PARTITION p20220619 VALUES LESS THAN ("20220620"),
+PARTITION p20220620 VALUES LESS THAN ("20220621"),
+PARTITION p20220621 VALUES LESS THAN ("20220622"),
+PARTITION p20220622 VALUES LESS THAN ("20220623"),
+PARTITION p20220623 VALUES LESS THAN ("20220624"),
+PARTITION p20220624 VALUES LESS THAN ("20220625")
+ );`)
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-09 00:00:00');")
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-10 00:00:00');")
+	tk.MustQuery("SELECT /*+STREAM_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+	tk.MustQuery("SELECT /*+HASH_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+}
+
+// https://github.com/pingcap/tidb/issues/27751
+func TestIssue27751(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table test.t(nname char(20));")
+	tk.MustExec("insert into test.t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');")
+	tk.MustExec("set @@group_concat_max_len=0;")
+	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
+	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
+}
+>>>>>>> 07afcb87d... executor: Fix group_concat returns wrong results after set group_concat_max_len (#35852)
