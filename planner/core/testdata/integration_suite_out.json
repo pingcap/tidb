@@ -7043,7 +7043,7 @@
           "  └─Projection 10000.00 mpp[tiflash]  Column#5, stream_count: 8",
           "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#5 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
-          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  , stream_count: 8",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
@@ -7056,11 +7056,11 @@
           "  └─Projection 10000.00 mpp[tiflash]  Column#7, Column#6, stream_count: 8",
           "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
-          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  , stream_count: 8",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "            └─Window 10000.00 mpp[tiflash]  rank()->Column#6 over(partition by test.t1.c2), stream_count: 8",
           "              └─Sort 10000.00 mpp[tiflash]  test.t1.c2, stream_count: 8",
-          "                └─ExchangeReceiver 10000.00 mpp[tiflash]  , stream_count: 8",
+          "                └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
           "                  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
           "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
@@ -7075,11 +7075,11 @@
           "      └─TopN 10.00 mpp[tiflash]  Column#7, Column#6, offset:0, count:10",
           "        └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "          └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
-          "            └─ExchangeReceiver 10000.00 mpp[tiflash]  , stream_count: 8",
+          "            └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
           "              └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "                └─Window 10000.00 mpp[tiflash]  rank()->Column#6 over(partition by test.t1.c2), stream_count: 8",
           "                  └─Sort 10000.00 mpp[tiflash]  test.t1.c2, stream_count: 8",
-          "                    └─ExchangeReceiver 10000.00 mpp[tiflash]  , stream_count: 8",
+          "                    └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
           "                      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
           "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
@@ -7092,7 +7092,7 @@
           "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4, stream_count: 8",
           "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c2 order by test.t1.c2 rows between current row and current row), stream_count: 8",
           "      └─Sort 2666.67 mpp[tiflash]  test.t1.c2, test.t1.c2, stream_count: 8",
-          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  , stream_count: 8",
+          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
           "            └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c2",
           "              └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#4, funcs:firstrow(test.t1.c2)->test.t1.c2",
@@ -7110,7 +7110,7 @@
           "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4, stream_count: 8",
           "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row), stream_count: 8",
           "      └─Sort 2666.67 mpp[tiflash]  test.t1.c1, test.t1.c2, stream_count: 8",
-          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  , stream_count: 8",
+          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "            └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c1, test.t1.c2",
           "              └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#4, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
@@ -7128,7 +7128,7 @@
           "  └─Projection 12487.50 mpp[tiflash]  Column#8, stream_count: 8",
           "    └─Window 12487.50 mpp[tiflash]  row_number()->Column#8 over(partition by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort 12487.50 mpp[tiflash]  test.t1.c1, stream_count: 8",
-          "        └─ExchangeReceiver 12487.50 mpp[tiflash]  , stream_count: 8",
+          "        └─ExchangeReceiver 12487.50 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.c1, test.t1.c2)]",
           "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
@@ -7147,7 +7147,7 @@
           "  └─Projection 3323.33 mpp[tiflash]  Column#5, stream_count: 8",
           "    └─Window 3323.33 mpp[tiflash]  row_number()->Column#5 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort 3323.33 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
-          "        └─ExchangeReceiver 3323.33 mpp[tiflash]  , stream_count: 8",
+          "        └─ExchangeReceiver 3323.33 mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
           "            └─Selection 3323.33 mpp[tiflash]  lt(test.t1.c1, 100)",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
