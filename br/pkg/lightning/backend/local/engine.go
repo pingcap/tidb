@@ -876,6 +876,7 @@ func (e *Engine) loadEngineMeta() error {
 		}
 		return err
 	}
+	//nolint: errcheck
 	defer closer.Close()
 
 	if err = json.Unmarshal(jsonBytes, &e.engineMeta); err != nil {

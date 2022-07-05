@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -47,6 +48,16 @@ func NewStalenessTxnContextProvider(sctx sessionctx.Context, ts uint64, is infos
 // GetTxnInfoSchema returns the information schema used by txn
 func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
+}
+
+// GetTxnScope returns the current txn scope
+func (p *StalenessTxnContextProvider) GetTxnScope() string {
+	return p.sctx.GetSessionVars().TxnCtx.TxnScope
+}
+
+// GetReadReplicaScope returns the read replica scope
+func (p *StalenessTxnContextProvider) GetReadReplicaScope() string {
+	return config.GetTxnScopeFromConfig()
 }
 
 // GetStmtReadTS returns the read timestamp
@@ -97,6 +108,7 @@ func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() erro
 	}
 
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	txnCtx.TxnScope = kv.GlobalTxnScope
 	txnCtx.IsStaleness = true
 	txnCtx.InfoSchema = p.is
 	return nil
@@ -148,4 +160,33 @@ func (p *StalenessTxnContextProvider) AdviseWarmup() error {
 // AdviseOptimizeWithPlan providers optimization according to the plan
 func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts and set the transaction related options
+// before return
+func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	if txn.Valid() {
+		return txn.GetSnapshot(), nil
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, p.ts)
+
+	replicaReadType := sessVars.GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	}
+	snapshot.SetOption(kv.IsStalenessReadOnly, true)
+
+	return snapshot, nil
+}
+
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
+func (p *StalenessTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	return nil, errors.New("GetSnapshotWithStmtForUpdateTS not supported for stalenessTxnProvider")
 }

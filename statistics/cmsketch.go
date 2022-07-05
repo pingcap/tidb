@@ -441,6 +441,9 @@ func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN,
 
 // TotalCount returns the total count in the sketch, it is only used for test.
 func (c *CMSketch) TotalCount() uint64 {
+	if c == nil {
+		return 0
+	}
 	return c.count
 }
 
