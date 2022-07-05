@@ -16,7 +16,7 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/fatih/color v1.10.0 // indirect
 	github.com/fsouza/fake-gcs-server v1.17.0 // indirect
-	github.com/go-sql-driver/mysql v1.5.0
+	github.com/go-sql-driver/mysql v1.6.0
 	github.com/go-yaml/yaml v2.1.0+incompatible
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.3.4
@@ -39,16 +39,16 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
 	github.com/pingcap/br v5.1.0-alpha.0.20210604015827-db22c6d284a0+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
+	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20210722113201-768c114017e8
-	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
+	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/pingcap/parser v0.0.0-20210618053735-57843e8185c4
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20211025074540-e1c7362eeeb4
+	github.com/pingcap/tipb v0.0.0-20220704075215-f654f5a3fece
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -68,8 +68,8 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.8.0
 	go.uber.org/automaxprocs v1.2.0
-	go.uber.org/goleak v0.10.0
-	go.uber.org/zap v1.17.0
+	go.uber.org/goleak v1.1.10
+	go.uber.org/zap v1.18.1
 	golang.org/x/net v0.0.0-20210316092652-d523dce5a7f4
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
 	golang.org/x/sys v0.0.0-20210324051608-47abb6519492
@@ -77,7 +77,7 @@ require (
 	golang.org/x/tools v0.1.0
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
-	modernc.org/mathutil v1.2.2 // indirect
+	modernc.org/mathutil v1.4.1 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
