@@ -170,6 +170,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 	return nil
 }
 
+// GetPDRegionRecordStats is a helper function calling `regions/check/down-peer|pending-peer`.
 func (m *TiFlashPDPlacementManager) GetPDInvalidRegionsInfo(ctx context.Context, regionInfo *helper.RegionsInfo) error {
 	var tempRegionInfo helper.RegionsInfo
 

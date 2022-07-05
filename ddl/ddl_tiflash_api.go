@@ -227,8 +227,8 @@ var (
 	PollTiFlashBackoffRate TiFlashTick = 1.5
 	// PollTiFlashUpdateInterval is the interval between every pollTiFlashPeerInfo call.
 	PollTiFlashPeerInfoInterval = 2 * time.Minute
-	// LastSyncTiFlashStoreTick indicates the time of the last call pollTiFlashPeerInfo
-	LastTimeSyncTiFlashStore = time.Now()
+	// LastTimeSyncTiFlashPeerInfo indicates the time of the last call pollTiFlashPeerInfo
+	LastTimeSyncTiFlashPeerInfo = time.Now()
 )
 
 func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
@@ -534,17 +534,17 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 		}
 	}
 
-	tiflashStoreIds := make([]int64, len(pollTiFlashContext.TiFlashStores))
+	tiflashStoreIDs := make([]int64, len(pollTiFlashContext.TiFlashStores))
 
 	for i, store := range pollTiFlashContext.TiFlashStores {
-		tiflashStoreIds[i-1] = store.Store.ID
+		tiflashStoreIDs[i-1] = store.Store.ID
 	}
 
-	sort.Slice(tiflashStoreIds, func(i, j int) bool { return tiflashStoreIds[i] < tiflashStoreIds[j] })
+	sort.Slice(tiflashStoreIDs, func(i, j int) bool { return tiflashStoreIDs[i] < tiflashStoreIDs[j] })
 
-	isTiflashPeer := func(tiflashPeerIds []int64, peerId int64) bool {
-		for _, tiflashPeerId := range tiflashPeerIds {
-			if tiflashPeerId == peerId {
+	isTiflashPeer := func(tiflashPeerIDs []int64, peerID int64) bool {
+		for _, tiflashPeerID := range tiflashPeerIDs {
+			if tiflashPeerID == peerID {
 				return true
 			}
 		}
@@ -552,8 +552,8 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 		return false
 	}
 
-	isTiflashAllPeerDown := func(tiflashPeerIds []int64, tiflashDownPeerIds []int64) bool {
-		return reflect.DeepEqual(tiflashPeerIds, tiflashDownPeerIds)
+	isTiflashAllPeerDown := func(tiflashPeerIDs []int64, tiflashDownPeerIDs []int64) bool {
+		return reflect.DeepEqual(tiflashPeerIDs, tiflashDownPeerIDs)
 	}
 
 	removeDuplicate := func(peerIDs []int64) []int64 {
@@ -582,13 +582,13 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 	for _, invaildRegion := range invaildRegions.Regions {
 		var invalidPeerIDs []int64
 		for _, downPeer := range invaildRegion.DownPeers {
-			if isTiflashPeer(tiflashStoreIds, downPeer.Peer.ID) {
+			if isTiflashPeer(tiflashStoreIDs, downPeer.Peer.ID) {
 				invalidPeerIDs = append(invalidPeerIDs, downPeer.Peer.ID)
 			}
 		}
 
 		for _, pendingPeer := range invaildRegion.PendingPeers {
-			if isTiflashPeer(tiflashStoreIds, pendingPeer.ID) {
+			if isTiflashPeer(tiflashStoreIDs, pendingPeer.ID) {
 				invalidPeerIDs = append(invalidPeerIDs, pendingPeer.ID)
 			}
 		}
@@ -597,7 +597,7 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 			sort.Slice(invalidPeerIDs, func(i, j int) bool { return invalidPeerIDs[i] < invalidPeerIDs[j] })
 
 			invalidPeerIDs = removeDuplicate(invalidPeerIDs)
-			if isTiflashAllPeerDown(tiflashStoreIds, invalidPeerIDs) {
+			if isTiflashAllPeerDown(tiflashStoreIDs, invalidPeerIDs) {
 				invaildTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)
 				invalidTableIDs = append(invalidTableIDs, invaildTableID)
 			}
@@ -766,14 +766,14 @@ func (d *ddl) PollTiFlashRoutine() {
 						}
 					}
 
-					syncElapsed := time.Since(LastTimeSyncTiFlashStore)
+					syncElapsed := time.Since(LastTimeSyncTiFlashPeerInfo)
 					if syncElapsed > PollTiFlashPeerInfoInterval {
 						_, err := d.pollTiFlashPeerInfo(sctx, pollTiflashContext)
 						if err != nil {
 							logutil.BgLogger().Warn("pollTiFlashPeerInfo returns error", zap.Error(err))
 						}
 
-						LastTimeSyncTiFlashStore = time.Now()
+						LastTimeSyncTiFlashPeerInfo = time.Now()
 					}
 				}
 				d.sessPool.put(sctx)
