@@ -298,6 +298,7 @@ parseLoop:
 }
 
 func (p *matcherParser) importFile(fileName string, parseMatcher func(string, bool) error) error {
+	//nolint: gosec
 	file, err := os.Open(fileName)
 	if err != nil {
 		return p.annotatef(err, "cannot open filter file")
