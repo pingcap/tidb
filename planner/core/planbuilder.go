@@ -442,6 +442,20 @@ type PlanBuilder struct {
 	outerScopes []*ScopeSchema
 	// curScope indicates all column that a select block can see in its level.
 	curScope *ScopeSchema
+	/**
+	This field is used as a work field during resolving to validate
+	the use of aggregate functions. For example in a query
+	SELECT ... FROM ...WHERE MIN(i) == 1 GROUP BY ... HAVING MIN(i) > 2
+	MIN(i) in the WHERE clause is not allowed since only non-aggregated data
+	is present, whereas MIN(i) in the HAVING clause is allowed because HAVING
+	operates on the output of a grouping operation.
+	Each query block is assigned a nesting level. This field is a bit field
+	that contains the value one in the position of that nesting level if
+	aggregate functions are allowed for that query block.
+
+	more usage detail ref structure of nestingMap
+	*/
+	allowAggFunc nestingMap
 
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName

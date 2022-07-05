@@ -743,6 +743,16 @@ type AggregateFuncExpr struct {
 	Distinct bool
 	// Order is only used in GROUP_CONCAT
 	Order *OrderByClause
+
+	// Extra is a structure to help with aggregate function check in the tree travel.
+	Extra *struct {
+		InAggFunc       *AggregateFuncExpr
+		MaxAggLevel     int
+		MaxAggFuncLevel int
+		AggQueryBlock   int
+		BaseQueryBlock  int
+		InsideAggregate []*AggregateFuncExpr
+	}
 }
 
 // Restore implements Node interface.

@@ -16,8 +16,7 @@ package core
 
 import (
 	"context"
-	"math"
-
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -40,6 +39,8 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
+	"math"
+	"strings"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -464,6 +465,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		// apply i-th optimizing rule.
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
+		}
+		if strings.HasPrefix(logic.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select (select 1 from t order by count(n.a) limit 1) from t n") && i == 13 {
+			fmt.Println(1)
 		}
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
 		logic, err = rule.optimize(ctx, logic, opt)

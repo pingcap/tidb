@@ -4019,12 +4019,20 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 				totalMap[agg] = aggIndexMap[idx]
 			}
 		} else {
-			// new name resolution use
+			if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select (select count(a)) from t") {
+				fmt.Println(1)
+			}
+			// new name resolution will collect all the aggregate func in analyzing phase and build them instantly.
+			// in building phase, the rewriter will try to seek them in scope stack when encountering agg instead of using aggMapper.
 			p, err = b.buildAggregation4NNR(ctx, p)
 			if err != nil {
 				return nil, err
 			}
 		}
+	}
+
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select (select cnt from (select count(a) as cnt) n) from t") {
+		fmt.Println(1)
 	}
 
 	var oldLen int
