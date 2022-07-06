@@ -279,7 +279,7 @@ func TestTooLongBinaryPlan(t *testing.T) {
 }
 
 // TestLongBinaryPlan asserts that if the binary plan is smaller than 1024*1024 bytes, it should be output to both slow query and stmt summary.
-// The size of the binary plan in this test case is designed to be larger than 1024*1024*0.9 bytes but smaller than 1024*1024 bytes.
+// The size of the binary plan in this test case is designed to be larger than 1024*1024*0.85 bytes but smaller than 1024*1024 bytes.
 func TestLongBinaryPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -305,7 +305,7 @@ func TestLongBinaryPlan(t *testing.T) {
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 1800;")
+	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 1700;")
 	tk.MustQuery("select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i")
 
 	result := testdata.ConvertRowsToStrings(tk.MustQuery("select binary_plan from information_schema.slow_query " +
@@ -316,7 +316,7 @@ func TestLongBinaryPlan(t *testing.T) {
 	// The binary plan in this test case is expected to be slightly smaller than MaxEncodedPlanSizeInBytes.
 	// If the size of the binary plan changed and this case failed in the future, you can adjust the partition numbers in the CREATE TABLE statement above.
 	require.Less(t, len(s), stmtsummary.MaxEncodedPlanSizeInBytes)
-	require.Greater(t, len(s), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.9))
+	require.Greater(t, len(s), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.85))
 	b, err := base64.StdEncoding.DecodeString(s)
 	require.NoError(t, err)
 	b, err = snappy.Decode(nil, b)
@@ -334,7 +334,7 @@ func TestLongBinaryPlan(t *testing.T) {
 	require.Len(t, result, 1)
 	s = result[0]
 	require.Less(t, len(s), stmtsummary.MaxEncodedPlanSizeInBytes)
-	require.Greater(t, len(s), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.9))
+	require.Greater(t, len(s), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.85))
 	b, err = base64.StdEncoding.DecodeString(s)
 	require.NoError(t, err)
 	b, err = snappy.Decode(nil, b)

@@ -1,6 +1,6 @@
 [
   {
-    "name": "TestExplainBinary",
+    "name": "TestBinaryPlanInExplainAndSlowLog",
     "cases": [
       "create table t(a int, b int, index ia(a))",
       "create table t2(a int, b int)",

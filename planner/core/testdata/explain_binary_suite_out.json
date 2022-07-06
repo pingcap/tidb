@@ -1,6 +1,6 @@
 [
   {
-    "Name": "TestExplainBinary",
+    "Name": "TestBinaryPlanInExplainAndSlowLog",
     "Cases": [
       {
         "SQL": "create table t(a int, b int, index ia(a));",
