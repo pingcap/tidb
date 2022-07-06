@@ -827,6 +827,17 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	fetchChildWorkerWaitGroup.Add(1)
 	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
 
+	// We get the pointers here instead of when we are all finished and adding the time because:
+	// (1) If there is Apply in the plan tree, executors may be reused (Open()ed and Close()ed multiple times)
+	// (2) we don't wait all goroutines of HashAgg to exit in HashAgg.Close()
+	// So we can't write something like:
+	//     atomic.AddInt64(&e.stats.PartialWallTime, int64(time.Since(partialStart)))
+	// Because the next execution of HashAgg may have started when this goroutine haven't exited and then there will be data race.
+	var partialWallTimePtr, finalWallTimePtr *int64
+	if e.stats != nil {
+		partialWallTimePtr = &e.stats.PartialWallTime
+		finalWallTimePtr = &e.stats.FinalWallTime
+	}
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
@@ -835,8 +846,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
-		if e.stats != nil {
-			atomic.AddInt64(&e.stats.PartialWallTime, int64(time.Since(partialStart)))
+		if partialWallTimePtr != nil {
+			atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
 		}
 	}()
 	finalWorkerWaitGroup := &sync.WaitGroup{}
@@ -847,8 +858,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()
-		if e.stats != nil {
-			atomic.AddInt64(&e.stats.FinalWallTime, int64(time.Since(finalStart)))
+		if finalWallTimePtr != nil {
+			atomic.AddInt64(finalWallTimePtr, int64(time.Since(finalStart)))
 		}
 	}()
 
