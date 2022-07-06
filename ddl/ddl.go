@@ -1197,26 +1197,10 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		}
 	}
 	// sort job.
-	sorter := &jobsSorter{jobs: allJobs}
-	sort.Sort(sorter)
+	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
+		return i.ID < j.ID
+	})
 	return allJobs, nil
-}
-
-// jobsSorter implements the sort.Interface interface.
-type jobsSorter struct {
-	jobs []*model.Job
-}
-
-func (s *jobsSorter) Swap(i, j int) {
-	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
-}
-
-func (s *jobsSorter) Len() int {
-	return len(s.jobs)
-}
-
-func (s *jobsSorter) Less(i, j int) bool {
-	return s.jobs[i].ID < s.jobs[j].ID
 }
 
 // GetHistoryJobByID return history DDL job by ID.
