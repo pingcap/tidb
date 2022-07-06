@@ -3670,7 +3670,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	err := tk.ExecToErr("alter table ipt LAST partition less than (100)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:1481]MAXVALUE can only be used in last partition definition", err.Error())
+	require.Equal(t, "[ddl:8246]Cannot ALTER TABLE <table> LAST PARTITION when MAXVALUE PARTITION exists, try ALTER TABLE <table> SPLIT MAXVALUE PARTITION instead", err.Error())
 
 	tk.MustExec("alter table ipt first partition less than (30)")
 	tk.MustQuery("show create table ipt").Check(testkit.Rows(
@@ -3704,7 +3704,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported merge partition", err.Error())
 
-	err = tk.ExecToErr("alter table ipt split max partition less than (140)")
+	err = tk.ExecToErr("alter table ipt split maxvalue partition less than (140)")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported split partition", err.Error())
 
@@ -3765,7 +3765,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported merge partition", err.Error())
 
-	err = tk.ExecToErr("alter table t2 split max partition less than (140)")
+	err = tk.ExecToErr("alter table t2 split maxvalue partition less than (140)")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported split partition", err.Error())
 

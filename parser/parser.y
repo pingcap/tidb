@@ -1655,7 +1655,7 @@ AlterTablePartitionOpt:
 		ret.NoWriteToBinlog = $3.(bool)
 		$$ = ret
 	}
-|	"SPLIT" "MAX" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
+|	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
 		partitionMethod := ast.PartitionMethod{Expr: $7}
 		$$ = &ast.AlterTableSpec{

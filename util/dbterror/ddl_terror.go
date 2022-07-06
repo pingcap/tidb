@@ -245,6 +245,8 @@ var (
 	ErrRangeNotIncreasing = ClassDDL.NewStd(mysql.ErrRangeNotIncreasing)
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
 	ErrPartitionMaxvalue = ClassDDL.NewStd(mysql.ErrPartitionMaxvalue)
+	// ErrPartitionLastPartitionMaxvalue Cannot do ALTER TABLE LAST PARTITION LESS THAN if MAXVALUE partition exists.
+	ErrPartitionLastPartitionMaxvalue = ClassDDL.NewStd(mysql.ErrPartitionLastPartitionMaxvalue)
 	// ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = ClassDDL.NewStd(mysql.ErrDropLastPartition)
 	// ErrTooManyPartitions returns too many partitions were defined.

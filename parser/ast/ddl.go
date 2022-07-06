@@ -3165,7 +3165,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteName(name.O)
 		}
 	case AlterTableReorganizeLastPartition:
-		ctx.WriteKeyWord("SPLIT MAX PARTITION LESS THAN (")
+		ctx.WriteKeyWord("SPLIT MAXVALUE PARTITION LESS THAN (")
 		if err := n.Partition.PartitionMethod.Expr.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableReorganizeLastPartition Exprs")
 		}

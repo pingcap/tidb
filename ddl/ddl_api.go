@@ -6349,7 +6349,7 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 
 func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec, part *model.PartitionInfo) error {
 	if meta.Partition.IntervalMaxPart {
-		return errors.Trace(dbterror.ErrPartitionMaxvalue)
+		return errors.Trace(dbterror.ErrPartitionLastPartitionMaxvalue)
 	}
 	if len(spec.PartDefinitions) > 0 {
 		return errors.Trace(dbterror.ErrUnsupportedAddPartition)

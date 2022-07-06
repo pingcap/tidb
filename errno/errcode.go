@@ -1072,6 +1072,7 @@ const (
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244
 	ErrColumnInChange                     = 8245
+	ErrPartitionLastPartitionMaxvalue     = 8246
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
