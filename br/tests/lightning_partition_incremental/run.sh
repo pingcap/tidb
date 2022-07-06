@@ -26,7 +26,7 @@ pid1="$!"
 run_lightning --log-file "$LOG_FILE2" --config "tests/$TEST_NAME/config2.toml" -d "tests/$TEST_NAME/data2" &
 pid2="$!"
 
-# Must wait for pid explicitly. Otherwise, we can't detect the process is exited with error.
+# Must wait for pid explicitly. Otherwise, we can't detect whether the process is exited with error.
 wait "$pid1" "$pid2"
 
 grep -F 'checksum pass' "$LOG_FILE1" | grep -Fq 'auto_rowid'
@@ -38,5 +38,11 @@ run_sql 'admin check table incr.non_pk_auto_inc'
 run_sql 'select count(*) from incr.auto_rowid'
 check_contains 'count(*): 60'
 
+run_sql 'select count(distinct _tidb_rowid) from incr.auto_rowid'
+check_contains 'count(distinct _tidb_rowid): 60'
+
 run_sql 'select count(*) from incr.non_pk_auto_inc'
 check_contains 'count(*): 60'
+
+run_sql 'select count(distinct _tidb_rowid) from incr.non_pk_auto_inc'
+check_contains 'count(distinct _tidb_rowid): 60'
