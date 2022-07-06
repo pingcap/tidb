@@ -122,7 +122,8 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage = metrics.TelemetrySQLCTECnt
+	telemetryCTEUsage               = metrics.TelemetrySQLCTECnt
+	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -3420,6 +3421,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCTEUsage.WithLabelValues("nonRecurCTE").Inc()
 	} else {
 		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
+	}
+
+	if ti.UseMultiSchemaChange {
+		telemetryMultiSchemaChangeUsage.Inc()
 	}
 }
 
