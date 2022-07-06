@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -315,12 +314,6 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
-func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
-	vars := sctx.GetSessionVars()
-	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, variable.BoolToOnOff(opt))
-	return err
-}
-
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
 func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
@@ -417,10 +410,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			planCacheCounter.Inc()
 		}
-		err = e.setFoundInPlanCache(sctx, true)
-		if err != nil {
-			return err
-		}
+		sessVars.FoundInPlanCache = true
 		e.names = names
 		e.Plan = plan
 		stmtCtx.PointExec = true
@@ -459,17 +449,11 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 						goto REBUILD
 					}
-					err = e.setFoundInPlanCache(sctx, true)
-					if err != nil {
-						return err
-					}
+					sessVars.FoundInPlanCache = true
 					if len(bindSQL) > 0 {
 						// When the `len(bindSQL) > 0`, it means we use the binding.
 						// So we need to record this.
-						err = sessVars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(true))
-						if err != nil {
-							return err
-						}
+						sessVars.FoundInBinding = true
 					}
 					if metrics.ResettablePlanCacheCounterFortTest {
 						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
@@ -533,7 +517,7 @@ REBUILD:
 			sctx.PreparedPlanCache().Put(cacheKey, []*PlanCacheValue{cached})
 		}
 	}
-	err = e.setFoundInPlanCache(sctx, false)
+	sessVars.FoundInPlanCache = false
 	return err
 }
 
