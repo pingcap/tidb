@@ -127,6 +127,40 @@ func TestCachedTable(t *testing.T) {
 	require.False(t, usage.CachedTable)
 }
 
+func TestMultiSchemaChange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("drop table if exists tele_multi_t")
+	tk.MustExec("create table tele_multi_t(id int)")
+	tk.MustExec("alter table tele_multi_t add column b int")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("alter table tele_multi_t add column c int, drop column b")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("alter table tele_multi_t add column b int, drop column c")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+
+	tk.MustExec("alter table tele_multi_t drop column b")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.MultiSchemaChange.MultiSchemaChangeUsed)
+}
+
 func TestPlacementPolicies(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
