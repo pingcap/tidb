@@ -716,15 +716,15 @@ func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPla
 			PlanDigest: hack.Slice(k.(string)),
 		}
 
+		var err error
 		if originalMeta.isLarge {
 			protoMeta.EncodedNormalizedPlan = compressPlan(hack.Slice(originalMeta.binaryNormalizedPlan))
 		} else {
-			planDecoded, errDecode := decodePlan(originalMeta.binaryNormalizedPlan)
-			if errDecode != nil {
-				logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
-				return true
-			}
-			protoMeta.NormalizedPlan = planDecoded
+			protoMeta.NormalizedPlan, err = decodePlan(originalMeta.binaryNormalizedPlan)
+		}
+		if err != nil {
+			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(err))
+			return true
 		}
 
 		metas = append(metas, protoMeta)
