@@ -546,7 +546,7 @@ func getRuntimeTLSVersion() string {
 		}
 	}
 	// get all available tls version
-	var tlsVersionSlice []string
+	tlsVersionSlice := make([]string, 0, len(tlsVersionString))
 	for _, v := range tlsVersionString {
 		tlsVersionSlice = append(tlsVersionSlice, v)
 	}
