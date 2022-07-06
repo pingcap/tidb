@@ -152,7 +152,7 @@ type selectResult struct {
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
-	// distSQLConcurrency and paging are only for collect information, and they don't affect the process of execution.
+	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
 }
