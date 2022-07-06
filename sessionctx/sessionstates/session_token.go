@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package sessionstates
 
 import (
@@ -73,7 +87,7 @@ func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
 	now := time.Now()
 	failpoint.Inject("mockValidateTokenTime", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
-			if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
 				now = t
 			}
 		}
@@ -103,11 +117,11 @@ var globalSigningCert SigningCert
 // SigningCert represents the parsed certificate used for token-based auth.
 type SigningCert struct {
 	sync.RWMutex
-	certPath   string
-	keyPath    string
-	expireTime time.Time
-	cert       *x509.Certificate
-	privKey    crypto.PrivateKey
+	certPath string
+	keyPath  string
+	/**/ expireTime time.Time
+	cert            *x509.Certificate
+	privKey         crypto.PrivateKey
 	// The cert file may happen to be replaced between signing and checking, so we keep the old cert for a while.
 	lastCertExpireTime time.Time
 	lastCert           *x509.Certificate
@@ -116,17 +130,21 @@ type SigningCert struct {
 // We cannot guarantee that the cert and key are set at the same time because they are set in the system variables.
 func (sc *SigningCert) setCertPath(certPath string) {
 	sc.Lock()
-	sc.certPath = certPath
-	// It may fail expectedly because the key path is not set yet.
-	_ = sc.checkAndLoadCert(true)
+	if certPath != sc.certPath {
+		sc.certPath = certPath
+		// It may fail expectedly because the key path is not set yet.
+		_ = sc.checkAndLoadCert(true)
+	}
 	sc.Unlock()
 }
 
 func (sc *SigningCert) setKeyPath(keyPath string) {
 	sc.Lock()
-	sc.keyPath = keyPath
-	// It may fail expectedly because the cert path is not set yet.
-	_ = sc.checkAndLoadCert(true)
+	if keyPath != sc.keyPath {
+		sc.keyPath = keyPath
+		// It may fail expectedly because the cert path is not set yet.
+		_ = sc.checkAndLoadCert(true)
+	}
 	sc.Unlock()
 }
 
@@ -135,19 +153,34 @@ func (sc *SigningCert) checkAndLoadCert(force bool) error {
 		return nil
 	}
 	now := time.Now()
+	failpoint.Inject("mockLoadCertTime", func(val failpoint.Value) {
+		if s := val.(string); len(s) > 0 {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				now = t
+			}
+		}
+	})
+	var err error
+	if force || now.After(sc.expireTime) {
+		err = sc.loadCert(force)
+		if err != nil {
+			logutil.BgLogger().Warn("loading signing cert failed",
+				zap.String("cert path", sc.certPath),
+				zap.String("key path", sc.keyPath),
+				zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("signing cert is loaded successfully",
+				zap.String("cert path", sc.certPath),
+				zap.String("key path", sc.keyPath))
+		}
+	}
 	if sc.lastCert != nil && now.After(sc.lastCertExpireTime) {
 		sc.lastCert = nil
 	}
-	if force || now.After(sc.expireTime) {
-		if err := sc.loadCert(); err != nil {
-			logutil.BgLogger().Warn("load cert failed", zap.Error(err))
-			return err
-		}
-	}
-	return nil
+	return err
 }
 
-func (sc *SigningCert) loadCert() error {
+func (sc *SigningCert) loadCert(force bool) error {
 	tlsCert, err := tls.LoadX509KeyPair(sc.certPath, sc.keyPath)
 	if err != nil {
 		return errors.Wrapf(err, "load x509 failed, cert path: %s, key path: %s", sc.certPath, sc.keyPath)
@@ -161,13 +194,19 @@ func (sc *SigningCert) loadCert() error {
 		}
 	}
 
-	if sc.cert != nil {
+	if force {
+		// If it's force loaded by replacing the path, start the countdown from now.
+		now := time.Now()
+		sc.expireTime = now.Add(certLifetime)
+		if sc.cert != nil {
+			sc.lastCert = sc.cert
+			sc.lastCertExpireTime = now.Add(oldCertValidTime)
+		}
+	} else {
+		// If it's loaded because of expiration, the original cert must exist.
 		sc.lastCert = sc.cert
 		sc.lastCertExpireTime = sc.expireTime.Add(oldCertValidTime)
 		sc.expireTime = sc.expireTime.Add(certLifetime)
-	} else {
-		// If the cert has never been loaded before.
-		sc.expireTime = time.Now().Add(certLifetime)
 	}
 	sc.cert = cert
 	sc.privKey = tlsCert.PrivateKey
@@ -241,7 +280,7 @@ func (sc *SigningCert) CheckSignature(content, signature []byte) error {
 	err = sc.cert.CheckSignature(sc.cert.SignatureAlgorithm, content, signature)
 	// The content might be signed with the older certificate, so we also try the old one.
 	if err != nil && sc.lastCert != nil && time.Now().Before(sc.lastCertExpireTime) {
-		return sc.cert.CheckSignature(sc.cert.SignatureAlgorithm, content, signature)
+		return sc.lastCert.CheckSignature(sc.lastCert.SignatureAlgorithm, content, signature)
 	}
 	return err
 }

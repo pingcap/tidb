@@ -2025,9 +2025,12 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 		return err
 	}
 	// session token
-	token, err := sessionstates.CreateSessionToken(e.ctx.GetSessionVars().User.Username)
-	if err != nil {
-		return err
+	var token *sessionstates.SessionToken
+	// In testing, user is nil.
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+			return err
+		}
 	}
 	tokenBytes, err := gjson.Marshal(token)
 	if err != nil {
