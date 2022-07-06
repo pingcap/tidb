@@ -123,6 +123,7 @@ go_test(
         "//domain",
         "//errno",
         "//executor",
+        "//infoschema",
         "//kv",
         "//meta",
         "//parser/ast",
