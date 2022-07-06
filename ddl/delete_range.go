@@ -324,8 +324,9 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		tableID := job.TableID
 		var indexID int64
+		var ifExists bool
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
@@ -346,9 +347,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexName interface{}
+		var ifExists bool
 		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
@@ -365,24 +367,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			elemID := ea.allocForIndexID(tableID, indexID)
 			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
-		}
-	case model.ActionDropIndexes:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		// Remove data in TiKV.
-		if len(indexIDs) == 0 {
-			return nil
-		}
-		if len(partitionIDs) == 0 {
-			return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
-		}
-		for _, pID := range partitionIDs {
-			if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pID, indexIDs, now, ea); err != nil {
-				return errors.Trace(err)
-			}
 		}
 	case model.ActionDropColumn:
 		var colName model.CIStr

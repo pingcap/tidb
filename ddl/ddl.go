@@ -833,16 +833,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
-		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
-		if historyJob.IsCancelled() && (historyJob.Type == model.ActionDropIndexes) {
-			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
-				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-				}
-			}
-			logutil.BgLogger().Info("[ddl] DDL job is cancelled", zap.Int64("jobID", jobID))
-			return nil
-		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
@@ -1145,15 +1135,16 @@ const MaxHistoryJobs = 10
 // DefNumHistoryJobs is default value of the default number of history job
 const DefNumHistoryJobs = 10
 
-// GetHistoryDDLJobs returns the DDL history jobs and an error.
+const batchNumHistoryJobs = 128
+
+// GetLastNHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
-func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
-	t := meta.NewMeta(txn)
-	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
+func GetLastNHistoryDDLJobs(t *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
+	iterator, err := t.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return jobs, nil
+	return iterator.GetLastJobs(maxNumJobs, nil)
 }
 
 // IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
@@ -1193,7 +1184,42 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
 func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
-	return m.GetAllHistoryDDLJobs()
+	iterator, err := m.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	allJobs := make([]*model.Job, 0, batchNumHistoryJobs)
+	for {
+		jobs, err := iterator.GetLastJobs(batchNumHistoryJobs, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		allJobs = append(allJobs, jobs...)
+		if len(jobs) < batchNumHistoryJobs {
+			break
+		}
+	}
+	// sort job.
+	sorter := &jobsSorter{jobs: allJobs}
+	sort.Sort(sorter)
+	return allJobs, nil
+}
+
+// jobsSorter implements the sort.Interface interface.
+type jobsSorter struct {
+	jobs []*model.Job
+}
+
+func (s *jobsSorter) Swap(i, j int) {
+	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
+}
+
+func (s *jobsSorter) Len() int {
+	return len(s.jobs)
+}
+
+func (s *jobsSorter) Less(i, j int) bool {
+	return s.jobs[i].ID < s.jobs[j].ID
 }
 
 // GetHistoryJobByID return history DDL job by ID.

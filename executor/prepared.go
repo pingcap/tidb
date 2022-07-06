@@ -32,7 +32,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -333,14 +332,11 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	isStaleness := snapshotTS != 0
-	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
-	execStmt.BinaryArgs = args
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err
@@ -349,21 +345,16 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
-		staleread.AssertStmtStaleness(sctx, snapshotTS != 0)
-		if snapshotTS != 0 {
-			sessiontxn.AssertTxnManagerReadTS(sctx, snapshotTS)
-		}
 	})
 
 	stmt := &ExecStmt{
-		GoCtx:            ctx,
-		InfoSchema:       is,
-		Plan:             execPlan,
-		StmtNode:         execStmt,
-		Ctx:              sctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
-		ReplicaReadScope: replicaReadScope,
+		GoCtx:       ctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         sctx,
+		OutputNames: names,
+		Ti:          &TelemetryInfo{},
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
