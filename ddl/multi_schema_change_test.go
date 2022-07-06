@@ -222,6 +222,28 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4"))
 }
 
+func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originHook := dom.DDL().GetHook()
+
+	// Test for cancelling the job in a middle state.
+	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4, " +
+		"index(a), index(b), index(c), index(d));")
+	tk.MustExec("insert into t values ();")
+	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel job when the column 'a' is in delete-reorg.
+		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
+	})
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t drop column b, drop column a, drop column d;")
+	dom.DDL().SetHook(originHook)
+	hook.MustCancelFailed(t)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3"))
+}
+
 func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -239,6 +261,32 @@ func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
 	putTheSameDDLJobTwice(t, func() {
 		tk.MustGetErrCode("alter table t drop column b, drop column a;", errno.ErrCantDropFieldOrKey)
 	})
+}
+
+func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	// [a, b] -> [+c, -a, +d, -b] -> [c, d]
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("alter table t add column c int default 3, drop column a, add column d int default 4, drop column b;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4"))
+
+	// [a, b] -> [-a, -b, +c, +d] -> [c, d]
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("alter table t drop column a, drop column b, add column c int default 3, add column d int default 4;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("insert into t values ();")
+	tk.MustGetErrCode("alter table t add column c int default 3 after a, add column d int default 4 first, drop column a, drop column b;", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestMultiSchemaChangeDropIndexes(t *testing.T) {
