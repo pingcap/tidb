@@ -1080,6 +1080,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrColumnInChange:                  mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
 	ErrPartitionLastPartitionMaxvalue:  mysql.Message("Cannot ALTER TABLE <table> LAST PARTITION when MAXVALUE PARTITION exists, try ALTER TABLE <table> SPLIT MAXVALUE PARTITION instead", nil),
 	ErrUnsupportedReorganizePartition:  mysql.Message("Unsupported REORGANIZE PARTITION", nil),
+	ErrIntervalPartition:               mysql.Message("INTERVAL PARTITION %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),

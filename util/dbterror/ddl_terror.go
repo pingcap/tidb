@@ -382,6 +382,8 @@ var (
 
 	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
 	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
+	// ErrIntervalPartitionFail when something goes wrong during ALTER TABLE with INTERVAL PARTITIONing
+	ErrIntervalPartitionFail = ClassDDL.NewStd(mysql.ErrIntervalPartition)
 
 	// ErrAutoConvert when auto convert happens
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)

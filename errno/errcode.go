@@ -1074,6 +1074,8 @@ const (
 	ErrColumnInChange                     = 8245
 	ErrPartitionLastPartitionMaxvalue     = 8246
 	ErrUnsupportedReorganizePartition     = 8247
+	ErrIntervalPartition                  = 8248
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

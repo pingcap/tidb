@@ -3796,8 +3796,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	if spec.Tp == ast.AlterTableDropFirstPartition {
 		partInfo = &model.PartitionInfo{}
 		if len(spec.Partition.Definitions) != 0 {
-			// TODO: Fix the error
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
 				"Internal error during generating altered INTERVAL partitions, table info already contains partition definitions")
 		}
 		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition, partInfo)
@@ -3810,18 +3809,16 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		}
 		if len(spec.Partition.Definitions) == 0 ||
 			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
-			// TODO: Fix the error
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
 				"Internal error during generating altered INTERVAL partitions, number of partitions does not match")
 		}
 		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
 				"Internal error during generating altered INTERVAL partitions, number of partition names does not match")
 		}
 		for i, part := range spec.Partition.Definitions {
 			if part.Name.L != meta.Partition.Definitions[i+pNullOffset].Name.L {
-				// TODO: Fix the error
-				return dbterror.ErrRepairTableFail.GenWithStackByArgs(
+				return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
 					"Internal error during generating altered INTERVAL partitions, names does not match")
 			}
 			spec.PartitionNames = append(spec.PartitionNames, part.Name)
