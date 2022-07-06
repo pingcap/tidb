@@ -3148,6 +3148,10 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
+		case ast.AlterTableReorganizeFirstPartition:
+			err = errors.Trace(dbterror.ErrUnsupportedMergePartition)
+		case ast.AlterTableReorganizeLastPartition:
+			err = errors.Trace(dbterror.ErrUnsupportedSplitPartition)
 		case ast.AlterTableCheckPartitions:
 			err = errors.Trace(dbterror.ErrUnsupportedCheckPartition)
 		case ast.AlterTableRebuildPartition:
@@ -3312,7 +3316,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableNoCache:
 			err = d.AlterTableNoCache(sctx, ident)
 		default:
-			// Nothing to do now.
+			err = errors.Trace(dbterror.ErrUnsupportedAlterTableSpec)
 		}
 
 		if err != nil {

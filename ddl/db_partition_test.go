@@ -3700,9 +3700,14 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `SYS_P_LT_90` VALUES LESS THAN (90),\n" +
 			" PARTITION `SYS_P_MAXVALUE` VALUES LESS THAN (MAXVALUE))"))
 
-	// WAS HERE!!!
-	tk.MustExec("alter table ipt merge first partition less than (40)")
-	tk.MustExec("alter table ipt split MAX partition less than (100)")
+	err = tk.ExecToErr("alter table ipt merge first partition less than (60)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported merge partition", err.Error())
+
+	err = tk.ExecToErr("alter table ipt split max partition less than (140)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported split partition", err.Error())
+
 	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
 	tk.MustQuery("show create table ipt").Check(testkit.Rows(
 		"ipt CREATE TABLE `ipt` (\n" +
@@ -3756,8 +3761,14 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	tk.MustExec("create table t2 (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90)")
 	tk.MustExec("alter table t2 first partition less than (20)")
 	tk.MustExec("alter table t2 LAST partition less than (100)")
-	tk.MustExec("alter table t2 merge first partition less than (30)")
-	err = tk.ExecToErr("alter table t2 split MAX partition less than (100)")
+	err = tk.ExecToErr("alter table t2 merge first partition less than (60)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported merge partition", err.Error())
+
+	err = tk.ExecToErr("alter table t2 split max partition less than (140)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported split partition", err.Error())
+
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `id` bigint(20) unsigned NOT NULL,\n" +
