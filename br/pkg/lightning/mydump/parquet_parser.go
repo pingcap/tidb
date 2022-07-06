@@ -403,7 +403,7 @@ func getDatumLen(v reflect.Value) int {
 // See: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
 func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement, logger log.Logger) error {
 	switch v.Kind() {
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Bool, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		d.SetUint64(v.Uint())
 	case reflect.Int8, reflect.Int16:
 		d.SetInt64(v.Int())
