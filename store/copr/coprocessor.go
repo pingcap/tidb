@@ -120,6 +120,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 
 	if it.req.KeepOrder {
+		// Don't set high concurrency for the keep order case. It wastes a lot of memory.
+		if it.concurrency > 2 {
+			it.concurrency = 2
+		}
 		it.sendRate = util.NewRateLimit(2 * it.concurrency)
 		it.respChan = nil
 	} else {
