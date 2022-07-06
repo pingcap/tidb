@@ -316,3 +316,14 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 		require.True(t, idx.TopN.Equal(topn))
 	}
 }
+
+func TestAnalyzePartitionTableForFloat(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( id int, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN MAXVALUE)")
+	tk.MustExec("INSERT INTO t1 (id,num) VALUES (6404,0.44816685),(6532,0.7986926);")
+	tk.MustExec("analyze table t1")
+}
