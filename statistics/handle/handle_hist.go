@@ -192,24 +192,32 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 	} else {
 		task = lastTask
 	}
-	if !task.TableItemID.IsIndex {
-		return h.handleOneColTask(task, readerCtx, ctx)
-	}
-	return h.handleOneIndexTask(task, readerCtx, ctx)
+	return h.handleOneItemTask(task, readerCtx, ctx)
 }
 
-func (h *Handle) handleOneColTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
-	col := task.TableItemID
+func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
+	item := task.TableItemID
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.Get(col.TableID)
+	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
-		h.writeToResultChan(task.ResultCh, col)
+		h.writeToResultChan(task.ResultCh, item)
 		return nil, nil
 	}
-	c, ok := tbl.Columns[col.ID]
-	if !ok || c.Len() > 0 {
-		h.writeToResultChan(task.ResultCh, col)
-		return nil, nil
+	var index *statistics.Index
+	var col *statistics.Column
+	var err error
+	if item.IsIndex {
+		index, ok = tbl.Indices[item.ID]
+		if !ok || index.Len() > 0 {
+			h.writeToResultChan(task.ResultCh, item)
+			return nil, nil
+		}
+	} else {
+		col, ok = tbl.Columns[item.ID]
+		if !ok || col.Len() > 0 {
+			h.writeToResultChan(task.ResultCh, item)
+			return nil, nil
+		}
 	}
 	// to avoid duplicated handling in concurrent scenario
 	working := h.setWorking(task.TableItemID, task.ResultCh)
@@ -219,47 +227,29 @@ func (h *Handle) handleOneColTask(task *NeededItemTask, readerCtx *StatsReaderCo
 	// refresh statsReader to get latest stats
 	h.getFreshStatsReader(readerCtx, ctx)
 	t := time.Now()
-	hist, err := h.readStatsForOne(col, c, readerCtx.reader)
-	if err != nil {
-		return task, err
+	needUpdate := false
+	if item.IsIndex {
+		index, err = h.readStatsForOneIdx(item, index, readerCtx.reader)
+		if err != nil {
+			return task, err
+		}
+		if index != nil {
+			needUpdate = true
+		}
+	} else {
+		col, err = h.readStatsForOneCol(item, col, readerCtx.reader)
+		if err != nil {
+			return task, err
+		}
+		if col != nil {
+			needUpdate = true
+		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if hist != nil && h.updateCachedItem(col, hist, nil) {
-		h.writeToResultChan(task.ResultCh, col)
+	if needUpdate && h.updateCachedItem(item, col, index) {
+		h.writeToResultChan(task.ResultCh, item)
 	}
-	h.finishWorking(col)
-	return nil, nil
-}
-
-func (h *Handle) handleOneIndexTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
-	idx := task.TableItemID
-	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.Get(idx.TableID)
-	if !ok {
-		h.writeToResultChan(task.ResultCh, idx)
-		return nil, nil
-	}
-	index, ok := tbl.Indices[idx.ID]
-	if !ok || index.Len() > 0 {
-		h.writeToResultChan(task.ResultCh, idx)
-		return nil, nil
-	}
-	// to avoid duplicated handling in concurrent scenario
-	working := h.setWorking(task.TableItemID, task.ResultCh)
-	if !working {
-		return nil, nil
-	}
-	h.getFreshStatsReader(readerCtx, ctx)
-	t := time.Now()
-	hist, err := h.readStatsForOneIdx(idx, index, readerCtx.reader)
-	if err != nil {
-		return task, err
-	}
-	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if hist != nil && h.updateCachedItem(idx, nil, hist) {
-		h.writeToResultChan(task.ResultCh, idx)
-	}
-	h.finishWorking(idx)
+	h.finishWorking(item)
 	return nil, nil
 }
 
@@ -288,7 +278,7 @@ func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.
 }
 
 // readStatsForOne reads hist for one column, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOne(col model.TableItemID, c *statistics.Column, reader *statsReader) (*statistics.Column, error) {
+func (h *Handle) readStatsForOneCol(col model.TableItemID, c *statistics.Column, reader *statsReader) (*statistics.Column, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
