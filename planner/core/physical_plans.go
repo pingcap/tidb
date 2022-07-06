@@ -73,11 +73,12 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
-type readReqType uint8
+// ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
+type ReadReqType uint8
 
 const (
 	// Cop means read from storage by cop request.
-	Cop readReqType = iota
+	Cop ReadReqType = iota
 	// BatchCop means read from storage by BatchCop request, only used for TiFlash
 	BatchCop
 	// MPP means read from storage by MPP request, only used for TiFlash
@@ -85,7 +86,7 @@ const (
 )
 
 // Name returns the name of read request type.
-func (r readReqType) Name() string {
+func (r ReadReqType) Name() string {
 	switch r {
 	case BatchCop:
 		return "batchCop"
