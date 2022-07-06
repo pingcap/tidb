@@ -24,7 +24,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -732,8 +732,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	sort.Slice(metas, func(i, j int) bool {
-		return bytes.Compare(metas[i].minKey, metas[j].minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) bool {
+		return bytes.Compare(i.minKey, j.minKey) < 0
 	})
 
 	metaLevels := make([][]*sstMeta, 0)
@@ -894,8 +894,8 @@ func sortAndMergeRanges(ranges []Range) []Range {
 		return ranges
 	}
 
-	sort.Slice(ranges, func(i, j int) bool {
-		return bytes.Compare(ranges[i].start, ranges[j].start) < 0
+	slices.SortFunc(ranges, func(i, j Range) bool {
+		return bytes.Compare(i.start, j.start) < 0
 	})
 
 	curEnd := ranges[0].end
@@ -1161,8 +1161,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		sort.Slice(w.writeBatch[:w.batchCount], func(i, j int) bool {
-			return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
+			return bytes.Compare(i.Key, j.Key) < 0
 		})
 		w.isWriteBatchSorted = true
 	}

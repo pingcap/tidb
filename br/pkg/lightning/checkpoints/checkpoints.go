@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type CheckpointStatus uint8
@@ -1217,8 +1218,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		sort.Slice(engine.Chunks, func(i, j int) bool {
-			return engine.Chunks[i].Key.less(&engine.Chunks[j].Key)
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
+			return i.Key.less(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine
