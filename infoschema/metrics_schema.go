@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/pingcap/tidb/types"
-	"sort"
+	"golang.org/x/exp/slices"
 	"strconv"
 	"strings"
 
@@ -136,7 +136,7 @@ func GenLabelConditionValues(values set.StringSet) string {
 	for k := range values {
 		vs = append(vs, k)
 	}
-	sort.Strings(vs)
+	slices.Sort(vs)
 	return strings.Join(vs, "|")
 }
 
