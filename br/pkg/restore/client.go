@@ -1660,6 +1660,7 @@ func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
 	files []*backuppb.DataFileInfo,
+	updateStats func(kvCount uint64, size uint64),
 	onProgress func(),
 ) error {
 	var err error
@@ -1701,6 +1702,7 @@ func (rc *Client) RestoreKVFiles(
 				fileStart := time.Now()
 				defer func() {
 					onProgress()
+					updateStats(uint64(file.NumberOfEntries), file.Length)
 					summary.CollectInt("File", 1)
 					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 				}()
@@ -1818,6 +1820,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
+	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 ) error {
 	// sort files firstly.
@@ -1827,8 +1830,8 @@ func (rc *Client) RestoreMetaKVFiles(
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
 	// The k-v events in default CF should be restored firstly. The reason is that:
-	// The error of transactions of meta will happen,
-	// if restore default CF events successfully, but failed to restore write CF events.
+	// The error of transactions of meta could happen if restore write CF events successfully,
+	// but failed to restore default CF events.
 	for _, f := range files {
 		if f.Cf == stream.WriteCF {
 			filesInWriteCF = append(filesInWriteCF, f)
@@ -1842,19 +1845,21 @@ func (rc *Client) RestoreMetaKVFiles(
 			continue
 		}
 
-		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		updateStats(kvCount, size)
 		progressInc()
 	}
 
 	// Restore files in write CF.
 	for _, f := range filesInWriteCF {
-		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		updateStats(kvCount, size)
 		progressInc()
 	}
 
@@ -1870,7 +1875,11 @@ func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
-) error {
+) (uint64, uint64, error) {
+	var (
+		kvCount uint64
+		size    uint64
+	)
 	log.Info("restore meta kv events", zap.String("file", file.Path),
 		zap.String("cf", file.Cf), zap.Int64("kv-count", file.NumberOfEntries),
 		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
@@ -1878,10 +1887,10 @@ func (rc *Client) RestoreMetaKVFile(
 	rc.rawKVClient.SetColumnFamily(file.GetCf())
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
-		return errors.Annotatef(berrors.ErrInvalidMetaFile,
+		return 0, 0, errors.Annotatef(berrors.ErrInvalidMetaFile,
 			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
 	}
 
@@ -1889,13 +1898,13 @@ func (rc *Client) RestoreMetaKVFile(
 	for iter.Valid() {
 		iter.Next()
 		if iter.GetError() != nil {
-			return errors.Trace(iter.GetError())
+			return 0, 0, errors.Trace(iter.GetError())
 		}
 
 		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
 		ts, err := GetKeyTS(txnEntry.Key)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		}
 
 		// The commitTs in write CF need be limited on [startTs, restoreTs].
@@ -1921,7 +1930,7 @@ func (rc *Client) RestoreMetaKVFile(
 		if err != nil {
 			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
 				logutil.Key("txn-key", txnEntry.Key))
-			return errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		} else if newEntry == nil {
 			continue
 		}
@@ -1929,11 +1938,14 @@ func (rc *Client) RestoreMetaKVFile(
 			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, ts); err != nil {
-			return errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		}
+
+		kvCount += 1
+		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
 
-	return rc.rawKVClient.PutRest(ctx)
+	return kvCount, size, rc.rawKVClient.PutRest(ctx)
 }
 
 func transferBoolToValue(enable bool) string {

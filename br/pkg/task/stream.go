@@ -979,16 +979,6 @@ func RunStreamRestore(
 	cmdName string,
 	cfg *RestoreConfig,
 ) (err error) {
-	startTime := time.Now()
-	defer func() {
-		dur := time.Since(startTime)
-		if err != nil {
-			summary.Log(cmdName+" failed summary", zap.Error(err))
-		} else {
-			summary.Log(cmdName+" success summary", zap.Duration("total-take", dur),
-				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS))
-		}
-	}()
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -1053,7 +1043,23 @@ func restoreStream(
 	g glue.Glue,
 	cfg *RestoreConfig,
 	logMinTS, logMaxTS uint64,
-) error {
+) (err error) {
+	var (
+		totalKVCount uint64
+		totalSize    uint64
+		mu           sync.Mutex
+		startTime    = time.Now()
+	)
+	defer func() {
+		if err != nil {
+			summary.Log("restore log failed summary", zap.Error(err))
+		} else {
+			summary.Log("restore log success summary", zap.Duration("total-take", time.Since(startTime)),
+				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS),
+				zap.Uint64("total-kv-count", totalKVCount), zap.Uint64("total-size", totalSize))
+		}
+	}()
+
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -1127,9 +1133,15 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	updateStats := func(kvCount uint64, size uint64) {
+		mu.Lock()
+		defer mu.Unlock()
+		totalKVCount += kvCount
+		totalSize += size
+	}
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, p.Inc)
+		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1143,7 +1155,7 @@ func restoreStream(
 
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
+		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -1284,7 +1296,6 @@ func calcuateShiftTS(
 		min_begin_ts uint64
 		isExist      bool
 	)
-
 	for _, m := range metas {
 		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
 			continue
