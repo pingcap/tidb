@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
-	goutil "github.com/pingcap/tidb/util" //nolint: gci
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -882,7 +881,7 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
 
