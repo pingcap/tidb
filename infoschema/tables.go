@@ -20,26 +20,21 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stmtsummary"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -48,8 +43,12 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1910,25 +1909,12 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-// SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
-type SchemasSorter []*model.DBInfo
-
-func (s SchemasSorter) Len() int {
-	return len(s)
-}
-
-func (s SchemasSorter) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s SchemasSorter) Less(i, j int) bool {
-	return s[i].Name.L < s[j].Name.L
-}
-
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := ctx.GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()
-	sort.Sort(SchemasSorter(dbs))
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
+		return i.Name.L < j.Name.L
+	})
 	switch it.meta.Name.O {
 	case tableFiles:
 	case tablePlugins, tableTriggers:

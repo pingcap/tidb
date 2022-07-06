@@ -83,6 +83,7 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 }
 
 func loadTestSuiteCases(filePath string) (res []testCases, err error) {
+	//nolint: gosec
 	jsonFile, err := os.Open(filePath)
 	if err != nil {
 		return res, err

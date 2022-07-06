@@ -2176,7 +2176,7 @@ func TestIdentifier(t *testing.T) {
 		{`select COUNT from DESC`, false, ""},
 		{`select COUNT from SELECT.DESC`, true, "SELECT `COUNT` FROM `SELECT`.`DESC`"},
 		{"use `select`", true, "USE `select`"},
-		{"use `sel``ect`", true, "USE `sel``ect`"},
+		{"use `sel``ect`", true, "USE `sel``ect`"}, //nolint: misspell
 		{"use select", false, "USE `select`"},
 		{`select * from t as a`, true, "SELECT * FROM `t` AS `a`"},
 		{"select 1 full, 1 row, 1 abs", false, ""},
