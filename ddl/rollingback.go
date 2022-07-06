@@ -228,7 +228,7 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 }
 
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
-	if needNotifyAndStopReorg(job) {
+	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		d.notifyReorgCancel(job)
@@ -240,15 +240,13 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	return
 }
 
-func needNotifyAndStopReorg(job *model.Job) bool {
+func needNotifyAndStopReorgWorker(job *model.Job) bool {
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
-		//nolint:staticcheck
-		//lint:ignore S1008
-		if job.IsNonRevertibleSubJob() {
+		// If the value of SnapshotVer isn't zero, it means the worker is backfilling the indexes.
+		if job.MultiSchemaInfo != nil {
 			// However, if the sub-job is non-revertible, it means the reorg process is finished.
 			// We don't need to start another round to notify reorg workers to exit.
-			return false
+			return job.MultiSchemaInfo.Revertible
 		}
 		return true
 	}

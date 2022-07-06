@@ -435,14 +435,6 @@ func (job *Job) MarkNonRevertible() {
 	}
 }
 
-// IsNonRevertibleSubJob returns true if the job is a sub-job, and it is non-revertible.
-func (job *Job) IsNonRevertibleSubJob() bool {
-	if job.MultiSchemaInfo != nil {
-		return !job.MultiSchemaInfo.Revertible
-	}
-	return false
-}
-
 // Clone returns a copy of the job.
 func (job *Job) Clone() *Job {
 	encode, err := job.Encode(true)
