@@ -508,16 +508,44 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 			return errors.Trace(err)
 		}
 		// Note: tableIDs contains partition ids, cannot directly use dbReplace.TableMap
-		// TODO: use global ID replace map
+		/* TODO: use global ID replace map
+		 *
+		 *	for i := 0; i < len(tableIDs); i++ {
+		 *		tableReplace, exist := dbReplace.TableMap[tableIDs[i]]
+		 *		if !exist {
+		 *			return errors.Errorf("DropSchema: try to drop a non-existent table, missing oldTableID")
+		 *		}
+		 *		tableIDs[i] = tableReplace.NewTableID
+		 *	}
+		 */
 
-		for i := 0; i < len(tableIDs); i++ {
-			tableReplace, exist := dbReplace.TableMap[tableIDs[i]]
-			if !exist {
-				return errors.Errorf("DropSchema: try to drop a non-existent table, missing oldTableID")
-			}
-			tableIDs[i] = tableReplace.NewTableID
+		argsSet := make(map[int64]struct{}, len(tableIDs))
+		for _, tableID := range tableIDs {
+			argsSet[tableID] = struct{}{}
 		}
-		if err := insertDeleteRangeForTable(ctx, newJobID, tableIDs, sr.RewriteTS); err != nil {
+
+		meetCnt := 0
+		newTableIDs := make([]int64, 0, len(tableIDs))
+		for tableID, tableReplace := range dbReplace.TableMap {
+			meetCnt += 1 // meet table
+			if _, exist := argsSet[tableID]; !exist {
+				return errors.Errorf("DropSchema: record a table, but it doesn't exist in job args")
+			}
+			newTableIDs = append(newTableIDs, tableID)
+			for partitionID, newPartitionID := range tableReplace.PartitionMap {
+				meetCnt += 1 // meet partition
+				if _, exist := argsSet[partitionID]; !exist {
+					return errors.Errorf("DropSchema: record a partition, but it doesn't exist in job args")
+				}
+				newTableIDs = append(newTableIDs, newPartitionID)
+			}
+		}
+
+		if len(newTableIDs) != len(tableIDs) {
+			return errors.Errorf("DropSchema: try to drop a non-exsitent table/partition, whose oldID doesn't exist in tableReplace")
+		}
+
+		if err := insertDeleteRangeForTable(ctx, newJobID, newTableIDs, sr.RewriteTS); err != nil {
 			return errors.Trace(err)
 		}
 		return nil
