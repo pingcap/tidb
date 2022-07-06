@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/ddl/label"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -70,7 +71,9 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type memtableRetriever struct {
@@ -97,7 +100,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		sort.Sort(infoschema.SchemasSorter(dbs))
+		slices.SortFunc(dbs, model.LessDBInfo)
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
@@ -165,6 +168,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForAttributes(sctx, is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
+		case infoschema.TableTrxSummary:
+			err = e.setDataForTrxSummary(sctx)
+		case infoschema.ClusterTableTrxSummary:
+			err = e.setDataForClusterTrxSummary(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -282,6 +289,7 @@ func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int6
 	}
 	c.mu.RUnlock()
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
@@ -677,10 +685,30 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 }
 
 func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
-	if err := tryFillViewColumnType(ctx, sctx, sctx.GetInfoSchema().(infoschema.InfoSchema), schema.Name, tbl); err != nil {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	if tbl.IsView() {
+		e.viewMu.Lock()
+		_, ok := e.viewSchemaMap[tbl.ID]
+		if !ok {
+			var viewLogicalPlan plannercore.Plan
+			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+			// Build plan is not thread safe, there will be concurrency on sessionctx.
+			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
+				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+				var err error
+				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
+				return errors.Trace(err)
+			}); err != nil {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				e.viewMu.Unlock()
+				return
+			}
+			e.viewSchemaMap[tbl.ID] = viewLogicalPlan.Schema()
+			e.viewOutputNamesMap[tbl.ID] = viewLogicalPlan.OutputNames()
+		}
+		e.viewMu.Unlock()
 	}
+
 	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []collate.WildcardPattern
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
@@ -715,6 +743,20 @@ ForColumnsTag:
 		if col.Hidden {
 			continue
 		}
+
+		ft := &col.FieldType
+		if tbl.IsView() {
+			e.viewMu.RLock()
+			if e.viewSchemaMap[tbl.ID] != nil {
+				// If this is a view, replace the column with the view column.
+				idx := expression.FindFieldNameIdxByColName(e.viewOutputNamesMap[tbl.ID], col.Name.L)
+				if idx >= 0 {
+					col1 := e.viewSchemaMap[tbl.ID].Columns[idx]
+					ft = col1.GetType()
+				}
+			}
+			e.viewMu.RUnlock()
+		}
 		if !extractor.SkipRequest {
 			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
 				continue
@@ -743,58 +785,58 @@ ForColumnsTag:
 		}
 
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
-		colLen, decimal := col.GetFlen(), col.GetDecimal()
-		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.GetType())
+		colLen, decimal := ft.GetFlen(), ft.GetDecimal()
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
-		if col.GetType() == mysql.TypeSet {
+		if ft.GetType() == mysql.TypeSet {
 			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
 			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.GetElems() {
+			for _, ele := range ft.GetElems() {
 				colLen += len(ele)
 			}
-			if len(col.GetElems()) != 0 {
-				colLen += (len(col.GetElems()) - 1)
+			if len(ft.GetElems()) != 0 {
+				colLen += (len(ft.GetElems()) - 1)
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.GetCharset())
-		} else if col.GetType() == mysql.TypeEnum {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if ft.GetType() == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
-			for _, ele := range col.GetElems() {
+			for _, ele := range ft.GetElems() {
 				if len(ele) > colLen {
 					colLen = len(ele)
 				}
 			}
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.GetCharset())
-		} else if types.IsString(col.GetType()) {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if types.IsString(ft.GetType()) {
 			charMaxLen = colLen
-			charOctLen = calcCharOctLength(colLen, col.GetCharset())
-		} else if types.IsTypeFractionable(col.GetType()) {
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
-		} else if types.IsTypeNumeric(col.GetType()) {
+		} else if types.IsTypeNumeric(ft.GetType()) {
 			numericPrecision = colLen
-			if col.GetType() != mysql.TypeFloat && col.GetType() != mysql.TypeDouble {
+			if ft.GetType() != mysql.TypeFloat && ft.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
 				numericScale = decimal
 			}
 		}
-		columnType := col.FieldType.InfoSchemaStr()
+		columnType := ft.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
-			if col.GetType() == mysql.TypeBit {
+			if ft.GetType() == mysql.TypeBit {
 				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
 				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
@@ -808,7 +850,7 @@ ForColumnsTag:
 			i+1,                   // ORIGINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(col.GetType(), col.GetCharset()), // DATA_TYPE
+			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
 			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
 			charOctLen,           // CHARACTER_OCTET_LENGTH
 			numericPrecision,     // NUMERIC_PRECISION
@@ -1379,7 +1421,7 @@ func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
-	sort.Strings(tables)
+	slices.Sort(tables)
 	rows := make([][]types.Datum, 0, len(tables))
 	for _, name := range tables {
 		schema := infoschema.MetricTableMap[name]
@@ -1866,7 +1908,8 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	chunkRows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, maxAnalyzeJobs)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, maxAnalyzeJobs)
 	if err != nil {
 		return nil, err
 	}
@@ -2145,6 +2188,29 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
+func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	if !hasProcessPriv {
+		return nil
+	}
+	rows := txninfo.Recorder.DumpTrxSummary()
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
+	err := e.setDataForTrxSummary(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
 type stmtSummaryTableRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
@@ -2299,10 +2365,11 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 type dataLockWaitsTableRetriever struct {
 	dummyCloser
 	batchRetrieverHelper
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	lockWaits   []*deadlock.WaitForEntry
-	initialized bool
+	table          *model.TableInfo
+	columns        []*model.ColumnInfo
+	lockWaits      []*deadlock.WaitForEntry
+	resolvingLocks []txnlock.ResolvingLock
+	initialized    bool
 }
 
 func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -2318,12 +2385,14 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		r.initialized = true
 		var err error
 		r.lockWaits, err = sctx.GetStore().GetLockWaits()
+		tikvStore, _ := sctx.GetStore().(helper.Storage)
+		r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
 		if err != nil {
 			r.retrieved = true
 			return nil, err
 		}
 
-		r.batchRetrieverHelper.totalRows = len(r.lockWaits)
+		r.batchRetrieverHelper.totalRows = len(r.lockWaits) + len(r.resolvingLocks)
 		r.batchRetrieverHelper.batchSize = 1024
 	}
 
@@ -2354,6 +2423,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					digests[i] = hex.EncodeToString(digest)
 				}
 			}
+			// todo: support resourcegrouptag for resolvingLocks
 		}
 
 		// Fetch the SQL Texts of the digests above if necessary.
@@ -2373,7 +2443,15 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
-		for rowIdx, lockWait := range r.lockWaits[start:end] {
+		// data_lock_waits contains both lockWaits (pessimistic lock waiting)
+		// and resolving (optimistic lock "waiting") info
+		// first we'll return the lockWaits, and then resolving, so we need to
+		// do some index calculation here
+		lockWaitsStart := mathutil.Min(start, len(r.lockWaits))
+		resolvingStart := start - lockWaitsStart
+		lockWaitsEnd := mathutil.Min(end, len(r.lockWaits))
+		resolvingEnd := end - lockWaitsEnd
+		for rowIdx, lockWait := range r.lockWaits[lockWaitsStart:lockWaitsEnd] {
 			row := make([]types.Datum, 0, len(r.columns))
 
 			for _, col := range r.columns {
@@ -2392,7 +2470,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 							decodedKeyStr = string(decodedKeyBytes)
 						}
 					} else {
-						logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+						logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
 					}
 					row = append(row, types.NewDatum(decodedKeyStr))
 				case infoschema.DataLockWaitsColumnTrxID:
@@ -2420,7 +2498,45 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 			res = append(res, row)
 		}
+		for _, resolving := range r.resolvingLocks[resolvingStart:resolvingEnd] {
+			row := make([]types.Datum, 0, len(r.columns))
 
+			for _, col := range r.columns {
+				switch col.Name.O {
+				case infoschema.DataLockWaitsColumnKey:
+					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(resolving.Key))))
+				case infoschema.DataLockWaitsColumnKeyInfo:
+					infoSchema := domain.GetDomain(sctx).InfoSchema()
+					var decodedKeyStr interface{} = nil
+					decodedKey, err := keydecoder.DecodeKey(resolving.Key, infoSchema)
+					if err == nil {
+						decodedKeyBytes, err := json.Marshal(decodedKey)
+						if err != nil {
+							logutil.Logger(ctx).Warn("marshal decoded key info to JSON failed", zap.Error(err))
+						} else {
+							decodedKeyStr = string(decodedKeyBytes)
+						}
+					} else {
+						logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
+					}
+					row = append(row, types.NewDatum(decodedKeyStr))
+				case infoschema.DataLockWaitsColumnTrxID:
+					row = append(row, types.NewDatum(resolving.TxnID))
+				case infoschema.DataLockWaitsColumnCurrentHoldingTrxID:
+					row = append(row, types.NewDatum(resolving.LockTxnID))
+				case infoschema.DataLockWaitsColumnSQLDigest:
+					// todo: support resourcegrouptag for resolvingLocks
+					row = append(row, types.NewDatum(nil))
+				case infoschema.DataLockWaitsColumnSQLDigestText:
+					// todo: support resourcegrouptag for resolvingLocks
+					row = append(row, types.NewDatum(nil))
+				default:
+					row = append(row, types.NewDatum(nil))
+				}
+			}
+
+			res = append(res, row)
+		}
 		return nil
 	})
 
@@ -2556,7 +2672,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 								value = types.NewDatum(string(decodedKeyJSON))
 							}
 						} else {
-							logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+							logutil.Logger(ctx).Warn("decode key failed", zap.Error(err))
 						}
 					}
 					row = append(row, value)
@@ -2582,15 +2698,18 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 type hugeMemTableRetriever struct {
 	dummyCloser
-	extractor   *plannercore.ColumnsTableExtractor
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	retrieved   bool
-	initialized bool
-	rows        [][]types.Datum
-	dbs         []*model.DBInfo
-	dbsIdx      int
-	tblIdx      int
+	extractor          *plannercore.ColumnsTableExtractor
+	table              *model.TableInfo
+	columns            []*model.ColumnInfo
+	retrieved          bool
+	initialized        bool
+	rows               [][]types.Datum
+	dbs                []*model.DBInfo
+	dbsIdx             int
+	tblIdx             int
+	viewMu             sync.RWMutex
+	viewSchemaMap      map[int64]*expression.Schema // table id to view schema
+	viewOutputNamesMap map[int64]types.NameSlice    // table id to view output names
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -2602,7 +2721,9 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		sort.Sort(infoschema.SchemasSorter(dbs))
+		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
+			return i.Name.L < j.Name.L
+		})
 		e.dbs = dbs
 		e.initialized = true
 		e.rows = make([][]types.Datum, 0, 1024)
@@ -2755,7 +2876,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 }
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
-	var columnNames []string // nolint: prealloc
+	var columnNames []string //nolint: prealloc
 	for _, c := range e.outputCols {
 		if c.Name.O == "TIFLASH_INSTANCE" {
 			continue

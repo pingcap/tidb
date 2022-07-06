@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
@@ -612,6 +613,25 @@ func TestLoadStats(t *testing.T) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	require.Greater(t, hg.Len(), 0)
+
+	// assert index LoadNeededHistograms
+	idx := stat.Indices[tableInfo.Indices[0].ID]
+	idx.EvictAllStats()
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.False(t, idx.IsEssentialStatsLoaded())
+	idx.IsInvalid(false)
+	require.NoError(t, h.LoadNeededHistograms())
+	stat = h.GetTableStats(tableInfo)
+	idx = stat.Indices[tableInfo.Indices[0].ID]
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.True(t, idx.IsFullLoad())
+
 	// Following test tests whether the LoadNeededHistograms would panic.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
@@ -1067,18 +1087,6 @@ partition by range (a) (
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
 	checkHealthy(60, 50, 66)
-}
-
-func TestHideGlobalStatsSwitch(t *testing.T) {
-	// NOTICE: remove this test when this global-stats is GA.
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_partition_prune_mode", strings.ToLower(r[0].(string)))
-	}
-	require.Len(t, tk.MustQuery("show variables where variable_name like '%tidb_partition_prune_mode%'").Rows(), 0)
 }
 
 func TestGlobalStatsData(t *testing.T) {
@@ -2219,6 +2227,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
+		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))
@@ -2562,18 +2571,6 @@ func TestHideIndexUsageSyncLease(t *testing.T) {
 	for _, r := range rs {
 		require.False(t, strings.Contains(strings.ToLower(r[0].(string)), "index-usage-sync-lease"))
 	}
-}
-
-func TestHideExtendedStatsSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	// NOTICE: remove this test when this extended-stats reaches GA state.
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_enable_extended_stats", strings.ToLower(r[0].(string)))
-	}
-	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
 }
 
 func TestRepetitiveAddDropExtendedStats(t *testing.T) {
@@ -3166,17 +3163,19 @@ func TestIssues24401(t *testing.T) {
 	testKit.MustExec("create table tp(a int, index(a)) partition by hash(a) partitions 3")
 	testKit.MustExec("insert into tp values (1), (2), (3)")
 	testKit.MustExec("analyze table tp")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// normal table with dynamic prune mode
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	testKit.MustExec("analyze table t")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	require.Equal(t, 6, len(rows))
 
 	// partition table with dynamic prune mode
 	testKit.MustExec("analyze table tp")
-	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
+	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
 	lenRows := len(rows)
 	require.Equal(t, 6, lenRows)
 
@@ -3310,4 +3309,93 @@ func TestRecordHistoricalStatsToStorage(t *testing.T) {
 	rows := tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where version = '%d'", version)).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.GreaterOrEqual(t, num, 1)
+}
+
+func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, index := range tblStats.Indices {
+		require.False(t, index.IsEvicted())
+	}
+
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, index := range tblStats.Indices {
+		require.True(t, index.IsEvicted())
+	}
+
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertEvictIndex", `return(true)`))
+	tk.MustExec("analyze incremental table test.t index idx_b")
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertEvictIndex"))
+}
+
+func TestEvictedColumnLoadedStatus(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	dom.StatsHandle().SetLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsCMSEvicted())
+	}
+}
+
+func TestAnalyzeTableLRUPut(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("create table t1(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tbl1, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.Nil(t, err)
+	// assert t1 should be front of lru
+	tk.MustExec("analyze table test.t1")
+	require.Equal(t, tbl1.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
+	// assert t should be front of lru
+	tk.MustExec("analyze table test.t")
+	require.Equal(t, tbl.Meta().ID, domain.GetDomain(tk.Session()).StatsHandle().GetStatsCacheFrontTable())
 }

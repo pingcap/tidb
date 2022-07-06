@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/require"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteDatabaseMeta(t *testing.T) {
@@ -350,7 +350,8 @@ func createTestWriter(conf *Config, t *testing.T) (w *Writer, clean func()) {
 	conn, err := db.Conn(context.Background())
 	require.NoError(t, err)
 
-	w = NewWriter(tcontext.Background(), 0, conf, conn, extStore)
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
+	w = NewWriter(tcontext.Background(), 0, conf, conn, extStore, metrics)
 	clean = func() {
 		require.NoError(t, db.Close())
 	}

@@ -15,17 +15,19 @@
 package stmtctx
 
 import (
+	"encoding/json"
 	"math"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -36,6 +38,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -60,6 +63,43 @@ type SQLWarn struct {
 	Err   error
 }
 
+type jsonSQLWarn struct {
+	Level  string        `json:"level"`
+	SQLErr *terror.Error `json:"err,omitempty"`
+	Msg    string        `json:"msg,omitempty"`
+}
+
+// MarshalJSON implements the Marshaler.MarshalJSON interface.
+func (warn *SQLWarn) MarshalJSON() ([]byte, error) {
+	w := &jsonSQLWarn{
+		Level: warn.Level,
+	}
+	e := errors.Cause(warn.Err)
+	switch x := e.(type) {
+	case *terror.Error:
+		// Omit outter errors because only the most inner error matters.
+		w.SQLErr = x
+	default:
+		w.Msg = e.Error()
+	}
+	return json.Marshal(w)
+}
+
+// UnmarshalJSON implements the Unmarshaler.UnmarshalJSON interface.
+func (warn *SQLWarn) UnmarshalJSON(data []byte) error {
+	var w jsonSQLWarn
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	warn.Level = w.Level
+	if w.SQLErr != nil {
+		warn.Err = w.SQLErr
+	} else {
+		warn.Err = errors.New(w.Msg)
+	}
+	return nil
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -69,6 +109,7 @@ type StatementContext struct {
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue        bool
+	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
 	InDeleteStmt           bool
@@ -76,6 +117,7 @@ type StatementContext struct {
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	InCreateOrAlterStmt    bool
+	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
@@ -96,10 +138,12 @@ type StatementContext struct {
 	SkipUTF8Check          bool
 	SkipASCIICheck         bool
 	SkipUTF8MB4Check       bool
+	MultiSchemaInfo        *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
-	IsStaleness bool
+	IsStaleness     bool
+	InRestrictedSQL bool
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
@@ -404,6 +448,13 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 	sc.mu.affectedRows += rows
 }
 
+// SetAffectedRows sets affected rows.
+func (sc *StatementContext) SetAffectedRows(rows uint64) {
+	sc.mu.Lock()
+	sc.mu.affectedRows = rows
+	sc.mu.Unlock()
+}
+
 // AffectedRows gets affected rows.
 func (sc *StatementContext) AffectedRows() uint64 {
 	sc.mu.Lock()
@@ -556,6 +607,7 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.mu.warnings = warns
+	sc.mu.errorCount = 0
 	for _, w := range warns {
 		if w.Level == WarnLevelError {
 			sc.mu.errorCount++
@@ -762,6 +814,9 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
 	}
+	if sc.InRestrictedSQL {
+		flags |= model.FlagInRestrictedSQL
+	}
 	return flags
 }
 
@@ -785,15 +840,15 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].TimeDetail.ProcessTime < sc.mu.allExecDetails[j].TimeDetail.ProcessTime
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
 	})
 	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
 	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
 	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
-	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].TimeDetail.WaitTime < sc.mu.allExecDetails[j].TimeDetail.WaitTime
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
 	})
 	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
@@ -819,8 +874,8 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		if len(items) == 0 {
 			continue
 		}
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].sleepTime < items[j].sleepTime
+		slices.SortFunc(items, func(i, j backoffItem) bool {
+			return i.sleepTime < j.sleepTime
 		})
 		n := len(items)
 		d.MaxBackoffAddress[backoff] = items[n-1].callee

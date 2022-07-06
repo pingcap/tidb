@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -498,7 +498,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	for _, key := range groupKey {
 		mem += int64(cap(key))
 	}
-	mem += 12 * int64(cap(groupKey))
+	mem += aggfuncs.DefSliceSize * int64(cap(groupKey))
 	return mem
 }
 
@@ -602,11 +602,11 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		for _, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta
+			allMemDelta += memDelta + 8 // the memory usage of PartialResult
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
@@ -1146,7 +1146,7 @@ func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, con
 		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
 	n := len(workerStats)
 	if n > 0 {
-		sort.Slice(workerStats, func(i, j int) bool { return workerStats[i].WorkerTime < workerStats[j].WorkerTime })
+		slices.SortFunc(workerStats, func(i, j *AggWorkerStat) bool { return i.WorkerTime < j.WorkerTime })
 		buf.WriteString(fmt.Sprintf(", max:%v, p95:%v",
 			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime)))
 	}

@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -499,7 +498,6 @@ func TestAnalyzeLongString(t *testing.T) {
 }
 
 func TestOutdatedStatsCheck(t *testing.T) {
-	domain.RunAutoAnalyze = false
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

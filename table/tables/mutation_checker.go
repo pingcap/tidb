@@ -15,7 +15,11 @@
 package tables
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -90,13 +94,16 @@ func CheckDataConsistency(
 
 	columnMaps := getColumnMaps(txn, t)
 
-	if rowToInsert != nil {
-		if err := checkRowInsertionConsistency(
-			sessVars, rowToInsert, rowInsertion, columnMaps.ColumnIDToInfo, columnMaps.ColumnIDToFieldType, t.Meta().Name.O,
-		); err != nil {
-			return errors.Trace(err)
-		}
-	}
+	// Row insertion consistency check contributes the least to defending data-index consistency, but costs most CPU resources.
+	// So we disable it for now.
+	//
+	// if rowToInsert != nil {
+	// 	if err := checkRowInsertionConsistency(
+	// 		sessVars, rowToInsert, rowInsertion, columnMaps.ColumnIDToInfo, columnMaps.ColumnIDToFieldType, t.Meta().Name.O,
+	// 	); err != nil {
+	// 		return errors.Trace(err)
+	// 	}
+	// }
 
 	if err != nil {
 		return err
@@ -380,4 +387,94 @@ func getOrBuildColumnMaps(
 		setter(tableMaps)
 	}
 	return maps
+}
+
+// only used in tests
+// commands is a comma separated string, each representing a type of corruptions to the mutations
+// The injection depends on actual encoding rules.
+func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, cmds string) error {
+	commands := strings.Split(cmds, ",")
+	memBuffer := txn.GetMemBuffer()
+
+	indexMutations, _, err := collectTableMutationsFromBufferStage(t, memBuffer, sh)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, cmd := range commands {
+		switch cmd {
+		case "extraIndex":
+			// an extra index mutation
+			{
+				if len(indexMutations) == 0 {
+					continue
+				}
+				indexMutation := indexMutations[0]
+				key := make([]byte, len(indexMutation.key))
+				copy(key, indexMutation.key)
+				key[len(key)-1] += 1
+				if len(indexMutation.value) == 0 {
+					if err := memBuffer.Delete(key); err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					if err := memBuffer.Set(key, indexMutation.value); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		case "missingIndex":
+			// an index mutation is missing
+			// "missIndex" should be placed in front of "extraIndex"es,
+			// in case it removes the mutation that was just added
+			{
+				indexMutation := indexMutations[0]
+				memBuffer.RemoveFromBuffer(indexMutation.key)
+			}
+		case "corruptIndexKey":
+			// a corrupted index mutation.
+			// TODO: distinguish which part is corrupted, value or handle
+			{
+				indexMutation := indexMutations[0]
+				key := indexMutation.key
+				memBuffer.RemoveFromBuffer(key)
+				key[len(key)-1] += 1
+				if len(indexMutation.value) == 0 {
+					if err := memBuffer.Delete(key); err != nil {
+						return errors.Trace(err)
+					}
+				} else {
+					if err := memBuffer.Set(key, indexMutation.value); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		case "corruptIndexValue":
+			// TODO: distinguish which part to corrupt, int handle, common handle, or restored data?
+			// It doesn't make much sense to always corrupt the last byte
+			{
+				if len(indexMutations) == 0 {
+					continue
+				}
+				indexMutation := indexMutations[0]
+				value := indexMutation.value
+				if len(value) > 0 {
+					value[len(value)-1] += 1
+					if err := memBuffer.Set(indexMutation.key, value); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		default:
+			return errors.New(fmt.Sprintf("unknown command to corrupt mutation: %s", cmd))
+		}
+	}
+	return nil
+}
+
+func injectMutationError(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle) error {
+	failpoint.Inject("corruptMutations", func(commands failpoint.Value) {
+		failpoint.Return(corruptMutations(t, txn, sh, commands.(string)))
+	})
+	return nil
 }

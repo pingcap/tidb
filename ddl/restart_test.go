@@ -47,8 +47,7 @@ func getDDLSchemaVer(t *testing.T, d *ddl) int64 {
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
-	d.wg.Add(1)
-	go d.limitDDLJobs()
+	d.wg.Run(d.limitDDLJobs)
 	if !RunWorker {
 		return
 	}
@@ -58,7 +57,6 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	for _, worker := range d.workers {
 		worker.wg.Add(1)
 		worker.ctx = d.ctx
-		worker.ddlJobCtx = context.Background()
 		w := worker
 		go w.start(d.ddlCtx)
 		asyncNotify(worker.ddlJobCh)
@@ -289,7 +287,8 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 }
 
 func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)

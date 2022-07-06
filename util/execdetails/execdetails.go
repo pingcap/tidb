@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // ExecDetails contains execution detail information.
@@ -152,7 +152,7 @@ func (d ExecDetails) String() string {
 			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
 		}
 		commitDetails.Mu.Unlock()
-		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
 		if resolveLockTime > 0 {
 			parts = append(parts, ResolveLockTimeStr+": "+strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64))
 		}
@@ -244,7 +244,7 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
 		}
 		commitDetails.Mu.Unlock()
-		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
 		if resolveLockTime > 0 {
 			fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))
 		}
@@ -374,7 +374,7 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	} else {
 		n := len(procTimes)
-		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+		slices.Sort(procTimes)
 		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
 			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
@@ -861,9 +861,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString("}")
 		}
 		e.Commit.Mu.Unlock()
-		if e.Commit.ResolveLockTime > 0 {
+		if e.Commit.ResolveLock.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
-			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
+			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLock.ResolveLockTime)))
 		}
 
 		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
@@ -902,9 +902,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(", keys:")
 			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.LockKeys), 10))
 		}
-		if e.LockKeys.ResolveLockTime > 0 {
+		if e.LockKeys.ResolveLock.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock:")
-			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLockTime)))
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLock.ResolveLockTime)))
 		}
 		if e.LockKeys.BackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
@@ -948,7 +948,7 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 		tpMap[tpStr] = struct{}{}
 		tpArray = append(tpArray, tpStr)
 	}
-	sort.Strings(tpArray)
+	slices.Sort(tpArray)
 	return fmt.Sprintf("%v", tpArray)
 }
 

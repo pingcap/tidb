@@ -16,7 +16,6 @@ package executor
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/tikv/client-go/v2/oracle"
+	"golang.org/x/exp/slices"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {
@@ -329,7 +329,7 @@ func stableColsStats(colStats map[int64]*statistics.Column) (cols []*statistics.
 	for _, col := range colStats {
 		cols = append(cols, col)
 	}
-	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+	slices.SortFunc(cols, func(i, j *statistics.Column) bool { return i.ID < j.ID })
 	return
 }
 
@@ -337,7 +337,7 @@ func stableIdxsStats(idxStats map[int64]*statistics.Index) (idxs []*statistics.I
 	for _, idx := range idxStats {
 		idxs = append(idxs, idx)
 	}
-	sort.Slice(idxs, func(i, j int) bool { return idxs[i].ID < idxs[j].ID })
+	slices.SortFunc(idxs, func(i, j *statistics.Index) bool { return i.ID < j.ID })
 	return
 }
 
@@ -426,14 +426,9 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 }
 
 func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName string, statsTbl *statistics.Table) {
-	if statsTbl.Pseudo {
+	healthy, ok := statsTbl.GetStatsHealthy()
+	if !ok {
 		return
-	}
-	var healthy int64
-	if statsTbl.ModifyCount < statsTbl.Count {
-		healthy = int64((1.0 - float64(statsTbl.ModifyCount)/float64(statsTbl.Count)) * 100.0)
-	} else if statsTbl.ModifyCount == 0 {
-		healthy = 100
 	}
 	e.appendRow([]interface{}{
 		dbName,
@@ -444,7 +439,7 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowHistogramsInFlight() {
-	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
+	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus() error {

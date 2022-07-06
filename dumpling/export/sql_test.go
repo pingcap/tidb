@@ -15,15 +15,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-sql-driver/mysql"
-
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/stretchr/testify/require"
 )
 
 var showIndexHeaders = []string{
@@ -535,11 +534,13 @@ func TestBuildTableSampleQueries(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      DefaultConfig(),
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	d.conf.ServerInfo = version.ServerInfo{
@@ -945,11 +946,13 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      DefaultConfig(),
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	d.conf.ServerInfo = version.ServerInfo{
@@ -1104,11 +1107,13 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 	require.NoError(t, err)
 	baseConn := newBaseConn(conn, true, nil)
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
 
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      DefaultConfig(),
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	d.conf.ServerInfo = version.ServerInfo{
@@ -1360,10 +1365,13 @@ func TestBuildVersion3RegionQueries(t *testing.T) {
 			{"t4", 0, TableTypeBase},
 		},
 	}
+	metrics := newMetrics(promutil.NewDefaultFactory(), nil)
+
 	d := &Dumper{
 		tctx:                      tctx,
 		conf:                      conf,
 		cancelCtx:                 cancel,
+		metrics:                   metrics,
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 	showStatsHistograms := buildMockNewRows(mock, []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size", "Correlation"},

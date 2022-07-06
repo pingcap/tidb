@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -385,6 +386,7 @@ func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 }
 
 func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn func(ctx context.Context, txnTS uint64) error) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := h.beginTxn(ctx, pessimistic)
 	if err != nil {
 		return errors.Trace(err)
@@ -415,6 +417,7 @@ func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn f
 }
 
 func (h *stateRemoteHandle) loadRow(ctx context.Context, tid int64, forUpdate bool) (CachedTableLockType, uint64, uint64, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	var chunkRows []chunk.Row
 	var err error
 	if forUpdate {
@@ -450,6 +453,7 @@ func (h *stateRemoteHandle) updateRow(ctx context.Context, tid int64, lockType s
 func (h *stateRemoteHandle) execSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	rs, err := h.exec.ExecuteInternal(ctx, sql, args...)
 	if rs != nil {
+		//nolint: errcheck
 		defer rs.Close()
 	}
 	if err != nil {

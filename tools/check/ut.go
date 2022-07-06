@@ -85,7 +85,6 @@ const modulePath = "github.com/pingcap/tidb"
 type task struct {
 	pkg  string
 	test string
-	old  bool
 }
 
 func (t *task) String() string {
@@ -126,7 +125,7 @@ func cmdList(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -204,7 +203,7 @@ func cmdRun(args ...string) bool {
 		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
-				fmt.Println("check test binary existance error", err)
+				fmt.Println("check test binary existence error", err)
 				return false
 			}
 			if !exist {
@@ -230,7 +229,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 
@@ -255,7 +254,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -354,6 +353,7 @@ func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
 	if err != nil {
 		return nil, withTrace(err)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	ret := make(map[string]struct{})
@@ -483,6 +483,7 @@ func collectCoverProfileFile() {
 		fmt.Println("create cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
@@ -520,6 +521,7 @@ func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEnt
 		fmt.Println("open temp cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	profs, err := cover.ParseProfilesFromReader(f)
@@ -626,17 +628,9 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 		return nil, withTrace(err)
 	}
 	for _, c := range newCases {
-		tasks = append(tasks, task{pkg, c, false})
+		tasks = append(tasks, task{pkg, c})
 	}
 
-	oldCases, err := listOldTestCases(pkg)
-	if err != nil {
-		fmt.Println("list old test case error", pkg, err)
-		return nil, withTrace(err)
-	}
-	for _, c := range oldCases {
-		tasks = append(tasks, task{pkg, c, true})
-	}
 	return tasks, nil
 }
 
@@ -692,7 +686,7 @@ type numa struct {
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
-		res := n.runTestCase(t.pkg, t.test, t.old)
+		res := n.runTestCase(t.pkg, t.test)
 		if res.Failure != nil {
 			fmt.Println("[FAIL] ", t.pkg, t.test)
 			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err.Error(), res.Failure.Contents)
@@ -708,7 +702,7 @@ type testResult struct {
 	err error
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
+func (n *numa) runTestCase(pkg string, fn string) testResult {
 	res := testResult{
 		JUnitTestCase: JUnitTestCase{
 			Classname: path.Join(modulePath, pkg),
@@ -720,7 +714,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 	var err error
 	var start time.Time
 	for i := 0; i < 3; i++ {
-		cmd := n.testCommand(pkg, fn, old)
+		cmd := n.testCommand(pkg, fn)
 		cmd.Dir = path.Join(workDir, pkg)
 		// Combine the test case output, so the run result for failed cases can be displayed.
 		cmd.Stdout = &buf
@@ -729,6 +723,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 		start = time.Now()
 		err = cmd.Run()
 		if err != nil {
+			//lint:ignore S1020
 			if _, ok := err.(*exec.ExitError); ok {
 				// Retry 3 times to get rid of the weird error:
 				switch err.Error() {
@@ -805,7 +800,7 @@ func failureCases(input []JUnitTestCase) int {
 	return sum
 }
 
-func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 	args := make([]string, 0, 10)
 	exe := "./" + testFileName(pkg)
 	if coverprofile != "" {
@@ -815,22 +810,19 @@ func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
 	}
 	args = append(args, "-test.cpu", "1")
 	if !race {
-		// Don't set timeout for race because it takes a longer when race is enabled.
 		args = append(args, []string{"-test.timeout", "2m"}...)
-	}
-	if old {
-		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
 	} else {
-		// session.test -test.run TestClusteredPrefixColum
-		args = append(args, "-test.run", fn)
+		// it takes a longer when race is enabled. so it is set more timeout value.
+		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
 
+	// session.test -test.run TestClusteredPrefixColum
+	args = append(args, "-test.run", "^"+fn+"$")
 	return exec.Command(exe, args...)
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling"}
+	skipDir := []string{"br", "cmd", "dumpling", "tests"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -887,6 +879,7 @@ func buildTestBinaryMulti(pkgs []string) error {
 func testBinaryExist(pkg string) (bool, error) {
 	_, err := os.Stat(testFileFullPath(pkg))
 	if err != nil {
+		//lint:ignore S1020
 		if _, ok := err.(*os.PathError); ok {
 			return false, nil
 		}
@@ -916,30 +909,6 @@ func listNewTestCases(pkg string) ([]string, error) {
 	return filter(res, func(s string) bool {
 		return strings.HasPrefix(s, "Test") && s != "TestT" && s != "TestBenchDaily"
 	}), nil
-}
-
-func listOldTestCases(pkg string) (res []string, err error) {
-	exe := "./" + testFileName(pkg)
-
-	// Maybe the restructure is finish on this package.
-	cmd := exec.Command(exe, "-h")
-	cmd.Dir = path.Join(workDir, pkg)
-	buf, err := cmd.CombinedOutput()
-	if err != nil {
-		err = withTrace(err)
-		return
-	}
-	if !bytes.Contains(buf, []byte("check.list")) {
-		// there is no old test case in pkg
-		return
-	}
-
-	// session.test -test.run TestT -check.list Test
-	cmd = exec.Command(exe, "-test.run", "^TestT$", "-check.list", "Test")
-	cmd.Dir = path.Join(workDir, pkg)
-	res, err = cmdToLines(cmd)
-	res = filter(res, func(s string) bool { return strings.Contains(s, "Test") })
-	return res, withTrace(err)
 }
 
 func cmdToLines(cmd *exec.Cmd) ([]string, error) {

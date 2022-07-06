@@ -137,7 +137,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupTS, err = parseTSString(backupTS)
+	cfg.BackupTS, err = ParseTSString(backupTS, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -354,7 +354,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
-		metautil.MetaFileSize, cfg.UseBackupMetaV2, &cfg.CipherInfo)
+		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
 	// Hack way to update backupmeta.
 	metawriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = req.StartVersion
@@ -374,7 +374,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// nothing to backup
-	if ranges == nil {
+	if ranges == nil || len(ranges) <= 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
@@ -527,8 +527,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	return nil
 }
 
-// parseTSString port from tidb setSnapshotTS.
-func parseTSString(ts string) (uint64, error) {
+// ParseTSString port from tidb setSnapshotTS.
+func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if len(ts) == 0 {
 		return 0, nil
 	}
@@ -539,6 +539,12 @@ func parseTSString(ts string) (uint64, error) {
 	loc := time.Local
 	sc := &stmtctx.StatementContext{
 		TimeZone: loc,
+	}
+	if tzCheck {
+		tzIdx, _, _, _, _ := types.GetTimezone(ts)
+		if tzIdx < 0 {
+			return 0, errors.Errorf("must set timezone when using datetime format ts")
+		}
 	}
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {

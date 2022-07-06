@@ -151,9 +151,24 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrInvalidTaskInfo"]
+error = '''
+task info is invalid
+'''
+
+["BR:PiTR:ErrMalformedMetadata"]
+error = '''
+malformed metadata
+'''
+
 ["BR:PiTR:ErrPiTRInvalidCDCLogFormat"]
 error = '''
 invalid cdc log format
+'''
+
+["BR:PiTR:ErrTaskNotFound"]
+error = '''
+task not found
 '''
 
 ["BR:Restore:ErrRestoreChecksumMismatch"]
@@ -224,6 +239,11 @@ failed to write and ingest
 ["BR:Restore:ErrUnsupportedSysTable"]
 error = '''
 the system table isn't supported for restoring yet
+'''
+
+["BR:Stream:ErrStreamLogTaskExist"]
+error = '''
+stream task already exists
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -1211,6 +1231,11 @@ error = '''
 '%s' is unsupported on cache tables.
 '''
 
+["ddl:8245"]
+error = '''
+column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1356,6 +1381,11 @@ error = '''
 TiDB admin check table failed.
 '''
 
+["executor:8067"]
+error = '''
+Load data: unmatched columns
+'''
+
 ["executor:8114"]
 error = '''
 Unknown plan
@@ -1424,6 +1454,11 @@ data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%
 ["executor:8142"]
 error = '''
 modifying %s will require SET GLOBAL in a future version of TiDB
+'''
+
+["executor:8144"]
+error = '''
+setting %s has no effect in TiDB
 '''
 
 ["executor:8212"]
@@ -1604,6 +1639,11 @@ Table '%-.192s' already exists
 ["meta:1146"]
 error = '''
 Table '%-.192s.%-.192s' doesn't exist
+'''
+
+["meta:1300"]
+error = '''
+Invalid %s character string: '%.64s'
 '''
 
 ["meta:8235"]
@@ -2041,6 +2081,11 @@ error = '''
 Column '%s' in ANALYZE column option does not exist in table '%s'
 '''
 
+["planner:8145"]
+error = '''
+variable %s has no effect in TiDB
+'''
+
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
@@ -2214,6 +2259,11 @@ error = '''
 ["session:8143"]
 error = '''
 non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
+'''
+
+["session:8146"]
+error = '''
+cannot migrate the current session: %s
 '''
 
 ["structure:8217"]
@@ -2559,6 +2609,11 @@ TiDB does not yet support JSON objects with the key length >= 65536
 ["types:8131"]
 error = '''
 Build table: %s global-level stats failed due to missing partition-level stats
+'''
+
+["types:8244"]
+error = '''
+Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions
 '''
 
 ["variable:1193"]

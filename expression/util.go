@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -547,8 +548,8 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 
 func locateStringWithCollation(str, substr, coll string) int64 {
 	collator := collate.GetCollator(coll)
-	strKey := collator.Key(str)
-	subStrKey := collator.Key(substr)
+	strKey := collator.KeyWithoutTrimRightSpace(str)
+	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 
 	index := bytes.Index(strKey, subStrKey)
 	if index == -1 || index == 0 {
@@ -560,8 +561,8 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 	for {
 		r, size := utf8.DecodeRuneInString(str)
 		count += 1
-		index -= len(collator.Key(string(r)))
-		if index == 0 {
+		index -= len(collator.KeyWithoutTrimRightSpace(string(r)))
+		if index <= 0 {
 			return count + 1
 		}
 		str = str[size:]
@@ -922,6 +923,26 @@ func ParamMarkerExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, ne
 		}
 	}
 	return value, nil
+}
+
+// ParamMarkerInPrepareChecker checks whether the given ast tree has paramMarker and is in prepare statement.
+type ParamMarkerInPrepareChecker struct {
+	InPrepareStmt bool
+}
+
+// Enter implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch v := in.(type) {
+	case *driver.ParamMarkerExpr:
+		pc.InPrepareStmt = !v.InExecute
+		return v, true
+	}
+	return in, false
+}
+
+// Leave implements Visitor Interface.
+func (pc *ParamMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
 
 // DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
@@ -1346,6 +1367,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
 func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
 		return r.runMockQuery(r.mockLocalData, inValues)

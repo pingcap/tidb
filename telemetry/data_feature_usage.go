@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -44,6 +45,7 @@ type featureUsage struct {
 	AutoCapture           bool                           `json:"autoCapture"`
 	PlacementPolicyUsage  *placementPolicyUsage          `json:"placementPolicy"`
 	NonTransactionalUsage *m.NonTransactionalStmtCounter `json:"nonTransactional"`
+	GlobalKill            bool                           `json:"globalKill"`
 }
 
 type placementPolicyUsage struct {
@@ -54,25 +56,27 @@ type placementPolicyUsage struct {
 	NumPartitionWithExplicitPolicies uint64 `json:"numPartitionWithExplicitPolicies"`
 }
 
-func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
+func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsage, error) {
 	var usage featureUsage
 	var err error
-	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx)
+	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
 
 	// transaction related feature
-	usage.Txn = getTxnUsageInfo(ctx)
+	usage.Txn = getTxnUsageInfo(sctx)
 
 	usage.CTE = getCTEUsageInfo()
 
-	usage.AutoCapture = getAutoCaptureUsageInfo(ctx)
+	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
 
-	collectFeatureUsageFromInfoschema(ctx, &usage)
+	collectFeatureUsageFromInfoschema(sctx, &usage)
 
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
+
+	usage.GlobalKill = getGlobalKillUsageInfo()
 
 	return &usage, nil
 }
@@ -138,12 +142,12 @@ type NewClusterIndexUsage struct {
 }
 
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
+func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
 	var newUsage NewClusterIndexUsage
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `
 		SELECT TIDB_PK_TYPE
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')`)
@@ -164,7 +168,7 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage
 		}
 	}()
 
-	err = ctx.RefreshTxnCtx(context.TODO())
+	err = sctx.RefreshTxnCtx(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -257,4 +261,8 @@ func getNonTransactionalUsage() *m.NonTransactionalStmtCounter {
 
 func postReportNonTransactionalCounter() {
 	initialNonTransactionalCounter = m.GetNonTransactionalStmtCounter()
+}
+
+func getGlobalKillUsageInfo() bool {
+	return config.GetGlobalConfig().EnableGlobalKill
 }

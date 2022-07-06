@@ -24,14 +24,14 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	RunInGoTest = true // flag for NewServer to known it is running in test environment
 	// Enable TopSQL for all test, and check the resource tag for each RPC request.

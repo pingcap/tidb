@@ -540,6 +540,7 @@ import (
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
 	san                   "SAN"
+	savepoint             "SAVEPOINT"
 	second                "SECOND"
 	secondaryEngine       "SECONDARY_ENGINE"
 	secondaryLoad         "SECONDARY_LOAD"
@@ -737,6 +738,7 @@ import (
 	run                        "RUN"
 	samples                    "SAMPLES"
 	sampleRate                 "SAMPLERATE"
+	sessionStates              "SESSION_STATES"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsMeta                  "STATS_META"
@@ -919,6 +921,8 @@ import (
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
+	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
+	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
 	ChangeStmt                 "Change statement"
@@ -1509,6 +1513,13 @@ AlterTableStmt:
 			IndexNames:     $9.([]model.CIStr),
 			IndexFlag:      true,
 			AnalyzeOpts:    $10.([]ast.AnalyzeOpt),
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "TIFLASH" "REPLICA"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:       $4.(*ast.TableName),
+			ReplicaKind: ast.CompactReplicaKindTiFlash,
 		}
 	}
 
@@ -3644,7 +3655,7 @@ AlterDatabaseStmt:
 	"ALTER" DatabaseSym DBName DatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
-			Name:                 $3,
+			Name:                 model.NewCIStr($3),
 			AlterDefaultDatabase: false,
 			Options:              $4.([]*ast.DatabaseOption),
 		}
@@ -3652,7 +3663,7 @@ AlterDatabaseStmt:
 |	"ALTER" DatabaseSym DatabaseOptionList
 	{
 		$$ = &ast.AlterDatabaseStmt{
-			Name:                 "",
+			Name:                 model.NewCIStr(""),
 			AlterDefaultDatabase: true,
 			Options:              $3.([]*ast.DatabaseOption),
 		}
@@ -3674,7 +3685,7 @@ CreateDatabaseStmt:
 	{
 		$$ = &ast.CreateDatabaseStmt{
 			IfNotExists: $3.(bool),
-			Name:        $4,
+			Name:        model.NewCIStr($4),
 			Options:     $5.([]*ast.DatabaseOption),
 		}
 	}
@@ -4452,7 +4463,7 @@ DatabaseSym:
 DropDatabaseStmt:
 	"DROP" DatabaseSym IfExists DBName
 	{
-		$$ = &ast.DropDatabaseStmt{IfExists: $3.(bool), Name: $4}
+		$$ = &ast.DropDatabaseStmt{IfExists: $3.(bool), Name: model.NewCIStr($4)}
 	}
 
 /******************************************************************
@@ -4721,6 +4732,18 @@ ExplainFormatType:
 |	"BRIEF"
 |	"VERBOSE"
 |	"TRUE_CARD_COST"
+
+SavepointStmt:
+	"SAVEPOINT" Identifier
+	{
+		$$ = &ast.SavepointStmt{Name: $2}
+	}
+
+ReleaseSavepointStmt:
+	"RELEASE" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.ReleaseSavepointStmt{Name: $3}
+	}
 
 /*******************************************************************
  * Backup / restore / import statements
@@ -5980,6 +6003,7 @@ UnReservedKeyword:
 |	"PRECEDING"
 |	"QUERY"
 |	"QUERIES"
+|	"SAVEPOINT"
 |	"SECOND"
 |	"SEPARATOR"
 |	"SHARE"
@@ -6156,6 +6180,7 @@ TiDBKeyword:
 |	"PUMP"
 |	"SAMPLES"
 |	"SAMPLERATE"
+|	"SESSION_STATES"
 |	"STATISTICS"
 |	"STATS"
 |	"STATS_META"
@@ -6740,6 +6765,17 @@ BitExpr:
 				$1,
 				$4,
 				&ast.TimeUnitExpr{Unit: $5.(ast.TimeUnitType)},
+			},
+		}
+	}
+|	"INTERVAL" Expression TimeUnit '+' BitExpr %prec '+'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr("DATE_ADD"),
+			Args: []ast.ExprNode{
+				$5,
+				$2,
+				&ast.TimeUnitExpr{Unit: $3.(ast.TimeUnitType)},
 			},
 		}
 	}
@@ -8091,6 +8127,14 @@ RollbackStmt:
 	{
 		$$ = &ast.RollbackStmt{CompletionType: $2.(ast.CompletionType)}
 	}
+|	"ROLLBACK" "TO" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $3}
+	}
+|	"ROLLBACK" "TO" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $4}
+	}
 
 CompletionTypeWithinTransaction:
 	"AND" "CHAIN" "NO" "RELEASE"
@@ -8141,7 +8185,7 @@ HelpStmt:
 	}
 
 SelectStmtBasic:
-	"SELECT" SelectStmtOpts SelectStmtFieldList
+	"SELECT" SelectStmtOpts SelectStmtFieldList HavingClause
 	{
 		st := &ast.SelectStmt{
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
@@ -8151,6 +8195,9 @@ SelectStmtBasic:
 		}
 		if st.SelectStmtOpts.TableHints != nil {
 			st.TableHints = st.SelectStmtOpts.TableHints
+		}
+		if $4 != nil {
+			st.Having = $4.(*ast.HavingClause)
 		}
 		$$ = st
 	}
@@ -8715,7 +8762,7 @@ OptLeadLagInfo:
 	}
 |	',' paramMarker OptLLDefault
 	{
-		args := []ast.ExprNode{ast.NewValueExpr($2, parser.charset, parser.collation)}
+		args := []ast.ExprNode{ast.NewParamMarkerExpr(yyS[yypt-1].offset)}
 		if $3 != nil {
 			args = append(args, $3.(ast.ExprNode))
 		}
@@ -9675,6 +9722,10 @@ SetStmt:
 	{
 		$$ = &ast.SetConfigStmt{Instance: $3, Name: $4, Value: $6}
 	}
+|	"SET" "SESSION_STATES" stringLit
+	{
+		$$ = &ast.SetSessionStatesStmt{SessionStates: $3}
+	}
 
 SetRoleStmt:
 	"SET" "ROLE" SetRoleOpt
@@ -9982,11 +10033,11 @@ Username:
 	}
 |	StringName '@' StringName
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.UserIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 |	"CURRENT_USER" OptionalBraces
 	{
@@ -10020,11 +10071,11 @@ RoleNameString:
 RolenameComposed:
 	StringName '@' StringName
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: $3}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower($3)}
 	}
 |	StringName singleAtIdentifier
 	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.ToLower(strings.TrimPrefix($2, "@"))}
 	}
 
 RolenameWithoutIdent:
@@ -10663,9 +10714,17 @@ ShowTargetFilterable:
 			Extended: true,
 		}
 	}
+|	builtinCount '(' '*' ')' "WARNINGS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings, CountWarningsOrErrors: true}
+	}
 |	"WARNINGS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	builtinCount '(' '*' ')' "ERRORS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowErrors, CountWarningsOrErrors: true}
 	}
 |	"ERRORS"
 	{
@@ -10752,17 +10811,21 @@ ShowTargetFilterable:
 			Tp: ast.ShowPlugins,
 		}
 	}
+|	"SESSION_STATES"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowSessionStates}
+	}
 |	"STATS_EXTENDED"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowStatsExtended}
 	}
 |	"STATS_META"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowStatsMeta}
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsMeta, Table: &ast.TableName{Name: model.NewCIStr("STATS_META"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
 |	"STATS_HISTOGRAMS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHistograms}
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsHistograms, Table: &ast.TableName{Name: model.NewCIStr("STATS_HISTOGRAMS"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
 |	"STATS_TOPN"
 	{
@@ -10770,7 +10833,7 @@ ShowTargetFilterable:
 	}
 |	"STATS_BUCKETS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowStatsBuckets}
+		$$ = &ast.ShowStmt{Tp: ast.ShowStatsBuckets, Table: &ast.TableName{Name: model.NewCIStr("STATS_BUCKETS"), Schema: model.NewCIStr(mysql.SystemDB)}}
 	}
 |	"STATS_HEALTHY"
 	{
@@ -11074,9 +11137,11 @@ Statement:
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
+|	ReleaseSavepointStmt
 |	ResumeImportStmt
 |	RevokeStmt
 |	RevokeRoleStmt
+|	SavepointStmt
 |	SetOprStmt
 |	SelectStmt
 |	SelectStmtWithClause
@@ -11136,6 +11201,8 @@ TraceableStmt:
 |	LoadDataStmt
 |	BeginTransactionStmt
 |	CommitStmt
+|	SavepointStmt
+|	ReleaseSavepointStmt
 |	RollbackStmt
 |	SetStmt
 
@@ -11829,12 +11896,13 @@ StringType:
 		tp := types.NewFieldType(mysql.TypeEnum)
 		elems := $3.([]*ast.TextString)
 		opt := $5.(*ast.OptBinary)
-		tp.SetElems(ast.TransformTextStrings(elems, opt.Charset))
+		tp.SetElems(make([]string, len(elems)))
 		fieldLen := -1 // enum_flen = max(ele_flen)
-		for i := range tp.GetElems() {
-			tp.SetElem(i, strings.TrimRight(tp.GetElem(i), " "))
-			if len(tp.GetElem(i)) > fieldLen {
-				fieldLen = len(tp.GetElem(i))
+		for i, e := range elems {
+			trimmed := strings.TrimRight(e.Value, " ")
+			tp.SetElemWithIsBinaryLit(i, trimmed, e.IsBinaryLiteral)
+			if len(trimmed) > fieldLen {
+				fieldLen = len(trimmed)
 			}
 		}
 		tp.SetFlen(fieldLen)
@@ -11849,11 +11917,12 @@ StringType:
 		tp := types.NewFieldType(mysql.TypeSet)
 		elems := $3.([]*ast.TextString)
 		opt := $5.(*ast.OptBinary)
-		tp.SetElems(ast.TransformTextStrings(elems, opt.Charset))
-		fieldLen := len(tp.GetElems()) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
-		for i := range tp.GetElems() {
-			tp.SetElem(i, strings.TrimRight(tp.GetElem(i), " "))
-			fieldLen += len(tp.GetElem(i))
+		tp.SetElems(make([]string, len(elems)))
+		fieldLen := len(elems) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
+		for i, e := range elems {
+			trimmed := strings.TrimRight(e.Value, " ")
+			tp.SetElemWithIsBinaryLit(i, trimmed, e.IsBinaryLiteral)
+			fieldLen += len(trimmed)
 		}
 		tp.SetFlen(fieldLen)
 		tp.SetCharset(opt.Charset)

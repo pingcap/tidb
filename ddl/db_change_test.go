@@ -17,7 +17,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,10 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -41,61 +38,27 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 	"go.uber.org/zap"
 )
 
-type stateChangeSuite struct {
-	suite.Suite
-	store kv.Storage
-	dom   *domain.Domain
-	tk    *testkit.TestKit
-}
-
-func TestStateChange(t *testing.T) {
-	suite.Run(t, new(stateChangeSuite))
-}
-
-func (s *stateChangeSuite) SetupSuite() {
-	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	session.SetSchemaLease(200 * time.Millisecond)
-
-	var err error
-	s.store, err = mockstore.NewMockStore()
-	s.Require().NoError(err)
-	s.dom, err = session.BootstrapSession(s.store)
-	s.Require().NoError(err)
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	tk.MustExec("use test_db_state")
-}
-
-func (s *stateChangeSuite) SetupTest() {
-	s.tk = testkit.NewTestKit(s.T(), s.store)
-	s.tk.MustExec("use test_db_state")
-}
-
-func (s *stateChangeSuite) TearDownSuite() {
-	s.dom.Close()
-	s.Require().NoError(s.store.Close())
-}
-
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
-func (s *stateChangeSuite) TestShowCreateTable() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestShowCreateTable(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create table t2 (a int, b varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci")
 	// tkInternal is used to execute additional sql (here show create table) in ddl change callback.
 	// Using same `tk` in different goroutines may lead to data race.
-	tkInternal := testkit.NewTestKit(s.T(), s.store)
+	tkInternal := testkit.NewTestKit(t, store)
 	tkInternal.MustExec("use test")
 
 	var checkErr error
@@ -126,7 +89,7 @@ func (s *stateChangeSuite) TestShowCreateTable() {
 		}
 		if job.SchemaState != model.StatePublic {
 			var result sqlexec.RecordSet
-			tbl2 := external.GetTableByName(s.T(), tkInternal, "test", "t2")
+			tbl2 := external.GetTableByName(t, tkInternal, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
 				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
 				result, checkErr = tkInternal.Exec("show create table t2")
@@ -152,19 +115,22 @@ func (s *stateChangeSuite) TestShowCreateTable() {
 			terror.Log(result.Close())
 		}
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	d.SetHook(callback)
 	for _, tc := range testCases {
 		tk.MustExec(tc.sql)
-		s.Require().NoError(checkErr)
+		require.NoError(t, checkErr)
 	}
 }
 
 // TestDropNotNullColumn is used to test issue #8654.
-func (s *stateChangeSuite) TestDropNotNullColumn() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestDropNotNullColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int, a int not null default 11)")
 	tk.MustExec("insert into t values(1, 1)")
@@ -174,11 +140,12 @@ func (s *stateChangeSuite) TestDropNotNullColumn() {
 	tk.MustExec("insert into t2 values(3, '11:22:33')")
 	tk.MustExec("create table t3 (id int, d json not null)")
 	tk.MustExec("insert into t3 values(4, d)")
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	callback := &ddl.TestDDLCallback{}
 	sqlNum := 0
@@ -187,7 +154,7 @@ func (s *stateChangeSuite) TestDropNotNullColumn() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		if job.SchemaState == model.StateWriteOnly {
 			switch sqlNum {
 			case 0:
@@ -204,21 +171,27 @@ func (s *stateChangeSuite) TestDropNotNullColumn() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop column a")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	sqlNum++
 	tk.MustExec("alter table t1 drop column b")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	sqlNum++
 	tk.MustExec("alter table t2 drop column c")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	sqlNum++
 	tk.MustExec("alter table t3 drop column d")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	d.SetHook(originalCallback)
 	tk.MustExec("drop table t, t1, t2, t3")
 }
 
-func (s *stateChangeSuite) TestTwoStates() {
+func TestTwoStates(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+
 	cnt := 5
 	// New the testExecInfo.
 	testInfo := &testExecInfo{
@@ -232,8 +205,8 @@ func (s *stateChangeSuite) TestTwoStates() {
 		}
 		testInfo.sqlInfos[i] = sqlInfo
 	}
-	err := testInfo.createSessions(s.store, "test_db_state")
-	s.Require().NoError(err)
+	require.NoError(t, testInfo.createSessions(store, "test_db_state"))
+
 	// Fill the SQLs and expected error messages.
 	testInfo.sqlInfos[0].sql = "insert into t (c1, c2, c3, c4) value(2, 'b', 'N', '2017-07-02')"
 	testInfo.sqlInfos[1].sql = "insert into t (c1, c2, c3, d3, c4) value(3, 'b', 'N', 'a', '2017-07-03')"
@@ -246,24 +219,17 @@ func (s *stateChangeSuite) TestTwoStates() {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
-	s.test(alterTableSQL, testInfo)
-	// TODO: Add more DDL statements.
-}
-
-func (s *stateChangeSuite) test(alterTableSQL string, testInfo *testExecInfo) {
-	s.tk.MustExec(`create table t (
+	tk.MustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
-	defer s.tk.MustExec("drop table t")
-
-	s.tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
+	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
 
 	callback := &ddl.TestDDLCallback{}
 	prevState := model.StateNone
-	s.Require().NoError(testInfo.parseSQLs(parser.New()))
+	require.NoError(t, testInfo.parseSQLs(parser.New()))
 
 	times := 0
 	var checkErr error
@@ -315,16 +281,16 @@ func (s *stateChangeSuite) test(alterTableSQL string, testInfo *testExecInfo) {
 			}
 		}
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	d.SetHook(callback)
-	s.tk.MustExec(alterTableSQL)
-	s.Require().NoError(testInfo.compileSQL(4))
-	s.Require().NoError(testInfo.execSQL(4))
+	tk.MustExec(alterTableSQL)
+	require.NoError(t, testInfo.compileSQL(4))
+	require.NoError(t, testInfo.execSQL(4))
 	// Mock the server is in `write reorg` state.
-	s.Require().NoError(testInfo.execSQL(3))
-	s.Require().NoError(checkErr)
+	require.NoError(t, testInfo.execSQL(3))
+	require.NoError(t, checkErr)
 }
 
 type stateCase struct {
@@ -452,72 +418,80 @@ type expectQuery struct {
 	rows []string
 }
 
-func (s *stateChangeSuite) TestAppendEnum() {
-	s.tk.MustExec(`create table t (
+func TestAppendEnum(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table t (
 			c1 varchar(64),
 			c2 enum('N','Y') not null default 'N',
 			c3 timestamp on update current_timestamp,
 			c4 int primary key,
 			unique key idx2 (c2, c3))`)
-	defer s.tk.MustExec("drop table t")
-	s.tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
+	tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
 	// Make sure these SQLs use the plan of index scan.
-	s.tk.MustExec("drop stats t")
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-
-	err := s.tk.ExecToErr("insert into t values('a', 'A', '2018-09-19', 9)")
-	s.Require().EqualError(err, "[types:1265]Data truncated for column 'c2' at row 1")
-
-	s.tk.MustExec("alter table t change c2 c2 enum('N') DEFAULT 'N'")
-	s.tk.MustExec("alter table t change c2 c2 int default 0")
-	s.tk.MustExec("alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'")
-	s.tk.MustExec("insert into t values('a', 'A', '2018-09-20', 10)")
-	s.tk.MustExec("insert into t (c1, c3, c4) values('a', '2018-09-21', 11)")
-
-	tk = testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
+	tk.MustExec("drop stats t")
+	tk.MustGetErrMsg("insert into t values('a', 'A', '2018-09-19', 9)", "[types:1265]Data truncated for column 'c2' at row 1")
+	tk.MustExec("alter table t change c2 c2 enum('N') DEFAULT 'N'")
+	tk.MustExec("alter table t change c2 c2 int default 0")
+	tk.MustExec("alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'")
+	tk.MustExec("insert into t values('a', 'A', '2018-09-20', 10)")
+	tk.MustExec("insert into t (c1, c3, c4) values('a', '2018-09-21', 11)")
 	tk.MustQuery("select c4, c2 from t order by c4 asc").Check(testkit.Rows("8 N", "10 A", "11 A"))
-
 	// fixed
-	s.tk.MustExec("update t set c2='N' where c4 = 10")
+	tk.MustExec("update t set c2='N' where c4 = 10")
 	tk.MustQuery("select c2 from t where c4 = 10").Check(testkit.Rows("N"))
-
 }
 
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
-func (s *stateChangeSuite) TestWriteOnlyWriteNULL() {
+func TestWriteOnlyWriteNULL(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"8 1"}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyOnDupUpdate() {
+func TestWriteOnlyOnDupUpdate(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t", nil}
 	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"2 1"}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns() {
+func TestWriteOnlyOnDupUpdateForAddColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t", nil}
 	sqls[1] = sqlWithErr{"insert t set c1 = 'c1_dup', c3 = '2018-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnsSQL := "alter table t add column c5 int not null default 1 after c4, add column c44 int not null default 1"
 	expectQuery := &expectQuery{"select c4, c5, c44 from t", []string{"2 1 1"}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnTimestampToInt() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestWriteReorgForModifyColumnTimestampToInt(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table tt(id int primary key auto_increment, c1 timestamp default '2020-07-10 01:05:08');")
 	tk.MustExec("insert into tt values();")
 	defer tk.MustExec("drop table if exists tt")
@@ -526,7 +500,7 @@ func (s *stateChangeSuite) TestWriteReorgForModifyColumnTimestampToInt() {
 	sqls[0] = sqlWithErr{"insert into tt values();", nil}
 	modifyColumnSQL := "alter table tt modify column c1 bigint;"
 	expectQuery := &expectQuery{"select c1 from tt", []string{"20200710010508", "20200710010508"}}
-	s.runTestInSchemaState(model.StateWriteReorganization, true, modifyColumnSQL, sqls, expectQuery)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, true, modifyColumnSQL, sqls, expectQuery)
 }
 
 type idxType byte
@@ -538,27 +512,30 @@ const (
 )
 
 // TestWriteReorgForModifyColumn tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumn() {
+func TestWriteReorgForModifyColumn(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
 }
 
 // TestWriteReorgForModifyColumnWithUniqIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx() {
+func TestWriteReorgForModifyColumnWithUniqIdx(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
 }
 
 // TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle() {
+func TestWriteReorgForModifyColumnWithPKIsHandle(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
 
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a) clustered, index idx2(a, c))`)
-	s.tk.MustExec("insert into tt (a, c) values(-1, -11)")
-	s.tk.MustExec("insert into tt (a, c) values(1, 11)")
-	defer s.tk.MustExec("drop table if exists tt")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a) clustered, index idx2(a, c))`)
+	tk.MustExec("insert into tt (a, c) values(-1, -11)")
+	tk.MustExec("insert into tt (a, c) values(1, 11)")
 
 	sqls := make([]sqlWithErr, 12)
 	sqls[0] = sqlWithErr{"delete from tt where c = -11", nil}
@@ -575,48 +552,51 @@ func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle() {
 	sqls[11] = sqlWithErr{"replace into tt values(6, 66, 56)", nil}
 
 	query := &expectQuery{sql: "admin check table tt;", rows: nil}
-	s.runTestInSchemaState(model.StateWriteReorganization, false, modifyColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, false, modifyColumnSQL, sqls, query)
 }
 
 // TestWriteReorgForModifyColumnWithPrimaryIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithPrimaryIdx() {
+func TestWriteReorgForModifyColumnWithPrimaryIdx(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
 }
 
 // TestWriteReorgForModifyColumnWithoutFirst tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithoutFirst() {
+func TestWriteReorgForModifyColumnWithoutFirst(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
 }
 
 // TestWriteReorgForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteReorgForModifyColumnWithoutDefaultVal() {
+func TestWriteReorgForModifyColumnWithoutDefaultVal(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint first"
-	s.testModifyColumn(model.StateWriteReorganization, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateWriteReorganization, modifyColumnSQL, noneIdx)
 }
 
 // TestDeleteOnlyForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestDeleteOnlyForModifyColumnWithoutDefaultVal() {
+func TestDeleteOnlyForModifyColumnWithoutDefaultVal(t *testing.T) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint first"
-	s.testModifyColumn(model.StateDeleteOnly, modifyColumnSQL, noneIdx)
+	testModifyColumn(t, model.StateDeleteOnly, modifyColumnSQL, noneIdx)
 }
 
-func (s *stateChangeSuite) testModifyColumn(state model.SchemaState, modifyColumnSQL string, idx idxType) {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
+func testModifyColumn(t *testing.T, state model.SchemaState, modifyColumnSQL string, idx idxType) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+
 	switch idx {
 	case uniqIdx:
-		s.tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, unique index idx(c), unique index idx1(a), index idx2(a, c))`)
+		tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, unique index idx(c), unique index idx1(a), index idx2(a, c))`)
 	case primaryIdx:
 		// TODO: Support modify/change column with the primary key.
-		s.tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), primary index idx1(a), index idx2(a, c))`)
+		tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), primary index idx1(a), index idx2(a, c))`)
 	default:
-		s.tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), index idx1(a), index idx2(a, c))`)
+		tk.MustExec(`create table tt  (a varchar(64), b int default 1, c int not null default 0, index idx(c), index idx1(a), index idx2(a, c))`)
 	}
-	s.tk.MustExec("insert into tt (a, c) values('a', 11)")
-	s.tk.MustExec("insert into tt (a, c) values('b', 22)")
-	defer s.tk.MustExec("drop table if exists tt")
+	tk.MustExec("insert into tt (a, c) values('a', 11)")
+	tk.MustExec("insert into tt (a, c) values('b', 22)")
 
 	sqls := make([]sqlWithErr, 13)
 	sqls[0] = sqlWithErr{"delete from tt where c = 11", nil}
@@ -643,36 +623,46 @@ func (s *stateChangeSuite) testModifyColumn(state model.SchemaState, modifyColum
 	sqls[12] = sqlWithErr{"replace into tt values('a_replace_2', 77, 56)", nil}
 
 	query := &expectQuery{sql: "admin check table tt;", rows: nil}
-	s.runTestInSchemaState(state, false, modifyColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, state, false, modifyColumnSQL, sqls, query)
 }
 
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteOnly() {
+func TestWriteOnly(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 first"
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnSQL, sqls, nil)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnSQL, sqls, nil)
 }
 
 // TestWriteOnlyForAddColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestWriteOnlyForAddColumns() {
+func TestWriteOnlyForAddColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"delete from t where c1 = 'a'", nil}
 	sqls[1] = sqlWithErr{"update t use index(idx2) set c1 = 'c1_update' where c1 = 'a'", nil}
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1", nil}
 	addColumnsSQL := "alter table t add column c5 int not null default 1 first, add column c6 int not null default 1"
-	s.runTestInSchemaState(model.StateWriteOnly, true, addColumnsSQL, sqls, nil)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, addColumnsSQL, sqls, nil)
 }
 
 // TestDeleteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestDeleteOnly() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (c varchar(64), c4 int)`)
-	s.tk.MustExec("insert into tt (c, c4) values('a', 8)")
-	defer s.tk.MustExec("drop table if exists tt")
+func TestDeleteOnly(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (c varchar(64), c4 int)`)
+	tk.MustExec("insert into tt (c, c4) values('a', 8)")
 
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
@@ -687,12 +677,15 @@ func (s *stateChangeSuite) TestDeleteOnly() {
 		errors.Errorf("[planner:1054]Unknown column 't.c1' in 'on clause'")}
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 2017-07-01 00:00:00 8"}}
 	dropColumnSQL := "alter table t drop column c1"
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 }
 
 // TestSchemaChangeForDropColumnWithIndexes test for modify data when a middle-state column with indexes in it.
-func (s *stateChangeSuite) TestSchemaChangeForDropColumnWithIndexes() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestSchemaChangeForDropColumnWithIndexes(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"delete from t1", nil}
@@ -708,16 +701,19 @@ func (s *stateChangeSuite) TestSchemaChangeForDropColumnWithIndexes() {
 	prepare()
 	dropColumnSQL := "alter table t1 drop column b"
 	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
 }
 
 // TestSchemaChangeForDropColumnWithIndexes test for modify data when some middle-state columns with indexes in it.
-func (s *stateChangeSuite) TestSchemaChangeForDropColumnsWithIndexes() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestSchemaChangeForDropColumnsWithIndexes(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	sqls := make([]sqlWithErr, 5)
 	sqls[0] = sqlWithErr{"delete from t1", nil}
@@ -733,45 +729,52 @@ func (s *stateChangeSuite) TestSchemaChangeForDropColumnsWithIndexes() {
 	prepare()
 	dropColumnSQL := "alter table t1 drop column b, drop column d"
 	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
-	s.runTestInSchemaState(model.StateWriteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 	prepare()
-	s.runTestInSchemaState(model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
 }
 
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
-func (s *stateChangeSuite) TestDeleteOnlyForDropExpressionIndex() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (a int, b int)`)
-	s.tk.MustExec(`alter table tt add index expr_idx((a+1))`)
-	s.tk.MustExec("insert into tt (a, b) values(8, 8)")
-	defer s.tk.MustExec("drop table if exists tt")
+func TestDeleteOnlyForDropExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (a int, b int)`)
+	tk.MustExec(`alter table tt add index expr_idx((a+1))`)
+	tk.MustExec("insert into tt (a, b) values(8, 8)")
 
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"delete from tt where b=8", nil}
 	dropIdxSQL := "alter table tt drop index expr_idx"
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropIdxSQL, sqls, nil)
-
-	s.tk.MustExec("admin check table tt")
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropIdxSQL, sqls, nil)
+	tk.MustExec("admin check table tt")
 }
 
 // TestDeleteOnlyForDropColumns tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *stateChangeSuite) TestDeleteOnlyForDropColumns() {
+func TestDeleteOnlyForDropColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("Can't find column c1")}
 	dropColumnsSQL := "alter table t drop column c1, drop column c3"
-	s.runTestInSchemaState(model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
+	runTestInSchemaState(t, tk, store, dom, model.StateDeleteOnly, true, dropColumnsSQL, sqls, nil)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyForDropColumn() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists tt")
-	s.tk.MustExec(`create table tt (c1 int, c4 int)`)
-	s.tk.MustExec("insert into tt (c1, c4) values(8, 8)")
-	defer s.tk.MustExec("drop table if exists tt")
+func TestWriteOnlyForDropColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tt (c1 int, c4 int)`)
+	tk.MustExec("insert into tt (c1, c4) values(8, 8)")
 
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
@@ -781,14 +784,17 @@ func (s *stateChangeSuite) TestWriteOnlyForDropColumn() {
 	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnSQL := "alter table t drop column c3"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"a N 8"}}
-	s.runTestInSchemaState(model.StateWriteOnly, false, dropColumnSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, false, dropColumnSQL, sqls, query)
 }
 
-func (s *stateChangeSuite) TestWriteOnlyForDropColumns() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec(`create table t_drop_columns (c1 int, c4 int)`)
-	s.tk.MustExec("insert into t_drop_columns (c1, c4) values(8, 8)")
-	defer s.tk.MustExec("drop table t_drop_columns")
+func TestWriteOnlyForDropColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table t_drop_columns (c1 int, c4 int)`)
+	tk.MustExec("insert into t_drop_columns (c1, c4) values(8, 8)")
 
 	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
@@ -797,40 +803,45 @@ func (s *stateChangeSuite) TestWriteOnlyForDropColumns() {
 	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnsSQL := "alter table t drop column c3, drop column c1"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 8"}}
-	s.runTestInSchemaState(model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
 }
 
-func (s *stateChangeSuite) runTestInSchemaState(
+func runTestInSchemaState(
+	t *testing.T,
+	tk *testkit.TestKit,
+	store kv.Storage,
+	dom *domain.Domain,
 	state model.SchemaState,
 	isOnJobUpdated bool,
 	alterTableSQL string,
 	sqlWithErrs []sqlWithErr,
 	expectQuery *expectQuery,
 ) {
-	s.tk.MustExec(`create table t (
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
 	 	c1 varchar(64),
 	 	c2 enum('N','Y') not null default 'N',
 	 	c3 timestamp on update current_timestamp,
 	 	c4 int primary key,
 	 	unique key idx2 (c2))`)
-	defer s.tk.MustExec("drop table t")
-	s.tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
+	tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
 	// Make sure these SQLs use the plan of index scan.
-	s.tk.MustExec("drop stats t")
+	tk.MustExec("drop stats t")
 
-	callback := &ddl.TestDDLCallback{Do: s.dom}
+	callback := &ddl.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
-	se, err := session.CreateSession(s.store)
-	s.Require().NoError(err)
+	se, err := session.CreateSession(store)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "use test_db_state")
-	s.Require().NoError(err)
+	require.NoError(t, err)
 	cbFunc := func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil {
+		if jobStateOrLastSubJobState(job) == prevState || checkErr != nil {
 			return
 		}
-		prevState = job.SchemaState
-		if job.SchemaState != state {
+		prevState = jobStateOrLastSubJobState(job)
+		if prevState != state {
 			return
 		}
 		for _, sqlWithErr := range sqlWithErrs {
@@ -846,19 +857,19 @@ func (s *stateChangeSuite) runTestInSchemaState(
 	} else {
 		callback.OnJobRunBeforeExported = cbFunc
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
-	s.tk.MustExec(alterTableSQL)
-	s.Require().NoError(checkErr)
+	tk.MustExec(alterTableSQL)
+	require.NoError(t, checkErr)
 	d.SetHook(originalCallback)
 
 	if expectQuery != nil {
-		tk := testkit.NewTestKit(s.T(), s.store)
+		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test_db_state")
 		rs, _ := tk.Exec(expectQuery.sql)
 		if expectQuery.rows == nil {
-			s.Require().Nil(rs)
+			require.Nil(t, rs)
 		} else {
 			rows := tk.ResultSetToResult(rs, fmt.Sprintf("sql:%s", expectQuery.sql))
 			rows.Check(testkit.Rows(expectQuery.rows...))
@@ -866,14 +877,24 @@ func (s *stateChangeSuite) runTestInSchemaState(
 	}
 }
 
-func (s *stateChangeSuite) TestShowIndex() {
-	s.tk.MustExec(`create table t(c1 int primary key nonclustered, c2 int)`)
-	defer s.tk.MustExec("drop table t")
+func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		subs := job.MultiSchemaInfo.SubJobs
+		return subs[len(subs)-1].SchemaState
+	}
+	return job.SchemaState
+}
+
+func TestShowIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table t(c1 int primary key nonclustered, c2 int)`)
 
 	callback := &ddl.TestDDLCallback{}
 	prevState := model.StateNone
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
 	showIndexSQL := `show index from t`
 	var checkErr error
 	callback.OnJobUpdatedExported = func(job *model.Job) {
@@ -896,12 +917,12 @@ func (s *stateChangeSuite) TestShowIndex() {
 		}
 	}
 
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
 	alterTableSQL := `alter table t add index c2(c2)`
-	s.tk.MustExec(alterTableSQL)
-	s.Require().NoError(checkErr)
+	tk.MustExec(alterTableSQL)
+	require.NoError(t, checkErr)
 
 	tk.MustQuery(showIndexSQL).Check(testkit.Rows(
 		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO",
@@ -909,7 +930,7 @@ func (s *stateChangeSuite) TestShowIndex() {
 	))
 	d.SetHook(originalCallback)
 
-	s.tk.MustExec(`create table tr(
+	tk.MustExec(`create table tr(
 		id int, name varchar(50),
 		purchased date
 	)
@@ -921,219 +942,254 @@ func (s *stateChangeSuite) TestShowIndex() {
     	partition p4 values less than (2010),
     	partition p5 values less than (2015)
    	);`)
-	defer s.tk.MustExec("drop table tr")
-	s.tk.MustExec("create index idx1 on tr (purchased);")
+	tk.MustExec("create index idx1 on tr (purchased);")
 	tk.MustQuery("show index from tr;").Check(testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id int primary key clustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id int primary key clustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id int primary key nonclustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id int primary key nonclustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id char(100) primary key clustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id char(100) primary key clustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
-	s.tk.MustExec("drop table if exists tr")
-	s.tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
+	tk.MustExec("drop table if exists tr")
+	tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 }
 
-func (s *stateChangeSuite) TestParallelAlterModifyColumn() {
+func TestParallelAlterModifyColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t MODIFY COLUMN b int FIRST;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().NoError(err2)
-		s.tk.MustExec("select * from t")
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		tk.MustExec("select * from t")
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 }
 
-func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
+func TestParallelAlterModifyColumnWithData(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+
 	// modify column: double -> int
 	// modify column: double -> int
 	sql := "ALTER TABLE t MODIFY COLUMN c int;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
-		rs, err := s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("3", sRows[0][2])
-		s.Require().NoError(rs.Close())
-		s.tk.MustExec("insert into t values(11, 22, 33.3, 44, 55)")
-		rs, err = s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("33", sRows[1][2])
-		s.Require().NoError(rs.Close())
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:8245]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "3", sRows[0][2])
+		require.NoError(t, rs.Close())
+		tk.MustExec("insert into t values(11, 22, 33.3, 44, 55)")
+		rs, err = tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "33", sRows[1][2])
+		require.NoError(t, rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 
 	// modify column: int -> double
 	// rename column: double -> int
 	sql1 := "ALTER TABLE t MODIFY b double;"
 	sql2 := "ALTER TABLE t RENAME COLUMN b to bb;"
 	f = func(err1, err2 error) {
-		s.Require().Nil(err1)
-		s.Require().Nil(err2)
-		rs, err := s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("2", sRows[0][1])
-		s.Require().NoError(rs.Close())
-		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
-		rs, err = s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("22", sRows[1][1])
-		s.Require().NoError(rs.Close())
+		require.Nil(t, err1)
+		require.Nil(t, err2)
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "2", sRows[0][1])
+		require.NoError(t, rs.Close())
+		tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "22", sRows[1][1])
+		require.NoError(t, rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 
 	// modify column: int -> double
 	// modify column: double -> int
 	sql2 = "ALTER TABLE t CHANGE b bb int;"
 	f = func(err1, err2 error) {
-		s.Require().Nil(err1)
-		s.Require().Nil(err2)
-		rs, err := s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("2", sRows[0][1])
-		s.Require().NoError(rs.Close())
-		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
-		rs, err = s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("22", sRows[1][1])
-		s.Require().NoError(rs.Close())
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "2", sRows[0][1])
+		require.NoError(t, rs.Close())
+		tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "22", sRows[1][1])
+		require.NoError(t, rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
+func TestParallelAlterModifyColumnToNotNullWithData(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+
 	// double null -> int not null
 	// double null -> int not null
 	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1072]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
-		rs, err := s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("3", sRows[0][2])
-		s.Require().NoError(rs.Close())
-		err = s.tk.ExecToErr("insert into t values(11, 22, null, 44, 55)")
-		s.Require().Error(err)
-		s.tk.MustExec("insert into t values(11, 22, 33.3, 44, 55)")
-		rs, err = s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("33", sRows[1][2])
-		s.Require().NoError(rs.Close())
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:8245]column c id 3 does not exist, this column may have been updated by other DDL ran in parallel")
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "3", sRows[0][2])
+		require.NoError(t, rs.Close())
+		err = tk.ExecToErr("insert into t values(11, 22, null, 44, 55)")
+		require.Error(t, err)
+		tk.MustExec("insert into t values(11, 22, 33.3, 44, 55)")
+		rs, err = tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "33", sRows[1][2])
+		require.NoError(t, rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 
 	// int null -> double not null
 	// double not null -> int null
 	sql1 := "ALTER TABLE t CHANGE b b double not null;"
 	sql2 := "ALTER TABLE t CHANGE b bb int null;"
 	f = func(err1, err2 error) {
-		s.Require().Nil(err1)
-		s.Require().Nil(err2)
-		rs, err := s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("2", sRows[0][1])
-		s.Require().NoError(rs.Close())
-		err = s.tk.ExecToErr("insert into t values(11, null, 33, 44, 55)")
-		s.Require().NoError(err)
-		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
-		rs, err = s.tk.Exec("select * from t")
-		s.Require().NoError(err)
-		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
-		s.Require().NoError(err)
-		s.Require().Equal("<nil>", sRows[1][1])
-		s.Require().Equal("22", sRows[2][1])
-		s.Require().NoError(rs.Close())
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		rs, err := tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "2", sRows[0][1])
+		require.NoError(t, rs.Close())
+		err = tk.ExecToErr("insert into t values(11, null, 33, 44, 55)")
+		require.NoError(t, err)
+		tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = tk.Exec("select * from t")
+		require.NoError(t, err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		require.Equal(t, "<nil>", sRows[1][1])
+		require.Equal(t, "22", sRows[2][1])
+		require.NoError(t, rs.Close())
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn() {
+func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
 	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
+
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
-		s.tk.MustExec("select * from t")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
+		tk.MustExec("select * from t")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAlterModifyColumnAndAddPK() {
+func TestParallelAlterModifyColumnAndAddPK(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b) NONCLUSTERED;"
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:8200]Unsupported modify column: this column has primary key flag")
-		s.tk.MustExec("select * from t")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+		tk.MustExec("select * from t")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
 // TODO: This test is not a test that performs two DDLs in parallel.
 // So we should not use the function of testControlParallelExecSQL. We will handle this test in the next PR.
-// func (s *stateChangeSuite) TestParallelColumnModifyingDefinition() {
+// func TestParallelColumnModifyingDefinition(t *testing.T) {
+//	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+//	defer clean()
+//	tk := testkit.NewTestKit(t, store)
+//	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 // 	sql1 := "insert into t(b) values (null);"
 // 	sql2 := "alter table t change b b2 bigint not null;"
 // 	f := func(err1, err2 error) {
-// 		s.Require().NoError(err1)
+// 		require.NoError(t, err1)
 // 		if err2 != nil {
-//			s.Require().ErrorEqual(err2, "[ddl:1265]Data truncated for column 'b2' at row 1")
+//			require.ErrorEqual(t, err2, "[ddl:1265]Data truncated for column 'b2' at row 1")
 // 		}
 // 	}
-// 	s.testControlParallelExecSQL("", sql1, sql2, f)
+// 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 // }
 
-func (s *stateChangeSuite) TestParallelAddColumAndSetDefaultValue() {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec(`create table tx (
+func TestParallelAddColumAndSetDefaultValue(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`create table tx (
 		c1 varchar(64),
 		c2 enum('N','Y') not null default 'N',
 		primary key idx2 (c2, c1))`)
-	s.tk.MustExec("insert into tx values('a', 'N')")
-	defer s.tk.MustExec("drop table tx")
+	tk.MustExec("insert into tx values('a', 'N')")
 
 	sql1 := "alter table tx add column cx int after c1"
 	sql2 := "alter table tx alter c2 set default 'N'"
 
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().NoError(err2)
-		s.tk.MustExec("delete from tx where c1='a'")
+		require.NoError(t, err1)
+		require.NoError(t, err2)
+		tk.MustExec("delete from tx where c1='a'")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelChangeColumnName() {
+func TestParallelChangeColumnName(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t CHANGE a aa int;"
 	sql2 := "ALTER TABLE t CHANGE b aa int;"
 	f := func(err1, err2 error) {
@@ -1146,42 +1202,59 @@ func (s *stateChangeSuite) TestParallelChangeColumnName() {
 				oneErr = err2
 			}
 		}
-		s.Require().EqualError(oneErr, "[schema:1060]Duplicate column name 'aa'")
+		require.EqualError(t, oneErr, "[schema:1060]Duplicate column name 'aa'")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAlterAddIndex() {
+func TestParallelAlterAddIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t add index index_b(b);"
 	sql2 := "CREATE INDEX index_b ON t (c);"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1061]index already exist index_b")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:1061]index already exist index_b")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAlterAddExpressionIndex() {
+func TestParallelAlterAddExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+
 	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1061]index already exist expr_index_b")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:1061]index already exist expr_index_b")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAddPrimaryKey() {
+func TestParallelAddPrimaryKey(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "ALTER TABLE t add primary key index_b(b);"
 	sql2 := "ALTER TABLE t add primary key index_b(c);"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[schema:1068]Multiple primary key defined")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[schema:1068]Multiple primary key defined")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAlterAddPartition() {
+func TestParallelAlterAddPartition(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := `alter table t_part add partition (
     partition p2 values less than (30)
    );`
@@ -1189,99 +1262,125 @@ func (s *stateChangeSuite) TestParallelAlterAddPartition() {
     partition p3 values less than (30)
    );`
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelDropColumn() {
+func TestParallelDropColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t drop COLUMN c ;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1091]column c doesn't exist")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:1091]column c doesn't exist")
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 }
 
-func (s *stateChangeSuite) TestParallelDropColumns() {
+func TestParallelDropColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t drop COLUMN b, drop COLUMN c;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1091]column b doesn't exist")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:1091]column b doesn't exist")
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 }
 
-func (s *stateChangeSuite) TestParallelDropIfExistsColumns() {
+func TestParallelDropIfExistsColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER TABLE t drop COLUMN if exists b, drop COLUMN if exists c;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().NoError(err2)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 }
 
-func (s *stateChangeSuite) TestParallelDropIndex() {
+func TestParallelDropIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "alter table t drop index idx1 ;"
 	sql2 := "alter table t drop index idx2 ;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelDropPrimaryKey() {
+func TestParallelDropPrimaryKey(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "alter table t drop primary key;"
 	sql2 := "alter table t drop primary key;"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[ddl:1091]index PRIMARY doesn't exist")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[ddl:1091]index PRIMARY doesn't exist")
 	}
-	s.testControlParallelExecSQL("ALTER TABLE t add primary key index_b(c);", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "ALTER TABLE t add primary key index_b(c);", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelCreateAndRename() {
+func TestParallelCreateAndRename(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
-	defer s.tk.MustExec("drop table if exists t_exists ")
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[schema:1050]Table 't_exists' already exists")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[schema:1050]Table 't_exists' already exists")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) TestParallelAlterAndDropSchema() {
-	s.tk.MustExec("create database db_drop_db")
+func TestParallelAlterAndDropSchema(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("create database db_drop_db")
 	sql1 := "DROP SCHEMA db_drop_db"
 	sql2 := "ALTER SCHEMA db_drop_db CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[schema:1008]Can't drop database ''; database doesn't exist")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[schema:1008]Can't drop database ''; database doesn't exist")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
+func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
 			return
 		}
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := ddl.GetDDLJobs(txn)
-				if err1 != nil {
-					return err1
-				}
-				qLen = len(jobs)
-				return nil
-			})
-			s.Require().NoError(err)
+			sess := testkit.NewTestKit(t, store).Session()
+			err := sessiontxn.NewTxn(context.Background(), sess)
+			require.NoError(t, err)
+			txn, err := sess.Txn(true)
+			require.NoError(t, err)
+			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			require.NoError(t, err)
+			qLen = len(jobs)
 			if qLen == 2 {
 				break
 			}
@@ -1289,31 +1388,29 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 		}
 		times++
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	d.SetHook(callback)
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
 
-	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 	ch := make(chan struct{})
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
 		var qLen int
 		for {
-			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := ddl.GetDDLJobs(txn)
-				if err3 != nil {
-					return err3
-				}
-				qLen = len(jobs)
-				return nil
-			})
-			s.Require().NoError(err)
+			sess := testkit.NewTestKit(t, store).Session()
+			err := sessiontxn.NewTxn(context.Background(), sess)
+			require.NoError(t, err)
+			txn, err := sess.Txn(true)
+			require.NoError(t, err)
+			jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+			require.NoError(t, err)
+			qLen = len(jobs)
 			if qLen == 1 {
-				// Make sure sql2 is executed after the sql1.
 				close(ch)
 				break
 			}
@@ -1323,26 +1420,26 @@ func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit
 	return tk1, tk2, ch, originalCallback
 }
 
-func (s *stateChangeSuite) testControlParallelExecSQL(preSQL, sql1, sql2 string, f func(e1, e2 error)) {
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("create table t(a int, b int, c double default null, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
+func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Storage, dom *domain.Domain, preSQL, sql1, sql2 string, f func(e1, e2 error)) {
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table t(a int, b int, c double default null, d int auto_increment,e int, index idx1(d), index idx2(d,e))")
 	if len(preSQL) != 0 {
-		s.tk.MustExec(preSQL)
+		tk.MustExec(preSQL)
 	}
-	s.tk.MustExec("insert into t values(1, 2, 3.1234, 4, 5)")
+	tk.MustExec("insert into t values(1, 2, 3.1234, 4, 5)")
 
-	defer s.tk.MustExec("drop table t")
+	defer tk.MustExec("drop table t")
 
 	// fixed
-	s.tk.MustExec("drop table if exists t_part")
-	s.tk.MustExec(`create table t_part (a int key)
+	tk.MustExec("drop table if exists t_part")
+	tk.MustExec(`create table t_part (a int key)
 	 	partition by range(a) (
 	 	partition p0 values less than (10),
 	 	partition p1 values less than (20)
 	 	);`)
 
-	tk1, tk2, ch, originalCallback := s.prepareTestControlParallelExecSQL()
-	defer s.dom.DDL().SetHook(originalCallback)
+	tk1, tk2, ch, originalCallback := prepareTestControlParallelExecSQL(t, store, dom)
+	defer dom.DDL().SetHook(originalCallback)
 
 	var err1 error
 	var err2 error
@@ -1351,7 +1448,7 @@ func (s *stateChangeSuite) testControlParallelExecSQL(preSQL, sql1, sql2 string,
 		var rs sqlexec.RecordSet
 		rs, err1 = tk1.Exec(sql1)
 		if err1 == nil && rs != nil {
-			s.Require().NoError(rs.Close())
+			require.NoError(t, rs.Close())
 		}
 	})
 	wg.Run(func() {
@@ -1359,7 +1456,7 @@ func (s *stateChangeSuite) testControlParallelExecSQL(preSQL, sql1, sql2 string,
 		var rs sqlexec.RecordSet
 		rs, err2 = tk2.Exec(sql2)
 		if err2 == nil && rs != nil {
-			s.Require().NoError(rs.Close())
+			require.NoError(t, rs.Close())
 		}
 	})
 
@@ -1367,44 +1464,10 @@ func (s *stateChangeSuite) testControlParallelExecSQL(preSQL, sql1, sql2 string,
 	f(err1, err2)
 }
 
-func (s *stateChangeSuite) TestParallelUpdateTableReplica() {
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
-	}()
-
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("drop table if exists t1;")
-	s.tk.MustExec("create table t1 (a int);")
-	s.tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
-
-	tk1, tk2, ch, originalCallback := s.prepareTestControlParallelExecSQL()
-	defer s.dom.DDL().SetHook(originalCallback)
-
-	t1 := external.GetTableByName(s.T(), s.tk, "test_db_state", "t1")
-
-	var err1 error
-	var err2 error
-	var wg util.WaitGroupWrapper
-	wg.Run(func() {
-		// Mock for table tiflash replica was available.
-		err1 = domain.GetDomain(tk1.Session()).DDL().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
-	})
-	wg.Run(func() {
-		<-ch
-		// Mock for table tiflash replica was available.
-		err2 = domain.GetDomain(tk2.Session()).DDL().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
-	})
-	wg.Wait()
-	s.Require().NoError(err1)
-	s.Require().EqualError(err2, "[ddl:-1]the replica available status of table t1 is already updated")
-}
-
-func (s *stateChangeSuite) testParallelExecSQL(sql string) {
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql string) {
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
-
-	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 
 	var err2, err3 error
@@ -1419,7 +1482,7 @@ func (s *stateChangeSuite) testParallelExecSQL(sql string) {
 		})
 	}
 
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	d.SetHook(callback)
@@ -1430,83 +1493,87 @@ func (s *stateChangeSuite) testParallelExecSQL(sql string) {
 		err3 = tk2.ExecToErr(sql)
 	})
 	wg.Wait()
-	s.Require().NoError(err2)
-	s.Require().NoError(err3)
+	require.NoError(t, err2)
+	require.NoError(t, err3)
 }
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
-func (s *stateChangeSuite) TestCreateTableIfNotExists() {
-	defer s.tk.MustExec("drop table test_not_exists")
-	s.testParallelExecSQL("create table if not exists test_not_exists(a int);")
+func TestCreateTableIfNotExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	dbChangeTestParallelExecSQL(t, store, dom, "create table if not exists test_not_exists(a int)")
 }
 
 // TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
-func (s *stateChangeSuite) TestCreateDBIfNotExists() {
-	defer s.tk.MustExec("drop database test_not_exists")
-	s.testParallelExecSQL("create database if not exists test_not_exists;")
+func TestCreateDBIfNotExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	dbChangeTestParallelExecSQL(t, store, dom, "create database if not exists test_not_exists")
 }
 
 // TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
-func (s *stateChangeSuite) TestDDLIfNotExists() {
-	defer s.tk.MustExec("drop table test_not_exists")
-	s.tk.MustExec("create table if not exists test_not_exists(a int)")
-
+func TestDDLIfNotExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table if not exists test_not_exists(a int)")
 	// ADD COLUMN
-	s.testParallelExecSQL("alter table test_not_exists add column if not exists b int")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists b int")
 	// ADD COLUMNS
-	s.testParallelExecSQL("alter table test_not_exists add column if not exists (c11 int, d11 int)")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
 	// ADD INDEX
-	s.testParallelExecSQL("alter table test_not_exists add index if not exists idx_b (b)")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add index if not exists idx_b (b)")
 	// CREATE INDEX
-	s.testParallelExecSQL("create index if not exists idx_b on test_not_exists (b)")
+	dbChangeTestParallelExecSQL(t, store, dom, "create index if not exists idx_b on test_not_exists (b)")
 }
 
 // TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
-func (s *stateChangeSuite) TestDDLIfExists() {
-	defer func() {
-		s.tk.MustExec("drop table test_exists")
-		s.tk.MustExec("drop table test_exists_2")
-	}()
-	s.tk.MustExec("create table if not exists test_exists (a int key, b int)")
-
+func TestDDLIfExists(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table if not exists test_exists (a int key, b int)")
 	// DROP COLUMNS
-	s.testParallelExecSQL("alter table test_exists drop column if exists c, drop column if exists d")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists c, drop column if exists d")
 	// DROP COLUMN
-	s.testParallelExecSQL("alter table test_exists drop column if exists b") // only `a` exists now
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists b") // only `a` exists now
 	// CHANGE COLUMN
-	s.testParallelExecSQL("alter table test_exists change column if exists a c int") // only, `c` exists now
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists change column if exists a c int") // only, `c` exists now
 	// MODIFY COLUMN
-	s.testParallelExecSQL("alter table test_exists modify column if exists a bigint")
-
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists modify column if exists a bigint")
 	// DROP INDEX
-	s.tk.MustExec("alter table test_exists add index idx_c (c)")
-	s.testParallelExecSQL("alter table test_exists drop index if exists idx_c")
-
+	tk.MustExec("alter table test_exists add index idx_c (c)")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop index if exists idx_c")
 	// DROP PARTITION (ADD PARTITION tested in TestParallelAlterAddPartition)
-	s.tk.MustExec("create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))")
-	s.testParallelExecSQL("alter table test_exists_2 drop partition if exists p1")
+	tk.MustExec("create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists_2 drop partition if exists p1")
 }
 
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
 // This test is used to simulate the following conditions:
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
-func (s *stateChangeSuite) TestParallelDDLBeforeRunDDLJob() {
-	defer s.tk.MustExec("drop table test_table")
-	s.tk.MustExec("use test_db_state")
-	s.tk.MustExec("create table test_table (c1 int, c2 int default 1, index (c1))")
+func TestParallelDDLBeforeRunDDLJo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	tk.MustExec("use test_db_state")
+	tk.MustExec("create table test_table (c1 int, c2 int default 1, index (c1))")
 
 	// Create two sessions.
-	tk1 := testkit.NewTestKit(s.T(), s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
 
-	tk2 := testkit.NewTestKit(s.T(), s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 
 	intercept := &ddl.TestInterceptor{}
@@ -1546,7 +1613,7 @@ func (s *stateChangeSuite) TestParallelDDLBeforeRunDDLJob() {
 
 		return info
 	}
-	d := s.dom.DDL()
+	d := dom.DDL()
 	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
@@ -1561,9 +1628,7 @@ func (s *stateChangeSuite) TestParallelDDLBeforeRunDDLJob() {
 	})
 	wg.Run(func() {
 		tk2.Session().SetConnectionID(2)
-		err := tk2.ExecToErr("alter table test_table add column c2 int")
-		s.Require().Error(err)
-		s.Require().Contains(err.Error(), "Information schema is changed")
+		tk2.MustMatchErrMsg("alter table test_table add column c2 int", ".*Information schema is changed.*")
 	})
 
 	wg.Wait()
@@ -1572,145 +1637,59 @@ func (s *stateChangeSuite) TestParallelDDLBeforeRunDDLJob() {
 	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }
 
-func (s *stateChangeSuite) TestParallelAlterSchemaCharsetAndCollate() {
+func TestParallelAlterSchemaCharsetAndCollate(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql := "ALTER SCHEMA test_db_state CHARSET utf8mb4 COLLATE utf8mb4_general_ci"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().NoError(err2)
+		require.NoError(t, err1)
+		require.NoError(t, err2)
 	}
-	s.testControlParallelExecSQL("", sql, sql, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 	sql = `SELECT default_character_set_name, default_collation_name
 			FROM information_schema.schemata
 			WHERE schema_name='test_db_state'`
-	tk := testkit.NewTestKit(s.T(), s.store)
+	tk = testkit.NewTestKit(t, store)
 	tk.MustQuery(sql).Check(testkit.Rows("utf8mb4 utf8mb4_general_ci"))
 }
 
 // TestParallelTruncateTableAndAddColumn tests add column when truncate table.
-func (s *stateChangeSuite) TestParallelTruncateTableAndAddColumn() {
+func TestParallelTruncateTableAndAddColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "truncate table t"
 	sql2 := "alter table t add column c3 int"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
 // TestParallelTruncateTableAndAddColumns tests add columns when truncate table.
-func (s *stateChangeSuite) TestParallelTruncateTableAndAddColumns() {
+func TestParallelTruncateTableAndAddColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	sql1 := "truncate table t"
 	sql2 := "alter table t add column c3 int, add column c4 int"
 	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
+		require.NoError(t, err1)
+		require.EqualError(t, err2, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
-	s.testControlParallelExecSQL("", sql1, sql2, f)
+	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-// TestParallelFlashbackTable tests parallel flashback table.
-func (s *stateChangeSuite) TestParallelFlashbackTable() {
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
-	defer func(originGC bool) {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
-		if originGC {
-			ddlutil.EmulatorGCEnable()
-		} else {
-			ddlutil.EmulatorGCDisable()
-		}
-	}(ddlutil.IsEmulatorGCEnable())
-
-	// disable emulator GC.
-	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
-	ddlutil.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	tk := testkit.NewTestKit(s.T(), s.store)
-	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
-	// set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-	// set GC enable.
-	err := gcutil.EnableGC(tk.Session())
-	s.Require().NoError(err)
-
-	// prepare dropped table.
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int);")
-	tk.MustExec("drop table if exists t")
-	// Test parallel flashback table.
-	sql1 := "flashback table t to t_flashback"
-	f := func(err1, err2 error) {
-		s.Require().NoError(err1)
-		s.Require().EqualError(err2, "[schema:1050]Table 't_flashback' already exists")
-	}
-	s.testControlParallelExecSQL("", sql1, sql1, f)
-
-	// Test parallel flashback table with different name
-	tk.MustExec("drop table t_flashback")
-	sql1 = "flashback table t_flashback"
-	sql2 := "flashback table t_flashback to t_flashback2"
-	s.testControlParallelExecSQL("", sql1, sql2, f)
-}
-
-// TestModifyColumnTypeArgs test job raw args won't be updated when error occurs in `updateVersionAndTableInfo`.
-func (s *stateChangeSuite) TestModifyColumnTypeArgs() {
-	s.Require().NoError(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`))
-	defer func() {
-		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
-	}()
-
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_modify_column_args")
-	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
-
-	err := tk.ExecToErr("alter table t_modify_column_args modify column a tinyint")
-	s.Require().Error(err)
-	// error goes like `mock update version and tableInfo error,jobID=xx`
-	strs := strings.Split(err.Error(), ",")
-	s.Require().Equal("[ddl:-1]mock update version and tableInfo error", strs[0])
-
-	jobID := strings.Split(strs[1], "=")[1]
-	tbl := external.GetTableByName(s.T(), tk, "test", "t_modify_column_args")
-	s.Require().Len(tbl.Meta().Columns, 1)
-	s.Require().Len(tbl.Meta().Indices, 1)
-
-	id, err := strconv.Atoi(jobID)
-	s.Require().NoError(err)
-	var historyJob *model.Job
-	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err = t.GetHistoryDDLJob(int64(id))
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	s.Require().NoError(err)
-	s.Require().NotNil(historyJob)
-
-	var (
-		newCol                *model.ColumnInfo
-		oldColName            *model.CIStr
-		modifyColumnTp        byte
-		updatedAutoRandomBits uint64
-		changingCol           *model.ColumnInfo
-		changingIdxs          []*model.IndexInfo
-	)
-	pos := &ast.ColumnPosition{}
-	err = historyJob.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
-	s.Require().NoError(err)
-	s.Require().Nil(changingCol)
-	s.Require().Nil(changingIdxs)
-}
-
-func (s *stateChangeSuite) TestWriteReorgForColumnTypeChange() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestWriteReorgForColumnTypeChange(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec(`CREATE TABLE t_ctc (
   a DOUBLE NULL DEFAULT '1.732088511183121',
@@ -1725,19 +1704,21 @@ func (s *stateChangeSuite) TestWriteReorgForColumnTypeChange() {
 	sqls[1] = sqlWithErr{"DELETE FROM t_ctc;", nil}
 	dropColumnsSQL := "alter table t_ctc change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
 	query := &expectQuery{sql: "admin check table t_ctc;", rows: nil}
-	s.runTestInSchemaState(model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
+	runTestInSchemaState(t, tk, store, dom, model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
 }
 
-func (s *stateChangeSuite) TestCreateExpressionIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestCreateExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
 	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
-	tk1.MustExec("use test_db_state")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
@@ -1746,7 +1727,7 @@ func (s *stateChangeSuite) TestCreateExpressionIndex() {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
@@ -1755,7 +1736,7 @@ func (s *stateChangeSuite) TestCreateExpressionIndex() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1791,28 +1772,29 @@ func (s *stateChangeSuite) TestCreateExpressionIndex() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
 }
 
-func (s *stateChangeSuite) TestCreateUniqueExpressionIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestCreateUniqueExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
-	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
-	tk1.MustExec("use test_db_state")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
@@ -1821,7 +1803,7 @@ func (s *stateChangeSuite) TestCreateUniqueExpressionIndex() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1903,27 +1885,28 @@ func (s *stateChangeSuite) TestCreateUniqueExpressionIndex() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 11", "1 7", "2 7", "5 7", "8 8", "11 10", "13 9"))
 }
 
-func (s *stateChangeSuite) TestDropExpressionIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestDropExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int default 0, b int default 0, key idx((b+1)))")
-	defer tk.MustExec("drop table t")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
-	tk1 := testkit.NewTestKit(s.T(), s.store)
-	tk1.MustExec("use test_db_state")
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
 	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
 	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
-	d := s.dom.DDL()
+	d := dom.DDL()
 	originalCallback := d.GetHook()
 	defer d.SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
@@ -1932,7 +1915,7 @@ func (s *stateChangeSuite) TestDropExpressionIndex() {
 			return
 		}
 		err := originalCallback.OnChanged(nil)
-		s.Require().NoError(err)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1963,36 +1946,36 @@ func (s *stateChangeSuite) TestDropExpressionIndex() {
 
 	d.SetHook(callback)
 	tk.MustExec("alter table t drop index idx")
-	s.Require().NoError(checkErr)
+	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10"))
 }
 
-func (s *stateChangeSuite) TestExpressionIndexDDLError() {
-	tk := testkit.NewTestKit(s.T(), s.store)
-	tk.MustExec("use test_db_state")
-	tk.MustExec("drop table if exists t")
+func TestExpressionIndexDDLError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
 	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
-	tk.MustExec("drop table t")
 }
 
-func (s *stateChangeSuite) TestRestrainDropColumnWithIndex() {
-	tk := testkit.NewTestKit(s.T(), s.store)
+func TestRestrainDropColumnWithIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b int, index(a));")
+	tk.MustExec("create table t (a int, b int, index(a))")
 	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=0")
 	tk.MustQuery("select @@tidb_enable_change_multi_schema").Check(testkit.Rows("0"))
-	tk.MustGetErrCode("alter table t drop column a;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t drop column a", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=1")
-	tk.MustExec("alter table t drop column a;")
-	tk.MustExec("drop table if exists t;")
+	tk.MustExec("alter table t drop column a")
 }
 
 func TestParallelRenameTable(t *testing.T) {
-	store, d, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2010,10 +1993,10 @@ func TestParallelRenameTable(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var checkErr error
-	d2 := d.DDL()
+	d2 := dom.DDL()
 	originalCallback := d2.GetHook()
 	defer d2.SetHook(originalCallback)
-	callback := &ddl.TestDDLCallback{Do: d}
+	callback := &ddl.TestDDLCallback{Do: dom}
 	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
@@ -2108,4 +2091,61 @@ func TestParallelRenameTable(t *testing.T) {
 	require.Error(t, checkErr)
 	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table tt to t")
+}
+
+func TestConcurrentSetDefaultValue(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a YEAR NULL DEFAULT '2029')")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	setdefaultSQL := []string{
+		"alter table t alter a SET DEFAULT '2098'",
+		"alter table t alter a SET DEFAULT '1'",
+	}
+	setdefaultSQLOffset := 0
+
+	var wg sync.WaitGroup
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{Do: dom}
+	skip := false
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			if skip {
+				break
+			}
+			skip = true
+			wg.Add(1)
+			go func() {
+				_, err := tk1.Exec(setdefaultSQL[setdefaultSQLOffset])
+				if setdefaultSQLOffset == 0 {
+					require.Nil(t, err)
+				}
+				wg.Done()
+			}()
+		}
+	}
+
+	d.SetHook(callback)
+	tk.MustExec("alter table t modify column a MEDIUMINT NULL DEFAULT '-8145111'")
+
+	wg.Wait()
+	tk.MustQuery("select column_type from information_schema.columns where table_name = 't' and table_schema = 'test';").Check(testkit.Rows("mediumint(9)"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int default 2)")
+	skip = false
+	setdefaultSQLOffset = 1
+	tk.MustExec("alter table t modify column a TIMESTAMP NULL DEFAULT '2017-08-06 10:47:11'")
+	wg.Wait()
+	tk.MustExec("show create table t")
+	tk.MustExec("insert into t value()")
 }

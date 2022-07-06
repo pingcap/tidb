@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -48,14 +49,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
@@ -130,6 +131,12 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 // eliminatePhysicalProjection should be called after physical optimization to
 // eliminate the redundant projection left after logical projection elimination.
 func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
+	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(p)
+		}
+	})
+
 	oldSchema := p.Schema()
 	newRoot := doPhysicalProjectionElimination(p)
 	newCols := newRoot.Schema().Columns

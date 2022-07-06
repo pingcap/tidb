@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -615,11 +616,15 @@ const (
 	version88 = 88
 	// version89 adds the tables mysql.advisory_locks
 	version89 = 89
+	// version90 converts enable-batch-dml, mem-quota-query, query-log-max-len, committer-concurrency, run-auto-analyze, and oom-action to a sysvar
+	version90 = 90
+	// version91 converts prepared-plan-cache to sysvars
+	version91 = 91
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version89
+var currentBootstrapVersion int64 = version91
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -712,12 +717,15 @@ var (
 		upgradeToVer87,
 		upgradeToVer88,
 		upgradeToVer89,
+		upgradeToVer90,
+		upgradeToVer91,
 	}
 )
 
 func checkBootstrapped(s Session) (bool, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	//  Check if system db exists.
-	_, err := s.ExecuteInternal(context.Background(), "USE %n", mysql.SystemDB)
+	_, err := s.ExecuteInternal(ctx, "USE %n", mysql.SystemDB)
 	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
 		logutil.BgLogger().Fatal("check bootstrap error",
 			zap.Error(err))
@@ -733,7 +741,7 @@ func checkBootstrapped(s Session) (bool, error) {
 	isBootstrapped := sVal == varTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
-		if err = s.CommitTxn(context.Background()); err != nil {
+		if err = s.CommitTxn(ctx); err != nil {
 			return false, errors.Trace(err)
 		}
 	}
@@ -743,7 +751,7 @@ func checkBootstrapped(s Session) (bool, error) {
 // getTiDBVar gets variable value from mysql.tidb table.
 // Those variables are used by TiDB server.
 func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME= %?`,
 		mysql.SystemDB,
 		mysql.TiDBTable,
@@ -783,7 +791,8 @@ func upgrade(s Session) {
 	}
 
 	updateBootstrapVer(s)
-	_, err = s.ExecuteInternal(context.Background(), "COMMIT")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	_, err = s.ExecuteInternal(ctx, "COMMIT")
 
 	if err != nil {
 		sleepTime := 1 * time.Second
@@ -871,8 +880,9 @@ func upgradeToVer8(s Session, ver int64) {
 	if ver >= version8 {
 		return
 	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
-	if _, err := s.ExecuteInternal(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
+	if _, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
 		return
 	}
 	upgradeToVer7(s, ver)
@@ -888,7 +898,8 @@ func upgradeToVer9(s Session, ver int64) {
 }
 
 func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	_, err := s.ExecuteInternal(context.Background(), sql)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	_, err := s.ExecuteInternal(ctx, sql)
 	for _, ignorableErr := range ignorableErrs {
 		if terror.ErrorEqual(err, ignorableErr) {
 			return
@@ -914,7 +925,8 @@ func upgradeToVer11(s Session, ver int64) {
 	if ver >= version11 {
 		return
 	}
-	_, err := s.ExecuteInternal(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	_, err := s.ExecuteInternal(ctx, "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
 	if err != nil {
 		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 			return
@@ -928,7 +940,7 @@ func upgradeToVer12(s Session, ver int64) {
 	if ver >= version12 {
 		return
 	}
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "BEGIN")
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
@@ -982,7 +994,7 @@ func upgradeToVer13(s Session, ver int64) {
 		"ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
 		"ALTER TABLE mysql.user ADD COLUMN `Event_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`",
 	}
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	for _, sql := range sqls {
 		_, err := s.ExecuteInternal(ctx, sql)
 		if err != nil {
@@ -1011,7 +1023,7 @@ func upgradeToVer14(s Session, ver int64) {
 		"ALTER TABLE mysql.db ADD COLUMN `Event_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
 		"ALTER TABLE mysql.db ADD COLUMN `Trigger_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Event_priv`",
 	}
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	for _, sql := range sqls {
 		_, err := s.ExecuteInternal(ctx, sql)
 		if err != nil {
@@ -1028,7 +1040,8 @@ func upgradeToVer15(s Session, ver int64) {
 		return
 	}
 	var err error
-	_, err = s.ExecuteInternal(context.Background(), CreateGCDeleteRangeTable)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	_, err = s.ExecuteInternal(ctx, CreateGCDeleteRangeTable)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer15 error", zap.Error(err))
 	}
@@ -1233,7 +1246,8 @@ func upgradeToVer38(s Session, ver int64) {
 		return
 	}
 	var err error
-	_, err = s.ExecuteInternal(context.Background(), CreateGlobalPrivTable)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	_, err = s.ExecuteInternal(ctx, CreateGlobalPrivTable)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer38 error", zap.Error(err))
 	}
@@ -1401,7 +1415,7 @@ func upgradeToVer55(s Session, ver int64) {
 	}
 
 	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, selectSQL)
 	terror.MustNil(err)
 	defer terror.Call(rs.Close)
@@ -1507,8 +1521,9 @@ func upgradeToVer67(s Session, ver int64) {
 		mustExecute(s, "COMMIT")
 	}()
 	mustExecute(s, h.LockBindInfoSQL())
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	var rs sqlexec.RecordSet
-	rs, err = s.ExecuteInternal(context.Background(),
+	rs, err = s.ExecuteInternal(ctx,
 		`SELECT bind_sql, default_db, status, create_time, charset, collation, source
 			FROM mysql.bind_info
 			WHERE source != 'builtin'
@@ -1727,7 +1742,7 @@ func upgradeToVer80(s Session, ver int64) {
 	}
 	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion)
 	terror.MustNil(err)
@@ -1750,7 +1765,7 @@ func upgradeToVer81(s Session, ver int64) {
 	}
 	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_enable_index_merge | off".
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge)
 	terror.MustNil(err)
@@ -1822,10 +1837,57 @@ func upgradeToVer89(s Session, ver int64) {
 	doReentrantDDL(s, CreateAdvisoryLocks)
 }
 
+// importConfigOption is a one-time import.
+// It is intended to be used to convert a config option to a sysvar.
+// It reads the config value from the tidb-server executing the bootstrap
+// (not guaranteed to be the same on all servers), and writes a message
+// to the error log. The message is important since the behavior is weird
+// (changes to the config file will no longer take effect past this point).
+func importConfigOption(s Session, configName, svName, valStr string) {
+	message := fmt.Sprintf("%s is now configured by the system variable %s. One-time importing the value specified in tidb.toml file", configName, svName)
+	logutil.BgLogger().Warn(message, zap.String("value", valStr))
+	// We use insert ignore, since if its a duplicate we don't want to overwrite any user-set values.
+	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, svName, valStr)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer90(s Session, ver int64) {
+	if ver >= version90 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().EnableBatchDML)
+	importConfigOption(s, "enable-batch-dml", variable.TiDBEnableBatchDML, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().MemQuotaQuery)
+	importConfigOption(s, "mem-quota-query", variable.TiDBMemQuotaQuery, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Log.QueryLogMaxLen)
+	importConfigOption(s, "query-log-max-len", variable.TiDBQueryLogMaxLen, valStr)
+	valStr = fmt.Sprint(config.GetGlobalConfig().Performance.CommitterConcurrency)
+	importConfigOption(s, "committer-concurrency", variable.TiDBCommitterConcurrency, valStr)
+	valStr = variable.BoolToOnOff(config.GetGlobalConfig().Performance.RunAutoAnalyze)
+	importConfigOption(s, "run-auto-analyze", variable.TiDBEnableAutoAnalyze, valStr)
+	valStr = config.GetGlobalConfig().OOMAction
+	importConfigOption(s, "oom-action", variable.TiDBMemOOMAction, valStr)
+}
+
+func upgradeToVer91(s Session, ver int64) {
+	if ver >= version91 {
+		return
+	}
+	valStr := variable.BoolToOnOff(config.GetGlobalConfig().PreparedPlanCache.Enabled)
+	importConfigOption(s, "prepared-plan-cache.enable", variable.TiDBEnablePrepPlanCache, valStr)
+
+	valStr = strconv.Itoa(int(config.GetGlobalConfig().PreparedPlanCache.Capacity))
+	importConfigOption(s, "prepared-plan-cache.capacity", variable.TiDBPrepPlanCacheSize, valStr)
+
+	valStr = strconv.FormatFloat(config.GetGlobalConfig().PreparedPlanCache.MemoryGuardRatio, 'f', -1, 64)
+	importConfigOption(s, "prepared-plan-cache.memory-guard-ratio", variable.TiDBPrepPlanCacheMemoryGuardRatio, valStr)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, config.OOMActionLog, comment, config.OOMActionLog,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,
 	)
 }
 
@@ -1918,6 +1980,12 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAdvisoryLocks)
 }
 
+// inTestSuite checks if we are bootstrapping in the context of tests.
+// There are some historical differences in behavior between tests and non-tests.
+func inTestSuite() bool {
+	return flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+}
+
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
 // TODO: sanitize.
@@ -1938,47 +2006,57 @@ func doDMLWorks(s Session) {
 		("%", "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 	}
 
-	// Init global system variables table.
+	// For GLOBAL scoped system variables, insert the initial value
+	// into the mysql.global_variables table. This is only run on initial
+	// bootstrap, and in some cases we will use a different default value
+	// for new installs versus existing installs.
+
 	values := make([]string, 0, len(variable.GetSysVars()))
 	for k, v := range variable.GetSysVars() {
-		// Only global variables should be inserted.
-		if v.HasGlobalScope() {
-			vVal := v.Value
-			if v.Name == variable.TiDBTxnMode && config.GetGlobalConfig().Store == "tikv" {
+		if !v.HasGlobalScope() {
+			continue
+		}
+		vVal := v.Value
+		switch v.Name {
+		case variable.TiDBTxnMode:
+			if config.GetGlobalConfig().Store == "tikv" {
 				vVal = "pessimistic"
 			}
-			if v.Name == variable.TiDBRowFormatVersion {
-				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
+			if config.GetGlobalConfig().Store == "tikv" {
+				vVal = variable.On
 			}
-			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = variable.DefTiDBPartitionPruneMode
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
-					// enable Dynamic Prune by default in test case.
-					vVal = string(variable.Dynamic)
-				}
+		case variable.TiDBPartitionPruneMode:
+			if inTestSuite() || config.CheckTableBeforeDrop {
+				vVal = string(variable.Dynamic)
 			}
-			if v.Name == variable.TiDBEnableChangeMultiSchema {
+		case variable.TiDBEnableChangeMultiSchema:
+			if inTestSuite() {
+				vVal = variable.On
+			}
+		case variable.TiDBMemOOMAction:
+			if inTestSuite() {
+				vVal = variable.OOMActionLog
+			}
+		case variable.TiDBEnableAutoAnalyze:
+			if inTestSuite() {
 				vVal = variable.Off
-				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
-					// enable change multi schema in test case for compatibility with old cases.
-					vVal = variable.On
-				}
 			}
-			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
-			}
-			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
-			}
-			if v.Name == variable.TiDBEnableMutationChecker {
-				vVal = variable.On
-			}
-			if v.Name == variable.TiDBTxnAssertionLevel {
-				vVal = variable.AssertionFastStr
-			}
-			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
-			values = append(values, value)
+		// For the following sysvars, we change the default
+		// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
+		// It is better to change the value in the Sysvar struct, so that
+		// all installs will have the same value.
+		case variable.TiDBRowFormatVersion:
+			vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+		case variable.TiDBTxnAssertionLevel:
+			vVal = variable.AssertionFastStr
+		case variable.TiDBEnableMutationChecker:
+			vVal = variable.On
+		case variable.TiDBEnablePaging:
+			vVal = variable.BoolToOnOff(variable.DefTiDBEnablePaging)
 		}
+		value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
+		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
@@ -2000,7 +2078,8 @@ func doDMLWorks(s Session) {
 
 	writeStmtSummaryVars(s)
 
-	_, err := s.ExecuteInternal(context.Background(), "COMMIT")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	_, err := s.ExecuteInternal(ctx, "COMMIT")
 	if err != nil {
 		sleepTime := 1 * time.Second
 		logutil.BgLogger().Info("doDMLWorks failed", zap.Error(err), zap.Duration("sleeping time", sleepTime))
@@ -2018,7 +2097,8 @@ func doDMLWorks(s Session) {
 }
 
 func mustExecute(s Session, sql string, args ...interface{}) {
-	_, err := s.ExecuteInternal(context.Background(), sql, args...)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	_, err := s.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		debug.PrintStack()
 		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err))

@@ -1,0 +1,59 @@
+diff -urN a/errcheck/analyzer.go b/errcheck/analyzer.go
+--- a/errcheck/analyzer.go
++++ b/errcheck/analyzer.go
+@@ -3,9 +3,9 @@ package errcheck
+ import (
+ 	"fmt"
+ 	"go/ast"
+-	"go/token"
+ 	"reflect"
+ 	"regexp"
++	"strings"
+ 
+ 	"golang.org/x/tools/go/analysis"
+ )
+@@ -21,6 +22,7 @@ var (
+ 	argBlank       bool
+ 	argAsserts     bool
+ 	argExcludeFile string
++	argExcludes    string
+ 	argExcludeOnly bool
+ )
+ 
+@@ -28,6 +30,7 @@ func init() {
+ 	Analyzer.Flags.BoolVar(&argBlank, "blank", false, "if true, check for errors assigned to blank identifier")
+ 	Analyzer.Flags.BoolVar(&argAsserts, "assert", false, "if true, check for ignored type assertion results")
+ 	Analyzer.Flags.StringVar(&argExcludeFile, "exclude", "", "Path to a file containing a list of functions to exclude from checking")
++	Analyzer.Flags.StringVar(&argExcludes, "excludes", "", "Contents of the exclude file as a string (overrides -exclude)")
+ 	Analyzer.Flags.BoolVar(&argExcludeOnly, "excludeonly", false, "Use only excludes from exclude file")
+ }
+ 
+@@ -39,7 +42,14 @@ func runAnalyzer(pass *analysis.Pass) (interface{}, error) {
+ 			exclude[name] = true
+ 		}
+ 	}
+-	if argExcludeFile != "" {
++	if argExcludes != "" {
++		for _, name := range strings.Split(argExcludes, "\n") {
++			if strings.HasPrefix(name, "//") || name == "" {
++				continue
++			}
++			exclude[name] = true
++		}
++	} else if argExcludeFile != "" {
+ 		excludes, err := ReadExcludes(argExcludeFile)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("Could not read exclude file: %v\n", err)
+--- a/errcheck/analyzer.go
++++ b/errcheck/analyzer.go
+@@ -65,8 +65,9 @@ func runAnalyzer(pass *analysis.Pass) (interface{}, error) {
+ 		ast.Walk(v, f)
+ 
+ 		for _, err := range v.errors {
++			fsetFile := pass.Fset.File(f.Pos())
+ 			pass.Report(analysis.Diagnostic{
+-				Pos:     token.Pos(int(f.Pos()) + err.Pos.Offset),
++				Pos:     fsetFile.Pos(err.Pos.Offset),
+ 				Message: "unchecked error",
+ 			})
+ 		}

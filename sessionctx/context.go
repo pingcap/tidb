@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -40,15 +42,29 @@ type InfoschemaMetaVersion interface {
 	SchemaMetaVersion() int64
 }
 
+// SessionStatesHandler is an interface for encoding and decoding session states.
+type SessionStatesHandler interface {
+	// EncodeSessionStates encodes session states into a JSON.
+	EncodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+	// DecodeSessionStates decodes a map into session states.
+	DecodeSessionStates(context.Context, Context, *sessionstates.SessionStates) error
+}
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
+	SessionStatesHandler
 	// NewTxn creates a new transaction for further execution.
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
 	NewTxn(context.Context) error
 	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
 	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
-
+	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// RollbackTxn rolls back the current transaction.
+	RollbackTxn(ctx context.Context)
+	// CommitTxn commits the current transaction.
+	CommitTxn(ctx context.Context) error
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
@@ -72,8 +88,13 @@ type Context interface {
 
 	// Deprecated: the semantics of session.GetInfoSchema() is ambiguous
 	// If you want to get the infoschema of the current transaction in SQL layer, use sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
-	// If you want to get the latest infoschema use domain.GetDomain(ctx).GetInfoSchema()
+	// If you want to get the latest infoschema use `GetDomainInfoSchema`
 	GetInfoSchema() InfoschemaMetaVersion
+
+	// GetDomainInfoSchema returns the latest information schema in domain
+	// Different with `domain.InfoSchema()`, the information schema returned by this method
+	// includes the temporary table definitions stored in session
+	GetDomainInfoSchema() InfoschemaMetaVersion
 
 	GetSessionVars() *variable.SessionVars
 
@@ -87,13 +108,6 @@ type Context interface {
 	// RefreshVars refreshes modified global variable to current session.
 	// only used to daemon session like `statsHandle` to detect global variable change.
 	RefreshVars(context.Context) error
-
-	// InitTxnWithStartTS initializes a transaction with startTS.
-	// It should be called right before we builds an executor.
-	InitTxnWithStartTS(startTS uint64) error
-
-	// GetSnapshotWithTS returns a snapshot with start ts
-	GetSnapshotWithTS(ts uint64) kv.Snapshot
 
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
@@ -134,7 +148,9 @@ type Context interface {
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
-	PrepareTSFuture(ctx context.Context)
+	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
+	// GetPreparedTxnFuture returns the prepared ts future
+	GetPreparedTxnFuture() TxnFuture
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
@@ -155,6 +171,13 @@ type Context interface {
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
 	ReleaseAllAdvisoryLocks() int
+}
+
+// TxnFuture is an interface where implementations have a kv.Transaction field and after
+// calling Wait of the TxnFuture, the kv.Transaction will become valid.
+type TxnFuture interface {
+	// Wait converts pending txn to valid
+	Wait(ctx context.Context, sctx Context) (kv.Transaction, error)
 }
 
 type basicCtxType int

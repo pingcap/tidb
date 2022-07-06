@@ -17,14 +17,17 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	atomicutil "go.uber.org/atomic"
+	"golang.org/x/exp/slices"
 )
+
+// TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
+const TrackMemWhenExceeds = 104857600 // 100MB
 
 // Tracker is used to track the memory usage during query execution.
 // It contains an optional limit and can be arranged into a tree structure
@@ -70,8 +73,8 @@ type Tracker struct {
 	label         int   // Label of this "Tracker".
 	bytesConsumed int64 // Consumed bytes.
 	bytesLimit    atomic.Value
-	maxConsumed   int64 // max number of bytes consumed during execution.
-	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
+	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
 }
 
 type actionMu struct {
@@ -103,7 +106,7 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 		bytesHardLimit: bytesLimit,
 		bytesSoftLimit: int64(float64(bytesLimit) * softScale),
 	})
-	t.maxConsumed = 0
+	t.maxConsumed.Store(0)
 	t.isGlobal = false
 }
 
@@ -217,7 +220,12 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 
 // SetLabel sets the label of a Tracker.
 func (t *Tracker) SetLabel(label int) {
+	parent := t.getParent()
+	t.Detach()
 	t.label = label
+	if parent != nil {
+		t.AttachTo(parent)
+	}
 }
 
 // Label gets the label of a Tracker.
@@ -229,6 +237,10 @@ func (t *Tracker) Label() int {
 // already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.
 func (t *Tracker) AttachTo(parent *Tracker) {
+	if parent.isGlobal {
+		t.AttachToGlobalTracker(parent)
+		return
+	}
 	oldParent := t.getParent()
 	if oldParent != nil {
 		oldParent.remove(t)
@@ -344,9 +356,9 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 
 		for {
-			maxNow := atomic.LoadInt64(&tracker.maxConsumed)
+			maxNow := tracker.maxConsumed.Load()
 			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
-			if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
+			if consumed > maxNow && !tracker.maxConsumed.CAS(maxNow, consumed) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
@@ -378,7 +390,7 @@ func (t *Tracker) Consume(bytes int64) {
 // BufferedConsume is used to buffer memory usage and do late consume
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
-	if *bufferedMemSize > int64(config.TrackMemWhenExceeds) {
+	if *bufferedMemSize > int64(TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
 	}
@@ -391,7 +403,7 @@ func (t *Tracker) BytesConsumed() int64 {
 
 // MaxConsumed returns max number of bytes consumed during execution.
 func (t *Tracker) MaxConsumed() int64 {
-	return atomic.LoadInt64(&t.maxConsumed)
+	return t.maxConsumed.Load()
 }
 
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
@@ -426,7 +438,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	for label := range t.mu.children {
 		labels = append(labels, label)
 	}
-	sort.Ints(labels)
+	slices.Sort(labels)
 	for _, label := range labels {
 		children := t.mu.children[label]
 		for _, child := range children {

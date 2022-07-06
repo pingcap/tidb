@@ -36,8 +36,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
-
+	"net/http" //nolint:goimports
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -50,6 +49,7 @@ import (
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -206,6 +206,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
 		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
 
+	// LoadTLSCertificates will auto generate certificates if autoTLS is enabled.
+	// It only returns an error if certificates are specified and invalid.
+	// In which case, we should halt server startup as a misconfiguration could
+	// lead to a connection downgrade.
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// Automatically reload auto-generated certificates.
 	// The certificates are re-created every 30 days and are valid for 90 days.
 	if autoReload {
@@ -223,18 +231,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		}()
 	}
 
-	if err != nil {
-		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
-	}
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
 			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
-	} else if cfg.Security.RequireSecureTransport {
-		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
-
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
@@ -350,7 +352,7 @@ func setTxnScope() {
 // Export config-related metrics
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
-	metrics.ConfigStatus.WithLabelValues("max-server-connections").Set(float64(s.cfg.MaxServerConnections))
+	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
 }
 
 // Run runs the server.
@@ -512,11 +514,18 @@ func (s *Server) onConn(conn *clientConn) {
 			})
 			terror.Log(err)
 		}
-		if errors.Cause(err) == io.EOF {
+		switch errors.Cause(err) {
+		case io.EOF:
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
-		} else {
+		case errConCount:
+			if err := conn.writeError(ctx, err); err != nil {
+				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+					Warn("error in writing errConCount", zap.Error(err),
+						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+			}
+		default:
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Warn("Server.onConn handshake", zap.Error(err),
@@ -529,6 +538,7 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
+		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
@@ -602,8 +612,8 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 func (s *Server) checkConnectionCount() error {
-	// When the value of MaxServerConnections is 0, the number of connections is unlimited.
-	if int(s.cfg.MaxServerConnections) == 0 {
+	// When the value of Instance.MaxConnections is 0, the number of connections is unlimited.
+	if int(s.cfg.Instance.MaxConnections) == 0 {
 		return nil
 	}
 
@@ -611,9 +621,9 @@ func (s *Server) checkConnectionCount() error {
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
 
-	if conns >= int(s.cfg.MaxServerConnections) {
+	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
-			zap.Uint32("max connections", s.cfg.MaxServerConnections), zap.Error(errConCount))
+			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(errConCount))
 		return errConCount
 	}
 	return nil
@@ -708,6 +718,25 @@ func killConn(conn *clientConn) {
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
+
+	// If the connection being killed is a DDL Job,
+	// we need to CANCEL the matching jobID first.
+	if sessVars.StmtCtx.IsDDLJobInQueue {
+		jobID := sessVars.StmtCtx.DDLJobID
+		err := kv.RunInNewTxn(context.Background(), conn.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+			// errs is the error per job, there is only one submitted
+			// err is the error of the overall task
+			errs, err := ddl.CancelJobs(txn, []int64{jobID})
+			if len(errs) > 0 {
+				logutil.BgLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+			}
+			return err
+		})
+		if err != nil {
+			logutil.BgLogger().Warn("could not cancel DDL job", zap.Error(err))
+		}
+	}
+
 	if cancelFunc != nil {
 		cancelFunc()
 	}
@@ -830,8 +859,12 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.sessionMapMutex.Lock()
 	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
+	analyzeProcID := util.GetAutoAnalyzeProcID(s.ServerID)
 	for se := range s.internalSessions {
-		if ts := session.GetStartTSFromSession(se); ts != 0 {
+		if ts, processInfoID := session.GetStartTSFromSession(se); ts != 0 {
+			if processInfoID == analyzeProcID {
+				continue
+			}
 			tsList = append(tsList, ts)
 		}
 	}

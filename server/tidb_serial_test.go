@@ -40,6 +40,7 @@ func TestLoadData1(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
+	ts.runTestLoadDataWithColumnList(t, ts.server)
 	ts.runTestLoadData(t, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(t, ts.server)
 	ts.runTestLoadDataForSlowLog(t, ts.server)
@@ -93,6 +94,22 @@ func TestLoadDataListPartition(t *testing.T) {
 	ts.runTestLoadDataForListPartition2(t)
 	ts.runTestLoadDataForListColumnPartition(t)
 	ts.runTestLoadDataForListColumnPartition2(t)
+}
+
+func TestInvalidTLS(t *testing.T) {
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Security = config.Security{
+		SSLCA:   "bogus-ca-cert.pem",
+		SSLCert: "bogus-server-cert.pem",
+		SSLKey:  "bogus-server-key.pem",
+	}
+	_, err := NewServer(cfg, ts.tidbdrv)
+	require.Error(t, err)
 }
 
 func TestTLSAuto(t *testing.T) {
@@ -214,6 +231,7 @@ func TestTLSVerify(t *testing.T) {
 	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.Port = cli.port
+	cfg.Socket = dir + "/tidbtest.sock"
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   fileName("ca-cert.pem"),
@@ -222,6 +240,7 @@ func TestTLSVerify(t *testing.T) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	require.NoError(t, err)
+	defer server.Close()
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
 		err := server.Run()
@@ -242,7 +261,6 @@ func TestTLSVerify(t *testing.T) {
 	err = cli.runTestTLSConnection(t, connOverrider)
 	require.NoError(t, err)
 	cli.runTestRegression(t, connOverrider, "TLSRegression")
-	server.Close()
 
 	require.False(t, util.IsTLSExpiredError(errors.New("unknown test")))
 	require.False(t, util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}))
@@ -252,6 +270,34 @@ func TestTLSVerify(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = util.LoadTLSCertificates("wrong ca", fileName("server-key.pem"), fileName("server-cert.pem"), true, 528)
 	require.Error(t, err)
+
+	// Test connecting with a client that does not have TLS configured.
+	// It can still connect, but it should not be able to change "require_secure_transport" to "ON"
+	// because that is a lock-out risk.
+	err = cli.runTestEnableSecureTransport(t, nil)
+	require.ErrorContains(t, err, "require_secure_transport can only be set to ON if the connection issuing the change is secure")
+
+	// Success: when using a secure connection, the value of "require_secure_transport" can change to "ON"
+	err = cli.runTestEnableSecureTransport(t, connOverrider)
+	require.NoError(t, err)
+
+	// This connection will now fail since the client is not configured to use TLS.
+	err = cli.runTestTLSConnection(t, nil)
+	require.ErrorContains(t, err, "Connections using insecure transport are prohibited while --require_secure_transport=ON")
+
+	// However, this connection is successful
+	err = cli.runTestTLSConnection(t, connOverrider)
+	require.NoError(t, err)
+
+	// Test socketFile does not require TLS enabled in require-secure-transport.
+	// Since this restriction should only apply to TCP connections.
+	err = cli.runTestTLSConnection(t, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = cfg.Socket
+		config.DBName = "test"
+	})
+	require.NoError(t, err)
 }
 
 func TestErrorNoRollback(t *testing.T) {
@@ -284,10 +330,9 @@ func TestErrorNoRollback(t *testing.T) {
 	cfg.Status.ReportStatus = false
 
 	cfg.Security = config.Security{
-		RequireSecureTransport: true,
-		SSLCA:                  "wrong path",
-		SSLCert:                "wrong path",
-		SSLKey:                 "wrong path",
+		SSLCA:   "wrong path",
+		SSLCert: "wrong path",
+		SSLKey:  "wrong path",
 	}
 	_, err = NewServer(cfg, ts.tidbdrv)
 	require.Error(t, err)

@@ -190,7 +190,7 @@ func TestFilterDDLJobs(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -254,7 +254,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, &cipher)
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
