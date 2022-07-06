@@ -5623,9 +5623,10 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 6, row.Len())
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	ddlInfo, err := ddl.GetDDLInfo(txn)
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("begin")
+	sess := tk.Session()
+	ddlInfo, err := ddl.GetDDLInfo(sess)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
@@ -5640,8 +5641,7 @@ func TestAdmin(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Zero(t, req.NumRows())
-	err = txn.Rollback()
-	require.NoError(t, err)
+	tk.MustExec("rollback")
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
@@ -5651,7 +5651,7 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 12, row.Len())
-	txn, err = store.Begin()
+	txn, err := store.Begin()
 	require.NoError(t, err)
 	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
