@@ -20,26 +20,21 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stmtsummary"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -48,8 +43,12 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -180,6 +179,8 @@ const (
 	TableAttributes = "ATTRIBUTES"
 	// TablePlacementPolicies is the string constant of placement policies table.
 	TablePlacementPolicies = "PLACEMENT_POLICIES"
+	// TableTrxSummary is the string constant of transaction summary table.
+	TableTrxSummary = "TRX_SUMMARY"
 )
 
 const (
@@ -278,6 +279,8 @@ var tableIDMap = map[string]int64{
 	TableAttributes:                      autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:           autoid.InformationSchemaDBID + 78,
 	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
+	TableTrxSummary:                      autoid.InformationSchemaDBID + 80,
+	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1463,6 +1466,11 @@ var tableAttributesCols = []columnInfo{
 	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
+var tableTrxSummaryCols = []columnInfo{
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, comment: "Digest of a transaction"},
+	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+}
+
 var tablePlacementPoliciesCols = []columnInfo{
 	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
@@ -1880,6 +1888,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableAttributes:                         tableAttributesCols,
 	TablePlacementPolicies:                  tablePlacementPoliciesCols,
+	TableTrxSummary:                         tableTrxSummaryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1900,25 +1909,12 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-// SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
-type SchemasSorter []*model.DBInfo
-
-func (s SchemasSorter) Len() int {
-	return len(s)
-}
-
-func (s SchemasSorter) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s SchemasSorter) Less(i, j int) bool {
-	return s[i].Name.L < s[j].Name.L
-}
-
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := ctx.GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()
-	sort.Sort(SchemasSorter(dbs))
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
+		return i.Name.L < j.Name.L
+	})
 	switch it.meta.Name.O {
 	case tableFiles:
 	case tablePlugins, tableTriggers:
