@@ -529,7 +529,7 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 			if _, exist := argsSet[tableID]; !exist {
 				return errors.Errorf("DropSchema: record a table, but it doesn't exist in job args")
 			}
-			newTableIDs = append(newTableIDs, tableID)
+			newTableIDs = append(newTableIDs, tableReplace.NewTableID)
 			for partitionID, newPartitionID := range tableReplace.PartitionMap {
 				if _, exist := argsSet[partitionID]; !exist {
 					return errors.Errorf("DropSchema: record a partition, but it doesn't exist in job args")
