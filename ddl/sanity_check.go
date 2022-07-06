@@ -117,14 +117,6 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
-	case model.ActionDropIndexes:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
-			return 0, errors.Trace(err)
-		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * len(indexIDs), nil
 	case model.ActionDropColumn:
 		var colName model.CIStr
 		var ifExists bool

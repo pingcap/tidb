@@ -23,7 +23,6 @@ import (
 	"math"
 	"math/rand"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +58,7 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // PreparedStmtCount is exported for test.
@@ -2435,7 +2435,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 			for backoff := range logItems.CopTasks.TotBackoffTimes {
 				backoffs = append(backoffs, backoff)
 			}
-			sort.Strings(backoffs)
+			slices.Sort(backoffs)
 
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",

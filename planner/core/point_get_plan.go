@@ -128,20 +128,20 @@ func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
 
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
-		return accessObject.String()
+		return accessObject
 	}
-	return accessObject.String() + ", " + operatorInfo
+	return accessObject + ", " + operatorInfo
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(true)
+	accessObject, operatorInfo := p.AccessObject().NormalizedString(), p.OperatorInfo(true)
 	if len(operatorInfo) == 0 {
-		return accessObject.NormalizedString()
+		return accessObject
 	}
-	return accessObject.NormalizedString() + ", " + operatorInfo
+	return accessObject + ", " + operatorInfo
 }
 
 // OperatorInfo implements dataAccesser interface.

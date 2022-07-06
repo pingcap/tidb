@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1911,25 +1911,12 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-// SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
-type SchemasSorter []*model.DBInfo
-
-func (s SchemasSorter) Len() int {
-	return len(s)
-}
-
-func (s SchemasSorter) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s SchemasSorter) Less(i, j int) bool {
-	return s[i].Name.L < s[j].Name.L
-}
-
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := ctx.GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()
-	sort.Sort(SchemasSorter(dbs))
+	slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
+		return i.Name.L < j.Name.L
+	})
 	switch it.meta.Name.O {
 	case tableFiles:
 	case tablePlugins, tableTriggers:

@@ -916,11 +916,11 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
-		return accessObject.String()
+		return accessObject
 	}
-	return accessObject.String() + ", " + operatorInfo
+	return accessObject + ", " + operatorInfo
 }
 
 // OperatorInfo implements dataAccesser interface.

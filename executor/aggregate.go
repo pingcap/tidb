@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -827,6 +827,17 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	fetchChildWorkerWaitGroup.Add(1)
 	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
 
+	// We get the pointers here instead of when we are all finished and adding the time because:
+	// (1) If there is Apply in the plan tree, executors may be reused (Open()ed and Close()ed multiple times)
+	// (2) we don't wait all goroutines of HashAgg to exit in HashAgg.Close()
+	// So we can't write something like:
+	//     atomic.AddInt64(&e.stats.PartialWallTime, int64(time.Since(partialStart)))
+	// Because the next execution of HashAgg may have started when this goroutine haven't exited and then there will be data race.
+	var partialWallTimePtr, finalWallTimePtr *int64
+	if e.stats != nil {
+		partialWallTimePtr = &e.stats.PartialWallTime
+		finalWallTimePtr = &e.stats.FinalWallTime
+	}
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
@@ -835,8 +846,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
-		if e.stats != nil {
-			atomic.AddInt64(&e.stats.PartialWallTime, int64(time.Since(partialStart)))
+		if partialWallTimePtr != nil {
+			atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
 		}
 	}()
 	finalWorkerWaitGroup := &sync.WaitGroup{}
@@ -847,8 +858,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()
-		if e.stats != nil {
-			atomic.AddInt64(&e.stats.FinalWallTime, int64(time.Since(finalStart)))
+		if finalWallTimePtr != nil {
+			atomic.AddInt64(finalWallTimePtr, int64(time.Since(finalStart)))
 		}
 	}()
 
@@ -1146,7 +1157,7 @@ func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, con
 		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
 	n := len(workerStats)
 	if n > 0 {
-		sort.Slice(workerStats, func(i, j int) bool { return workerStats[i].WorkerTime < workerStats[j].WorkerTime })
+		slices.SortFunc(workerStats, func(i, j *AggWorkerStat) bool { return i.WorkerTime < j.WorkerTime })
 		buf.WriteString(fmt.Sprintf(", max:%v, p95:%v",
 			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime)))
 	}

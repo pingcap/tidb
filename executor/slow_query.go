@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
@@ -962,8 +962,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	// Sort by start time
-	sort.Slice(logFiles, func(i, j int) bool {
-		return logFiles[i].start.Before(logFiles[j].start)
+	slices.SortFunc(logFiles, func(i, j logFile) bool {
+		return i.start.Before(j.start)
 	})
 	return logFiles, err
 }

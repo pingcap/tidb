@@ -17,13 +17,13 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
+	"golang.org/x/exp/slices"
 )
 
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
@@ -440,7 +440,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	for label := range t.mu.children {
 		labels = append(labels, label)
 	}
-	sort.Ints(labels)
+	slices.Sort(labels)
 	for _, label := range labels {
 		children := t.mu.children[label]
 		for _, child := range children {
