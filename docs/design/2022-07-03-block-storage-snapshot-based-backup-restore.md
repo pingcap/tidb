@@ -1,31 +1,53 @@
-<p style="color: red; font-weight: bold">>>>>>  gd2md-html alert:  ERRORs: 0; WARNINGs: 1; ALERTS: 16.</p>
-<ul style="color: red; font-weight: bold"><li>See top comment block for details on ERRORs and WARNINGs. <li>In the converted Markdown or HTML, search for inline alerts that start with >>>>>  gd2md-html alert:  for specific instances that need correction.</ul>
-
-<p style="color: red; font-weight: bold">Links to alert messages:</p><a href="#gdcalert1">alert1</a>
-<a href="#gdcalert2">alert2</a>
-<a href="#gdcalert3">alert3</a>
-<a href="#gdcalert4">alert4</a>
-<a href="#gdcalert5">alert5</a>
-<a href="#gdcalert6">alert6</a>
-<a href="#gdcalert7">alert7</a>
-<a href="#gdcalert8">alert8</a>
-<a href="#gdcalert9">alert9</a>
-<a href="#gdcalert10">alert10</a>
-<a href="#gdcalert11">alert11</a>
-<a href="#gdcalert12">alert12</a>
-<a href="#gdcalert13">alert13</a>
-<a href="#gdcalert14">alert14</a>
-<a href="#gdcalert15">alert15</a>
-<a href="#gdcalert16">alert16</a>
-
-<p style="color: red; font-weight: bold">>>>>> PLEASE check and correct alert issues and delete this message and the inline alerts.<hr></p>
-
-
-
 # TiDB Cluster on Amazon EBS Backup & Restore
 
 
-[TOC]
+## Table of Contents
+
+* [Introduction](#introduction)
+* [Goal](#goal)
+* [Limitation](#limitation)
+* [Architecture Design](#architecture-design)
+    * [Solution Overview](#solution-overview)
+      * [Backup Worker](#backup-worker)
+      * [Restore Worker](#restore-worker)
+    * [Key Design](#key-design)
+      * [Backup](#backup)
+      * [Restore](#restore)
+    * [Data Consistency](#data-consistency)
+      * [Transaction consistency](#transaction-consistency)
+      * [A Raft Group consistency](#a-raft-group-consistency)
+      * [Multi Raft Group consistency](#multi-raft-group-consistency)
+* [Feature Detail Design](#feature-detail-design)
+    * [Backup workflow](#backup-workflow)
+    * [Restore workflow](#restore-workflow)
+  * [Impacted components](#impacted-components)
+    * [Backup Worker](#backup-worker)
+    * [Restore Worker](#restore-worker)
+    * [TiDB Operator](#tidb-operator)
+      * [Backup design](#backup-design)
+      * [Restore design](#restore-design)
+    * [Backup & Restore](#backup-estore)
+      * [BR Backup](#br-backup)
+      * [BR Restore](#br-restore)
+    * [TiKV](#tikv)
+    * [Interface Definition](#interface-definition)
+      * [restore worker - PD / TiKV](#restore-worker-pd-tikv)
+      * [BR - PD](#br-pd)
+      * [TiKV - PD](#tikv-pd)
+      * [BR - TiKV](#br-tikv)
+      * [BR - restore worker](#br-restore-worker)
+    * [Backup & Restore](#backup-estore)
+    * [Backup & Restore](#backup-estore)
+    * [Backup & Restore](#backup-estore)
+    * [Backup & Restore](#backup-estore)
+* [Exception Handling](#exception-handling)
+* [Backward / Forward Compatibility](#backward-forward-compatibility)
+* [Security](#security)
+* [Dependencies](#dependencies)
+* [Technical Risk](#technical-risk)
+* [Impacts & Risks](#impacts--risks)
+* [Testing Note](#testing-note)
+* [Design review](#design-review)
 
 
 
@@ -65,12 +87,7 @@ Backup and Restore a TiDB cluster using the EBS snapshot on the AWS, it is expec
 
 ## Solution overview
 
-
 ## 
-
-<p id="gdcalert1" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/ebs-solution-overview.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert2">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
 ![alt_text](imgs/ebs-solution-overview.png "image_tooltip")
 
 
@@ -79,12 +96,8 @@ A [Custom Resource Definition](https://kubernetes.io/docs/tasks/extend-kubernete
 The Backup & Restore Controller detects the CRD. Then, creates a new POD to load the corresponding worker to execute the backup and restore work.
 
 
+
 ### **Backup Worker**
-
-
-
-<p id="gdcalert2" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/ebs-backup.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert3">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
 
 ![alt_text](imgs/ebs-backup.png "image_tooltip")
 
@@ -103,10 +116,6 @@ Notice:  If the user wants to delete the backup (snapshots and metadata), the us
 
 
 ### **Restore Worker**
-
-
-
-<p id="gdcalert3" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/ebs-restore.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert4">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
 
 
 ![alt_text](imgs/ebs-restore.png "image_tooltip")
@@ -172,12 +181,7 @@ TiDB Cluster On AWS EBS, a key-value write workflow as follows:
 
 TiDB->TiKV->OS->EBS
 
-
-
-<p id="gdcalert4" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image4.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert5">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image4.png "image_tooltip")
+![alt_text](imgs/ebs-overview.jpeg "image_tooltip")
 
 
 
@@ -281,12 +285,7 @@ For each Raft Group within TiKV, we have to deal with Region metadata and Region
 
 * Region metadata
 
-
-
-<p id="gdcalert5" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image5.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert6">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image5.png "image_tooltip")
+![alt_text](imgs/ebs-data-consistency.jpeg "image_tooltip")
 
 
 In TiKV#1, a write proposal has been applied, but TiKV#2 and TiKV#3 have not been applied.
@@ -325,10 +324,7 @@ After the above schedule is limited to 0, replica addition, deletion and replica
 
 
 
-<p id="gdcalert6" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image6.png). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert7">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image6.png "image_tooltip")
+![alt_text](imgs/ebs-backup-worker.jpeg "image_tooltip")
 
 
 After the TiDB Operator starts the Backup Worker, the backup job starts.
@@ -350,11 +346,7 @@ After the TiDB Operator starts the Backup Worker, the backup job starts.
 ### **Restore workflow**
 
 
-
-<p id="gdcalert7" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/image7.jpg). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert8">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
-![alt_text](imgs/image7.jpg "image_tooltip")
+![alt_text](imgs/ebs-restore-worker.jpeg "image_tooltip")
 
 
 After the TiDB Operator starts the Restore Worker, it starts to restore work.
@@ -380,7 +372,7 @@ After the TiDB Operator starts the Restore Worker, it starts to restore work.
 **Backup metadata definition**
 
 
-```
+```json
 {
  "cluster_info": {
    "cluster_version": "v6.1.0",
@@ -493,10 +485,6 @@ br backup ebs --pd "172.16.2.1:2379" -s "s3:/bucket/backup_folder" --volumes-fil
 Backup worker workflow
 
 
-
-<p id="gdcalert8" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/ebs-backup-worker.jpeg). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert9">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
 ![alt_text](imgs/ebs-backup-worker.jpeg "image_tooltip")
 
 
@@ -505,7 +493,7 @@ Backup worker workflow
 2. TiDB Operator provides --volumes-file=backup.json for the backup cluster, starts the backup job, and backup.toml contains:
 
 
-```
+```json
 {
  "tikv" : {
    "replicas": 3,
@@ -594,10 +582,6 @@ Worker container contains: 1. backup-manager, 2. BR
 Restore worker workflow:
 
 
-
-<p id="gdcalert9" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/ebs-restore-worker.jpeg). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert10">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
-
-
 ![alt_text](imgs/ebs-restore-worker.jpeg "image_tooltip")
 
 
@@ -613,7 +597,7 @@ Restore worker workflow:
 BR command output as follows:
 
 
-```
+```json
 {
  "cluster_info": {
    "cluster_version": "v6.1.0",
@@ -704,7 +688,7 @@ BR command output as follows:
 3. The backup-manager starts the BR again until the BR completes the restoration of data consistency, sets the PD flag to enter the normal mode, and then restarts TiKV to exit. For detailed design, see BR Restore Detailed Design
 
 
-```
+```bash
 /br restore data --pd "172.16.2.1:2379" -s "s3:///us-west-2/meta/&sk=xx..."
 ```
 
@@ -713,10 +697,6 @@ BR command output as follows:
 ### TiDB Operator
 
 **Backup design**
-
-
-
-<p id="gdcalert10" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/ebs-tidb-operator-backup.jpeg). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert11">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
 
 
 ![alt_text](imgs/ebs-tidb-operator-backup.jpeg "image_tooltip")
@@ -732,10 +712,6 @@ BR command output as follows:
 6.  Wait for the BR execution to complete, report the update backup completion status, and exit the job.
 
 **Restore design**
-
-
-
-<p id="gdcalert11" ><span style="color: red; font-weight: bold">>>>>>  gd2md-html alert: inline image link here (to imgs/ebs-tidb-operator-restore.jpeg). Store image on your image server and adjust path/filename/extension if necessary. </span><br>(<a href="#">Back to top</a>)(<a href="#gdcalert12">Next alert</a>)<br><span style="color: red; font-weight: bold">>>>>> </span></p>
 
 
 ![alt_text](imgs/ebs-tidb-operator-restore.jpeg "image_tooltip")
@@ -887,7 +863,7 @@ More info, please refer to[ PR](https://github.com/tikv/pd/pull/4716)
 
 1. Get TiKV level consistency timestamp resolved_ts.
 
-    ```
+```go
 message GetMinResolvedTsRequest {
    uint64 store_id = 1;
 }
@@ -904,7 +880,7 @@ message GetMinResolvedTsResponse {
 ### BR - PD
 
 
-```
+```go
 type Client interface {
    // SetRecoveryMode for the cluster from BR.
    SetRecoveryMode(ctx context.Context, mode bool) error
@@ -916,7 +892,7 @@ type Client interface {
 ### TiKV - PD
 
 
-```
+```go
 type Client interface {
    // TiKV  GetRecoveryMode from PD.
    GetRecoveryMode(ctx context.Context) bool
@@ -932,7 +908,7 @@ During the BR data recovery RegionRecover phase:
 TiKV enters the recovery mode interface.
 
 
-```
+```go
 message SwitchModeRequest {
    string pd_addr = 1;
    SwitchModeRequest request = 2;
@@ -947,7 +923,7 @@ message SwitchModeResponse {
 TiKV report region meta interface.
 
 
-```
+```go
 message RegionMeta {
    uint64 region_id = 1;
    uint64 commit_index = 2;
@@ -959,7 +935,7 @@ message RegionMeta {
 BR RegionRecover command interface
 
 
-```
+```go
 message RegionRecover {
    uint64 region_id = 1;
    bool force_leader = 2; // force the peer to be a leader
@@ -972,7 +948,7 @@ message RegionRecover {
 During the BR ResolvedData phase, delete data interface:
 
 
-```
+```go
 message DeleteKVByTsRequest {
    Context context = 1;
    string cf = 2;
@@ -993,7 +969,7 @@ recovery phase
 During the recovery phase, TiDB Operator needs to pass two parameters --pd and --resolved_ts to BR
 
 
-```
+```bash
 /usr/bin/br recover --pd "172.16.2.1:2379" -resolved_ts=467775486547
 ```
 
