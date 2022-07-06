@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -949,7 +948,7 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 		tpMap[tpStr] = struct{}{}
 		tpArray = append(tpArray, tpStr)
 	}
-	sort.Strings(tpArray)
+	slices.Sort(tpArray)
 	return fmt.Sprintf("%v", tpArray)
 }
 
