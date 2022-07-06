@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
@@ -1736,9 +1737,7 @@ func TestTikvRegionStatusExtractor(t *testing.T) {
 		require.NotNil(t, logicalMemTable.Extractor)
 		rse := logicalMemTable.Extractor.(*plannercore.TiKVRegionStatusExtractor)
 		tableids := rse.GetTablesID()
-		sort.Slice(tableids, func(i, j int) bool {
-			return tableids[i] < tableids[j]
-		})
+		slices.Sort(tableids)
 		require.Equal(t, ca.tableIDs, tableids)
 	}
 }
