@@ -122,7 +122,8 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage = metrics.TelemetrySQLCTECnt
+	telemetryCTEUsage               = metrics.TelemetrySQLCTECnt
+	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -2878,8 +2879,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if dom.GetEtcdClient() != nil {
 		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
 		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
-		dom.TelemetryReportLoop(ses[5])
-		dom.TelemetryRotateSubWindowLoop(ses[5])
+		go func() {
+			dom.TelemetryReportLoop(ses[5])
+			dom.TelemetryRotateSubWindowLoop(ses[5])
+		}()
 	}
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
@@ -3420,6 +3423,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryCTEUsage.WithLabelValues("nonRecurCTE").Inc()
 	} else {
 		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
+	}
+
+	if ti.UseMultiSchemaChange {
+		telemetryMultiSchemaChangeUsage.Inc()
 	}
 }
 
