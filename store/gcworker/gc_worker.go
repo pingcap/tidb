@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,6 +59,7 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -1453,8 +1453,8 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 			for i, lockInfo := range respInner.Locks {
 				locks[i] = txnlock.NewLock(lockInfo)
 			}
-			sort.Slice(locks, func(i, j int) bool {
-				return bytes.Compare(locks[i].Key, locks[j].Key) < 0
+			slices.SortFunc(locks, func(i, j *txnlock.Lock) bool {
+				return bytes.Compare(i.Key, j.Key) < 0
 			})
 			err = w.resolveLocksAcrossRegions(ctx, locks)
 

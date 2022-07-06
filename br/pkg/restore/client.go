@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +51,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -582,8 +582,8 @@ func (rc *Client) CreateTables(
 		newTables = append(newTables, et.Table)
 	}
 	// Let's ensure that it won't break the original order.
-	sort.Slice(newTables, func(i, j int) bool {
-		return tbMapping[newTables[i].Name.String()] < tbMapping[newTables[j].Name.String()]
+	slices.SortFunc(newTables, func(i, j *model.TableInfo) bool {
+		return tbMapping[i.Name.String()] < tbMapping[j.Name.String()]
 	})
 
 	select {
@@ -826,8 +826,8 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
-	sort.Slice(ddlJobs, func(i, j int) bool {
-		return ddlJobs[i].BinlogInfo.SchemaVersion < ddlJobs[j].BinlogInfo.SchemaVersion
+	slices.SortFunc(ddlJobs, func(i, j *model.Job) bool {
+		return i.BinlogInfo.SchemaVersion < j.BinlogInfo.SchemaVersion
 	})
 
 	for _, job := range ddlJobs {

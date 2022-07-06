@@ -19,6 +19,7 @@ go_library(
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
