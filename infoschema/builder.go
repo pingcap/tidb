@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type policyGetter struct {
@@ -648,7 +649,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTbls = append(sortedTbls, tbl)
-	sort.Sort(sortedTbls)
+	slices.SortFunc(sortedTbls, func(i, j table.Table) bool {
+		return i.Meta().ID < j.Meta().ID
+	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
 
 	newTbl, ok := b.is.TableByID(tableID)
