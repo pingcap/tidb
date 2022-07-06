@@ -289,6 +289,84 @@ func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
 	tk.MustGetErrCode("alter table t add column c int default 3 after a, add column d int default 4 first, drop column a, drop column b;", errno.ErrUnsupportedDDLOperation)
 }
 
+func TestMultiSchemaChangeAddIndexes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test add multiple indexes with same column.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t add index t(a, b), add index t1(a);")
+	tk.MustExec("alter table t add index t2(a), add index t3(a, b);")
+	tk.MustQuery("select * from t use index (t, t1, t2, t3);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
+
+	// Test add multiple indexes with same name.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustGetErrCode("alter table t add index t(a), add index t(b)", errno.ErrUnsupportedDDLOperation)
+
+	// Test add indexes with drop column.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustGetErrCode("alter table t add index t(a), drop column a", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add index t(a, b), drop column a", errno.ErrUnsupportedDDLOperation)
+
+	// Test add index failed.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);")
+	tk.MustGetErrCode("alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);",
+		errno.ErrDupEntry)
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
+	tk.MustExec("alter table t add index i1(a), add index i2(a, b), add index i3(c);")
+}
+
+func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originHook := dom.DDL().GetHook()
+
+	// Test cancel successfully.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	cancelHook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel the job when index 't2' is in write-reorg.
+		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
+	})
+	dom.DDL().SetHook(cancelHook)
+	tk.MustGetErrCode("alter table t "+
+		"add index t(a, b), add index t1(a), "+
+		"add index t2(a), add index t3(a, b);", errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(originHook)
+	cancelHook.MustCancelDone(t)
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
+
+	// Test cancel failed when some sub-jobs have been finished.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	cancelHook = newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel the job when index 't1' is in public.
+		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
+	})
+	dom.DDL().SetHook(cancelHook)
+	tk.MustExec("alter table t add index t(a, b), add index t1(a), " +
+		"add index t2(a), add index t3(a, b);")
+	dom.DDL().SetHook(originHook)
+	cancelHook.MustCancelFailed(t)
+	tk.MustQuery("select * from t use index(t, t1, t2, t3);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
+}
+
 func TestMultiSchemaChangeDropIndexes(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -370,6 +448,33 @@ func TestMultiSchemaChangeDropIndexesParallel(t *testing.T) {
 	putTheSameDDLJobTwice(t, func() {
 		tk.MustGetErrCode("alter table t drop index b, drop index a;", errno.ErrCantDropFieldOrKey)
 	})
+}
+
+func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test add and drop same index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustGetErrCode("alter table t drop index t, add index t(b)", errno.ErrDupKeyName)
+
+	// Test add and drop same index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustGetErrCode("alter table t add index t1(b), drop index t1", errno.ErrCantDropFieldOrKey)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, index (a), index(b), index(c));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t add index aa(a), drop index a, add index cc(c), drop index b, drop index c, add index bb(b);")
+	tk.MustQuery("select * from t use index(aa, bb, cc);").Check(testkit.Rows("1 2 3"))
+	tk.MustGetErrCode("select * from t use index(a);", errno.ErrKeyDoesNotExist)
+	tk.MustGetErrCode("select * from t use index(b);", errno.ErrKeyDoesNotExist)
+	tk.MustGetErrCode("select * from t use index(c);", errno.ErrKeyDoesNotExist)
+	tk.MustExec("admin check table t;")
 }
 
 type cancelOnceHook struct {

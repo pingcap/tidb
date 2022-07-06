@@ -396,10 +396,31 @@ func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta
 	return nil, err
 }
 
-func updateHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, state model.SchemaState) {
+// moveAndUpdateHiddenColumnsToPublic updates the hidden columns to public, and
+// moves the hidden columns to proper offsets, so that Table.Columns' states meet the assumption of
+// [public, public, ..., public, non-public, non-public, ..., non-public].
+func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	hiddenColOffset := make(map[int]struct{}, 0)
 	for _, col := range idxInfo.Columns {
 		if tblInfo.Columns[col.Offset].Hidden {
-			tblInfo.Columns[col.Offset].State = state
+			hiddenColOffset[col.Offset] = struct{}{}
+		}
+	}
+	if len(hiddenColOffset) == 0 {
+		return
+	}
+	// Find the first non-public column.
+	firstNonPublicPos := len(tblInfo.Columns) - 1
+	for i, c := range tblInfo.Columns {
+		if c.State != model.StatePublic {
+			firstNonPublicPos = i
+			break
+		}
+	}
+	for _, col := range idxInfo.Columns {
+		tblInfo.Columns[col.Offset].State = model.StatePublic
+		if _, needMove := hiddenColOffset[col.Offset]; needMove {
+			tblInfo.MoveColumnInfo(col.Offset, firstNonPublicPos)
 		}
 	}
 }
@@ -469,12 +490,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
-			pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-			for _, hiddenCol := range hiddenCols {
-				_, _, _, err = createColumnInfoWithPosCheck(tblInfo, hiddenCol, pos)
-				if err != nil {
-					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
+			if len(hiddenCols) > 0 {
+				for _, hiddenCol := range hiddenCols {
+					initAndAddColumnToTable(tblInfo, hiddenCol)
 				}
 			}
 		}
@@ -532,7 +550,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
-		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
@@ -573,12 +591,15 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		var done bool
-		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		if job.MultiSchemaInfo != nil {
+			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
+		} else {
+			done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		}
 		if !done {
 			return ver, err
 		}
 
-		indexInfo.State = model.StatePublic
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
@@ -586,6 +607,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, errors.Trace(err)
 			}
 		}
+		indexInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -597,6 +619,19 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	if job.MultiSchemaInfo.Revertible {
+		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		if done {
+			job.MarkNonRevertible()
+			done = false // We need another round to wait for all the others sub-jobs to finish.
+		}
+		return done, ver, err
+	}
+	return true, ver, err
 }
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
