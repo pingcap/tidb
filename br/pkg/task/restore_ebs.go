@@ -23,6 +23,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/aws"
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -35,19 +36,28 @@ import (
 )
 
 const (
-	flagOutputMetaFile = "output-file"
+	flagOutputMetaFile   = "output-file"
+	flagVolumeType       = "volume-type"
+	flagVolumeIOPS       = "volume-iops"
+	flagVolumeThroughput = "volume-throughput"
 )
 
 // DefineRestoreEBSMetaFlags defines common flags for the backup command.
 func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 	command.Flags().String(flagOutputMetaFile, "output.json", "the file path of output meta file")
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
+	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
+	command.Flags().Uint(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
+	command.Flags().Uint(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 }
 
 type RestoreEBSConfig struct {
 	Config
-	OutputFile string `json:"output-file"`
-	DryRun     bool   `json:"dry-run"`
+	OutputFile       string               `json:"output-file"`
+	DryRun           bool                 `json:"dry-run"`
+	VolumeType       config.EBSVolumeType `json:"volume-type"`
+	VolumeIOPS       uint32               `json:"volume-iops"`
+	VolumeThroughput uint32               `json:"volume-throughput"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -61,6 +71,26 @@ func (cfg *RestoreEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	volumeType, err := flags.GetString(flagVolumeType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.VolumeType = config.EBSVolumeType(volumeType)
+	if !cfg.VolumeType.Valid() {
+		return errors.New("invalid volume type: " + volumeType)
+	}
+	if cfg.VolumeIOPS, err = flags.GetUint32(flagVolumeIOPS); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.VolumeThroughput, err = flags.GetUint32(flagVolumeThroughput); err != nil {
+		return errors.Trace(err)
+	}
+	// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
+	// throughput: gp3 [125, 1000]; io1/io2 cannot set throughput
+	// io1 and io2 volumes support up to 64,000 IOPS only on Instances built on the Nitro System.
+	// Other instance families support performance up to 32,000 IOPS.
+	// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateVolume.html
+	// todo: check lower/upper bound
 
 	return cfg.Config.ParseFromFlags(flags)
 }
@@ -185,9 +215,44 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	if err := h.mgr.ResetTS(ctx, h.metaInfo.ClusterInfo.ResolvedTS); err != nil {
 		return 0, errors.Trace(err)
 	}
-	// todo: create volume from snapshots
-	// todo: save restored volumes back to output file
-	return 0, nil
+
+	volumeIDMap, totalSize, err := h.restoreVolumes(progress)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	h.metaInfo.SetRestoreVolumeIDs(volumeIDMap)
+	return totalSize, nil
+}
+
+func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[uint64]map[string]string, int64, error) {
+	log.Info("create volume from snapshots")
+	var (
+		ec2Session  *aws.EC2Session
+		volumeIDMap = make(map[uint64]map[string]string)
+		err         error
+		totalSize   int64
+	)
+	ec2Session, err = aws.NewEC2Session()
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	defer func() {
+		if err != nil {
+			log.Error("failed to create all volumes, cleaning up created volume")
+			ec2Session.DeleteVolumes(volumeIDMap)
+		}
+	}()
+	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
+		string(h.cfg.VolumeType), int64(h.cfg.VolumeIOPS), int64(h.cfg.VolumeThroughput))
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	totalSize, err = ec2Session.WaitVolumesCreated(volumeIDMap, progress)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	return volumeIDMap, totalSize, nil
 }
 
 func (h *restoreEBSMetaHelper) getBackupMetaInfo(ctx context.Context) (*config.EBSBasedBRMeta, error) {

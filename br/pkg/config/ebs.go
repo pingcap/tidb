@@ -20,14 +20,27 @@ import (
 	"github.com/pingcap/errors"
 )
 
+type EBSVolumeType string
+
+const (
+	GP3Volume EBSVolumeType = "gp3"
+	IO1Volume               = "io1"
+	IO2Volume               = "io2"
+)
+
+func (t EBSVolumeType) Valid() bool {
+	return t == GP3Volume || t == IO1Volume || t == IO2Volume
+}
+
 // EBSVolume is passed by TiDB deployment tools: TiDB Operator and TiUP(in future)
 // we should do snapshot inside BR, because we need some logic to determine the order of snapshot starts.
 // TODO finish the info with TiDB Operator developer.
 type EBSVolume struct {
-	ID         string `json:"volume_id" toml:"volume_id"`
-	Type       string `json:"type" toml:"type"`
-	SnapshotID string `json:"snapshot_id" toml:"snapshot_id"`
-	Status     string `json:"status" toml:"status"`
+	ID              string `json:"volume_id" toml:"volume_id"`
+	Type            string `json:"type" toml:"type"`
+	SnapshotID      string `json:"snapshot_id" toml:"snapshot_id"`
+	RestoreVolumeId string `json:"restore_volume_id" toml:"restore_volume_id"`
+	Status          string `json:"status" toml:"status"`
 }
 
 type EBSStore struct {
@@ -127,6 +140,14 @@ func (c *EBSBasedBRMeta) SetSnapshotIDs(idMap map[uint64]map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
 			volume.SnapshotID = idMap[store.StoreID][volume.ID]
+		}
+	}
+}
+
+func (c *EBSBasedBRMeta) SetRestoreVolumeIDs(idMap map[uint64]map[string]string) {
+	for _, store := range c.TiKVComponent.Stores {
+		for _, volume := range store.Volumes {
+			volume.RestoreVolumeId = idMap[store.StoreID][volume.ID]
 		}
 	}
 }

@@ -81,7 +81,6 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[u
 			log.Info("snapshot creating", zap.Stringer("snap", resp))
 			snapIDMap[store.StoreID][volume.ID] = *resp.SnapshotId
 		}
-		store.Volumes = volumes
 	}
 	return snapIDMap, nil
 }
@@ -129,5 +128,97 @@ func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[uint64]map[string]string
 			}
 		}
 		pendingSnapshots = uncompletedSnapshots
+	}
+}
+
+// CreateVolumes create volumes from snapshots
+// if err happens in the middle, return half-done result
+// returned map: store id -> old volume id -> new volume id
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64) (map[uint64]map[string]string, error) {
+	template := ec2.CreateVolumeInput{VolumeType: &volumeType}
+	if iops > 0 {
+		template.SetIops(iops)
+	}
+	if throughput > 0 {
+		template.SetThroughput(throughput)
+	}
+
+	newVolumeIDMap := make(map[uint64]map[string]string)
+	for _, store := range meta.TiKVComponent.Stores {
+		newVolumeIDMap[store.StoreID] = make(map[string]string)
+		for _, oldVol := range store.Volumes {
+			// TODO: build concurrent requests here.
+			log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
+			req := template
+			req.SetSnapshotId(oldVol.SnapshotID)
+			resp, err := e.ec2.CreateVolume(&req)
+			if err != nil {
+				// TODO: build an retry mechanism
+				return newVolumeIDMap, errors.Trace(err)
+			}
+			log.Info("new volume creating", zap.Stringer("snap", resp))
+			newVolumeIDMap[store.StoreID][oldVol.ID] = *resp.VolumeId
+		}
+	}
+	return newVolumeIDMap, nil
+}
+
+func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[uint64]map[string]string, progress glue.Progress) (int64, error) {
+	pendingVolumes := make([]*string, 0, len(volumeIDMap))
+	for _, s := range volumeIDMap {
+		for volume := range s {
+			volumeID := s[volume]
+			pendingVolumes = append(pendingVolumes, &volumeID)
+		}
+	}
+	totalVolumeSize := int64(0)
+
+	log.Info("starts check pending volumes", zap.Any("volumes", pendingVolumes))
+	for len(pendingVolumes) > 0 {
+		// check every 5 seconds
+		time.Sleep(5 * time.Second)
+		log.Info("check pending snapshots", zap.Int("count", len(pendingVolumes)))
+		resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{
+			VolumeIds: pendingVolumes,
+		})
+		if err != nil {
+			// TODO build retry mechanism
+			return 0, errors.Trace(err)
+		}
+
+		var unfinishedVolumes []*string
+		for _, volume := range resp.Volumes {
+			if *volume.State == ec2.VolumeStateAvailable {
+				log.Info("volume is available", zap.String("id", *volume.SnapshotId))
+				totalVolumeSize += *volume.Size
+				progress.Inc()
+			} else {
+				log.Debug("volume creating...", zap.Stringer("volume", volume))
+				unfinishedVolumes = append(unfinishedVolumes, volume.SnapshotId)
+			}
+		}
+		pendingVolumes = unfinishedVolumes
+	}
+	log.Info("all pending volume are created.")
+	return totalVolumeSize, nil
+}
+
+func (e *EC2Session) DeleteVolumes(volumeIDMap map[uint64]map[string]string) {
+	pendingVolumes := make([]*string, 0, len(volumeIDMap))
+	for _, s := range volumeIDMap {
+		for volume := range s {
+			volumeID := s[volume]
+			pendingVolumes = append(pendingVolumes, &volumeID)
+		}
+	}
+
+	for _, volID := range pendingVolumes {
+		_, err2 := e.ec2.DeleteVolume(&ec2.DeleteVolumeInput{
+			VolumeId: volID,
+		})
+		if err2 != nil {
+			log.Warn("failed to delete volume")
+			// todo: retry delete. we can only retry for a few times, might fail still, need to handle error from outside.
+		}
 	}
 }

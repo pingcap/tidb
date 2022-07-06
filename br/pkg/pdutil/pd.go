@@ -771,9 +771,9 @@ func (p *PdController) GetBaseAllocID(ctx context.Context) (uint64, error) {
 
 func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error {
 	reqData, _ := json.Marshal(&struct {
-		Id uint64 `json:"id"`
+		Id string `json:"id"`
 	}{
-		Id: id,
+		Id: fmt.Sprintf("%d", id),
 	})
 	var err error
 	for _, addr := range p.addrs {
@@ -792,10 +792,10 @@ func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	// reset-ts of PD will never set ts < current pd ts
 	// we set force-use-larger=true to allow ts > current pd ts + 24h(on default)
 	reqData, _ := json.Marshal(&struct {
-		Tso            uint64 `json:"tso"`
+		Tso            string `json:"tso"`
 		ForceUseLarger bool   `json:"force-use-larger"`
 	}{
-		Tso:            ts,
+		Tso:            fmt.Sprintf("%d", ts),
 		ForceUseLarger: true,
 	})
 	var err error
