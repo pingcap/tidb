@@ -2364,17 +2364,29 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustExec("insert into nt values (1)")
 
 	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
 	hookFunc := func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition {
+			tkCancel.MustExec("use test")
+			tkCancel.MustExec("insert into nt values (2)")
+		}
+	}
+	hook.OnJobUpdatedExported = hookFunc
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1]\n[2"))
+
+	hookFunc = func(job *model.Job) {
 		if job.Type == model.ActionExchangeTablePartition {
 			tkCancel.MustExec("use test")
 			tkCancel.MustExec("insert into nt values (5)")
 		}
 	}
-	dom.DDL().SetHook(hook)
 	hook.OnJobUpdatedExported = hookFunc
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
-	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1]\n[5"))
+	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1]\n[2"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {

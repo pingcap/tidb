@@ -194,6 +194,8 @@ type Table interface {
 
 	// Type returns the type of table
 	Type() Type
+
+	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error)
 }
 
 // AllocAutoIncrementValue allocates an auto_increment value for a new row.

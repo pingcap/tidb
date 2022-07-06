@@ -1389,6 +1389,24 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	if !nt.ExchangePartitionFlag {
+		if withValidation {
+			err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+		nt.ExchangePartitionFlag = true
+		nt.ExchangePartitionId = ptID
+		nt.ExchangePartitionDefId = defID
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
+	}
+
+	if d.lease > 0 {
+		delayForAsyncCommit()
+	}
+
 	if withValidation {
 		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 		if err != nil {
@@ -1525,7 +1543,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	nt.ExchangePartitionFlag = false
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

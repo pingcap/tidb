@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/infoschema"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
@@ -77,6 +78,23 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		var err error
 		if err = col.HandleBadNull(&newData[i], sc); err != nil {
 			return false, err
+		}
+	}
+
+	// Handle exchange partition
+	tbl := t.Meta()
+	if tbl.ExchangePartitionFlag {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionId)
+		if !tableFound {
+			return false, errors.Errorf("exchange partition with table TableByID Failed")
+		}
+		canExchange, err := pt.CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionDefId)
+		if err != nil {
+			return false, err
+		}
+		if !canExchange {
+			return false, errors.Errorf("update data not match partition constraint during exchange partition with table.")
 		}
 	}
 

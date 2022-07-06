@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
 	"math"
 	"sync"
 	"time"
@@ -640,6 +641,22 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 					return nil, err
 				}
 			}
+		}
+	}
+	tbl := e.Table.Meta()
+	// Handle exchange partition
+	if tbl.ExchangePartitionFlag {
+		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionId)
+		if !tableFound {
+			return nil, errors.Errorf("insert record TableByID Failed")
+		}
+		canExchange, err := pt.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionDefId)
+		if err != nil {
+			return nil, err
+		}
+		if !canExchange {
+			return nil, errors.Errorf("update data not match partition constraint during exchange partition with table.")
 		}
 	}
 	for i, gCol := range gCols {

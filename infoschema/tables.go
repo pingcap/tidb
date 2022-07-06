@@ -1910,6 +1910,10 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
+func (it *infoschemaTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
+	panic("implement me")
+}
+
 // SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
 type SchemasSorter []*model.DBInfo
 

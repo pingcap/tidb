@@ -703,9 +703,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.RUnlock()
 		}
 
-		d.mu.RLock()
-		d.mu.hook.OnJobUpdated(job)
-		d.mu.RUnlock()
+		//d.mu.RLock()
+		//d.mu.hook.OnJobUpdated(job)
+		//d.mu.RUnlock()
 
 		if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 			asyncNotify(d.ddlJobDoneCh)
@@ -1160,10 +1160,12 @@ func updateSchemaVersion(_ *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
 		var (
-			ptSchemaID int64
-			ptTableID  int64
+			ptSchemaID     int64
+			ptTableID      int64
+			partName       string
+			withValidation bool
 		)
-		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID)
+		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID, &partName, &withValidation)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

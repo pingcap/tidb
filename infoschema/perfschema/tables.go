@@ -112,6 +112,10 @@ type perfSchemaTable struct {
 	indices []table.Index
 }
 
+func (vt *perfSchemaTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
+	panic("implement me")
+}
+
 var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
 
 // IsPredefinedTable judges whether this table is predefined.

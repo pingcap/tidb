@@ -68,6 +68,10 @@ type partition struct {
 	TableCommon
 }
 
+func (p *partition) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
+	panic("implement me")
+}
+
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (p *partition) GetPhysicalID() int64 {
 	return p.physicalTableID
@@ -962,6 +966,17 @@ func (t *partitionedTable) GetPartitionColumnNames() []model.CIStr {
 func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
+}
+
+func (t *partitionedTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
+	defID, err := t.locatePartition(ctx, pi, r)
+	if err != nil {
+		return false, err
+	}
+	if defID != pid {
+		return false, errors.Errorf("insert data doesn't match partition constraint during exchange partition with table")
+	}
+	return true, nil
 }
 
 // locatePartition returns the partition ID of the input record.

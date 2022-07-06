@@ -444,6 +444,11 @@ type TableInfo struct {
 
 	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
+
+	// ExchangePartitionFlag、ExchangePartitionId、ExchangePartitionDefId is used when do exchange partition with table
+	ExchangePartitionFlag  bool  `json:"exchange_partition_flag"`
+	ExchangePartitionId    int64 `json:"exchange_partition_id"`
+	ExchangePartitionDefId int64 `json:"exchange_partition_def_id"`
 }
 type TableCacheStatusType int
 
