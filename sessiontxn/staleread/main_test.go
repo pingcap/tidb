@@ -11,32 +11,23 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-package ddl_test
+package staleread_test
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/goleak"
 )
 
-func TestIsJobRollbackable(t *testing.T) {
-	cases := []struct {
-		tp     model.ActionType
-		state  model.SchemaState
-		result bool
-	}{
-		{model.ActionDropIndex, model.StateNone, true},
-		{model.ActionDropIndex, model.StateDeleteOnly, false},
-		{model.ActionDropSchema, model.StateDeleteOnly, false},
-		{model.ActionDropColumn, model.StateDeleteOnly, false},
+func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+	tikv.EnableFailpoints()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	job := &model.Job{}
-	for _, ca := range cases {
-		job.Type = ca.tp
-		job.SchemaState = ca.state
-		re := job.IsRollbackable()
-		require.Equal(t, ca.result, re)
-	}
+	goleak.VerifyTestMain(m, opts...)
 }

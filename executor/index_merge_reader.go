@@ -304,6 +304,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetStartTS(e.startTS).
 					SetDesc(e.descs[workID]).
 					SetKeepOrder(false).
+					SetTxnScope(e.txnScope).
 					SetReadReplicaScope(e.readReplicaScope).
 					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -383,6 +384,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					baseExecutor:     newBaseExecutor(e.ctx, ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:            e.dagPBs[workID],
 					startTS:          e.startTS,
+					txnScope:         e.txnScope,
 					readReplicaScope: e.readReplicaScope,
 					isStaleness:      e.isStaleness,
 					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
@@ -603,6 +605,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		table:            tbl,
 		dagPB:            e.tableRequest,
 		startTS:          e.startTS,
+		txnScope:         e.txnScope,
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,
 		columns:          e.columns,
