@@ -3315,6 +3315,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.AlterTableCache(sctx, ident)
 		case ast.AlterTableNoCache:
 			err = d.AlterTableNoCache(sctx, ident)
+		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
+			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
+			// MyISAM specific
 		default:
 			err = errors.Trace(dbterror.ErrUnsupportedAlterTableSpec)
 		}
