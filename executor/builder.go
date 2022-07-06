@@ -3874,9 +3874,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if !canReorderHandles {
-		// If we can't reorder handles, the kvRange maybe not ordered. The test case(see issue35831) for IndexMergeJoin will fail.
-		// Now IndexMergeJoin is not GA and not maintained temporarily.
-		// So we close paging protocol in IndexMergeJoin request, and use the non-paging logic to read data.
+		// `canReorderHandles` is set to false only in IndexMergeJoin. IndexMergeJoin will trigger a dead loop problem
+		// when enabling paging(tidb/issues/35831). But IndexMergeJoin is not visible to the user and is deprecated
+		// for now. Thus, we disable paging here.
 		e.paging = false
 	}
 	if err != nil {
