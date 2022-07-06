@@ -109,9 +109,6 @@ type Context interface {
 	// only used to daemon session like `statsHandle` to detect global variable change.
 	RefreshVars(context.Context) error
 
-	// GetSnapshotWithTS returns a snapshot with start ts
-	GetSnapshotWithTS(ts uint64) kv.Snapshot
-
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
@@ -152,8 +149,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
-	// GetPreparedTSFuture returns the prepared ts future
-	GetPreparedTSFuture() oracle.Future
+	// GetPreparedTxnFuture returns the prepared ts future
+	GetPreparedTxnFuture() TxnFuture
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
@@ -174,6 +171,13 @@ type Context interface {
 	ReleaseAdvisoryLock(string) bool
 	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
 	ReleaseAllAdvisoryLocks() int
+}
+
+// TxnFuture is an interface where implementations have a kv.Transaction field and after
+// calling Wait of the TxnFuture, the kv.Transaction will become valid.
+type TxnFuture interface {
+	// Wait converts pending txn to valid
+	Wait(ctx context.Context, sctx Context) (kv.Transaction, error)
 }
 
 type basicCtxType int

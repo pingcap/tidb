@@ -22,7 +22,6 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -291,8 +291,8 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	if len(stores) <= 1 {
 		return nil
 	}
-	sort.Slice(stores, func(i, j int) bool {
-		return stores[i].Status.RegionCount < stores[j].Status.RegionCount
+	slices.SortFunc(stores, func(i, j *pdtypes.StoreInfo) bool {
+		return i.Status.RegionCount < j.Status.RegionCount
 	})
 	minStore := stores[0]
 	maxStore := stores[len(stores)-1]
@@ -629,6 +629,7 @@ func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.Sour
 	default:
 		panic(fmt.Sprintf("unknown file type '%s'", dataFileMeta.Type))
 	}
+	//nolint: errcheck
 	defer parser.Close()
 
 	err = parser.ReadRow()
@@ -995,6 +996,7 @@ func (rc *Controller) sampleDataFromTable(
 	default:
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", sampleFile.Path, sampleFile.Type.String()))
 	}
+	//nolint: errcheck
 	defer parser.Close()
 	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
 	igCols, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, rc.cfg.Mydumper.CaseSensitive)
@@ -1154,7 +1156,7 @@ loop:
 
 	if len(tableNames) > 0 {
 		// sort the failed names
-		sort.Strings(tableNames)
+		slices.Sort(tableNames)
 		msg := fmt.Sprintf("table(s) [%s] are not empty", strings.Join(tableNames, ", "))
 		rc.checkTemplate.Collect(Critical, false, msg)
 	}
