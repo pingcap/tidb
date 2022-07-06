@@ -4,8 +4,10 @@ package restore
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -17,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"go.uber.org/zap"
 )
 
@@ -24,6 +27,8 @@ const (
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
 	insertDeleteRangeSQLValue  = `(%?, %?, %?, %?, %?)`
 	insertDeleteRangeSQL       = insertDeleteRangeSQLPrefix + insertDeleteRangeSQLValue
+
+	batchInsertDeleteRangeSize = 256
 )
 
 // DB is a TiDB instance, not thread-safe.
@@ -339,9 +344,68 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	return err
 }
 
-// InsertDeleteRange insert entry into table `gc_delete_range`.
-func (db *DB) InsertDeleteRange(ctx context.Context, jobID int64, elementID int64, startKeyEncoded string, endKeyEncoded string, ts uint64) error {
-	db.se.ExecuteInternal(ctx, insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+// InsertDeleteRange insert table delete job into table `gc_delete_range`.
+func (db *DB) InsertDeleteRangeForTable(ctx context.Context, jobID int64, tableIDs []int64, ts uint64) error {
+	var elementID int64 = 1
+	var tableID int64
+	for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
+		batchEnd := len(tableIDs)
+		if batchEnd > i+batchInsertDeleteRangeSize {
+			batchEnd = i + batchInsertDeleteRangeSize
+		}
+
+		var buf strings.Builder
+		buf.WriteString(insertDeleteRangeSQLPrefix)
+		paramsList := make([]interface{}, 0, (batchEnd-i)*5)
+		for j := i; j < batchEnd; j++ {
+			tableID = tableIDs[j]
+			startKey := tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			startKeyEncoded := hex.EncodeToString(startKey)
+			endKeyEncoded := hex.EncodeToString(endKey)
+			buf.WriteString(insertDeleteRangeSQLValue)
+			if j != batchEnd-1 {
+				buf.WriteString(",")
+			}
+			paramsList = append(paramsList, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+			elementID += 1
+		}
+		if err := db.se.ExecuteInternal(ctx, buf.String(), paramsList...); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// InsertDeleteRangeForTable insert index delete job into table `gc_delete_range`.
+func (db *DB) InsertDeleteRangeForIndex(ctx context.Context, jobID int64, elementID *int64, tableID int64, indexIDs []int64, ts uint64) error {
+	var indexID int64
+	for i := 0; i < len(indexIDs); i += batchInsertDeleteRangeSize {
+		batchEnd := len(indexIDs)
+		if batchEnd > i+batchInsertDeleteRangeSize {
+			batchEnd = i + batchInsertDeleteRangeSize
+		}
+
+		var buf strings.Builder
+		buf.WriteString(insertDeleteRangeSQLPrefix)
+		paramsList := make([]interface{}, 0, (batchEnd-i)*5)
+		for j := i; j < batchEnd; j++ {
+			indexID = indexIDs[j]
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			startKeyEncoded := hex.EncodeToString(startKey)
+			endKeyEncoded := hex.EncodeToString(endKey)
+			buf.WriteString(insertDeleteRangeSQLValue)
+			if j != batchEnd-1 {
+				buf.WriteString(",")
+			}
+			paramsList = append(paramsList, jobID, *elementID, startKeyEncoded, endKeyEncoded, ts)
+			*elementID += 1
+		}
+		if err := db.se.ExecuteInternal(ctx, buf.String(), paramsList...); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
