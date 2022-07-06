@@ -351,13 +351,14 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		b.err = err
 		return nil
 	}
-	txn, err := e.ctx.Txn(true)
+
+	session, err := e.getSysSession()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-
-	ddlInfo, err := ddl.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfoWithNewTxn(session)
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
 	if err != nil {
 		b.err = err
 		return nil
