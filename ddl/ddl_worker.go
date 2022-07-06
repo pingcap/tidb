@@ -426,6 +426,8 @@ func needToUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	if meetErr && job.RawArgs != nil && job.Args == nil {
 		// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 		// so we shouldn't replace RawArgs with the marshaling Args.
+		//nolint:staticcheck
+		//lint:ignore S1008
 		if job.MultiSchemaInfo != nil {
 			// However, for multi-schema change, the args of the parent job is always nil.
 			// Since Job.Encode() can handle the sub-jobs properly, we can safely update the raw args.

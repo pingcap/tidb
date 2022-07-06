@@ -243,6 +243,8 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 func needNotifyAndStopReorg(job *model.Job) bool {
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
+		//nolint:staticcheck
+		//lint:ignore S1008
 		if job.IsNonRevertibleSubJob() {
 			// However, if the sub-job is non-revertible, it means the reorg process is finished.
 			// We don't need to start another round to notify reorg workers to exit.
