@@ -903,7 +903,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 		err = AddHistoryDDLJob(m, jobs[i], true)
 		require.NoError(t, err)
 
-		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+		historyJobs, err := GetLastNHistoryDDLJobs(m, DefNumHistoryJobs)
 		require.NoError(t, err)
 
 		if i+1 > MaxHistoryJobs {
@@ -914,7 +914,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	}
 
 	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+	historyJobs, err := GetLastNHistoryDDLJobs(m, DefNumHistoryJobs)
 	require.NoError(t, err)
 	require.Len(t, historyJobs, MaxHistoryJobs)
 
