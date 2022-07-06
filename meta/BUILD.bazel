@@ -19,7 +19,6 @@ go_library(
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -33,6 +32,7 @@ go_test(
     embed = [":meta"],
     flaky = True,
     deps = [
+        "//ddl",
         "//kv",
         "//parser/model",
         "//store/mockstore",
