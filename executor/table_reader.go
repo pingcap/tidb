@@ -417,6 +417,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
+		SetClosestReplicaReadChecker(newClosestReadChecker(e.ctx, &reqBuilder.Request, e.netCost)).
 		SetPaging(e.paging)
 	return reqBuilder.Build()
 }
