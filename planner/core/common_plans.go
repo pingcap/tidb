@@ -1271,11 +1271,9 @@ func (e *Explain) RenderResult() error {
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	case types.ExplainFormatBinary:
-		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
-			flat := FlattenPhysicalPlan(physicalPlan, false)
-			str := BinaryPlanStrFromFlatPlan(e.ctx, flat)
-			e.Rows = append(e.Rows, []string{str})
-		}
+		flat := FlattenPhysicalPlan(e.TargetPlan, false)
+		str := BinaryPlanStrFromFlatPlan(e.ctx, flat)
+		e.Rows = append(e.Rows, []string{str})
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}

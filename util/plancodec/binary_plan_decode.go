@@ -47,16 +47,22 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	}
 
 	// 2. calculate the max length of each column and the total length
+	// Because the text tree part of the "id" column contains characters that consist of multiple bytes, we need the
+	// lengths calculated in bytes and runes both. Length in bytes is for preallocating memory. Length in runes is
+	// for padding space to align the content.
 	runeMaxLens, byteMaxLens := calculateMaxFieldLens(rows, pb.WithRuntimeStats)
 	singleRowLen := 0
 	for _, fieldLen := range byteMaxLens {
 		singleRowLen += fieldLen
-		// every field is followed by a '\t' or '\n'
+		// every field begins with "| " and ends with " "
 		singleRowLen += 3
 	}
+	// every row ends with " |\n"
 	singleRowLen += 3
 	// length for a row * (row count + 1(for title row))
 	totalBytes := singleRowLen * (len(rows) + 1)
+	// there is a "\n" at the beginning
+	totalBytes += 1
 
 	// 3. format the strings and get the final result
 	var b strings.Builder
