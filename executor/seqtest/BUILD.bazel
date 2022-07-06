@@ -13,7 +13,6 @@ go_test(
         "//ddl/util",
         "//errno",
         "//executor",
-        "//infoschema",
         "//kv",
         "//meta/autoid",
         "//metrics",
