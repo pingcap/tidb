@@ -27,6 +27,7 @@ import (
 
 // LoadFromFile load a meta from a file.
 func (ls *MemStore) LoadFromFile(fileName string) (meta []byte, err error) {
+	//nolint: gosec
 	f, err := os.Open(fileName)
 	if err != nil {
 		if os.IsNotExist(err) {

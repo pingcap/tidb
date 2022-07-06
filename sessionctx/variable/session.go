@@ -1159,6 +1159,10 @@ type SessionVars struct {
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
 
+	// TiFlash related optimization, only for MPP.
+	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
+
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
 }
