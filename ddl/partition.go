@@ -662,7 +662,8 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr, err := strconv.Unquote(tbInfo.Partition.Expr)
 	if err != nil {
-		return err
+		// tbInfo.Partition.Expr has not quotation.
+		expr = tbInfo.Partition.Expr
 	}
 	col := model.FindColumnInfo(tbInfo.Columns, expr)
 	if col != nil && mysql.HasUnsignedFlag(col.GetFlag()) {
