@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -242,6 +243,7 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 	defer func() {
 		vars.InRestrictedSQL = origin
 	}()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnTrace)
 	rs, err := se.ExecuteStmt(ctx, e.stmtNode)
 	if err != nil {
 		var errCode uint16
@@ -360,6 +362,7 @@ func generateOptimizerTraceFile() (*os.File, string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
+	//nolint: gosec
 	_, err = rand.Read(b)
 	if err != nil {
 		return nil, "", errors.AddStack(err)

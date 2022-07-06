@@ -7,7 +7,6 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"

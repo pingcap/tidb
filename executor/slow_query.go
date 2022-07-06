@@ -863,6 +863,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	}
 	if e.extractor == nil || !e.extractor.Enable {
 		totalFileNum = 1
+		//nolint: gosec
 		file, err := os.Open(logFilePath)
 		if err != nil {
 			if os.IsNotExist(err) {
