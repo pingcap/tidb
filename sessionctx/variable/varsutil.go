@@ -539,11 +539,10 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 
 func getRuntimeTLSVersion() string {
 	// get minTlsVersion
-	minTlsVersion := "TLSv1.1"
-	configuredTlsVersion := config.GetGlobalConfig().Security.MinTLSVersion
+	minTLSVersion := "TLSv1.1"
 	for _, v := range tlsVersionString {
-		if v == configuredTlsVersion {
-			minTlsVersion = v
+		if v == config.GetGlobalConfig().Security.MinTLSVersion {
+			minTLSVersion = v
 		}
 	}
 	// get all available tls version
@@ -555,7 +554,7 @@ func getRuntimeTLSVersion() string {
 
 	// choose we support
 	for i := 0; i < len(tlsVersionSlice); i++ {
-		if minTlsVersion == tlsVersionSlice[i] {
+		if minTLSVersion == tlsVersionSlice[i] {
 			tlsVersionSlice = tlsVersionSlice[i:]
 			break
 		}
