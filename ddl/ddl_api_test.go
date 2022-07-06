@@ -31,7 +31,6 @@ func TestIsJobRollbackable(t *testing.T) {
 		{model.ActionDropIndex, model.StateDeleteOnly, false},
 		{model.ActionDropSchema, model.StateDeleteOnly, false},
 		{model.ActionDropColumn, model.StateDeleteOnly, false},
-		{model.ActionDropIndexes, model.StateDeleteOnly, false},
 	}
 	job := &model.Job{}
 	for _, ca := range cases {

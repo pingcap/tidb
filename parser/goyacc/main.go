@@ -144,6 +144,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/cznic/strutil"
+	"golang.org/x/exp/slices"
 	parser "modernc.org/parser/yacc"
 	"modernc.org/y"
 )
@@ -396,7 +397,7 @@ type %[1]sXError struct {
 		}
 		nsyms[nm] = sym
 	}
-	sort.Strings(a)
+	slices.Sort(a)
 	mustFormat(f, "\nconst (%i\n")
 	for _, v := range a {
 		nm := v
