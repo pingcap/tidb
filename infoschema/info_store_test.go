@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package infoschema
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -32,38 +31,38 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 
 	// case-sensitive
 
-	is := newInfoStore(0)
-	is.putSchema(dbInfo)
+	is := NewInfoStore(0)
+	is.PutSchema(dbInfo)
 	got := is.SchemaByName(dbName)
 	require.NotNil(t, got)
 	got = is.SchemaByName(lowerDBName)
 	require.Nil(t, got)
 
-	err := is.putTable(lowerDBName, tableInfo)
-	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
-	err = is.putTable(dbName, tableInfo)
+	err := is.PutTable(lowerDBName, tableInfo)
+	require.True(t, ErrDatabaseNotExists.Equal(err))
+	err = is.PutTable(dbName, tableInfo)
 	require.NoError(t, err)
 	got2, err := is.TableByName(dbName, tableName)
 	require.NoError(t, err)
 	require.NotNil(t, got2)
 	got2, err = is.TableByName(lowerTableName, tableName)
-	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
+	require.True(t, ErrDatabaseNotExists.Equal(err))
 	require.Nil(t, got2)
 	got2, err = is.TableByName(dbName, lowerTableName)
-	require.True(t, infoschema.ErrTableNotExists.Equal(err))
+	require.True(t, ErrTableNotExists.Equal(err))
 	require.Nil(t, got2)
 
 	// compare-insensitive
 
-	is = newInfoStore(2)
-	is.putSchema(dbInfo)
+	is = NewInfoStore(2)
+	is.PutSchema(dbInfo)
 	got = is.SchemaByName(dbName)
 	require.NotNil(t, got)
 	got = is.SchemaByName(lowerDBName)
 	require.NotNil(t, got)
 	require.Equal(t, dbName, got.Name)
 
-	err = is.putTable(lowerDBName, tableInfo)
+	err = is.PutTable(lowerDBName, tableInfo)
 	require.NoError(t, err)
 	got2, err = is.TableByName(dbName, tableName)
 	require.NoError(t, err)
@@ -75,7 +74,7 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 }
 
 func TestInfoStoreDeleteTables(t *testing.T) {
-	is := newInfoStore(0)
+	is := NewInfoStore(0)
 	dbName1 := model.NewCIStr("DBName1")
 	dbName2 := model.NewCIStr("DBName2")
 	tableName1 := model.NewCIStr("TableName1")
@@ -85,32 +84,32 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	tableInfo1 := &model.TableInfo{Name: tableName1}
 	tableInfo2 := &model.TableInfo{Name: tableName2}
 
-	is.putSchema(dbInfo1)
-	err := is.putTable(dbName1, tableInfo1)
+	is.PutSchema(dbInfo1)
+	err := is.PutTable(dbName1, tableInfo1)
 	require.NoError(t, err)
-	err = is.putTable(dbName1, tableInfo2)
+	err = is.PutTable(dbName1, tableInfo2)
 	require.NoError(t, err)
 
 	// db2 not created
-	ok := is.deleteSchema(dbName2)
+	ok := is.DeleteSchema(dbName2)
 	require.False(t, ok)
-	err = is.putTable(dbName2, tableInfo1)
-	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
-	err = is.deleteTable(dbName2, tableName1)
-	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
+	err = is.PutTable(dbName2, tableInfo1)
+	require.True(t, ErrDatabaseNotExists.Equal(err))
+	err = is.DeleteTable(dbName2, tableName1)
+	require.True(t, ErrDatabaseNotExists.Equal(err))
 
-	is.putSchema(dbInfo2)
-	err = is.putTable(dbName2, tableInfo1)
+	is.PutSchema(dbInfo2)
+	err = is.PutTable(dbName2, tableInfo1)
 	require.NoError(t, err)
 
-	err = is.deleteTable(dbName2, tableName2)
-	require.True(t, infoschema.ErrTableNotExists.Equal(err))
-	err = is.deleteTable(dbName2, tableName1)
+	err = is.DeleteTable(dbName2, tableName2)
+	require.True(t, ErrTableNotExists.Equal(err))
+	err = is.DeleteTable(dbName2, tableName1)
 	require.NoError(t, err)
 
 	// delete db will remove its tables
-	ok = is.deleteSchema(dbName1)
+	ok = is.DeleteSchema(dbName1)
 	require.True(t, ok)
 	_, err = is.TableByName(dbName1, tableName1)
-	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
+	require.True(t, ErrDatabaseNotExists.Equal(err))
 }
