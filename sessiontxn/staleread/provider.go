@@ -93,7 +93,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 		return err
 	}
 
-	txnScope := config.GetTxnScopeFromConfig()
+	txnScope := kv.GlobalTxnScope
 	if err = p.sctx.PrepareTSFuture(p.ctx, sessiontxn.ConstantFuture(p.ts), txnScope); err != nil {
 		return err
 	}
