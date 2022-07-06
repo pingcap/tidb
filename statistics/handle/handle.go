@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +50,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1628,7 +1628,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 			err = h.recordHistoricalStatsMeta(tableID, statsVer)
 		}
 	}()
-	sort.Slice(colIDs, func(i, j int) bool { return colIDs[i] < colIDs[j] })
+	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
 		return errors.Trace(err)

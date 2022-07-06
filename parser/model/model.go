@@ -1353,6 +1353,10 @@ func (db *DBInfo) Copy() *DBInfo {
 	return &newInfo
 }
 
+func LessDBInfo(a *DBInfo, b *DBInfo) bool {
+	return a.Name.L < b.Name.L
+}
+
 // CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
