@@ -1204,12 +1204,32 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if len(jobs) == 0 {
+		allJobs = append(allJobs, jobs...)
+		if len(jobs) < batchNumHistoryJobs {
 			break
 		}
-		allJobs = append(allJobs, jobs...)
 	}
+	// sort job.
+	sorter := &jobsSorter{jobs: allJobs}
+	sort.Sort(sorter)
 	return allJobs, nil
+}
+
+// jobsSorter implements the sort.Interface interface.
+type jobsSorter struct {
+	jobs []*model.Job
+}
+
+func (s *jobsSorter) Swap(i, j int) {
+	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
+}
+
+func (s *jobsSorter) Len() int {
+	return len(s.jobs)
+}
+
+func (s *jobsSorter) Less(i, j int) bool {
+	return s.jobs[i].ID < s.jobs[j].ID
 }
 
 // GetHistoryJobByID return history DDL job by ID.
