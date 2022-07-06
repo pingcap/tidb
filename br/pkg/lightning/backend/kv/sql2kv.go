@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()
@@ -188,8 +188,8 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 	}
 
 	// order the result by column offset so they match the evaluation order.
-	sort.Slice(genCols, func(i, j int) bool {
-		return cols[genCols[i].index].Offset < cols[genCols[j].index].Offset
+	slices.SortFunc(genCols, func(i, j genCol) bool {
+		return cols[i.index].Offset < cols[j.index].Offset
 	})
 	return genCols, nil
 }
