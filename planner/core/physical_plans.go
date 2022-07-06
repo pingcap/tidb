@@ -111,7 +111,7 @@ type PhysicalTableReader struct {
 
 	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
 	// BatchCop and MPP, currently, the latter two are only used in TiFlash
-	ReadReqType readReqType
+	ReadReqType ReadReqType
 
 	IsCommonHandle bool
 
