@@ -144,9 +144,9 @@ var (
 	// ErrUnsupportedReorganizePartition returns for does not support reorganize partitions.
 	ErrUnsupportedReorganizePartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "reorganize partition"), nil))
 	// ErrUnsupportedSplitPartition returns for does not support SPLIT partitions.
-	ErrUnsupportedSplitPartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "split partition"), nil))
+	ErrUnsupportedSplitPartition = ClassDDL.NewStd(mysql.ErrUnsupportedReorganizePartition)
 	// ErrUnsupportedMergePartition returns for does not support MERGE partitions.
-	ErrUnsupportedMergePartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "merge partition"), nil))
+	ErrUnsupportedMergePartition = ClassDDL.NewStd(mysql.ErrUnsupportedReorganizePartition)
 	// ErrUnsupportedCheckPartition returns for does not support check partitions.
 	ErrUnsupportedCheckPartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "check partition"), nil))
 	// ErrUnsupportedOptimizePartition returns for does not support optimize partitions.
@@ -381,7 +381,7 @@ var (
 	ErrIncompatibleTiFlashAndPlacement = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Placement and tiflash replica options cannot be set at the same time", nil))
 
 	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
-	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Unsupported/unknown ALTER TABLE specification", nil))
+	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
 
 	// ErrAutoConvert when auto convert happens
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)

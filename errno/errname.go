@@ -1079,6 +1079,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrColumnInChange:                  mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
 	ErrPartitionLastPartitionMaxvalue:  mysql.Message("Cannot ALTER TABLE <table> LAST PARTITION when MAXVALUE PARTITION exists, try ALTER TABLE <table> SPLIT MAXVALUE PARTITION instead", nil),
+	ErrUnsupportedReorganizePartition:  mysql.Message("Unsupported REORGANIZE PARTITION", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),

@@ -3702,11 +3702,11 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	err = tk.ExecToErr("alter table ipt merge first partition less than (60)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported merge partition", err.Error())
+	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
 
 	err = tk.ExecToErr("alter table ipt split maxvalue partition less than (140)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported split partition", err.Error())
+	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
 
 	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
 	tk.MustQuery("show create table ipt").Check(testkit.Rows(
@@ -3763,11 +3763,11 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	tk.MustExec("alter table t2 LAST partition less than (100)")
 	err = tk.ExecToErr("alter table t2 merge first partition less than (60)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported merge partition", err.Error())
+	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
 
 	err = tk.ExecToErr("alter table t2 split maxvalue partition less than (140)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported split partition", err.Error())
+	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
 
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
