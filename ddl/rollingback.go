@@ -60,8 +60,8 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 		}
 	}
 
-	// the second args will be used in onDropIndex.
-	job.Args = []interface{}{indexInfo.Name, getPartitionIDs(tblInfo)}
+	// the second and the third args will be used in onDropIndex.
+	job.Args = []interface{}{indexInfo.Name, false /* ifExists */, getPartitionIDs(tblInfo)}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
 	// The write reorganization state in add index job that likes write only state in drop index job.
@@ -175,36 +175,8 @@ func rollingbackAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, dbterror.ErrCancelledDDLJob
 }
 
-func rollingbackAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, columnInfos, _, _, _, _, err := checkAddColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if len(columnInfos) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-
-	colNames := make([]model.CIStr, len(columnInfos))
-	originalState := columnInfos[0].State
-	for i, columnInfo := range columnInfos {
-		columnInfos[i].State = model.StateDeleteOnly
-		colNames[i] = columnInfo.Name
-	}
-	ifExists := make([]bool, len(columnInfos))
-
-	job.SchemaState = model.StateDeleteOnly
-	job.Args = []interface{}{colNames, ifExists}
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfos[0].State)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.State = model.JobStateRollingback
-	return ver, dbterror.ErrCancelledDDLJob
-}
-
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, err := checkDropColumn(t, job)
+	_, colInfo, idxInfos, _, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -235,40 +207,8 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, nil
 }
 
-func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfos, _, idxInfos, err := checkDropColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	for _, indexInfo := range idxInfos {
-		switch indexInfo.State {
-		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
-			// We can not rollback now, so just continue to drop index.
-			// In function isJobRollbackable will let job rollback when state is StateNone.
-			// When there is no index related to the drop columns job it is OK, but when there has indices, we should
-			// make sure the job is not rollback.
-			job.State = model.JobStateRunning
-			return ver, nil
-		case model.StatePublic:
-		default:
-			return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-		}
-	}
-
-	// StatePublic means when the job is not running yet.
-	if colInfos[0].State == model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-	// In the state of drop columns `write only -> delete only -> reorganization`,
-	// We can not rollback now, so just continue to drop columns.
-	job.State = model.JobStateRunning
-	return ver, nil
-}
-
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, indexInfo, err := checkDropIndex(t, job)
+	_, indexInfo, _, err := checkDropIndex(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -285,43 +225,6 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
-}
-
-func rollingbackDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	indexInfo := indexInfos[0]
-	originalState := indexInfo.State
-	switch indexInfo.State {
-	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
-		// We can not rollback now, so just continue to drop index.
-		// Normally won't fetch here, because there is a check when canceling DDL jobs. See function: IsRollbackable.
-		job.State = model.JobStateRunning
-		return ver, nil
-	case model.StatePublic:
-		job.State = model.JobStateRollbackDone
-		for _, indexInfo := range indexInfos {
-			indexInfo.State = model.StatePublic
-		}
-	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-	}
-
-	job.SchemaState = indexInfo.State
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
-	return ver, dbterror.ErrCancelledDDLJob
 }
 
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
@@ -444,8 +347,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(d, t, job)
-	case model.ActionAddColumns:
-		ver, err = rollingbackAddColumns(d, t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddIndex(w, d, t, job, false)
 	case model.ActionAddPrimaryKey:
@@ -454,12 +355,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddTablePartition(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
-	case model.ActionDropColumns:
-		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(t, job)
-	case model.ActionDropIndexes:
-		ver, err = rollingbackDropIndexes(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:

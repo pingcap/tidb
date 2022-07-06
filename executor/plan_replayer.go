@@ -129,6 +129,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err e
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
+	//nolint: gosec
 	_, err = rand.Read(b)
 	if err != nil {
 		return "", err
@@ -525,6 +526,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
+			//nolint: errcheck
 			defer v.Close()
 			_, err = toml.DecodeReader(v, &varMap)
 			if err != nil {
@@ -556,6 +558,7 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return errors.AddStack(err)
 	}
+	//nolint: errcheck
 	defer r.Close()
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(r)
@@ -589,6 +592,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return errors.AddStack(err)
 	}
+	//nolint: errcheck
 	defer r.Close()
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(r)

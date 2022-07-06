@@ -1353,6 +1353,10 @@ func (db *DBInfo) Copy() *DBInfo {
 	return &newInfo
 }
 
+func LessDBInfo(a *DBInfo, b *DBInfo) bool {
+	return a.Name.L < b.Name.L
+}
+
 // CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
@@ -1394,6 +1398,13 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 type TableColumnID struct {
 	TableID  int64
 	ColumnID int64
+}
+
+// TableItemID is composed by table ID and column/index ID
+type TableItemID struct {
+	TableID int64
+	ID      int64
+	IsIndex bool
 }
 
 // PolicyRefInfo is the struct to refer the placement policy.

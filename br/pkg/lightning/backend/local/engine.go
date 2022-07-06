@@ -24,7 +24,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 
@@ -33,7 +32,6 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -46,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -733,8 +732,8 @@ func (e *Engine) batchIngestSSTs(metas []*sstMeta) error {
 	if len(metas) == 0 {
 		return nil
 	}
-	sort.Slice(metas, func(i, j int) bool {
-		return bytes.Compare(metas[i].minKey, metas[j].minKey) < 0
+	slices.SortFunc(metas, func(i, j *sstMeta) bool {
+		return bytes.Compare(i.minKey, j.minKey) < 0
 	})
 
 	metaLevels := make([][]*sstMeta, 0)
@@ -877,6 +876,7 @@ func (e *Engine) loadEngineMeta() error {
 		}
 		return err
 	}
+	//nolint: errcheck
 	defer closer.Close()
 
 	if err = json.Unmarshal(jsonBytes, &e.engineMeta); err != nil {
@@ -894,8 +894,8 @@ func sortAndMergeRanges(ranges []Range) []Range {
 		return ranges
 	}
 
-	sort.Slice(ranges, func(i, j int) bool {
-		return bytes.Compare(ranges[i].start, ranges[j].start) < 0
+	slices.SortFunc(ranges, func(i, j Range) bool {
+		return bytes.Compare(i.start, j.start) < 0
 	})
 
 	curEnd := ranges[0].end
@@ -1003,21 +1003,6 @@ type Writer struct {
 	batchSize  int64
 
 	lastMetaSeq int32
-	prevRowID   int64 // only used for appendRowsSorted
-}
-
-func (w *Writer) flushAndNewWriter() error {
-	var err error
-	err = w.flush(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	newWriter, err := w.createSSTWriter()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	w.writer = newWriter
-	return nil
 }
 
 func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
@@ -1027,17 +1012,6 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 			return errors.Trace(err)
 		}
 		w.writer = writer
-	}
-	if len(kvs) == 0 {
-		return nil
-	}
-	if w.prevRowID != 0 && kvs[0].RowID > w.prevRowID+1 {
-		// rowID leap. probably re-alloc id
-		// should write to different sst
-		err := w.flushAndNewWriter()
-		if err != nil {
-			return err
-		}
 	}
 
 	keyAdapter := w.engine.keyAdapter
@@ -1063,26 +1037,7 @@ func (w *Writer) appendRowsSorted(kvs []common.KvPair) error {
 		}
 		kvs = newKvs
 	}
-	startIdx := 0
-	w.prevRowID = kvs[len(kvs)-1].RowID
-	for i := 1; i < len(kvs); i++ {
-		if kvs[i].RowID > kvs[i-1].RowID+1 {
-			// leap id
-			err := w.writer.writeKVs(kvs[startIdx:i])
-			if err != nil {
-				return err
-			}
-			err = w.flushAndNewWriter()
-			if err != nil {
-				return err
-			}
-			startIdx = i
-		}
-	}
-	if startIdx < len(kvs) {
-		return w.writer.writeKVs(kvs[startIdx:])
-	}
-	return nil
+	return w.writer.writeKVs(kvs)
 }
 
 func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) error {
@@ -1149,9 +1104,6 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 }
 
 func (w *Writer) flush(ctx context.Context) error {
-	failpoint.Inject("MockFlushWriter", func() {
-		failpoint.Return(nil)
-	})
 	w.Lock()
 	defer w.Unlock()
 	if w.batchCount == 0 {
@@ -1209,8 +1161,8 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if !w.isWriteBatchSorted {
-		sort.Slice(w.writeBatch[:w.batchCount], func(i, j int) bool {
-			return bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0
+		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) bool {
+			return bytes.Compare(i.Key, j.Key) < 0
 		})
 		w.isWriteBatchSorted = true
 	}

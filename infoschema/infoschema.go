@@ -23,8 +23,11 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/mock"
+	"golang.org/x/exp/slices"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -127,7 +130,9 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		sort.Sort(result.sortedTablesBuckets[i])
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
+			return i.Meta().ID < j.Meta().ID
+		})
 	}
 	return result
 }
@@ -152,7 +157,9 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		sort.Sort(result.sortedTablesBuckets[i])
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
+			return i.Meta().ID < j.Meta().ID
+		})
 	}
 	result.schemaMetaVersion = schemaVer
 	return result
@@ -352,6 +359,9 @@ func init() {
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
 	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
+	}
+	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {
+		return MockInfoSchema(tbList)
 	}
 }
 

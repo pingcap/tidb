@@ -536,13 +536,8 @@ func TestIsNoop(t *testing.T) {
 	require.True(t, sv.IsNoop)
 }
 
-func TestInstanceScopedVars(t *testing.T) {
-	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
-	// Eventually these should be changed to use getters so that the switch
-	// statement in GetSessionOnlySysVars can be removed.
-
+func TestSessionGetterFuncs(t *testing.T) {
 	vars := NewSessionVars()
-
 	val, err := GetSessionOrGlobalSystemVar(vars, TiDBCurrentTS)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d", vars.TxnCtx.StartTS), val)
@@ -557,7 +552,22 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(info), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBGeneralLog)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInBinding)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
+	require.NoError(t, err)
+	require.Equal(t, vars.TxnScope.GetVarValue(), val)
+}
+
+func TestInstanceScopedVars(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBGeneralLog)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(ProcessGeneralLog.Load()), val)
 
@@ -610,21 +620,19 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
-	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInBinding)
-	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
-
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBConfig)
 	require.NoError(t, err)
-	require.Equal(t, vars.TxnScope.GetVarValue(), val)
+	expected, err = config.GetJSONConfig()
+	require.NoError(t, err)
+	require.Equal(t, expected, val)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLogFileMaxDays)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
 }
 
 // TestDefaultValuesAreSettable that sysvars defaults are logically valid. i.e.
@@ -645,6 +653,14 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
 		}
+	}
+}
+
+// TestSysVarNameIsLowerCase tests that no new sysvars are added with uppercase characters.
+// In MySQL variables are always lowercase, and can be set in a case-insensitive way.
+func TestSysVarNameIsLowerCase(t *testing.T) {
+	for _, sv := range GetSysVars() {
+		require.Equal(t, strings.ToLower(sv.Name), sv.Name, "sysvar name contains uppercase characters")
 	}
 }
 

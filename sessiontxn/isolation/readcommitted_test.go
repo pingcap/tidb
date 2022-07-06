@@ -29,10 +29,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testfork"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -55,26 +58,26 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	forUpdateStmt := stmts[0]
 
 	compareTS := se.GetSessionVars().TxnCtx.StartTS
-	// first ts should request from tso
+	// first ts should use the txn startTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, ts, compareTS)
 	rcCheckTS := ts
 
-	// second ts should reuse first ts
+	// second ts should reuse the txn startTS
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 
 	// when one statement did not getStmtReadTS, the next one should still reuse the first ts
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
@@ -93,7 +96,7 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 
 	// if retry succeed next statement will still use rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
@@ -103,14 +106,14 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
 
 	// `StmtErrAfterPessimisticLock` will still disable rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), readOnlyStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Equal(t, rcCheckTS, ts)
@@ -128,13 +131,67 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 
 	// only read-only stmt can retry for rc check
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), forUpdateStmt))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, ts, compareTS)
 	nextAction, err = provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, kv.ErrWriteConflict)
 	require.NoError(t, err)
 	require.Equal(t, sessiontxn.StmtActionNoIdea, nextAction)
+}
+
+func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk2.MustExec("insert into t values(1, 1)")
+
+	tk.MustExec("set @@tidb_rc_read_check_ts=1")
+	se := tk.Session()
+	ctx := context.Background()
+	provider := initializePessimisticRCProvider(t, tk)
+	txnStartTS := se.GetSessionVars().TxnCtx.StartTS
+
+	// first ts should use the txn startTS
+	stmt, _, _, err := tk.Session().PrepareStmt("select * from t")
+	require.NoError(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	require.NoError(t, err)
+	ts, err := provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Equal(t, txnStartTS, ts)
+
+	// second ts should reuse the txn startTS
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	require.NoError(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Equal(t, txnStartTS, ts)
+
+	tk2.MustExec("update t set v = v + 10 where id = 1")
+	compareTS := getOracleTS(t, se)
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	require.NoError(t, err)
+	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, compareTS, ts)
+	// retry
+	tk.Session().GetSessionVars().RetryInfo.Retrying = true
+	rs, err = tk.Session().ExecutePreparedStmt(ctx, stmt, []types.Datum{})
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
+	ts, err = provider.GetStmtForUpdateTS()
+	require.NoError(t, err)
+	require.Greater(t, ts, compareTS)
 }
 
 func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
@@ -155,7 +212,7 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 		&tikverr.ErrDeadlock{Deadlock: &kvrpcpb.Deadlock{}, IsRetryable: true},
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-		require.NoError(t, provider.OnStmtStart(context.TODO()))
+		require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.NoError(t, err)
 		require.Equal(t, sessiontxn.StmtActionRetryReady, nextAction)
@@ -167,7 +224,7 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 		errors.New("err"),
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-		require.NoError(t, provider.OnStmtStart(context.TODO()))
+		require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.Same(t, lockErr, err)
 		require.Equal(t, sessiontxn.StmtActionError, nextAction)
@@ -189,7 +246,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 
 	// first read
 	require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	readTS, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	forUpdateTS, err := provider.GetStmtForUpdateTS()
@@ -202,7 +259,7 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	compareTS = getOracleTS(t, se)
 	require.Greater(t, compareTS, readTS)
 	require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), stmt))
 	readTS, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	forUpdateTS, err = provider.GetStmtForUpdateTS()
@@ -231,61 +288,66 @@ func TestRCProviderInitialize(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
-	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+	testfork.RunTest(t, func(t *testfork.T) {
+		clearScopeSettings := forkScopeSettings(t, store)
+		defer clearScopeSettings()
 
-	// begin outside a txn
-	assert := activeRCTxnAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		tk := testkit.NewTestKit(t, store)
+		se := tk.Session()
+		tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
+		tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 
-	// begin in a txn
-	assert = activeRCTxnAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		// begin outside a txn
+		assert := activeRCTxnAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
-	assert = activeRCTxnAssert(t, se, true)
-	assert.causalConsistencyOnly = true
-	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
-	assert.Check(t)
+		// begin in a txn
+		assert = activeRCTxnAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// EnterNewTxnDefault will create an active txn, but not explicit
-	assert = activeRCTxnAssert(t, se, false)
-	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-		Type:    sessiontxn.EnterNewTxnDefault,
-		TxnMode: ast.Pessimistic,
-	}))
-	assert.Check(t)
+		// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
+		assert = activeRCTxnAssert(t, se, true)
+		assert.causalConsistencyOnly = true
+		tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
+		assert.Check(t)
 
-	// non-active txn and then active it
-	tk.MustExec("rollback")
-	tk.MustExec("set @@autocommit=0")
-	assert = inactiveRCTxnAssert(se)
-	assertAfterActive := activeRCTxnAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider := assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	ts, err := provider.GetStmtReadTS()
-	require.NoError(t, err)
-	assertAfterActive.Check(t)
-	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-	tk.MustExec("rollback")
+		// EnterNewTxnDefault will create an active txn, but not explicit
+		assert = activeRCTxnAssert(t, se, false)
+		require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+			Type:    sessiontxn.EnterNewTxnDefault,
+			TxnMode: ast.Pessimistic,
+		}))
+		assert.Check(t)
 
-	// Case Pessimistic Autocommit
-	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inactiveRCTxnAssert(se)
-	assertAfterActive = activeRCTxnAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	ts, err = provider.GetStmtReadTS()
-	require.NoError(t, err)
-	assertAfterActive.Check(t)
-	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-	tk.MustExec("rollback")
+		// non-active txn and then active it
+		tk.MustExec("rollback")
+		tk.MustExec("set @@autocommit=0")
+		assert = inactiveRCTxnAssert(se)
+		assertAfterActive := activeRCTxnAssert(t, se, true)
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		provider := assert.CheckAndGetProvider(t)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+		ts, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		assertAfterActive.Check(t)
+		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+		tk.MustExec("rollback")
+
+		// Case Pessimistic Autocommit
+		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+		assert = inactiveRCTxnAssert(se)
+		assertAfterActive = activeRCTxnAssert(t, se, true)
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		provider = assert.CheckAndGetProvider(t)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+		ts, err = provider.GetStmtReadTS()
+		require.NoError(t, err)
+		assertAfterActive.Check(t)
+		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+		tk.MustExec("rollback")
+	})
 }
 
 func TestTidbSnapshotVarInRC(t *testing.T) {
@@ -346,12 +408,12 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	}
 
 	// information schema and ts should equal to snapshot when tidb_snapshot is set
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseSnapshot()
 
 	// information schema and ts will restore when set tidb_snapshot to empty
 	tk.MustExec("set @@tidb_snapshot=''")
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseTxn(false)
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
@@ -372,7 +434,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
 			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider = assert.CheckAndGetProvider(t)
-			require.NoError(t, provider.OnStmtStart(context.TODO()))
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
 			assertAfterUseSnapshot.Check(t)
 		}()
@@ -461,7 +523,7 @@ func TestConflictErrorsInRC(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
-func activeRCTxnAssert(t *testing.T, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
+func activeRCTxnAssert(t testing.TB, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRCTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "READ-COMMITTED",
@@ -481,7 +543,7 @@ func inactiveRCTxnAssert(sctx sessionctx.Context) *txnAssert[*isolation.Pessimis
 	}
 }
 
-func initializePessimisticRCProvider(t *testing.T, tk *testkit.TestKit) *isolation.PessimisticRCTxnContextProvider {
+func initializePessimisticRCProvider(t testing.TB, tk *testkit.TestKit) *isolation.PessimisticRCTxnContextProvider {
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	assert := activeRCTxnAssert(t, tk.Session(), true)
 	tk.MustExec("begin pessimistic")
