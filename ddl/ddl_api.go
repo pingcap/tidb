@@ -3078,7 +3078,7 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 func allSupported(specs []*ast.AlterTableSpec) bool {
 	for _, s := range specs {
 		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey:
 		default:
 			return false
 		}
@@ -3088,7 +3088,6 @@ func allSupported(specs []*ast.AlterTableSpec) bool {
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-
 	validSpecs, err := resolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
 		return errors.Trace(err)
@@ -3119,10 +3118,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	if len(validSpecs) > 1 {
 		useMultiSchemaChange := false
 		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn,
+			ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
 			useMultiSchemaChange = true
-		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-			err = d.DropIndexes(sctx, ident, validSpecs)
 		default:
 			return dbterror.ErrRunMultiSchemaChanges
 		}
@@ -4033,6 +4031,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	if err != nil {
 		return err
 	}
+
 	var multiSchemaInfo *model.MultiSchemaInfo
 	if variable.EnableChangeMultiSchema.Load() {
 		multiSchemaInfo = &model.MultiSchemaInfo{}
@@ -5292,7 +5291,8 @@ func (d *ddl) dropTableObject(
 					zap.String("table", fullti.Name.O),
 				)
 				exec := ctx.(sqlexec.RestrictedSQLExecutor)
-				_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
+				internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+				_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 				if err != nil {
 					return err
 				}
@@ -5963,10 +5963,12 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 				// Check wrong reference options of foreign key on stored generated columns
 				switch refer.OnUpdate.ReferOpt {
 				case ast.ReferOptionCascade, ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					//nolint: gosec
 					return nil, dbterror.ErrWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON UPDATE " + refer.OnUpdate.ReferOpt.String())
 				}
 				switch refer.OnDelete.ReferOpt {
 				case ast.ReferOptionSetNull, ast.ReferOptionSetDefault:
+					//nolint: gosec
 					return nil, dbterror.ErrWrongFKOptionForGeneratedColumn.GenWithStackByArgs("ON DELETE " + refer.OnDelete.ReferOpt.String())
 				}
 				continue
@@ -6124,65 +6126,11 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		SchemaID:    schema.ID,
 		TableID:     t.Meta().ID,
 		SchemaName:  schema.Name.L,
+		SchemaState: indexInfo.State,
 		TableName:   t.Meta().Name.L,
 		Type:        jobTp,
 		BinlogInfo:  &model.HistoryInfo{},
-		SchemaState: indexInfo.State,
-		Args:        []interface{}{indexName},
-	}
-
-	err = d.DoDDLJob(ctx, job)
-	// index not exists, but if_exists flags is true, so we ignore this error.
-	if dbterror.ErrCantDropFieldOrKey.Equal(err) && ifExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-	err = d.callHookOnChanged(job, err)
-	return errors.Trace(err)
-}
-
-func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return err
-	}
-
-	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Indexes"))
-	}
-	indexNames := make([]model.CIStr, 0, len(specs))
-	ifExists := make([]bool, 0, len(specs))
-	for _, spec := range specs {
-		var indexName model.CIStr
-		if spec.Tp == ast.AlterTableDropPrimaryKey {
-			indexName = model.NewCIStr(mysql.PrimaryKeyName)
-		} else {
-			indexName = model.NewCIStr(spec.Name)
-		}
-
-		indexInfo := t.Meta().FindIndexByName(indexName.L)
-		if indexInfo != nil {
-			_, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
-			if err != nil {
-				return err
-			}
-			if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		indexNames = append(indexNames, indexName)
-		ifExists = append(ifExists, spec.IfExists)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionDropIndexes,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexNames, ifExists},
+		Args:        []interface{}{indexName, ifExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7078,8 +7026,8 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 	return errors.Trace(err)
 }
 
-func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error) {
+	schema, t, err := d.getSchemaAndTableByIdent(sctx, ti)
 	if err != nil {
 		return err
 	}
@@ -7107,17 +7055,18 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
 
-	ddlQuery, _ := ctx.Value(sessionctx.QueryString).(string)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	ddlQuery, _ := sctx.Value(sessionctx.QueryString).(string)
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
-	_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil,
+	_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil,
 		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	ctx.SetValue(sessionctx.QueryString, ddlQuery)
+	sctx.SetValue(sessionctx.QueryString, ddlQuery)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -7129,14 +7078,16 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		Args:       []interface{}{},
 	}
 
-	err = d.DoDDLJob(ctx, job)
+	err = d.DoDDLJob(sctx, job)
 	return d.callHookOnChanged(job, err)
 }
 
 func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
 	const cacheTableSizeLimit = 64 * (1 << 20) // 64M
 	succ := true
-	err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		txn.SetOption(kv.RequestSourceType, kv.InternalTxnCacheTable)
 		prefix := tablecodec.GenTablePrefix(tableID)
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {

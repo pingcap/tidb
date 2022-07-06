@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"math"
-	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -32,7 +31,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -42,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -49,22 +48,6 @@ var (
 	_ Executor = &ExecuteExec{}
 	_ Executor = &PrepareExec{}
 )
-
-type paramMarkerSorter struct {
-	markers []ast.ParamMarkerExpr
-}
-
-func (p *paramMarkerSorter) Len() int {
-	return len(p.markers)
-}
-
-func (p *paramMarkerSorter) Less(i, j int) bool {
-	return p.markers[i].(*driver.ParamMarkerExpr).Offset < p.markers[j].(*driver.ParamMarkerExpr).Offset
-}
-
-func (p *paramMarkerSorter) Swap(i, j int) {
-	p.markers[i], p.markers[j] = p.markers[j], p.markers[i]
-}
 
 type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
@@ -184,16 +167,17 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
 	// sort it by position.
-	sorter := &paramMarkerSorter{markers: extractor.markers}
-	sort.Sort(sorter)
-	e.ParamCount = len(sorter.markers)
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
+		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
+	})
+	e.ParamCount = len(extractor.markers)
 	for i := 0; i < e.ParamCount; i++ {
-		sorter.markers[i].SetOrder(i)
+		extractor.markers[i].SetOrder(i)
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
 		StmtType:      GetStmtLabel(stmt),
-		Params:        sorter.markers,
+		Params:        extractor.markers,
 		SchemaVersion: ret.InfoSchema.SchemaMetaVersion(),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
@@ -333,14 +317,11 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	isStaleness := snapshotTS != 0
-	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
-	execStmt.BinaryArgs = args
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err
@@ -349,21 +330,16 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
-		staleread.AssertStmtStaleness(sctx, snapshotTS != 0)
-		if snapshotTS != 0 {
-			sessiontxn.AssertTxnManagerReadTS(sctx, snapshotTS)
-		}
 	})
 
 	stmt := &ExecStmt{
-		GoCtx:            ctx,
-		InfoSchema:       is,
-		Plan:             execPlan,
-		StmtNode:         execStmt,
-		Ctx:              sctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
-		ReplicaReadScope: replicaReadScope,
+		GoCtx:       ctx,
+		InfoSchema:  is,
+		Plan:        execPlan,
+		StmtNode:    execStmt,
+		Ctx:         sctx,
+		OutputNames: names,
+		Ti:          &TelemetryInfo{},
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

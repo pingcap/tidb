@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"go.uber.org/zap"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 const logProgressTick = 2 * time.Minute

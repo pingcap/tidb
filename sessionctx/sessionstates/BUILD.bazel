@@ -17,6 +17,7 @@ go_test(
     timeout = "short",
     srcs = ["session_states_test.go"],
     deps = [
+        "//config",
         "//errno",
         "//parser/mysql",
         "//parser/terror",

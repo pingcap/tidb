@@ -23,7 +23,6 @@ import (
 	"math"
 	"math/rand"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +58,7 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // PreparedStmtCount is exported for test.
@@ -1158,6 +1158,13 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// TiFlash related optimization, only for MPP.
+	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -2419,7 +2426,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 			for backoff := range logItems.CopTasks.TotBackoffTimes {
 				backoffs = append(backoffs, backoff)
 			}
-			sort.Strings(backoffs)
+			slices.Sort(backoffs)
 
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",

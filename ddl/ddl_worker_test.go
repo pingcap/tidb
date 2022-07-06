@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
+
 package ddl_test
 
 import (
@@ -113,7 +113,8 @@ func TestParallelDDL(t *testing.T) {
 			qLen2 := int64(0)
 			var err error
 			for {
-				checkErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+				checkErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 					m := meta.NewMeta(txn)
 					qLen1, err = m.DDLJobQueueLen()
 					if err != nil {

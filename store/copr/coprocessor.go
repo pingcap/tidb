@@ -93,6 +93,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		req.Paging = false
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
+	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
@@ -165,6 +166,7 @@ type copTask struct {
 	pagingSize uint64
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
+	requestSource  util.RequestSource
 }
 
 func (r *copTask) String() string {
@@ -212,15 +214,16 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				pagingSize = paging.MinPagingSize
 			}
 			tasks = append(tasks, &copTask{
-				region:     loc.Location.Region,
-				bucketsVer: loc.getBucketVersion(),
-				ranges:     loc.Ranges.Slice(i, nextI),
-				respChan:   make(chan *copResponse, chanSize),
-				cmdType:    cmdType,
-				storeType:  req.StoreType,
-				eventCb:    eventCb,
-				paging:     req.Paging,
-				pagingSize: pagingSize,
+				region:        loc.Location.Region,
+				bucketsVer:    loc.getBucketVersion(),
+				ranges:        loc.Ranges.Slice(i, nextI),
+				respChan:      make(chan *copResponse, chanSize),
+				cmdType:       cmdType,
+				storeType:     req.StoreType,
+				eventCb:       eventCb,
+				paging:        req.Paging,
+				pagingSize:    pagingSize,
+				requestSource: req.RequestSource,
 			})
 			i = nextI
 		}
@@ -712,15 +715,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	var cacheKey []byte
 	var cacheValue *coprCacheValue
 
-	// TODO: cache paging copr
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore such requests directly to avoid slowly building the cache key.
-	if task.cmdType == tikvrpc.CmdCop && !task.paging && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
+	if task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(&copReq)
 		if err == nil {
 			cacheKey = cKey
 			cValue := worker.store.coprCache.Get(cKey)
 			copReq.IsCacheEnabled = true
+
 			if cValue != nil && cValue.RegionID == task.region.GetID() && cValue.TimeStamp <= worker.req.StartTs {
 				// Append cache version to the request to skip Coprocessor computation if possible
 				// when request result is cached
@@ -741,6 +744,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
+		RequestSource:  task.requestSource.GetRequestSource(),
 	})
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
@@ -779,7 +783,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
 
 	if worker.req.Paging {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, task, ch, costTime)
+		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, costTime)
 	}
 
 	// Handles the response for non-paging copTask.
@@ -848,8 +852,8 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
-	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, nil, nil, task, ch, nil, costTime)
+func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, costTime time.Duration) ([]*copTask, error) {
+	remainedTasks, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, ch, nil, costTime)
 	if err != nil || len(remainedTasks) != 0 {
 		// If there is region error or lock error, keep the paging size and retry.
 		for _, remainedTask := range remainedTasks {
@@ -895,7 +899,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		return buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
 	}
+	var resolveLockDetail *util.ResolveLockDetail
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
+		resolveLockDetail = worker.getLockResolverDetails()
 		// Be care that we didn't redact the SQL statement because the log is DEBUG level.
 		if task.eventCb != nil {
 			task.eventCb(trxevents.WrapCopMeetLock(&trxevents.CopMeetLock{
@@ -905,11 +911,17 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
 				zap.Stringer("lock", lockErr))
 		}
-		msBeforeExpired, err1 := worker.kvclient.ResolveLocks(bo.TiKVBackoffer(), worker.req.StartTs, []*txnlock.Lock{txnlock.NewLock(lockErr)})
+		resolveLocksOpts := txnlock.ResolveLocksOptions{
+			CallerStartTS: worker.req.StartTs,
+			Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
+			Detail:        resolveLockDetail,
+		}
+		resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
 		err1 = derr.ToTiDBErr(err1)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
+		msBeforeExpired := resolveLocksRes.TTL
 		if msBeforeExpired > 0 {
 			if err := bo.BackoffWithMaxSleepTxnLockFast(int(msBeforeExpired), errors.New(lockErr.String())); err != nil {
 				return nil, errors.Trace(err)
@@ -944,7 +956,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
+	worker.handleCollectExecutionInfo(bo, rpcCtx, resp, resolveLockDetail)
 	resp.respTime = costTime
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
@@ -954,6 +966,26 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		data := make([]byte, len(cacheValue.Data))
 		copy(data, cacheValue.Data)
 		resp.pbResp.Data = data
+		if worker.req.Paging {
+			var start, end []byte
+			if cacheValue.PageStart != nil {
+				start = make([]byte, len(cacheValue.PageStart))
+				copy(start, cacheValue.PageStart)
+			}
+			if cacheValue.PageEnd != nil {
+				end = make([]byte, len(cacheValue.PageEnd))
+				copy(end, cacheValue.PageEnd)
+			}
+			// When paging protocol is used, the response key range is part of the cache data.
+			if start != nil || end != nil {
+				resp.pbResp.Range = &coprocessor.KeyRange{
+					Start: start,
+					End:   end,
+				}
+			} else {
+				resp.pbResp.Range = nil
+			}
+		}
 		resp.detail.CoprCacheHit = true
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
@@ -969,6 +1001,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 						RegionID:          task.region.GetID(),
 						RegionDataVersion: resp.pbResp.CacheLastVersion,
 					}
+					// When paging protocol is used, the response key range is part of the cache data.
+					if r := resp.pbResp.GetRange(); r != nil {
+						newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
+						newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
+					}
+
 					worker.store.coprCache.Set(cacheKey, &newCacheValue)
 				}
 			}
@@ -978,7 +1016,14 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	return nil, nil
 }
 
-func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetail {
+	if !worker.enableCollectExecutionInfo {
+		return nil
+	}
+	return &util.ResolveLockDetail{}
+}
+
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, resolveLockDetail *util.ResolveLockDetail) {
 	defer func() {
 		worker.kvclient.Stats = nil
 	}()
@@ -1006,6 +1051,9 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	sd := &util.ScanDetail{}
+	if resolveLockDetail != nil {
+		sd.ResolveLock = resolveLockDetail
+	}
 	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.

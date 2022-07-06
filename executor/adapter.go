@@ -197,8 +197,6 @@ type TelemetryInfo struct {
 type ExecStmt struct {
 	// GoCtx stores parent go context.Context for a stmt.
 	GoCtx context.Context
-	// ReplicaReadScope indicates the scope the store selector scope the request visited
-	ReplicaReadScope string
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -229,7 +227,7 @@ func (a ExecStmt) GetStmtNode() ast.StmtNode {
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
-func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*recordSet, error) {
+func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("ExecStmt.PointGet", opentracing.ChildOf(span.Context()))
 		span1.LogKV("sql", a.OriginText())
@@ -240,7 +238,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
 		// stale read should not reach here
 		staleread.AssertStmtStaleness(a.Ctx, false)
-		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
+		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, a.InfoSchema)
 	})
 
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -259,12 +257,12 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.PsStmt.PreparedAst.CachedPlan.(*plannercore.PointGetPlan)
-			exec.Init(pointGetPlan, startTs)
+			exec.Init(pointGetPlan)
 			a.PsStmt.Executor = exec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.ReplicaReadScope)
+		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -317,11 +315,14 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
 		staleread.AssertStmtStaleness(a.Ctx, ret.IsStaleness)
+		if ret.IsStaleness {
+			sessiontxn.AssertTxnManagerReadTS(a.Ctx, ret.LastSnapshotTS)
+		}
 	})
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
-	a.ReplicaReadScope = ret.ReadReplicaScope
-	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && a.ReplicaReadScope == kv.GlobalReplicaScope {
+	replicaReadScope := sessiontxn.GetTxnManager(a.Ctx).GetReadReplicaScope()
+	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && replicaReadScope == kv.GlobalReplicaScope {
 		logutil.BgLogger().Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
 	}
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
@@ -824,7 +825,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.ReplicaReadScope)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
