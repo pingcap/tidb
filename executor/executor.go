@@ -613,11 +613,12 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	jobs, err := ddl.GetAllDDLJobs(meta.NewMeta(txn))
+	m := meta.NewMeta(txn)
+	jobs, err := ddl.GetAllDDLJobs(m)
 	if err != nil {
 		return err
 	}
-	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, ddl.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}
