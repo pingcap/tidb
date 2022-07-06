@@ -142,6 +142,34 @@
       ".*failpoint_binding__.go$": "ignore generated code"
     }
   },
+  "gci": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      ".*\\.pb\\.go$": "generated code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "util/printer/printer.go": "ignore util/printer code"
+    }
+  },
+  "gosec": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "parser/goyacc/": "ignore goyacc code",
+      ".*_test\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      "tools/check/ut.go": "ignore tools/check code",
+      "tools/check/xprog.go": "ignore tools/check code",
+      "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
+      "tools/check/xprog.go:": "ignore tools/check code",
+      "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "GOROOT/": "ignore code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "httpresponse": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -174,6 +202,13 @@
   },
   "lostcancel": {
     "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "misspell": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
