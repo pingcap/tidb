@@ -2010,6 +2010,7 @@ func (e *ShowExec) fetchShowBuiltins() error {
 }
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
+	// session states
 	sessionStates := &sessionstates.SessionStates{}
 	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
 	if err != nil {
@@ -2023,8 +2024,12 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
-	// This will be implemented in future PRs.
-	tokenBytes, err := gjson.Marshal("")
+	// session token
+	token, err := sessionstates.CreateSessionToken(e.ctx.GetSessionVars().User.Username)
+	if err != nil {
+		return err
+	}
+	tokenBytes, err := gjson.Marshal(token)
 	if err != nil {
 		return errors.Trace(err)
 	}
