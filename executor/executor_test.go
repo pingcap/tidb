@@ -5653,7 +5653,7 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, 12, row.Len())
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5678,7 +5678,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
@@ -5742,7 +5742,7 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 
 	// Split region for history ddl job queues.
@@ -5751,7 +5751,7 @@ func TestAdmin(t *testing.T) {
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
-	historyJobs2, err := ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }
