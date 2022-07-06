@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -58,6 +57,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -1121,22 +1121,10 @@ func GetAllDDLJobs(t *meta.Meta) ([]*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	jobs := append(generalJobs, addIdxJobs...)
-	sort.Sort(jobArray(jobs))
+	slices.SortFunc(jobs, func(i, j *model.Job) bool {
+		return i.ID < j.ID
+	})
 	return jobs, nil
-}
-
-type jobArray []*model.Job
-
-func (v jobArray) Len() int {
-	return len(v)
-}
-
-func (v jobArray) Less(i, j int) bool {
-	return v[i].ID < v[j].ID
-}
-
-func (v jobArray) Swap(i, j int) {
-	v[i], v[j] = v[j], v[i]
 }
 
 // MaxHistoryJobs is exported for testing.

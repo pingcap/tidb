@@ -3763,8 +3763,8 @@ def go_deps():
         name = "org_golang_x_exp",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/exp",
-        sum = "h1:rxKZ2gOnYxjfmakvUUqh9Gyb6KXfrj7JWTxORTYqb0E=",
-        version = "v0.0.0-20220426173459-3bcf042a4bf5",
+        sum = "h1:TfdoLivD44QwvssI9Sv1xwa5DcL5XQr4au4sZ2F2NV4=",
+        version = "v0.0.0-20220428152302-39d4317da171",
     )
     go_repository(
         name = "org_golang_x_exp_typeparams",
