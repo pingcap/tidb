@@ -430,6 +430,11 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
+
+	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
+	// 1. For ExchangeSender, means its output will be partitioned by hash key.
+	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
+	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
 // Cost implements PhysicalPlan interface.
@@ -444,8 +449,9 @@ func (p *basePhysicalPlan) SetCost(cost float64) {
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
-		basePlan: p.basePlan,
-		self:     newSelf,
+		basePlan:                             p.basePlan,
+		self:                                 newSelf,
+		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()

@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,6 +70,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -351,13 +351,14 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		b.err = err
 		return nil
 	}
-	txn, err := e.ctx.Txn(true)
+
+	session, err := e.getSysSession()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-
-	ddlInfo, err := ddl.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfoWithNewTxn(session)
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3247,7 +3248,9 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	// Sort the partition is necessary to make the final multiple partition key ranges ordered.
-	sort.Sort(partitionSlice(partitions))
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
+		return i.GetPhysicalID() < j.GetPhysicalID()
+	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
 		partitions: partitions,
@@ -3369,7 +3372,9 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	}
 
 	// To make the final key ranges involving multiple partitions ordered.
-	sort.Sort(partitionSlice(usedPartition))
+	slices.SortFunc(usedPartition, func(i, j table.PhysicalTable) bool {
+		return i.GetPhysicalID() < j.GetPhysicalID()
+	})
 	return usedPartition, true, contentPos, nil
 }
 
@@ -3956,8 +3961,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			count += len(lookUpContents)
 		}
 		// The key ranges should be ordered.
-		sort.Slice(kvRanges, func(i, j int) bool {
-			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
 		})
 		e.updateRowsCount(float64(count))
 		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
@@ -3994,8 +3999,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 
 	// The key ranges should be ordered.
-	sort.Slice(kvRanges, func(i, j int) bool {
-		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
 	e.updateRowsCount(float64(count))
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
@@ -4024,21 +4029,6 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
-}
-
-// partitionSlice implement the sort interface.
-type partitionSlice []table.PhysicalTable
-
-func (s partitionSlice) Len() int {
-	return len(s)
-}
-
-func (s partitionSlice) Less(i, j int) bool {
-	return s[i].GetPhysicalID() < s[j].GetPhysicalID()
-}
-
-func (s partitionSlice) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
@@ -4122,8 +4112,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
 	if canReorderHandles {
-		sort.Slice(handles, func(i, j int) bool {
-			return handles[i].Compare(handles[j]) < 0
+		slices.SortFunc(handles, func(i, j kv.Handle) bool {
+			return i.Compare(j) < 0
 		})
 	}
 	var b distsql.RequestBuilder
@@ -4369,8 +4359,8 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
-		sort.Slice(kvRanges, func(i, j int) bool {
-			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
 		})
 		return kvRanges, nil
 	}

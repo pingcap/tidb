@@ -689,55 +689,6 @@ func TestReorg(t *testing.T) {
 	}
 }
 
-func TestGetDDLInfo(t *testing.T) {
-	store, clean := newMockStore(t)
-	defer clean()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-
-	dbInfo2 := &model.DBInfo{
-		ID:    2,
-		Name:  model.NewCIStr("b"),
-		State: model.StateNone,
-	}
-	job := &model.Job{
-		SchemaID: dbInfo2.ID,
-		Type:     model.ActionCreateSchema,
-		RowCount: 0,
-	}
-	job1 := &model.Job{
-		SchemaID: dbInfo2.ID,
-		Type:     model.ActionAddIndex,
-		RowCount: 0,
-	}
-
-	err = m.EnQueueDDLJob(job)
-	require.NoError(t, err)
-
-	info, err := GetDDLInfo(txn)
-	require.NoError(t, err)
-	require.Len(t, info.Jobs, 1)
-	require.Equal(t, job, info.Jobs[0])
-	require.Nil(t, info.ReorgHandle)
-
-	// two jobs
-	m = meta.NewMeta(txn, meta.AddIndexJobListKey)
-	err = m.EnQueueDDLJob(job1)
-	require.NoError(t, err)
-
-	info, err = GetDDLInfo(txn)
-	require.NoError(t, err)
-	require.Len(t, info.Jobs, 2)
-	require.Equal(t, job, info.Jobs[0])
-	require.Equal(t, job1, info.Jobs[1])
-	require.Nil(t, info.ReorgHandle)
-
-	err = txn.Rollback()
-	require.NoError(t, err)
-}
-
 func TestGetDDLJobs(t *testing.T) {
 	store, clean := newMockStore(t)
 	defer clean()
@@ -952,7 +903,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 		err = AddHistoryDDLJob(m, jobs[i], true)
 		require.NoError(t, err)
 
-		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+		historyJobs, err := GetLastNHistoryDDLJobs(m, DefNumHistoryJobs)
 		require.NoError(t, err)
 
 		if i+1 > MaxHistoryJobs {
@@ -963,7 +914,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	}
 
 	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+	historyJobs, err := GetLastNHistoryDDLJobs(m, DefNumHistoryJobs)
 	require.NoError(t, err)
 	require.Len(t, historyJobs, MaxHistoryJobs)
 
