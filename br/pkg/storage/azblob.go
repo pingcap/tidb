@@ -12,15 +12,14 @@ import (
 	"path"
 	"strings"
 
-	"github.com/google/uuid"
-	"github.com/spf13/pflag"
-
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
 

@@ -1016,6 +1016,7 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 
 	sql := `select TABLE_SCHEMA,TABLE_NAME,TABLE_ROWS,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,INDEX_LENGTH,DATA_FREE from INFORMATION_SCHEMA.TABLES`
 	if len(condition) > 0 {
+		//nolint: gosec
 		sql += ` WHERE ` + strings.Join(condition, ` AND `)
 	}
 	var results sqlexec.RecordSet

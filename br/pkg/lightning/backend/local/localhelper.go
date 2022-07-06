@@ -359,7 +359,7 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 		if err != nil {
 			return errors.Trace(err)
 		}
-
+		//nolint: errcheck
 		defer rows.Close()
 		var (
 			regionID uint64
