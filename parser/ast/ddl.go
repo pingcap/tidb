@@ -2569,6 +2569,8 @@ const (
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
+	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
+	AlterTableSetTiFlashMode
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2665,6 +2667,7 @@ type AlterTableSpec struct {
 	Num              uint64
 	Visibility       IndexVisibility
 	TiFlashReplica   *TiFlashReplicaSpec
+	TiFlashMode      model.TiFlashMode
 	Writeable        bool
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
@@ -2727,6 +2730,9 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case AlterTableSetTiFlashMode:
+		ctx.WriteKeyWord("SET TIFLASH MODE ")
+		ctx.WriteKeyWord(n.TiFlashMode.String())
 	case AlterTableAddStatistics:
 		ctx.WriteKeyWord("ADD STATS_EXTENDED ")
 		if n.IfNotExists {
