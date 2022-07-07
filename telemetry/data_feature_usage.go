@@ -37,15 +37,16 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex          *ClusterIndexUsage             `json:"clusterIndex"`
-	NewClusterIndex       *NewClusterIndexUsage          `json:"newClusterIndex"`
-	TemporaryTable        bool                           `json:"temporaryTable"`
-	CTE                   *m.CTEUsageCounter             `json:"cte"`
-	CachedTable           bool                           `json:"cachedTable"`
-	AutoCapture           bool                           `json:"autoCapture"`
-	PlacementPolicyUsage  *placementPolicyUsage          `json:"placementPolicy"`
-	NonTransactionalUsage *m.NonTransactionalStmtCounter `json:"nonTransactional"`
-	GlobalKill            bool                           `json:"globalKill"`
+	ClusterIndex          *ClusterIndexUsage               `json:"clusterIndex"`
+	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
+	TemporaryTable        bool                             `json:"temporaryTable"`
+	CTE                   *m.CTEUsageCounter               `json:"cte"`
+	CachedTable           bool                             `json:"cachedTable"`
+	AutoCapture           bool                             `json:"autoCapture"`
+	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
+	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
+	GlobalKill            bool                             `json:"globalKill"`
+	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
 }
 
 type placementPolicyUsage struct {
@@ -69,6 +70,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.Txn = getTxnUsageInfo(sctx)
 
 	usage.CTE = getCTEUsageInfo()
+
+	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
 	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
 
@@ -201,6 +204,7 @@ type TxnUsage struct {
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
+var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -233,7 +237,6 @@ func postReportTxnUsage() {
 	initialTxnCommitCounter = metrics.GetTxnCommitCounter()
 }
 
-// ResetCTEUsage resets CTE usages.
 func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
@@ -242,6 +245,16 @@ func postReportCTEUsage() {
 func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
+	return &diff
+}
+
+func postReportMultiSchemaChangeUsage() {
+	initialMultiSchemaChangeCounter = m.GetMultiSchemaCounter()
+}
+
+func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
+	curr := m.GetMultiSchemaCounter()
+	diff := curr.Sub(initialMultiSchemaChangeCounter)
 	return &diff
 }
 
