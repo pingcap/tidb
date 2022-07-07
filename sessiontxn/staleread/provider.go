@@ -99,10 +99,6 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	}
 
 	txnFuture := p.sctx.GetPreparedTxnFuture()
-	if txnFuture == nil {
-		return errors.AddStack(kv.ErrInvalidTxn)
-	}
-
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return err

@@ -221,10 +221,6 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	txnFuture := p.sctx.GetPreparedTxnFuture()
-	if txnFuture == nil {
-		return nil, errors.AddStack(kv.ErrInvalidTxn)
-	}
-
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
