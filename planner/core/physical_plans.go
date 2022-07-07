@@ -1077,7 +1077,7 @@ type basePhysicalAgg struct {
 	MppPartitionCols []*property.MPPPartitionColumn
 }
 
-func (p *basePhysicalAgg) isFinalAgg() bool {
+func (p *basePhysicalAgg) IsFinalAgg() bool {
 	if len(p.AggFuncs) > 0 {
 		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
 			return true
@@ -1547,11 +1547,6 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// AccessObject implements physicalScan interface.
-func (p *PhysicalCTE) AccessObject(normalized bool) string {
-	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
-}
-
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
@@ -1559,7 +1554,7 @@ func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalCTE) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainID overrides the ExplainID.

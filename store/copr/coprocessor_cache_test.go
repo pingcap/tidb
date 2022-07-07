@@ -155,8 +155,8 @@ func TestCacheValueLen(t *testing.T) {
 		RegionID:          0x1,
 		RegionDataVersion: 0x3,
 	}
-	// 72 = (8 byte pointer + 8 byte for length + 8 byte for cap) * 2 + 8 byte * 3
-	require.Equal(t, 72, v.Len())
+	// 120 = (8 byte pointer + 8 byte for length + 8 byte for cap) * 4 + 8 byte * 3
+	require.Equal(t, 120, v.Len())
 
 	v = coprCacheValue{
 		Key:               []byte("foobar"),
@@ -165,7 +165,17 @@ func TestCacheValueLen(t *testing.T) {
 		RegionID:          0x1,
 		RegionDataVersion: 0x3,
 	}
-	require.Equal(t, 72+len(v.Key)+len(v.Data), v.Len())
+	require.Equal(t, 120+len(v.Key)+len(v.Data), v.Len())
+
+	v = coprCacheValue{
+		Key:               []byte("foobar"),
+		Data:              []byte("12345678"),
+		TimeStamp:         0x123,
+		RegionID:          0x1,
+		RegionDataVersion: 0x3,
+		PageEnd:           []byte("3235"),
+	}
+	require.Equal(t, 120+len(v.Key)+len(v.Data)+len(v.PageEnd), v.Len())
 }
 
 func TestGetSet(t *testing.T) {
