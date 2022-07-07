@@ -239,7 +239,7 @@ type clusterCollector struct {
 }
 
 // NewClusterCollector creates a new cluster collector.
-// collectors are the structure transform region information to checkpoint information, 
+// collectors are the structure transform region information to checkpoint information,
 // by requesting the checkpoint of regions in the store.
 func NewClusterCollector(ctx context.Context, srv LogBackupService) *clusterCollector {
 	cx, cancel := context.WithCancel(ctx)

@@ -881,7 +881,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
-	err = do.InitLogBackup(ctx, pdClient)
+	err = do.initLogBackup(ctx, pdClient)
 	if err != nil {
 		return err
 	}
@@ -889,7 +889,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	return nil
 }
 
-func (do *Domain) InitLogBackup(ctx context.Context, pdClient pd.Client) error {
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.LogBackup.Enabled {
 		env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)

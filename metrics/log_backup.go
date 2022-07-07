@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// log backup metrics.
+// see the `Help` field for details.
 var (
 	LastCheckpoint = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",

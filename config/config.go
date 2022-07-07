@@ -414,6 +414,8 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 	return nil
 }
 
+// LogBackup is the config for log backup service.
+// For now, it includes the embed advancer.
 type LogBackup struct {
 	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
 	Enabled  bool                 `toml:"enabled" json:"enabled"`

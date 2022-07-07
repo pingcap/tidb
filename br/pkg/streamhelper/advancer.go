@@ -74,7 +74,9 @@ type CheckpointAdvancer struct {
 type advancerState interface {
 	// Note:
 	// Go doesn't support sealed classes or ADTs currently.
+	// (it can only be used at generic constraints...)
 	// Leave it empty for now.
+
 	// ~*fullScan | ~*updateSmallTree
 }
 
@@ -92,6 +94,7 @@ type updateSmallTree struct {
 	consistencyCheckTick int
 }
 
+// NewCheckpointAdvancer creates a checkpoint advancer with the env.
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 	return &CheckpointAdvancer{
 		env:   env,
@@ -337,6 +340,8 @@ func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskE
 	}
 }
 
+// beginListenTaskChange bootstraps the initial task set,
+// and returns a channel respecting the change of tasks.
 func (c *CheckpointAdvancer) beginListenTaskChange(ctx context.Context) (<-chan TaskEvent, error) {
 	ch := make(chan TaskEvent, 1024)
 	if err := c.env.Begin(ctx, ch); err != nil {
@@ -349,6 +354,8 @@ func (c *CheckpointAdvancer) beginListenTaskChange(ctx context.Context) (<-chan 
 	return ch, nil
 }
 
+// StartTaskListener starts the task listener for the advancer.
+// When no task detected, advancer would do nothing, please call this before begin the tick loop.
 func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 	cx, cancel := context.WithCancel(ctx)
 	var ch <-chan TaskEvent

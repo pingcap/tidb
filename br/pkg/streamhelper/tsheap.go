@@ -97,8 +97,8 @@ func (rst *RangesSharesTS) Less(other btree.Item) bool {
 	return rst.TS < other.(*RangesSharesTS).TS
 }
 
-// Checkpoints is a heap that collectes all checkpoints of
-// regions, it supports query the latest checkpoint fastly.
+// Checkpoints is a heap that collects all checkpoints of
+// regions, it supports query the latest checkpoint fast.
 // This structure is thread safe.
 type Checkpoints struct {
 	tree *btree.BTree
@@ -210,7 +210,7 @@ func (h *Checkpoints) ConsistencyCheck() error {
 	r := CollapseRanges(len(ranges), func(i int) kv.KeyRange { return ranges[i] })
 	if len(r) != 1 || len(r[0].StartKey) != 0 || len(r[0].EndKey) != 0 {
 		return errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
-			"the region tree cannot cover the key space, collpased: %s", logutil.StringifyKeys(r))
+			"the region tree cannot cover the key space, collapsed: %s", logutil.StringifyKeys(r))
 	}
 	return nil
 }
