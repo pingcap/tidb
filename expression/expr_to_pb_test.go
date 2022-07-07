@@ -1233,6 +1233,10 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	function, err = NewFunction(mock.NewContext(), ast.Repeat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	function, err = NewFunction(mock.NewContext(), ast.IsIPv4Mapped, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
