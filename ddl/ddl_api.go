@@ -3078,7 +3078,8 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 func allSupported(specs []*ast.AlterTableSpec) bool {
 	for _, s := range specs {
 		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey,
+			ast.AlterTableAddConstraint:
 		default:
 			return false
 		}
@@ -3113,23 +3114,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	err = checkMultiSpecs(sctx, validSpecs)
 	if err != nil {
 		return err
-	}
-
-	if len(validSpecs) > 1 {
-		useMultiSchemaChange := false
-		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn,
-			ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-			useMultiSchemaChange = true
-		default:
-			return dbterror.ErrRunMultiSchemaChanges
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !useMultiSchemaChange {
-			return nil
-		}
 	}
 
 	if len(validSpecs) > 1 {
