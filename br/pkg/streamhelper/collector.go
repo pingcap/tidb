@@ -9,10 +9,13 @@ import (
 	"strings"
 	"sync"
 
+	"sync/atomic"
+
 	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
@@ -26,7 +29,8 @@ type onSuccessHook = func(uint64, kv.KeyRange)
 
 // storeCollector collects the region checkpoints from some store.
 // it receives requests from the input channel, batching the requests, and send them to the store.
-// because the server supports batching, the range of request regions can be discreted.
+// because the server supports batching, the range of request regions can be discrete.
+// note this is a temporary struct, its lifetime is shorter that the tick of advancer.
 type storeCollector struct {
 	storeID   uint64
 	batchSize int
@@ -35,8 +39,7 @@ type storeCollector struct {
 
 	input chan RegionWithLeader
 	// the oneshot error reporter.
-	// should only be used to report the sole call of "recvLoop".
-	errMessenger chan error
+	err *atomic.Value
 	// whether the recv and send loop has exited.
 	doneMessenger chan struct{}
 	onSuccess     onSuccessHook
@@ -56,7 +59,7 @@ func newStoreCollector(storeID uint64, srv LogBackupService) *storeCollector {
 		batchSize:     defaultBatchSize,
 		service:       srv,
 		input:         make(chan RegionWithLeader, defaultBatchSize),
-		errMessenger:  make(chan error, 1),
+		err:           new(atomic.Value),
 		doneMessenger: make(chan struct{}),
 		regionMap:     make(map[uint64]kv.KeyRange),
 	}
@@ -67,18 +70,15 @@ func (c *storeCollector) reportErr(err error) {
 		log.Warn("reporting error twice, ignoring", logutil.AShortError("old", err), logutil.AShortError("new", oldErr))
 		return
 	}
-	c.errMessenger <- err
+	c.err.Store(err)
 }
 
 func (c *storeCollector) Err() error {
-	select {
-	case err := <-c.errMessenger:
-		// reschedule the error so the next time it would be the same error.
-		c.errMessenger <- err
-		return err
-	default:
+	err, ok := c.err.Load().(error)
+	if !ok {
 		return nil
 	}
+	return err
 }
 
 func (c *storeCollector) setOnSuccessHook(hook onSuccessHook) {
@@ -94,14 +94,15 @@ func (c *storeCollector) begin(ctx context.Context) {
 	close(c.doneMessenger)
 }
 
-func (c *storeCollector) recvLoop(ctx context.Context) error {
+func (c *storeCollector) recvLoop(ctx context.Context) (err error) {
+	defer utils.PanicToErr(&err)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case r, ok := <-c.input:
 			if !ok {
-				return c.flush(ctx)
+				return c.sendPendingRequests(ctx)
 			}
 
 			if r.Leader.StoreId != c.storeID {
@@ -117,7 +118,7 @@ func (c *storeCollector) recvLoop(ctx context.Context) error {
 				EpochVersion: r.Region.GetRegionEpoch().GetVersion(),
 			})
 			if len(c.currentRequest.Regions) >= c.batchSize {
-				err := c.flush(ctx)
+				err := c.sendPendingRequests(ctx)
 				if err != nil {
 					return err
 				}
@@ -173,7 +174,7 @@ func (c *storeCollector) spawn(ctx context.Context) func() (StoreCheckpoints, er
 	}
 }
 
-func (c *storeCollector) flush(ctx context.Context) error {
+func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	log.Debug("sending batch", zap.Int("size", len(c.currentRequest.Regions)), zap.Uint64("store", c.storeID))
 	cli, err := c.service.GetLogBackupClient(ctx, c.storeID)
 	if err != nil {
@@ -207,6 +208,21 @@ type runningStoreCollector struct {
 	wait      func() (StoreCheckpoints, error)
 }
 
+// clusterCollector is the controller for collecting region checkpoints for the cluster.
+// It creates multi store collectors.
+//                             ┌──────────────────────┐ Requesting   ┌────────────┐
+//                          ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
+//                          │  └──────────────────────┘              └────────────┘
+//                          │
+//                          │Owns
+// ┌──────────────────┐     │  ┌──────────────────────┐ Requesting   ┌────────────┐
+// │ ClusterCollector ├─────┼─►│ StoreCollector[id=4] ├─────────────►│ TiKV[id=4] │
+// └──────────────────┘     │  └──────────────────────┘              └────────────┘
+//                          │
+//                          │
+//                          │  ┌──────────────────────┐ Requesting   ┌────────────┐
+//                          └─►│ StoreCollector[id=5] ├─────────────►│ TiKV[id=5] │
+//                             └──────────────────────┘              └────────────┘
 type clusterCollector struct {
 	mu         sync.Mutex
 	collectors map[uint64]runningStoreCollector
@@ -222,6 +238,9 @@ type clusterCollector struct {
 	srv       LogBackupService
 }
 
+// NewClusterCollector creates a new cluster collector.
+// collectors are the structure transform region information to checkpoint information, 
+// by requesting the checkpoint of regions in the store.
 func NewClusterCollector(ctx context.Context, srv LogBackupService) *clusterCollector {
 	cx, cancel := context.WithCancel(ctx)
 	return &clusterCollector{
@@ -232,10 +251,12 @@ func NewClusterCollector(ctx context.Context, srv LogBackupService) *clusterColl
 	}
 }
 
+// setOnSuccessHook sets the hook when getting checkpoint of some region.
 func (c *clusterCollector) setOnSuccessHook(hook onSuccessHook) {
 	c.onSuccess = hook
 }
 
+// collectRegion adds a region to the collector.
 func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -274,6 +295,8 @@ func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
 	}
 }
 
+// Finish finishes collecting the region checkpoints, wait and returning the final result.
+// Note this takes the ownership of this collector, you may create a new collector for next use.
 func (c *clusterCollector) Finish(ctx context.Context) (StoreCheckpoints, error) {
 	defer c.cancel()
 	result := StoreCheckpoints{FailureSubranges: c.noLeaders}

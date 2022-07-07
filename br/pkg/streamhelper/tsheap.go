@@ -16,16 +16,48 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+// CheckpointsCache is the heap-like cache for checkpoints.
+//
+// "Checkpoint" is the "Resolved TS" of some range.
+// A resolved ts is a "watermark" for the system, which:
+//   - implies there won't be any transactions (in some range) commit with `commit_ts` smaller than this TS.
+//   - is monotonic increasing.
+// A "checkpoint" is a "safe" Resolved TS, which:
+//   - is a TS *less than* the real resolved ts of now.
+//   - is based on range (it only promises there won't be new committed txns in the range).
+//   - the checkpoint of union of ranges is the minimal checkpoint of all ranges.
+// As an example:
+// +----------------------------------+
+// ^-----------^ (Checkpoint = 42)
+//         ^---------------^ (Checkpoint = 76)
+// ^-----------------------^ (Checkpoint = min(42, 76) = 42)
+//
+// For calculating the global checkpoint, we can make a heap-like structure:
+// Checkpoint    Ranges
+// 42         -> {[0, 8], [16, 100]}
+// 1002       -> {[8, 16]}
+// 1082       -> {[100, inf]}
+// For now, the checkpoint of range [8, 16] and [100, inf] won't affect the global checkpoint
+// directly, so we can try to advance only the ranges of {[0, 8], [16, 100]} (which's checkpoint is steal).
+// Once them get advance, the global checkpoint would be advanced then,
+// and we don't need to update all ranges (because some new ranges don't need to be advanced so quickly.)
 type CheckpointsCache interface {
 	fmt.Stringer
+	// InsertRange inserts a range with specified TS to the cache.
 	InsertRange(ts uint64, rng kv.KeyRange)
+	// InsertRanges inserts a set of ranges that sharing checkpoint to the cache.
 	InsertRanges(rst RangesSharesTS)
+	// CheckpointTS returns the now global (union of all ranges) checkpoint of the cache.
 	CheckpointTS() uint64
+	// PopRangesWithGapGT pops the ranges which's checkpoint is
 	PopRangesWithGapGT(d time.Duration) []*RangesSharesTS
+	// Check whether the ranges in the cache is integrate.
 	ConsistencyCheck() error
+	// Clear the cache.
 	Clear()
 }
 
+// NoOPCheckpointCache is used when cache disabled.
 type NoOPCheckpointCache struct{}
 
 func (NoOPCheckpointCache) InsertRange(ts uint64, rng kv.KeyRange) {}
@@ -133,8 +165,8 @@ func (h *Checkpoints) Clear() {
 	h.tree.Clear(false)
 }
 
-// PopRangesWithGapGT pops ranges with gap greater than the specfied duraiton.
-// NOTE: maybe make something like `DrainIterator` for better composbility?
+// PopRangesWithGapGT pops ranges with gap greater than the specified duration.
+// NOTE: maybe make something like `DrainIterator` for better composing?
 func (h *Checkpoints) PopRangesWithGapGT(d time.Duration) []*RangesSharesTS {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -164,7 +196,7 @@ func (h *Checkpoints) CheckpointTS() uint64 {
 	return item.TS
 }
 
-// ConsistencyCheck checkes whether the tree contains the full range of key space.
+// ConsistencyCheck checks whether the tree contains the full range of key space.
 // TODO: add argument to it and check a sub range.
 func (h *Checkpoints) ConsistencyCheck() error {
 	h.mu.Lock()

@@ -106,6 +106,9 @@ func (t TaskStatus) GetMinStoreCheckpoint() Checkpoint {
 			initialized = true
 			checkpoint = cp
 		}
+		if cp.Type() == CheckpointTypeGlobal {
+			return cp
+		}
 	}
 	return checkpoint
 }
@@ -133,7 +136,6 @@ func (p *printByTable) AddTask(task TaskStatus) {
 		info := fmt.Sprintf("%s; gap=%s", pTime, gapColor.Sprint(gap))
 		return info
 	}
-	table.Add("checkpoint[global]", formatTS(task.GetMinStoreCheckpoint().TS))
 	p.addCheckpoints(&task, table, formatTS)
 	for store, e := range task.LastErrors {
 		table.Add(fmt.Sprintf("error[store=%d]", store), e.ErrorCode)
@@ -144,16 +146,17 @@ func (p *printByTable) AddTask(task TaskStatus) {
 }
 
 func (p *printByTable) addCheckpoints(task *TaskStatus, table *glue.Table, formatTS func(uint64) string) {
+	cp := task.GetMinStoreCheckpoint()
 	items := make([][2]string, 0, len(task.Checkpoints))
-outer:
-	for _, cp := range task.Checkpoints {
-		switch cp.Type() {
-		case CheckpointTypeStore:
-			items = append(items, [2]string{fmt.Sprintf("checkpoint[store=%d]", cp.ID), formatTS(cp.TS)})
-		case CheckpointTypeGlobal:
-			items = [][2]string{{"checkpoint[central-global]", formatTS(cp.TS)}}
-			break outer
+	if cp.Type() != CheckpointTypeGlobal {
+		for _, cp := range task.Checkpoints {
+			switch cp.Type() {
+			case CheckpointTypeStore:
+				items = append(items, [2]string{fmt.Sprintf("checkpoint[store=%d]", cp.ID), formatTS(cp.TS)})
+			}
 		}
+	} else {
+		items = append(items, [2]string{"checkpoint[central-global]", formatTS(cp.TS)})
 	}
 
 	for _, item := range items {

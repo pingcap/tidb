@@ -135,6 +135,17 @@ func TestInsertRanges(t *testing.T) {
 				rs(1, r("0", "1"), r("1", "2"), r("2", "3"), r("3", "4")),
 			},
 		},
+		{
+			Parameters: []streamhelper.RangesSharesTS{
+				rs(1, r("0", "1")),
+				rs(2, r("2", "3")),
+				rs(1, r("4", "5"), r("6", "7")),
+			},
+			Expected: []streamhelper.RangesSharesTS{
+				rs(1, r("0", "1"), r("4", "5"), r("6", "7")),
+				rs(2, r("2", "3")),
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -143,6 +154,8 @@ func TestInsertRanges(t *testing.T) {
 			theTree.InsertRanges(p)
 		}
 		ranges := theTree.PopRangesWithGapGT(0)
-		require.ElementsMatch(t, c.Expected, ranges)
+		for i, rs := range ranges {
+			require.ElementsMatch(t, c.Expected[i].Ranges, rs.Ranges, "case = %#v", c)
+		}
 	}
 }

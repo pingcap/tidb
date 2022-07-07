@@ -148,7 +148,7 @@ func oneStoreFailure() func(uint64) error {
 		}
 		if victim == u {
 			return status.Error(codes.NotFound,
-				"The place once lit by the warm lamplight has been swallowed up by the debris.")
+				"The place once lit by the warm lamplight has been swallowed up by the debris now.")
 		}
 		return nil
 	}
@@ -176,4 +176,10 @@ func TestOneStoreFailure(t *testing.T) {
 		c.flushAll()
 		require.ErrorContains(t, adv.OnTick(ctx), "the warm lamplight")
 	}
+
+	c.onGetClient = nil
+	cp := c.advanceCheckpoints()
+	c.flushAll()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, cp, env.checkpoint)
 }

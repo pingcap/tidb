@@ -27,7 +27,7 @@ const (
 // ad := NewAdvancerDaemon(adv, mgr)
 // loop, err := ad.Begin(ctx)
 // if err != nil {
-//	return err
+//   return err
 // }
 // loop()
 type AdvancerDaemon struct {
