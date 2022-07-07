@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sessionstates",
+    srcs = ["session_states.go"],
+    importpath = "github.com/pingcap/tidb/sessionctx/sessionstates",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//parser/types",
+        "//sessionctx/stmtctx",
+        "//types",
+    ],
+)
+
+go_test(
+    name = "sessionstates_test",
+    timeout = "short",
+    srcs = ["session_states_test.go"],
+    deps = [
+        "//config",
+        "//errno",
+        "//parser/mysql",
+        "//parser/terror",
+        "//server",
+        "//sessionctx/variable",
+        "//testkit",
+        "//types",
+        "//util/sem",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)

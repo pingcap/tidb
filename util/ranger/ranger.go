@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"math"
 	"regexp"
-	"sort"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -35,6 +34,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"golang.org/x/exp/slices"
 )
 
 func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
@@ -454,8 +454,8 @@ func UnionRanges(sctx sessionctx.Context, ranges []*Range, mergeConsecutive bool
 		}
 		objects = append(objects, &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right})
 	}
-	sort.Slice(objects, func(i, j int) bool {
-		return bytes.Compare(objects[i].encodedStart, objects[j].encodedStart) < 0
+	slices.SortFunc(objects, func(i, j *sortRange) bool {
+		return bytes.Compare(i.encodedStart, j.encodedStart) < 0
 	})
 	ranges = ranges[:0]
 	lastRange := objects[0]

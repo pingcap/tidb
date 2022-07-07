@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +55,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -330,7 +330,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
 	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rateLimit)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -605,8 +605,8 @@ func (rc *Client) CreateTables(
 		newTables = append(newTables, et.Table)
 	}
 	// Let's ensure that it won't break the original order.
-	sort.Slice(newTables, func(i, j int) bool {
-		return tbMapping[newTables[i].Name.String()] < tbMapping[newTables[j].Name.String()]
+	slices.SortFunc(newTables, func(i, j *model.TableInfo) bool {
+		return tbMapping[i.Name.String()] < tbMapping[j.Name.String()]
 	})
 
 	select {
@@ -975,8 +975,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
-	sort.Slice(ddlJobs, func(i, j int) bool {
-		return ddlJobs[i].BinlogInfo.SchemaVersion < ddlJobs[j].BinlogInfo.SchemaVersion
+	slices.SortFunc(ddlJobs, func(i, j *model.Job) bool {
+		return i.BinlogInfo.SchemaVersion < j.BinlogInfo.SchemaVersion
 	})
 
 	for _, job := range ddlJobs {
@@ -992,17 +992,50 @@ func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	return nil
 }
 
-func (rc *Client) setSpeedLimit(ctx context.Context) error {
-	if !rc.hasSpeedLimited && rc.rateLimit != 0 {
+// Mock the call of setSpeedLimit function
+func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient, rc *Client, concurrency uint) error {
+	rc.SetRateLimit(42)
+	rc.SetConcurrency(concurrency)
+	rc.hasSpeedLimited = false
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false)
+	return rc.setSpeedLimit(ctx, rc.rateLimit)
+}
+
+func (rc *Client) ResetSpeedLimit(ctx context.Context) error {
+	rc.hasSpeedLimited = false
+	err := rc.setSpeedLimit(ctx, 0)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
+	if !rc.hasSpeedLimited {
 		stores, err := conn.GetAllTiKVStores(ctx, rc.pdClient, conn.SkipTiFlash)
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		eg, ectx := errgroup.WithContext(ctx)
 		for _, store := range stores {
-			err = rc.fileImporter.setDownloadSpeedLimit(ctx, store.GetId())
-			if err != nil {
+			if err := ectx.Err(); err != nil {
 				return errors.Trace(err)
 			}
+
+			finalStore := store
+			rc.workerPool.ApplyOnErrorGroup(eg,
+				func() error {
+					err = rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					return nil
+				})
+		}
+
+		if err := eg.Wait(); err != nil {
+			return errors.Trace(err)
 		}
 		rc.hasSpeedLimited = true
 	}
@@ -1075,7 +1108,7 @@ func (rc *Client) RestoreSSTFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
-	err = rc.setSpeedLimit(ctx)
+	err = rc.setSpeedLimit(ctx, rc.rateLimit)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1199,38 +1232,52 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 	}
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = time.Second * 3
+
+	eg, ectx := errgroup.WithContext(ctx)
 	for _, store := range stores {
-		opt := grpc.WithInsecure()
-		if rc.tlsConf != nil {
-			opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
-		}
-		gctx, cancel := context.WithTimeout(ctx, time.Second*5)
-		connection, err := grpc.DialContext(
-			gctx,
-			store.GetAddress(),
-			opt,
-			grpc.WithBlock(),
-			grpc.FailOnNonTempDialError(true),
-			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-			// we don't need to set keepalive timeout here, because the connection lives
-			// at most 5s. (shorter than minimal value for keepalive time!)
-		)
-		cancel()
-		if err != nil {
+		if err := ectx.Err(); err != nil {
 			return errors.Trace(err)
 		}
-		client := import_sstpb.NewImportSSTClient(connection)
-		_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
-			Mode: mode,
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = connection.Close()
-		if err != nil {
-			log.Error("close grpc connection failed in switch mode", zap.Error(err))
-			continue
-		}
+
+		finalStore := store
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				opt := grpc.WithInsecure()
+				if rc.tlsConf != nil {
+					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
+				}
+				gctx, cancel := context.WithTimeout(ectx, time.Second*5)
+				connection, err := grpc.DialContext(
+					gctx,
+					finalStore.GetAddress(),
+					opt,
+					grpc.WithBlock(),
+					grpc.FailOnNonTempDialError(true),
+					grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+					// we don't need to set keepalive timeout here, because the connection lives
+					// at most 5s. (shorter than minimal value for keepalive time!)
+				)
+				cancel()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				client := import_sstpb.NewImportSSTClient(connection)
+				_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
+					Mode: mode,
+				})
+				if err != nil {
+					return errors.Trace(err)
+				}
+				err = connection.Close()
+				if err != nil {
+					log.Error("close grpc connection failed in switch mode", zap.Error(err))
+				}
+				return nil
+			})
+	}
+
+	if err = eg.Wait(); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -2080,6 +2127,7 @@ func (rc *Client) GenGlobalID(ctx context.Context) (int64, error) {
 	var id int64
 	storage := rc.GetDomain().Store()
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(
 		ctx,
 		storage,
@@ -2099,6 +2147,7 @@ func (rc *Client) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
 	ids := make([]int64, 0)
 	storage := rc.GetDomain().Store()
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(
 		ctx,
 		storage,
@@ -2118,6 +2167,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 	storage := rc.GetDomain().Store()
 	var schemaVersion int64
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	if err := kv.RunInNewTxn(
 		ctx,
 		storage,

@@ -25,6 +25,7 @@ go_library(
         "//util/logutil",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_text//encoding",
         "@org_uber_go_zap//:zap",
     ],
@@ -32,6 +33,7 @@ go_library(
 
 go_test(
     name = "collate_test",
+    timeout = "short",
     srcs = [
         "collate_bench_test.go",
         "collate_test.go",

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -417,6 +418,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 		return nil, nil
 	}
 	e.retrieved = true
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 
 	rules := inspectionFilter{set: e.extractor.Rules}
 	names := inspectionFilter{set: e.extractor.MetricNames}

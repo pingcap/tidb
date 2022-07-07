@@ -808,6 +808,54 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	return colInfo
 }
 
+// GetPrimaryKey extract the primary key in a table and return `IndexInfo`
+// The returned primary key could be explicit or implicit.
+// If there is no explicit primary key in table,
+// the first UNIQUE INDEX on NOT NULL columns will be the implicit primary key.
+// For more information about implicit primary key, see
+// https://dev.mysql.com/doc/refman/8.0/en/invisible-indexes.html
+func (t *TableInfo) GetPrimaryKey() *IndexInfo {
+	var implicitPK *IndexInfo
+
+	for _, key := range t.Indices {
+		if key.Primary {
+			// table has explicit primary key
+			return key
+		}
+		// The case index without any columns should never happen, but still do a check here
+		if len(key.Columns) == 0 {
+			continue
+		}
+		// find the first unique key with NOT NULL columns
+		if implicitPK == nil && key.Unique {
+			// ensure all columns in unique key have NOT NULL flag
+			allColNotNull := true
+			skip := false
+			for _, idxCol := range key.Columns {
+				col := FindColumnInfo(t.Cols(), idxCol.Name.L)
+				// This index has a column in DeleteOnly state,
+				// or it is expression index (it defined on a hidden column),
+				// it can not be implicit PK, go to next index iterator
+				if col == nil || col.Hidden {
+					skip = true
+					break
+				}
+				if !mysql.HasNotNullFlag(col.GetFlag()) {
+					allColNotNull = false
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+			if allColNotNull {
+				implicitPK = key
+			}
+		}
+	}
+	return implicitPK
+}
+
 // ColumnIsInIndex checks whether c is included in any indices of t.
 func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	for _, index := range t.Indices {
@@ -1305,6 +1353,10 @@ func (db *DBInfo) Copy() *DBInfo {
 	return &newInfo
 }
 
+func LessDBInfo(a *DBInfo, b *DBInfo) bool {
+	return a.Name.L < b.Name.L
+}
+
 // CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
@@ -1348,6 +1400,13 @@ type TableColumnID struct {
 	ColumnID int64
 }
 
+// TableItemID is composed by table ID and column/index ID
+type TableItemID struct {
+	TableID int64
+	ID      int64
+	IsIndex bool
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`
@@ -1378,8 +1437,7 @@ type PolicyInfo struct {
 }
 
 func (p *PolicyInfo) Clone() *PolicyInfo {
-	var cloned PolicyInfo
-	cloned = *p
+	cloned := *p
 	cloned.PlacementSettings = p.PlacementSettings.Clone()
 	return &cloned
 }
@@ -1441,8 +1499,7 @@ func (p *PlacementSettings) String() string {
 }
 
 func (p *PlacementSettings) Clone() *PlacementSettings {
-	var cloned PlacementSettings
-	cloned = *p
+	cloned := *p
 	return &cloned
 }
 

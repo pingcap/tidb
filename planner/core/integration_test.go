@@ -17,6 +17,7 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -176,9 +177,6 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
 	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
 	tk.MustExec("analyze table tbl")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -3685,9 +3683,6 @@ func TestExtendedStatsSwitch(t *testing.T) {
 		"1.000000 1",
 	))
 
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
-
 	// Estimated index scan count is 4 using extended stats.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
 		"Limit 1.00 root  offset:0, count:1",
@@ -4557,9 +4552,6 @@ func TestLimitIndexLookUpKeepOrder(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
 
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
-
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4584,6 +4576,34 @@ func TestDecorrelateInnerJoinInSubquery(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null, b int not null)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestDecorrelateLimitInSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test")
+	tk.MustExec("create table test(id int, value int)")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c int)")
+	tk.MustExec("insert t values(10), (8), (7), (9), (11)")
 
 	var input []string
 	var output []struct {
@@ -4757,9 +4777,6 @@ func TestMultiColMaxOneRow(t *testing.T) {
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5533,8 +5550,6 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5573,9 +5588,6 @@ func TestIssue27083(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -6536,6 +6548,107 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 	tk.MustExec("drop table hp_t;")
 }
 
+func TestTiFlashFineGrainedShuffle(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	sql := "explain select row_number() over w1 from t1 window w1 as (partition by c1);"
+
+	getStreamCountFromExplain := func(rows [][]interface{}) (res []uint64) {
+		re := regexp.MustCompile("stream_count: ([0-9]+)")
+		for _, row := range rows {
+			buf := bytes.NewBufferString("")
+			_, _ = fmt.Fprintf(buf, "%s\n", row)
+			if matched := re.FindStringSubmatch(buf.String()); matched != nil {
+				require.Equal(t, len(matched), 2)
+				c, err := strconv.ParseUint(matched[1], 10, 64)
+				require.NoError(t, err)
+				res = append(res, c)
+			}
+		}
+		return res
+	}
+
+	// tiflash_fine_grained_shuffle_stream_count should be same with tidb_max_tiflash_threads.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows := tk.MustQuery(sql).Rows()
+	streamCount := getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(10), streamCount[0])
+
+	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is -1.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = -1")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+
+	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 0")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+
+	// Disabled when tiflash_fine_grained_shuffle_stream_count is 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	require.Equal(t, len(streamCount), 0)
+
+	// Test when tiflash_fine_grained_shuffle_stream_count is greater than 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 16")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(16), streamCount[0])
+}
+
 func TestIssue33175(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -6683,4 +6796,56 @@ func TestIssue31609(t *testing.T) {
 		"    └─Sort_10 10000.00 root  Column#3",
 		"      └─MemTableScan_9 10000.00 root table:TABLES ",
 	))
+}
+
+func TestDecimalOverflow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table deci (a decimal(65,30),b decimal(65,0))")
+	tk.MustExec("insert into deci values (1234567890.123456789012345678901234567890,987654321098765432109876543210987654321098765432109876543210)")
+	tk.MustQuery("select a from deci union ALL select b from deci;").Sort().Check(testkit.Rows("1234567890.123456789012345678901234567890", "99999999999999999999999999999999999.999999999999999999999999999999"))
+}
+
+func TestIssue35083(t *testing.T) {
+	defer func() {
+		variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ProjectionPushDown = true
+	})
+	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a varchar(100), b int)")
+	tk.MustQuery("select @@tidb_opt_projection_push_down").Check(testkit.Rows("1"))
+	tk.MustQuery("explain format = 'brief' select cast(a as datetime) from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:Projection",
+		"└─Projection 10000.00 cop[tikv]  cast(test.t1.a, datetime BINARY)->Column#4",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+
+func TestIssue25813(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec("insert into t values('{\"id\": \"ish\"}');")
+	tk.MustQuery("select t2.a from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows("{\"id\": \"ish\"}"))
+
+	tk.MustQuery("explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows(
+		"Selection 8000.00 root  eq(json_extract(test.t.a, \"$.id\"), cast(\"ish\", json BINARY))",
+		"└─HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
+		"  ├─TableReader(Build) 8000.00 root  data:Selection",
+		"  │ └─Selection 8000.00 cop[tikv]  not(isnull(cast(test.t.a, var_string(4294967295))))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }

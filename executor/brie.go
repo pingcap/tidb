@@ -249,7 +249,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			return nil
 		}
 	default:
-		break
 	}
 
 	if tidbCfg.Store != "tikv" {
@@ -463,14 +462,17 @@ func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error)
 // These queries execute without privilege checking, since the calling statements
 // such as BACKUP and RESTORE have already been privilege checked.
 // NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
-func (gs *tidbGlueSession) Execute(ctx context.Context, sql string, args ...interface{}) error {
-	_, _, err := gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql, args)
+func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	_, _, err := gs.se.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql)
 	return err
 }
 
-func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	exec := gs.se.(sqlexec.SQLExecutor)
-	return exec.ExecuteInternal(ctx, sql, args...)
+	_, err := exec.ExecuteInternal(ctx, sql, args...)
+	return err
 }
 
 // CreateDatabase implements glue.Session

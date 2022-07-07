@@ -274,15 +274,15 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
 	}
 	colHist := &statistics.Column{
-		PhysicalID: col.TableID,
-		Histogram:  *hg,
-		Info:       c.Info,
-		CMSketch:   cms,
-		TopN:       topN,
-		FMSketch:   fms,
-		IsHandle:   c.IsHandle,
-		StatsVer:   rows[0].GetInt64(0),
-		Loaded:     true,
+		PhysicalID:        col.TableID,
+		Histogram:         *hg,
+		Info:              c.Info,
+		CMSketch:          cms,
+		TopN:              topN,
+		FMSketch:          fms,
+		IsHandle:          c.IsHandle,
+		StatsVer:          rows[0].GetInt64(0),
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())

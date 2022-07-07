@@ -1486,9 +1486,9 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		// ref2: https://github.com/pingcap/tidb/issues/24953
 		resultTp.AddFlag((a.GetFlag() & mysql.UnsignedFlag) & (b.GetFlag() & mysql.UnsignedFlag))
 	}
-	resultTp.SetDecimal(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+	resultTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
 	// `flen - decimal` is the fraction before '.'
-	resultTp.SetFlen(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+	resultTp.SetFlenUnderLimit(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
 	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
 		resultTp.SetFlen(mysql.MaxIntWidth)
@@ -5179,18 +5179,21 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		}
 
 		for i, col := range tbl.WritableCols() {
-			if flags[i] >= 0 && col.State != model.StatePublic {
+			if flags[i] < 0 {
+				continue
+			}
+
+			if col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
-			if flags[i] >= 0 {
-				update = true
-				if mysql.HasPriKeyFlag(col.GetFlag()) {
-					updatePK = true
-				}
-				for _, partColName := range partitionColumnNames {
-					if col.Name.L == partColName.L {
-						updatePartitionCol = true
-					}
+
+			update = true
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				updatePK = true
+			}
+			for _, partColName := range partitionColumnNames {
+				if col.Name.L == partColName.L {
+					updatePartitionCol = true
 				}
 			}
 		}
@@ -6889,6 +6892,8 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.RetType = col.RetType.Clone()
 		col.UniqueID = svar.AllocPlanColumnID()
 		col.RetType.DelFlag(mysql.NotNullFlag)
+		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.
+		col.CleanHashCode()
 	}
 	return res
 }
