@@ -487,9 +487,7 @@ func jobNeedGC(job *model.Job) bool {
 }
 
 func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, insertDeleteRangeForTable InsertDeleteRangeForTable, insertDeleteRangeForIndex InsertDeleteRangeForIndex) error {
-	oldDBID := job.SchemaID
-	oldTableID := job.TableID
-	dbReplace, exist := sr.DbMap[oldDBID]
+	dbReplace, exist := sr.DbMap[job.SchemaID]
 	if !exist {
 		return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldDBID")
 	}
@@ -548,7 +546,7 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 		return nil
 	// Truncate will generates new id for table or partition, so ts can be large enough
 	case model.ActionDropTable, model.ActionTruncateTable:
-		tableReplace, exist := dbReplace.TableMap[oldTableID]
+		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
 			return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldTableID")
 		}
