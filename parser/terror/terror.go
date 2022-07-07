@@ -104,7 +104,7 @@ func (m *code2ErrClassMap) Get(key string) (ErrClass, bool) {
 	if !have {
 		return ErrClass(-1), false
 	}
-	return ret.(ErrClass), have
+	return ret.(ErrClass), true
 }
 
 func (m *code2ErrClassMap) Put(key string, err ErrClass) {
