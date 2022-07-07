@@ -1524,7 +1524,10 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 		basic, groups := rootStats.MergeStats()
 		out.RootBasicExecInfo = basic.String()
 		for _, group := range groups {
-			out.RootGroupExecInfo = append(out.RootGroupExecInfo, group.String())
+			str := group.String()
+			if len(str) > 0 {
+				out.RootGroupExecInfo = append(out.RootGroupExecInfo, str)
+			}
 		}
 		out.ActRows = uint64(rootStats.GetActRows())
 	}
