@@ -448,14 +448,14 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
-		if !ok || c.Len() > 0 {
+		if !ok || c.IsFullLoad() {
 			return true
 		}
 		tbl = tbl.Copy()
 		tbl.Columns[c.ID] = colHist
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
-		if !ok || index.Len() > 0 {
+		if !ok || index.IsFullLoad() {
 			return true
 		}
 		tbl = tbl.Copy()
