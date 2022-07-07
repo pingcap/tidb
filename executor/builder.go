@@ -983,6 +983,12 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
+	switch v.Statement.(type) {
+	case *ast.AlterTableStmt:
+		if len(v.Statement.(*ast.AlterTableStmt).Specs) > 1 && b.Ti != nil {
+			b.Ti.UseMultiSchemaChange = true
+		}
+	}
 	e := &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
@@ -1722,6 +1728,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableAttributes),
 			strings.ToLower(infoschema.TablePlacementPolicies),
 			strings.ToLower(infoschema.TableTrxSummary),
+			strings.ToLower(infoschema.TableVariablesInfo),
 			strings.ToLower(infoschema.ClusterTableTrxSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),

@@ -161,7 +161,11 @@ func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, is
 }
 
 // RegisterPlan uses for testing.
-func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string) {
+func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string, isLarge bool) {
+	if isLarge {
+		return
+	}
+
 	digestStr := string(hack.String(planDigest))
 	c.Lock()
 	_, ok := c.planMap[digestStr]
