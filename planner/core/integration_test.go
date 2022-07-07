@@ -2757,7 +2757,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 		{"  └─Projection_4", "mpp[tiflash]", "time_to_sec(test.t.a)->Column#3"},
 		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
-	tk.MustQuery("explain analyze select time_to_sec(a) from t;").CheckAt([]int{0, 3, 6}, rows)
+	tk.MustQuery("explain select time_to_sec(a) from t;").CheckAt([]int{0, 3, 6}, rows)
 }
 
 func TestBitColumnPushDown(t *testing.T) {
