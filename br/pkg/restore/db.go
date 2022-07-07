@@ -26,7 +26,6 @@ import (
 const (
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
 	insertDeleteRangeSQLValue  = `(%?, %?, %?, %?, %?)`
-	insertDeleteRangeSQL       = insertDeleteRangeSQLPrefix + insertDeleteRangeSQLValue
 
 	batchInsertDeleteRangeSize = 256
 )

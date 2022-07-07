@@ -234,20 +234,20 @@ const (
 
 var (
 	mDDLJobALLNewTableIDSet = map[int64]struct{}{
-		mDDLJobTable0NewID:     struct{}{},
-		mDDLJobPartition0NewID: struct{}{},
-		mDDLJobPartition1NewID: struct{}{},
-		mDDLJobPartition2NewID: struct{}{},
-		mDDLJobTable1NewID:     struct{}{},
+		mDDLJobTable0NewID:     {},
+		mDDLJobPartition0NewID: {},
+		mDDLJobPartition1NewID: {},
+		mDDLJobPartition2NewID: {},
+		mDDLJobTable1NewID:     {},
 	}
 	mDDLJobALLNewPartitionIDSet = map[int64]struct{}{
-		mDDLJobPartition0NewID: struct{}{},
-		mDDLJobPartition1NewID: struct{}{},
-		mDDLJobPartition2NewID: struct{}{},
+		mDDLJobPartition0NewID: {},
+		mDDLJobPartition1NewID: {},
+		mDDLJobPartition2NewID: {},
 	}
 	mDDLJobALLIndexesIDSet = map[int64]struct{}{
-		2: struct{}{},
-		3: struct{}{},
+		2: {},
+		3: {},
 	}
 )
 

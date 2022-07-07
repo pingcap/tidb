@@ -438,7 +438,9 @@ func (sr *SchemasReplace) RewriteKvEntry(ctx context.Context, e *kv.Entry, cf st
 	if !strings.HasPrefix(string(e.Key), "mDB") {
 		if strings.HasPrefix(string(e.Key), "mDDLJobH") { // mDDLJobHistory
 			job := &model.Job{}
-			job.Decode(e.Value)
+			if err := job.Decode(e.Value); err != nil {
+				return nil, errors.Errorf(fmt.Sprintf("failed to decode the job: %s", string(e.Value)))
+			}
 			if jobNeedGC(job) {
 				return nil, sr.deleteRange(ctx, job, insertDeleteRangeForTable, insertDeleteRangeForIndex)
 			}
@@ -537,7 +539,7 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 		}
 
 		if len(newTableIDs) != len(tableIDs) {
-			return errors.Errorf("DropSchema: try to drop a non-exsitent table/partition, whose oldID doesn't exist in tableReplace")
+			return errors.Errorf("DropSchema: try to drop a non-existent table/partition, whose oldID doesn't exist in tableReplace")
 		}
 
 		if err := insertDeleteRangeForTable(ctx, newJobID, newTableIDs, sr.RewriteTS); err != nil {
