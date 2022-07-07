@@ -179,10 +179,12 @@ const (
 	TableAttributes = "ATTRIBUTES"
 	// TablePlacementPolicies is the string constant of placement policies table.
 	TablePlacementPolicies = "PLACEMENT_POLICIES"
-	// TableTrxSummary is the string constant of transaction summary table.
-	TableTrxSummary = "TRX_SUMMARY"
 	// TableVariablesInfo is the string constant of variables_info table.
 	TableVariablesInfo = "VARIABLES_INFO"
+	// TableTrxSummary is the string constant of transaction summary table.
+	TableTrxSummary = "TRX_SUMMARY"
+	// TableTrxIDDigest is the string constant of transaction id to digest mapping table.
+	TableTrxIDDigest = "TRX_ID_DIGEST"
 )
 
 const (
@@ -281,9 +283,11 @@ var tableIDMap = map[string]int64{
 	TableAttributes:                      autoid.InformationSchemaDBID + 77,
 	TableTiDBHotRegionsHistory:           autoid.InformationSchemaDBID + 78,
 	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
-	TableTrxSummary:                      autoid.InformationSchemaDBID + 80,
-	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
-	TableVariablesInfo:                   autoid.InformationSchemaDBID + 82,
+	TableVariablesInfo:                   autoid.InformationSchemaDBID + 80,
+	TableTrxSummary:                      autoid.InformationSchemaDBID + 81,
+	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 82,
+	TableTrxIDDigest:                     autoid.InformationSchemaDBID + 83,
+	ClusterTableTrxIDDigest:              autoid.InformationSchemaDBID + 84,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1470,11 +1474,6 @@ var tableAttributesCols = []columnInfo{
 	{name: "RANGES", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
-var tableTrxSummaryCols = []columnInfo{
-	{name: "DIGEST", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, comment: "Digest of a transaction"},
-	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
-}
-
 var tablePlacementPoliciesCols = []columnInfo{
 	{name: "POLICY_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
 	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
@@ -1499,6 +1498,16 @@ var tableVariablesInfoCols = []columnInfo{
 	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 	{name: "POSSIBLE_VALUES", tp: mysql.TypeVarchar, size: 256},
 	{name: "IS_NOOP", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+}
+
+var tableTrxSummaryCols = []columnInfo{
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, comment: "Digest of a transaction"},
+	{name: txninfo.AllSQLDigestsStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+}
+
+var tableTrxIDDigestCols = []columnInfo{
+	{name: "TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1903,8 +1912,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableAttributes:                         tableAttributesCols,
 	TablePlacementPolicies:                  tablePlacementPoliciesCols,
-	TableTrxSummary:                         tableTrxSummaryCols,
 	TableVariablesInfo:                      tableVariablesInfoCols,
+	TableTrxSummary:                         tableTrxSummaryCols,
+	TableTrxIDDigest:                        tableTrxIDDigestCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

@@ -728,6 +728,8 @@ type PessimisticTxn struct {
 type TrxSummary struct {
 	// how many transaction summary in `transaction_summary` each TiDB node should keep.
 	TransactionSummaryCapacity uint `toml:"transaction-summary-capacity" json:"transaction-summary-capacity"`
+	// how many transaction id to digest mapping in `trx_id_digest` each TiDB node should keep.
+	TransactionIDDigestsCapacity uint `toml:"transaction-id-digests-capacity" json:"transaction-summary-capacity"`
 	// how long a transaction should be executed to make it be recorded in `transaction_id_digest`.
 	TransactionIDDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
 }

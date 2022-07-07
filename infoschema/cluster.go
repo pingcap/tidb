@@ -46,6 +46,8 @@ const (
 	ClusterTableDeadlocks = "CLUSTER_DEADLOCKS"
 	// ClusterTableDeadlocks is the string constant of cluster transaction summary table.
 	ClusterTableTrxSummary = "CLUSTER_TRX_SUMMARY"
+	// ClusterTableDeadlocks is the string constant of cluster transaction id digest mapping table.
+	ClusterTableTrxIDDigest = "CLUSTER_TRX_ID_DIGEST"
 )
 
 // memTableToClusterTables means add memory table to cluster table.

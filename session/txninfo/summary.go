@@ -15,6 +15,7 @@
 package txninfo
 
 import (
+	"container/heap"
 	"container/list"
 	"encoding/json"
 	"fmt"
@@ -50,6 +51,78 @@ type trxSummaries struct {
 	cache    *list.List
 }
 
+// TrxIDDigest maps from txn ID to trxSummaryEntry
+type TrxIDDigest struct {
+	TrxID    uint64
+	Duration time.Duration
+	Digest   uint64
+}
+
+type trxIDDigests struct {
+	capacity  uint
+	idDigests []TrxIDDigest
+}
+
+func (pq trxIDDigests) Len() int { return len(pq.idDigests) }
+
+func (pq trxIDDigests) Less(i, j int) bool {
+	return pq.idDigests[i].Duration < pq.idDigests[j].Duration
+}
+
+func (pq trxIDDigests) Swap(i, j int) {
+	pq.idDigests[i], pq.idDigests[j] = pq.idDigests[j], pq.idDigests[i]
+}
+
+func (pq *trxIDDigests) Push(x interface{}) {
+	item := x.(TrxIDDigest)
+	pq.idDigests = append(pq.idDigests, item)
+}
+
+func (pq *trxIDDigests) Pop() interface{} {
+	old := pq.idDigests
+	n := len(old)
+	item := old[n-1]
+	pq.idDigests = old[0 : n-1]
+	return item
+}
+
+func newtTxIDDigests(capacity uint) trxIDDigests {
+	return trxIDDigests{
+		capacity:  capacity,
+		idDigests: make([]TrxIDDigest, 0, capacity),
+	}
+}
+
+func (pq *trxIDDigests) onTrxEnd(trxID uint64, duration time.Duration, digest uint64) {
+	heap.Push(pq, TrxIDDigest{
+		TrxID:    trxID,
+		Duration: duration,
+		Digest:   digest,
+	})
+	if uint(len(pq.idDigests)) > pq.capacity {
+		heap.Pop(pq)
+	}
+}
+
+func (pq *trxIDDigests) dump() [][]types.Datum {
+	var result [][]types.Datum
+	for i := 0; i < len(pq.idDigests); i++ {
+		digest := fmt.Sprintf("%x", pq.idDigests[i].Digest)
+		result = append(result, []types.Datum{
+			types.NewDatum(pq.idDigests[i].TrxID),
+			types.NewDatum(digest),
+		})
+	}
+	return result
+}
+
+func (pq *trxIDDigests) resize(capacity uint) {
+	pq.capacity = capacity
+	for uint(len(pq.idDigests)) > pq.capacity {
+		heap.Pop(pq)
+	}
+}
+
 func newTrxSummaries(capacity uint) trxSummaries {
 	return trxSummaries{
 		capacity: capacity,
@@ -58,12 +131,12 @@ func newTrxSummaries(capacity uint) trxSummaries {
 	}
 }
 
-func (s *trxSummaries) onTrxEnd(digests []string) {
+func (s *trxSummaries) onTrxEnd(digests []string) uint64 {
 	key := digest(digests)
 	element, exists := s.elements[key]
 	if exists {
 		s.cache.MoveToFront(element)
-		return
+		return key
 	}
 	e := trxSummaryEntry{
 		trxDigest: key,
@@ -75,13 +148,13 @@ func (s *trxSummaries) onTrxEnd(digests []string) {
 		delete(s.elements, last.Value.(trxSummaryEntry).trxDigest)
 		s.cache.Remove(last)
 	}
+	return key
 }
 
 func (s *trxSummaries) dumpTrxSummary() [][]types.Datum {
 	var result [][]types.Datum
 	for element := s.cache.Front(); element != nil; element = element.Next() {
 		sqls := element.Value.(trxSummaryEntry).digests
-		// for consistency with other digests in TiDB, we calculate sum256 here to generate varchar(64) digest
 		digest := fmt.Sprintf("%x", element.Value.(trxSummaryEntry).trxDigest)
 
 		res, err := json.Marshal(sqls)
@@ -111,6 +184,7 @@ type TrxHistoryRecorder struct {
 	mu          sync.Mutex
 	minDuration time.Duration
 	summaries   trxSummaries
+	idDigests   trxIDDigests
 }
 
 // DumpTrxSummary dumps the transaction summary to Datum for displaying in `TRX_SUMMARY` table.
@@ -120,21 +194,31 @@ func (recorder *TrxHistoryRecorder) DumpTrxSummary() [][]types.Datum {
 	return recorder.summaries.dumpTrxSummary()
 }
 
+// DumpTrxIDDigests dumps the transaction id-digest mapping to Datum for displaying in `TRX_ID_DIGEST` table.
+func (recorder *TrxHistoryRecorder) DumpTrxIDDigests() [][]types.Datum {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return recorder.idDigests.dump()
+}
+
 // OnTrxEnd should be called when a transaction ends, ie. leaves `TIDB_TRX` table.
 func (recorder *TrxHistoryRecorder) OnTrxEnd(info *TxnInfo) {
 	now := time.Now()
 	startTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
-	if now.Sub(startTime) < recorder.minDuration {
+	duration := now.Sub(startTime)
+	if duration < recorder.minDuration {
 		return
 	}
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	recorder.summaries.onTrxEnd(info.AllSQLDigests)
+	summaryID := recorder.summaries.onTrxEnd(info.AllSQLDigests)
+	recorder.idDigests.onTrxEnd(info.StartTS, duration, summaryID)
 }
 
-func newTrxHistoryRecorder(summariesCap uint) TrxHistoryRecorder {
+func newTrxHistoryRecorder(summariesCap uint, idDigestCap uint) TrxHistoryRecorder {
 	return TrxHistoryRecorder{
 		summaries:   newTrxSummaries(summariesCap),
+		idDigests:   newtTxIDDigests(idDigestCap),
 		minDuration: 1 * time.Second,
 	}
 }
@@ -142,6 +226,7 @@ func newTrxHistoryRecorder(summariesCap uint) TrxHistoryRecorder {
 // Clean clears the history recorder. For test only.
 func (recorder *TrxHistoryRecorder) Clean() {
 	recorder.summaries.cache = list.New()
+	recorder.idDigests.idDigests = make([]TrxIDDigest, 0, recorder.idDigests.capacity)
 }
 
 // SetMinDuration sets the minimum duration for a transaction to be recorded.
@@ -158,5 +243,12 @@ func (recorder *TrxHistoryRecorder) ResizeSummaries(capacity uint) {
 	recorder.summaries.resize(capacity)
 }
 
+// ResizeIDDigests resizes the id-digests mapping capacity.
+func (recorder *TrxHistoryRecorder) ResizeIDDigests(capacity uint) {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	recorder.idDigests.resize(capacity)
+}
+
 // Recorder is the recorder instance.
-var Recorder TrxHistoryRecorder = newTrxHistoryRecorder(0)
+var Recorder TrxHistoryRecorder = newTrxHistoryRecorder(0, 0)

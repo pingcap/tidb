@@ -170,10 +170,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlacementPolicies(sctx)
 		case infoschema.TableTrxSummary:
 			err = e.setDataForTrxSummary(sctx)
-		case infoschema.ClusterTableTrxSummary:
-			err = e.setDataForClusterTrxSummary(sctx)
 		case infoschema.TableVariablesInfo:
 			err = e.setDataForVariablesInfo(sctx)
+		case infoschema.ClusterTableTrxSummary:
+			err = e.setDataForClusterTrxSummary(sctx)
+		case infoschema.TableTrxIDDigest:
+			err = e.setDataForTrxIDDigest(sctx)
+		case infoschema.ClusterTableTrxIDDigest:
+			err = e.setDataForClusterTrxIDDigest(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2257,6 +2261,29 @@ func (e *memtableRetriever) setDataForTrxSummary(ctx sessionctx.Context) error {
 
 func (e *memtableRetriever) setDataForClusterTrxSummary(ctx sessionctx.Context) error {
 	err := e.setDataForTrxSummary(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+	if err != nil {
+		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTrxIDDigest(ctx sessionctx.Context) error {
+	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
+	if !hasProcessPriv {
+		return nil
+	}
+	rows := txninfo.Recorder.DumpTrxIDDigests()
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForClusterTrxIDDigest(ctx sessionctx.Context) error {
+	err := e.setDataForTrxIDDigest(ctx)
 	if err != nil {
 		return err
 	}
