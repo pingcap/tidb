@@ -3749,15 +3749,92 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) NONCLUSTERED\n" +
 			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (1 WEEK) FIRST PARTITION LESS THAN (2022-02-01) LAST PARTITION LESS THAN (2022-03-29) NULL PARTITION MAXVALUE PARTITION"))
-	// TODO:
-	// Test date ranges, like 2022-01-31 INTERVAL 1 MONTH (should fail for february!)
-	// test unsigned and different ranges for INT type
-	// test unsigned and different ranges for things like TO_DAYS()/TO_SECONDS()
-	// Test time zones with timestamp?
-	// Test other offsets, including when first and last have different offset vs INTERVAL
-	// Test out-of-range?
-	// Test non integer/Date column types in RANGE COLUMNS
-	// Test float types in RANGE COLUMNS?
+	// Notice that '2022-01-31' + INTERVAL n MONTH returns '2022-02-28', '2022-03-31' etc.
+	// So having a range of the last of the month (normally what you want is LESS THAN first of the months) will work
+	// if using a month with 31 days.
+	// But managing partitions with the day-part of 29, 30 or 31 will be troublesome, since once the FIRST is not 31
+	// both the ALTER TABLE t FIRST PARTITION and MERGE FIRST PARTITION will have issues
+	tk.MustExec("create table t (id date primary key, val varchar(255), key (val)) partition by range COLUMNS (id) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN ('2022-01-31') LAST PARTITION LESS THAN ('2022-05-31')")
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) NONCLUSTERED\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN (2022-01-31) LAST PARTITION LESS THAN (2022-05-31)"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `SYS_P_LT_2022-01-31` VALUES LESS THAN ('2022-01-31'),\n" +
+			" PARTITION `SYS_P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
+			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
+			" PARTITION `SYS_P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
+	tk.MustExec("alter table t first partition less than ('2022-02-28')")
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) NONCLUSTERED\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN (2022-02-28) LAST PARTITION LESS THAN (2022-05-31)"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `SYS_P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
+			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
+			" PARTITION `SYS_P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
+	// Now we are stuck, since we will use the current FIRST PARTITION to check the INTERVAL!
+	// Should we check and limit FIRST PARTITION for QUARTER and MONTH to not have day part in (29,30,31)?
+	err = tk.ExecToErr("alter table t first partition less than ('2022-03-31')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8248]INTERVAL PARTITION LAST expr (2022-03-31) not matching FIRST + n INTERVALs ('2022-02-28' + n * '1' MONTH)", err.Error())
+	tk.MustExec("alter table t last partition less than ('2022-06-30')")
+	err = tk.ExecToErr("alter table t last partition less than ('2022-07-31')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8248]INTERVAL PARTITION LAST expr (2022-07-31) not matching FIRST + n INTERVALs ('2022-06-30' + n * '1' MONTH)", err.Error())
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) NONCLUSTERED\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (1 MONTH) FIRST PARTITION LESS THAN (2022-02-28) LAST PARTITION LESS THAN (2022-06-30)"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` date NOT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  KEY `val` (`val`),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"(PARTITION `SYS_P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
+			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
+			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
+			" PARTITION `SYS_P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'),\n" +
+			" PARTITION `SYS_P_LT_2022-06-30` VALUES LESS THAN ('2022-06-30'))"))
+	tk.MustExec("drop table t")
+
 	tk.MustExec("create table t2 (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90)")
 	tk.MustExec("alter table t2 first partition less than (20)")
 	tk.MustExec("alter table t2 LAST partition less than (100)")
@@ -3769,6 +3846,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
 
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
 		"t2 CREATE TABLE `t2` (\n" +
 			"  `id` bigint(20) unsigned NOT NULL,\n" +
@@ -3796,6 +3874,96 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `SYS_P_LT_80` VALUES LESS THAN (80),\n" +
 			" PARTITION `SYS_P_LT_90` VALUES LESS THAN (90),\n" +
 			" PARTITION `SYS_P_LT_100` VALUES LESS THAN (100))"))
+	tk.MustExec("drop table t2")
+
+	err = tk.ExecToErr("create table t (id timestamp, val varchar(255)) partition by range columns (id) interval (1 minute) first partition less than ('2022-01-01 00:01:00') last partition less than ('2022-01-01 01:00:00')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1659]Field 'id' is of a not allowed type for this type of partitioning", err.Error())
+	err = tk.ExecToErr("create table t (id timestamp, val varchar(255)) partition by range (TO_SECONDS(id)) interval (3600) first partition less than (TO_SECONDS('2022-01-01 00:00:00')) last partition less than ('2022-01-02 00:00:00')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1486]Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed", err.Error())
+	tk.MustExec("create table t (id timestamp, val varchar(255)) partition by range (unix_timestamp(id)) interval (3600) first partition less than (unix_timestamp('2022-01-01 00:00:00')) last partition less than (unix_timestamp('2022-01-02 00:00:00'))")
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` timestamp NULL DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (UNIX_TIMESTAMP(`id`)) INTERVAL (3600) FIRST PARTITION LESS THAN (1640991600) LAST PARTITION LESS THAN (1641078000)"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` timestamp NULL DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (UNIX_TIMESTAMP(`id`))\n" +
+			"(PARTITION `SYS_P_LT_1640991600` VALUES LESS THAN (1640991600),\n" +
+			" PARTITION `SYS_P_LT_1640995200` VALUES LESS THAN (1640995200),\n" +
+			" PARTITION `SYS_P_LT_1640998800` VALUES LESS THAN (1640998800),\n" +
+			" PARTITION `SYS_P_LT_1641002400` VALUES LESS THAN (1641002400),\n" +
+			" PARTITION `SYS_P_LT_1641006000` VALUES LESS THAN (1641006000),\n" +
+			" PARTITION `SYS_P_LT_1641009600` VALUES LESS THAN (1641009600),\n" +
+			" PARTITION `SYS_P_LT_1641013200` VALUES LESS THAN (1641013200),\n" +
+			" PARTITION `SYS_P_LT_1641016800` VALUES LESS THAN (1641016800),\n" +
+			" PARTITION `SYS_P_LT_1641020400` VALUES LESS THAN (1641020400),\n" +
+			" PARTITION `SYS_P_LT_1641024000` VALUES LESS THAN (1641024000),\n" +
+			" PARTITION `SYS_P_LT_1641027600` VALUES LESS THAN (1641027600),\n" +
+			" PARTITION `SYS_P_LT_1641031200` VALUES LESS THAN (1641031200),\n" +
+			" PARTITION `SYS_P_LT_1641034800` VALUES LESS THAN (1641034800),\n" +
+			" PARTITION `SYS_P_LT_1641038400` VALUES LESS THAN (1641038400),\n" +
+			" PARTITION `SYS_P_LT_1641042000` VALUES LESS THAN (1641042000),\n" +
+			" PARTITION `SYS_P_LT_1641045600` VALUES LESS THAN (1641045600),\n" +
+			" PARTITION `SYS_P_LT_1641049200` VALUES LESS THAN (1641049200),\n" +
+			" PARTITION `SYS_P_LT_1641052800` VALUES LESS THAN (1641052800),\n" +
+			" PARTITION `SYS_P_LT_1641056400` VALUES LESS THAN (1641056400),\n" +
+			" PARTITION `SYS_P_LT_1641060000` VALUES LESS THAN (1641060000),\n" +
+			" PARTITION `SYS_P_LT_1641063600` VALUES LESS THAN (1641063600),\n" +
+			" PARTITION `SYS_P_LT_1641067200` VALUES LESS THAN (1641067200),\n" +
+			" PARTITION `SYS_P_LT_1641070800` VALUES LESS THAN (1641070800),\n" +
+			" PARTITION `SYS_P_LT_1641074400` VALUES LESS THAN (1641074400),\n" +
+			" PARTITION `SYS_P_LT_1641078000` VALUES LESS THAN (1641078000))"))
+	tk.MustExec("drop table t")
+
+	// OK with out-of-range partitions, see https://github.com/pingcap/tidb/issues/36022
+	tk.MustExec("create table t (id tinyint, val varchar(255)) partition by range (id) interval (50) first partition less than (-300) last partition less than (300)")
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` tinyint(4) DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`) INTERVAL (50) FIRST PARTITION LESS THAN (-300) LAST PARTITION LESS THAN (300)"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` tinyint(4) DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `SYS_P_LT_-300` VALUES LESS THAN (-300),\n" +
+			" PARTITION `SYS_P_LT_-250` VALUES LESS THAN (-250),\n" +
+			" PARTITION `SYS_P_LT_-200` VALUES LESS THAN (-200),\n" +
+			" PARTITION `SYS_P_LT_-150` VALUES LESS THAN (-150),\n" +
+			" PARTITION `SYS_P_LT_-100` VALUES LESS THAN (-100),\n" +
+			" PARTITION `SYS_P_LT_-50` VALUES LESS THAN (-50),\n" +
+			" PARTITION `SYS_P_LT_0` VALUES LESS THAN (0),\n" +
+			" PARTITION `SYS_P_LT_50` VALUES LESS THAN (50),\n" +
+			" PARTITION `SYS_P_LT_100` VALUES LESS THAN (100),\n" +
+			" PARTITION `SYS_P_LT_150` VALUES LESS THAN (150),\n" +
+			" PARTITION `SYS_P_LT_200` VALUES LESS THAN (200),\n" +
+			" PARTITION `SYS_P_LT_250` VALUES LESS THAN (250),\n" +
+			" PARTITION `SYS_P_LT_300` VALUES LESS THAN (300))"))
+	tk.MustExec("drop table t")
+	// TODO:
+	// test unsigned and different ranges for INT type
+	// test unsigned and different ranges for things like TO_DAYS()/TO_SECONDS()
+	// Test other offsets, including when first and last have different offset vs INTERVAL
+	// Test out-of-range?
+	// Test non integer/Date column types in RANGE COLUMNS
+	// Test float types in RANGE COLUMNS?
+	// Test first and last set to NULL?
+	// Test normal DROP / ADD partition and try to see either if it will work with INTERVAL or not (if not issue a warning that interval partitioning has been removed!)
+	// Extra feature take a well ranged partitioned table and add INTERVAL?
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {

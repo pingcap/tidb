@@ -504,19 +504,23 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only allowed on RANGE partitioning")
 	}
 	if len(partOptions.ColumnNames) > 1 {
+		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow RANGE COLUMNS with more than one column")
 	}
 	if len(partOptions.Definitions) > 0 {
 		// Suggested syntax does not allow partition definitions for INTERVAL range partitioning
+		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow partition definitions")
 	}
 	partOptions.Definitions = make([]*ast.PartitionDefinition, 0, 1)
 	if partOptions.Interval.FirstRangeEnd == nil || partOptions.Interval.LastRangeEnd == nil {
+		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
 	}
 	switch partOptions.Interval.IntervalExpr.TimeUnit {
 	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitDayMinute, ast.TimeUnitSecond:
 	default:
+		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECONDS as time unit")
 	}
 	first := ast.PartitionDefinitionClauseLessThan{
@@ -603,7 +607,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	var timeUnit ast.TimeUnitType
 	if partInfo != nil {
 		if tp == ast.AlterTablePartition {
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions")
+			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions")
 		}
 		timeUnit = ast.ToTimeUnit(tbInfo.Partition.IntervalUnit)
 		lastExpr = partitionOptions.Expr
@@ -645,7 +649,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 				intervalExpr = ast.NewValueExpr(tbInfo.Partition.IntervalExpr, "", "")
 			}
 		default:
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions, no known alter type")
+			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions, no known alter type")
 		}
 		partInfo.IntervalUnit = tbInfo.Partition.IntervalUnit
 		partInfo.IntervalNullPart = tbInfo.Partition.IntervalNullPart
@@ -653,7 +657,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		partInfo.IntervalExpr = tbInfo.Partition.IntervalExpr
 	} else {
 		if tp != ast.AlterTablePartition {
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating INTERVAL partitions")
+			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs("Internal error during generating INTERVAL partitions")
 		}
 		startExpr = *partitionOptions.Interval.FirstRangeEnd
 		lastExpr = *partitionOptions.Interval.LastRangeEnd
@@ -713,8 +717,28 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			return err
 		}
 		if cmp > 0 {
-			// TODO: Add string of currVal and lastVal to error message
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL table partitioning; LAST expr not matching FIRST + n INTERVALS")
+			lastStr, err := lastVal.ToString()
+			if err != nil {
+				return err
+			}
+			var sb strings.Builder
+			err = intervalExpr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			if err != nil {
+				return err
+			}
+			exprStr := sb.String()
+			sb.Reset()
+			err = startExpr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			if err != nil {
+				return err
+			}
+			startStr := sb.String()
+			errStr := fmt.Sprintf("LAST expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
+				lastStr, startStr, exprStr)
+			if timeUnit != ast.TimeUnitInvalid {
+				errStr = errStr + " " + timeUnit.String()
+			}
+			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(errStr + ")")
 		}
 		valStr, err := currVal.ToString()
 		if err != nil {
@@ -760,9 +784,6 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			return err
 		}
 		tbInfo.Partition.IntervalExpr = sb.String()
-		if err != nil {
-			return err
-		}
 	} else {
 		switch tp {
 		case ast.AlterTableDropFirstPartition:
@@ -778,6 +799,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 				return err
 			}
 		default:
+			// TODO fix error message
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions, no known alter type")
 		}
 	}
