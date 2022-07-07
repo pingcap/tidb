@@ -17,11 +17,11 @@ package profile
 import (
 	"fmt"
 	"math"
-	"sort"
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/texttree"
+	"golang.org/x/exp/slices"
 )
 
 type flamegraphNode struct {
@@ -93,12 +93,11 @@ func (n *flamegraphNode) sortedChildren() []flamegraphNodeWithLocation {
 			locID:          locID,
 		})
 	}
-	sort.Slice(children, func(i, j int) bool {
-		a, b := children[i], children[j]
-		if a.cumValue != b.cumValue {
-			return a.cumValue > b.cumValue
+	slices.SortFunc(children, func(i, j flamegraphNodeWithLocation) bool {
+		if i.cumValue != j.cumValue {
+			return i.cumValue > j.cumValue
 		}
-		return a.locID < b.locID
+		return i.locID < j.locID
 	})
 
 	return children

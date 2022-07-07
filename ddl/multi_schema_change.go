@@ -72,8 +72,12 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				}
 				proxyJob := sub.ToProxyJob(job)
 				ver, err = w.runDDLJob(d, t, &proxyJob)
+				err = handleRollbackException(err, proxyJob.Error)
+				if err != nil {
+					return ver, err
+				}
 				sub.FromProxyJob(&proxyJob)
-				return ver, err
+				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
 			job.State = model.JobStateRollbackDone
@@ -159,6 +163,22 @@ func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror
 			sub.State = model.JobStateCancelled
 		}
 	}
+}
+
+func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
+	if runJobErr != nil {
+		// The physical errors are not recoverable during rolling back.
+		// We keep retrying it.
+		return runJobErr
+	}
+	if proxyJobErr != nil {
+		if proxyJobErr.Equal(dbterror.ErrCancelledDDLJob) {
+			// A cancelled DDL error is normal during rolling back.
+			return nil
+		}
+		return proxyJobErr
+	}
+	return nil
 }
 
 func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {

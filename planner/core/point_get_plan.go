@@ -128,7 +128,7 @@ func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
 
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -137,50 +137,11 @@ func (p *PointGetPlan) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, operatorInfo := p.AccessObject(true), p.OperatorInfo(true)
+	accessObject, operatorInfo := p.AccessObject().NormalizedString(), p.OperatorInfo(true)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
 	return accessObject + ", " + operatorInfo
-}
-
-// AccessObject implements dataAccesser interface.
-func (p *PointGetPlan) AccessObject(normalized bool) string {
-	var buffer strings.Builder
-	tblName := p.TblInfo.Name.O
-	buffer.WriteString("table:")
-	buffer.WriteString(tblName)
-	if p.PartitionInfo != nil {
-		if normalized {
-			buffer.WriteString(", partition:?")
-		} else {
-			buffer.WriteString(", partition:")
-			buffer.WriteString(p.PartitionInfo.Name.O)
-		}
-	}
-	if p.IndexInfo != nil {
-		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", clustered index:")
-			buffer.WriteString(p.IndexInfo.Name.O)
-			buffer.WriteString("(")
-		} else {
-			buffer.WriteString(", index:")
-			buffer.WriteString(p.IndexInfo.Name.O)
-			buffer.WriteString("(")
-		}
-		for i, idxCol := range p.IndexInfo.Columns {
-			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(p.IndexInfo.Columns) {
-				buffer.WriteString(", ")
-			}
-		}
-		buffer.WriteString(")")
-	}
-	return buffer.String()
 }
 
 // OperatorInfo implements dataAccesser interface.
@@ -337,53 +298,12 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 
 // ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
-}
-
-// AccessObject implements physicalScan interface.
-func (p *BatchPointGetPlan) AccessObject(normalized bool) string {
-	var buffer strings.Builder
-	tblName := p.TblInfo.Name.O
-	buffer.WriteString("table:")
-	buffer.WriteString(tblName)
-	if p.PartitionInfos != nil {
-		if normalized {
-			buffer.WriteString(", partition:?")
-		} else {
-			for i, partitionInfo := range p.PartitionInfos {
-				if i == 0 {
-					buffer.WriteString(", partition:")
-				} else {
-					buffer.WriteString(",")
-				}
-				buffer.WriteString(partitionInfo.Name.O)
-			}
-		}
-	}
-	if p.IndexInfo != nil {
-		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
-		} else {
-			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
-		}
-		for i, idxCol := range p.IndexInfo.Columns {
-			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(p.IndexInfo.Columns) {
-				buffer.WriteString(", ")
-			}
-		}
-		buffer.WriteString(")")
-	}
-	return buffer.String()
+	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
 // OperatorInfo implements dataAccesser interface.

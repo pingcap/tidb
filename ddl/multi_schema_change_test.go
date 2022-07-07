@@ -521,12 +521,14 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustGetErrCode("alter table t add index t(a), add index t(b)", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
 
 	// Test add indexes with drop column.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustGetErrCode("alter table t add index t(a), drop column a", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add index t(a, b), drop column a", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
 
 	// Test add index failed.
 	tk.MustExec("drop table if exists t;")
@@ -1080,6 +1082,9 @@ func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteOnly {
 			tk2 := testkit.NewTestKit(t, store)

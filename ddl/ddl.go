@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -49,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
-	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -58,6 +56,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -872,7 +871,7 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
 
@@ -977,10 +976,25 @@ type Info struct {
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
+// GetDDLInfoWithNewTxn returns DDL information using a new txn.
+func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
+	err := sessiontxn.NewTxn(context.Background(), s)
+	if err != nil {
+		return nil, err
+	}
+	info, err := GetDDLInfo(s)
+	s.RollbackTxn(context.Background())
+	return info, err
+}
+
 // GetDDLInfo returns DDL information.
-func GetDDLInfo(txn kv.Transaction) (*Info, error) {
+func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
+	txn, err := s.Txn(true)
+	if err != nil {
+		return nil, err
+	}
 	t := meta.NewMeta(txn)
 
 	info.Jobs = make([]*model.Job, 0, 2)
@@ -1114,22 +1128,10 @@ func GetAllDDLJobs(t *meta.Meta) ([]*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	jobs := append(generalJobs, addIdxJobs...)
-	sort.Sort(jobArray(jobs))
+	slices.SortFunc(jobs, func(i, j *model.Job) bool {
+		return i.ID < j.ID
+	})
 	return jobs, nil
-}
-
-type jobArray []*model.Job
-
-func (v jobArray) Len() int {
-	return len(v)
-}
-
-func (v jobArray) Less(i, j int) bool {
-	return v[i].ID < v[j].ID
-}
-
-func (v jobArray) Swap(i, j int) {
-	v[i], v[j] = v[j], v[i]
 }
 
 // MaxHistoryJobs is exported for testing.
@@ -1203,26 +1205,10 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		}
 	}
 	// sort job.
-	sorter := &jobsSorter{jobs: allJobs}
-	sort.Sort(sorter)
+	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
+		return i.ID < j.ID
+	})
 	return allJobs, nil
-}
-
-// jobsSorter implements the sort.Interface interface.
-type jobsSorter struct {
-	jobs []*model.Job
-}
-
-func (s *jobsSorter) Swap(i, j int) {
-	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
-}
-
-func (s *jobsSorter) Len() int {
-	return len(s.jobs)
-}
-
-func (s *jobsSorter) Less(i, j int) bool {
-	return s.jobs[i].ID < s.jobs[j].ID
 }
 
 // GetHistoryJobByID return history DDL job by ID.

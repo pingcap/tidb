@@ -419,7 +419,10 @@ func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta
 	return nil, err
 }
 
-func updateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+// moveAndUpdateHiddenColumnsToPublic updates the hidden columns to public, and
+// moves the hidden columns to proper offsets, so that Table.Columns' states meet the assumption of
+// [public, public, ..., public, non-public, non-public, ..., non-public].
+func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffset := make(map[int]struct{}, 0)
 	for _, col := range idxInfo.Columns {
 		if tblInfo.Columns[col.Offset].Hidden {
@@ -568,7 +571,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
-		updateHiddenColumnsToPublic(tblInfo, indexInfo)
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
@@ -609,7 +612,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		var done bool
-		done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
+		if job.MultiSchemaInfo != nil {
+			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
+		} else {
+			done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		}
 		if !done {
 			return ver, err
 		}
@@ -621,7 +628,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, errors.Trace(err)
 			}
 		}
-
 		indexInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
@@ -638,24 +644,15 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo != nil {
-		if job.IsCancelling() {
-			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback",
-				zap.String("job", job.String()), zap.Error(err))
-			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, dbterror.ErrCancelledDDLJob)
-			return false, ver, err
+	if job.MultiSchemaInfo.Revertible {
+		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		if done {
+			job.MarkNonRevertible()
 		}
-		if job.MultiSchemaInfo.Revertible {
-			done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
-			if done {
-				job.MarkNonRevertible()
-				done = false
-			}
-			return done, ver, err
-		}
-		return true, ver, err
+		// We need another round to wait for all the others sub-jobs to finish.
+		return false, ver, err
 	}
-	return doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+	return true, ver, err
 }
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,

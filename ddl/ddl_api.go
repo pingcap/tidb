@@ -3229,6 +3229,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
+		case ast.AlterTableSetTiFlashMode:
+			err = d.AlterTableSetTiFlashMode(sctx, ident, spec.TiFlashMode)
 		case ast.AlterTableOrderByColumns:
 			err = d.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
@@ -4918,6 +4920,30 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		Type:       model.ActionSetTiFlashReplica,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{*replicaInfo},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if mode != model.TiFlashModeNormal && mode != model.TiFlashModeFast {
+		return fmt.Errorf("unsupported TiFlash mode %s", mode)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		SchemaName: schema.Name.L,
+		TableName:  tb.Meta().Name.L,
+		Type:       model.ActionSetTiFlashMode,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{mode},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
