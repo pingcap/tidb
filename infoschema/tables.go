@@ -181,6 +181,8 @@ const (
 	TablePlacementPolicies = "PLACEMENT_POLICIES"
 	// TableTrxSummary is the string constant of transaction summary table.
 	TableTrxSummary = "TRX_SUMMARY"
+	// TableVariablesInfo is the string constant of variables_info table.
+	TableVariablesInfo = "VARIABLES_INFO"
 )
 
 const (
@@ -281,6 +283,7 @@ var tableIDMap = map[string]int64{
 	TablePlacementPolicies:               autoid.InformationSchemaDBID + 79,
 	TableTrxSummary:                      autoid.InformationSchemaDBID + 80,
 	ClusterTableTrxSummary:               autoid.InformationSchemaDBID + 81,
+	TableVariablesInfo:                   autoid.InformationSchemaDBID + 82,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1486,6 +1489,17 @@ var tablePlacementPoliciesCols = []columnInfo{
 	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64},
 }
 
+var tableVariablesInfoCols = []columnInfo{
+	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "VARIABLES_SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CURRENT_VALUE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},
+	{name: "MAX_VALUE", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "POSSIBLE_VALUES", tp: mysql.TypeVarchar, size: 256},
+	{name: "IS_NOOP", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1889,6 +1903,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableAttributes:                         tableAttributesCols,
 	TablePlacementPolicies:                  tablePlacementPoliciesCols,
 	TableTrxSummary:                         tableTrxSummaryCols,
+	TableVariablesInfo:                      tableVariablesInfoCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
