@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go/service/ec2/ec2iface"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/config"
@@ -18,7 +19,7 @@ import (
 )
 
 type EC2Session struct {
-	ec2 *ec2.EC2
+	ec2 ec2iface.EC2API
 }
 
 func NewEC2Session() (*EC2Session, error) {
@@ -38,11 +39,10 @@ func NewEC2Session() (*EC2Session, error) {
 // It will do the following works.
 // 1. determine the order of volume snapshot.
 // 2. send snapshot requests to aws.
-func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[uint64]map[string]string, error) {
-	snapIDMap := make(map[uint64]map[string]string)
+func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[string]string, error) {
+	snapIDMap := make(map[string]string)
 	for _, store := range backupInfo.TiKVComponent.Stores {
 		volumes := store.Volumes
-		snapIDMap[store.StoreID] = make(map[string]string)
 		if len(volumes) > 1 {
 			// if one store has multiple volume, we should respect the order
 			// raft log/engine first, then kv db. then wal
@@ -79,7 +79,7 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[u
 				return snapIDMap, errors.Trace(err)
 			}
 			log.Info("snapshot creating", zap.Stringer("snap", resp))
-			snapIDMap[store.StoreID][volume.ID] = *resp.SnapshotId
+			snapIDMap[volume.ID] = *resp.SnapshotId
 		}
 	}
 	return snapIDMap, nil
@@ -88,13 +88,11 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[u
 // WaitSnapshotFinished waits all snapshots finished.
 // according to EBS snapshot will do real snapshot background.
 // so we'll check whether all snapshots finished.
-func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[uint64]map[string]string, progress glue.Progress) (int64, error) {
+func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[string]string, progress glue.Progress) (int64, error) {
 	pendingSnapshots := make([]*string, 0, len(snapIDMap))
-	for _, s := range snapIDMap {
-		for volume := range s {
-			snapID := s[volume]
-			pendingSnapshots = append(pendingSnapshots, &snapID)
-		}
+	for volID := range snapIDMap {
+		snapID := snapIDMap[volID]
+		pendingSnapshots = append(pendingSnapshots, &snapID)
 	}
 	totalVolumeSize := int64(0)
 
@@ -134,7 +132,7 @@ func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[uint64]map[string]string
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
-func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64) (map[uint64]map[string]string, error) {
+func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64) (map[string]string, error) {
 	template := ec2.CreateVolumeInput{VolumeType: &volumeType}
 	if iops > 0 {
 		template.SetIops(iops)
@@ -143,9 +141,8 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 		template.SetThroughput(throughput)
 	}
 
-	newVolumeIDMap := make(map[uint64]map[string]string)
+	newVolumeIDMap := make(map[string]string)
 	for _, store := range meta.TiKVComponent.Stores {
-		newVolumeIDMap[store.StoreID] = make(map[string]string)
 		for _, oldVol := range store.Volumes {
 			// TODO: build concurrent requests here.
 			log.Debug("create volume from snapshot", zap.Any("volume", oldVol))
@@ -157,19 +154,17 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 				return newVolumeIDMap, errors.Trace(err)
 			}
 			log.Info("new volume creating", zap.Stringer("snap", resp))
-			newVolumeIDMap[store.StoreID][oldVol.ID] = *resp.VolumeId
+			newVolumeIDMap[oldVol.ID] = *resp.VolumeId
 		}
 	}
 	return newVolumeIDMap, nil
 }
 
-func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[uint64]map[string]string, progress glue.Progress) (int64, error) {
+func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress glue.Progress) (int64, error) {
 	pendingVolumes := make([]*string, 0, len(volumeIDMap))
-	for _, s := range volumeIDMap {
-		for volume := range s {
-			volumeID := s[volume]
-			pendingVolumes = append(pendingVolumes, &volumeID)
-		}
+	for oldVolID := range volumeIDMap {
+		newVolumeID := volumeIDMap[oldVolID]
+		pendingVolumes = append(pendingVolumes, &newVolumeID)
 	}
 	totalVolumeSize := int64(0)
 
@@ -203,13 +198,11 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[uint64]map[string]string
 	return totalVolumeSize, nil
 }
 
-func (e *EC2Session) DeleteVolumes(volumeIDMap map[uint64]map[string]string) {
+func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 	pendingVolumes := make([]*string, 0, len(volumeIDMap))
-	for _, s := range volumeIDMap {
-		for volume := range s {
-			volumeID := s[volume]
-			pendingVolumes = append(pendingVolumes, &volumeID)
-		}
+	for oldVolID := range volumeIDMap {
+		volumeID := volumeIDMap[oldVolID]
+		pendingVolumes = append(pendingVolumes, &volumeID)
 	}
 
 	for _, volID := range pendingVolumes {
@@ -217,7 +210,7 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[uint64]map[string]string) {
 			VolumeId: volID,
 		})
 		if err2 != nil {
-			log.Warn("failed to delete volume")
+			log.Error("failed to delete volume", zap.Error(err2))
 			// todo: retry delete. we can only retry for a few times, might fail still, need to handle error from outside.
 		}
 	}

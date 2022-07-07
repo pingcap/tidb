@@ -225,11 +225,11 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	return totalSize, nil
 }
 
-func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[uint64]map[string]string, int64, error) {
+func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[string]string, int64, error) {
 	log.Info("create volume from snapshots")
 	var (
 		ec2Session  *aws.EC2Session
-		volumeIDMap = make(map[uint64]map[string]string)
+		volumeIDMap = make(map[string]string)
 		err         error
 		totalSize   int64
 	)

@@ -175,7 +175,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	if err != nil {
 		return errors.Trace(err)
 	}
-	snapIDMap := make(map[uint64]map[string]string)
+	snapIDMap := make(map[string]string)
 	if !cfg.DryRun {
 		log.Info("start async snapshots")
 		snapIDMap, err = ec2Session.StartsEBSSnapshot(backupInfo)

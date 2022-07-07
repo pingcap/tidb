@@ -136,18 +136,18 @@ func (c *EBSBasedBRMeta) SetClusterVersion(version string) {
 	c.ClusterInfo.Version = version
 }
 
-func (c *EBSBasedBRMeta) SetSnapshotIDs(idMap map[uint64]map[string]string) {
+func (c *EBSBasedBRMeta) SetSnapshotIDs(idMap map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
-			volume.SnapshotID = idMap[store.StoreID][volume.ID]
+			volume.SnapshotID = idMap[volume.ID]
 		}
 	}
 }
 
-func (c *EBSBasedBRMeta) SetRestoreVolumeIDs(idMap map[uint64]map[string]string) {
+func (c *EBSBasedBRMeta) SetRestoreVolumeIDs(idMap map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
-			volume.RestoreVolumeId = idMap[store.StoreID][volume.ID]
+			volume.RestoreVolumeId = idMap[volume.ID]
 		}
 	}
 }
