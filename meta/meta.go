@@ -1169,6 +1169,14 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, phy
 	return errors.Trace(err)
 }
 
+// ClearAllHistoryJob clears all history jobs. **IT IS VERY DANGEROUS**
+func (m *Meta) ClearAllHistoryJob() error {
+	if err := m.txn.HClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RemoveReorgElement removes the element of the reorganization information.
 func (m *Meta) RemoveReorgElement(job *model.Job) error {
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
