@@ -15,6 +15,7 @@
 package handle
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -33,6 +34,11 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+type statsWrapper struct {
+	col *statistics.Column
+	idx *statistics.Index
+}
 
 // StatsLoad is used to load stats concurrently
 type StatsLoad struct {
@@ -195,6 +201,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 	return h.handleOneItemTask(task, readerCtx, ctx)
 }
 
+// readStatsForOne reads hist for one column/index, TODO load data via kv-get asynchronously
 func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
 	item := task.TableItemID
 	oldCache := h.statsCache.Load().(statsCache)
@@ -203,21 +210,22 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 		h.writeToResultChan(task.ResultCh, item)
 		return nil, nil
 	}
-	var index *statistics.Index
-	var col *statistics.Column
 	var err error
+	var wrapper *statsWrapper
 	if item.IsIndex {
-		index, ok = tbl.Indices[item.ID]
+		index, ok := tbl.Indices[item.ID]
 		if !ok || index.Len() > 0 {
 			h.writeToResultChan(task.ResultCh, item)
 			return nil, nil
 		}
+		wrapper.idx = index
 	} else {
-		col, ok = tbl.Columns[item.ID]
+		col, ok := tbl.Columns[item.ID]
 		if !ok || col.Len() > 0 {
 			h.writeToResultChan(task.ResultCh, item)
 			return nil, nil
 		}
+		wrapper.col = col
 	}
 	// to avoid duplicated handling in concurrent scenario
 	working := h.setWorking(task.TableItemID, task.ResultCh)
@@ -228,25 +236,21 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	h.getFreshStatsReader(readerCtx, ctx)
 	t := time.Now()
 	needUpdate := false
+	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
+	if err != nil {
+		return task, err
+	}
 	if item.IsIndex {
-		index, err = h.readStatsForOneIdx(item, index, readerCtx.reader)
-		if err != nil {
-			return task, err
-		}
-		if index != nil {
+		if wrapper.idx != nil {
 			needUpdate = true
 		}
 	} else {
-		col, err = h.readStatsForOneCol(item, col, readerCtx.reader)
-		if err != nil {
-			return task, err
-		}
-		if col != nil {
+		if wrapper.col != nil {
 			needUpdate = true
 		}
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
-	if needUpdate && h.updateCachedItem(item, col, index) {
+	if needUpdate && h.updateCachedItem(item, wrapper.col, wrapper.idx) {
 		h.writeToResultChan(task.ResultCh, item)
 	}
 	h.finishWorking(item)
@@ -277,83 +281,85 @@ func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.
 	}
 }
 
-// readStatsForOne reads hist for one column, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOneCol(col model.TableItemID, c *statistics.Column, reader *statsReader) (*statistics.Column, error) {
+func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
+	c := w.col
+	index := w.idx
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-	hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var hg *statistics.Histogram
+	var err error
+	isIndexFlag := int64(0)
+	if item.IsIndex {
+		isIndexFlag = 1
 	}
-	cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ID)
+	if item.IsIndex {
+		hg, err = h.histogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		hg, err = h.histogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	var cms *statistics.CMSketch
+	var topN *statistics.TopN
+	cms, topN, err = h.cmSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var fms *statistics.FMSketch
 	if loadFMSketch {
-		fms, err = h.fmSketchFromStorage(reader, col.TableID, 0, col.ID)
+		fms, err = h.fmSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ID)
+	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = %? and table_id = %? and hist_id = %?", isIndexFlag, item.TableID, item.ID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
+		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID), zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+		return nil, errors.Trace(errors.New(fmt.Sprintf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex)))
 	}
-	colHist := &statistics.Column{
-		PhysicalID:        col.TableID,
-		Histogram:         *hg,
-		Info:              c.Info,
-		CMSketch:          cms,
-		TopN:              topN,
-		FMSketch:          fms,
-		IsHandle:          c.IsHandle,
-		StatsVer:          rows[0].GetInt64(0),
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-	}
-	// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
-	colHist.Count = int64(colHist.TotalRowCount())
-	return colHist, nil
-}
-
-func (h *Handle) readStatsForOneIdx(idx model.TableItemID, index *statistics.Index, reader *statsReader) (*statistics.Index, error) {
-	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-	hg, err := h.histogramFromStorage(reader, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, 1, index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	cms, topN, err := h.cmSketchAndTopNFromStorage(reader, idx.TableID, 1, idx.ID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = h.fmSketchFromStorage(reader, idx.TableID, 1, idx.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
+	if item.IsIndex {
+		idxHist := &statistics.Index{
+			Histogram: *hg,
+			CMSketch:  cms,
+			TopN:      topN,
+			FMSketch:  fms,
+			Info:      index.Info,
+			ErrorRate: index.ErrorRate,
+			StatsVer:  rows[0].GetInt64(0), Flag: index.Flag,
+			PhysicalID:        index.PhysicalID,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 		}
+		index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
+		w.idx = idxHist
+	} else {
+		colHist := &statistics.Column{
+			PhysicalID:        item.TableID,
+			Histogram:         *hg,
+			Info:              c.Info,
+			CMSketch:          cms,
+			TopN:              topN,
+			FMSketch:          fms,
+			IsHandle:          c.IsHandle,
+			StatsVer:          rows[0].GetInt64(0),
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		}
+		// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
+		colHist.Count = int64(colHist.TotalRowCount())
+		w.col = colHist
 	}
-	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", idx.TableID, idx.ID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID))
-	}
-	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: index.Info, ErrorRate: index.ErrorRate, StatsVer: index.StatsVer, Flag: index.Flag,
-		PhysicalID:        index.PhysicalID,
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
-	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
-	return idxHist, nil
+	return w, nil
 }
 
 // drainColTask will hang until a column task can return, and either task or error will be returned.
