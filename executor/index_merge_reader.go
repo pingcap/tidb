@@ -457,7 +457,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 }
 
 func (e *IndexMergeReaderExecutor) initRuntimeStats() {
-	if e.runtimeStats != nil && e.stats == nil {
+	if e.runtimeStats != nil {
 		e.stats = &IndexMergeRuntimeStat{
 			Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
@@ -1023,7 +1023,6 @@ func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	e.FetchRow += tmp.FetchRow
 	e.WaitTime += e.WaitTime
 	e.TableTaskNum += tmp.TableTaskNum
-	e.Concurrency += tmp.Concurrency
 }
 
 // Tp implements the RuntimeStats interface.

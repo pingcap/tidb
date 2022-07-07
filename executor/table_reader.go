@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -422,9 +422,9 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 			virtualColumnIndex = append(virtualColumnIndex, i)
 		}
 	}
-	sort.Slice(virtualColumnIndex, func(i, j int) bool {
-		return plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[i]].ID).Offset <
-			plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[j]].ID).Offset
+	slices.SortFunc(virtualColumnIndex, func(i, j int) bool {
+		return plannercore.FindColumnInfoByID(columns, schema.Columns[i].ID).Offset <
+			plannercore.FindColumnInfoByID(columns, schema.Columns[j].ID).Offset
 	})
 	return virtualColumnIndex
 }

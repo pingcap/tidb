@@ -108,6 +108,7 @@ func (l *LocalStorage) URI() string {
 
 // Open a Reader by file path, path is a relative path to base path.
 func (l *LocalStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+	//nolint: gosec
 	return os.Open(filepath.Join(l.base, path))
 }
 
