@@ -25,6 +25,7 @@ go_library(
         "//util/logutil",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_text//encoding",
         "@org_uber_go_zap//:zap",
     ],
