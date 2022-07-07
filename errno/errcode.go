@@ -1026,6 +1026,7 @@ const (
 	ErrNonTransactionalJobFailure          = 8143
 	ErrSettingNoopVariable                 = 8144
 	ErrGettingNoopVariable                 = 8145
+	ErrCannotMigrateSession                = 8146
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

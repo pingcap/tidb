@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -20,10 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -36,6 +31,10 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 )
 
 var openDBFunc = sql.Open
@@ -81,10 +80,17 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 
+	var err error
+
 	d.metrics = newMetrics(conf.PromFactory, conf.Labels)
 	d.metrics.registerTo(conf.PromRegistry)
+	defer func() {
+		if err != nil {
+			d.metrics.unregisterFrom(conf.PromRegistry)
+		}
+	}()
 
-	err := adjustConfig(conf,
+	err = adjustConfig(conf,
 		registerTLSConfig,
 		validateSpecifiedSQL,
 		adjustFileFormat)
@@ -1551,9 +1557,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 		for _, tbInfoLoop := range tbInfos {
 			// make sure tbInfo is only used in this loop
 			tbInfo := tbInfoLoop
-			sort.Slice(tbInfo, func(i, j int) bool {
-				return tbInfo[i] < tbInfo[j]
-			})
+			slices.Sort(tbInfo)
 		}
 	}
 

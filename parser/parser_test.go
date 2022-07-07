@@ -2177,7 +2177,7 @@ func TestIdentifier(t *testing.T) {
 		{`select COUNT from DESC`, false, ""},
 		{`select COUNT from SELECT.DESC`, true, "SELECT `COUNT` FROM `SELECT`.`DESC`"},
 		{"use `select`", true, "USE `select`"},
-		{"use `sel``ect`", true, "USE `sel``ect`"},
+		{"use `sel``ect`", true, "USE `sel``ect`"}, //nolint: misspell
 		{"use select", false, "USE `select`"},
 		{`select * from t as a`, true, "SELECT * FROM `t` AS `a`"},
 		{"select 1 full, 1 row, 1 abs", false, ""},
@@ -5735,6 +5735,7 @@ func TestNotExistsSubquery(t *testing.T) {
 }
 
 func TestWindowFunctionIdentifier(t *testing.T) {
+	//nolint: prealloc
 	var table []testCase
 	for key := range parser.WindowFuncTokenMapForTest {
 		table = append(table, testCase{fmt.Sprintf("select 1 %s", key), false, fmt.Sprintf("SELECT 1 AS `%s`", key)})
@@ -6191,6 +6192,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		node.Specs = specs
 	case *ast.Join:
 		node.ExplicitParens = false
+	case *ast.ColumnDef:
+		node.Tp.CleanElemIsBinaryLit()
 	}
 	return in, false
 }

@@ -102,7 +102,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
-	prometheus.MustRegister(DistSQLCoprCacheHistogram)
+	prometheus.MustRegister(DistSQLCoprCacheCounter)
 	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
@@ -189,6 +189,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
+	prometheus.MustRegister(TxnStatusEnteringCounter)
+	prometheus.MustRegister(TxnDurationHistogram)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

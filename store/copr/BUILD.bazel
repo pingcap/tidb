@@ -50,6 +50,7 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )

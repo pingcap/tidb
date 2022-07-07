@@ -2540,21 +2540,21 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0), uint64(arg1)) == 0:
 		res = 1
 	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
 		res = 1
 	case isUnsigned0 && !isUnsigned1:
 		if arg1 < 0 {
-			break
+			return res, false, nil
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
 		}
 	case !isUnsigned0 && isUnsigned1:
 		if arg0 < 0 {
-			break
+			return res, false, nil
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
@@ -2587,7 +2587,7 @@ func (b *builtinNullEQRealSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case types.CompareFloat64(arg0, arg1) == 0:
 		res = 1
 	}
@@ -2618,7 +2618,7 @@ func (b *builtinNullEQDecimalSig) evalInt(row chunk.Row) (val int64, isNull bool
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2649,7 +2649,7 @@ func (b *builtinNullEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool,
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case types.CompareString(arg0, arg1, b.collation) == 0:
 		res = 1
 	}
@@ -2680,7 +2680,7 @@ func (b *builtinNullEQDurationSig) evalInt(row chunk.Row) (val int64, isNull boo
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2711,7 +2711,7 @@ func (b *builtinNullEQTimeSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2742,7 +2742,7 @@ func (b *builtinNullEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	default:
 		cmpRes := json.CompareBinary(arg0, arg1)
 		if cmpRes == 0 {
