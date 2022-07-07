@@ -89,12 +89,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		if !tableFound {
 			return false, errors.Errorf("exchange partition with table TableByID Failed")
 		}
-		canExchange, err := pt.(table.PartitionedTable).CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionDefId)
+		err := pt.(table.PartitionedTable).CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionDefId)
 		if err != nil {
 			return false, err
-		}
-		if !canExchange {
-			return false, errors.Errorf("update data not match partition constraint during exchange partition with table.")
 		}
 	}
 

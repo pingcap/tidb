@@ -649,14 +649,11 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionId)
 		if !tableFound {
-			return nil, errors.Errorf("insert record TableByID Failed")
+			return nil, errors.Errorf("exchange partition with table TableByID Failed")
 		}
-		canExchange, err := pt.(table.PartitionedTable).CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionDefId)
+		err := pt.(table.PartitionedTable).CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionDefId)
 		if err != nil {
 			return nil, err
-		}
-		if !canExchange {
-			return nil, errors.Errorf("update data not match partition constraint during exchange partition with table.")
 		}
 	}
 	for i, gCol := range gCols {

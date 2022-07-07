@@ -2380,7 +2380,7 @@ func TestExchangePartitionHook(t *testing.T) {
 	hookFunc = func(job *model.Job) {
 		if job.Type == model.ActionExchangeTablePartition {
 			tkCancel.MustExec("use test")
-			tkCancel.MustGetErrMsg("insert into nt values (5)", "insert data doesn't match partition constraint during exchange partition with table")
+			tkCancel.MustGetErrCode("insert into nt values (5)", tmysql.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
 	hook.OnJobUpdatedExported = hookFunc
