@@ -56,6 +56,7 @@ func TestSetTableFlashReplica(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(2), tbl.Meta().TiFlashReplica.Count)
 	require.Equal(t, "a,b", strings.Join(tbl.Meta().TiFlashReplica.LocationLabels, ","))
+	require.Equal(t, model.TiFlashModeNormal, tbl.Meta().TiFlashMode) // check the default tiflash mode
 
 	tk.MustExec("alter table t_flash set tiflash replica 0")
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")

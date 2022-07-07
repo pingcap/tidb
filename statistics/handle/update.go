@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +48,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -911,11 +911,11 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 	for id, t := range colMap {
 		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
-			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+	slices.SortFunc(pairs, func(i, j pair) bool {
+		if i.tblColID.TableID == j.tblColID.TableID {
+			return i.tblColID.ColumnID < j.tblColID.ColumnID
 		}
-		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
+		return i.tblColID.TableID < j.tblColID.TableID
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {
