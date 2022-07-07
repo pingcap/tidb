@@ -625,9 +625,9 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
 		if done {
 			job.MarkNonRevertible()
-			done = false // We need another round to wait for all the others sub-jobs to finish.
 		}
-		return done, ver, err
+		// We need another round to wait for all the others sub-jobs to finish.
+		return false, ver, err
 	}
 	return true, ver, err
 }
