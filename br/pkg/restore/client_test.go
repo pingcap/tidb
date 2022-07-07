@@ -240,3 +240,47 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
 }
+
+func TestDeleteRangeQuery(t *testing.T) {
+	ctx := context.Background()
+	m := mc
+	mockStores := []*metapb.Store{
+		{
+			Id: 1,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id: 2,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+	}
+
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(fakePDClient{
+		stores: mockStores,
+	}, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
+	require.NoError(t, err)
+
+	client.RunGCRowsLoader(ctx)
+
+	client.InsertDeleteRangeForTable(2, []int64{3})
+	client.InsertDeleteRangeForTable(4, []int64{5, 6})
+
+	elementID := int64(1)
+	client.InsertDeleteRangeForIndex(7, &elementID, 8, []int64{1})
+	client.InsertDeleteRangeForIndex(9, &elementID, 10, []int64{1, 2})
+
+	querys := client.GetGCRows()
+	require.Equal(t, querys[0], "")
+}

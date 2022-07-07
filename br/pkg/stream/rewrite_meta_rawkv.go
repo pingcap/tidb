@@ -432,7 +432,7 @@ func (sr *SchemasReplace) rewriteValue(
 }
 
 // RewriteKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
-func (sr *SchemasReplace) RewriteKvEntry(ctx context.Context, e *kv.Entry, cf string, insertDeleteRangeForTable InsertDeleteRangeForTable, insertDeleteRangeForIndex InsertDeleteRangeForIndex) (*kv.Entry, error) {
+func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string, insertDeleteRangeForTable InsertDeleteRangeForTable, insertDeleteRangeForIndex InsertDeleteRangeForIndex) (*kv.Entry, error) {
 	// skip mDDLJob
 
 	if !strings.HasPrefix(string(e.Key), "mDB") {
@@ -442,7 +442,7 @@ func (sr *SchemasReplace) RewriteKvEntry(ctx context.Context, e *kv.Entry, cf st
 				return nil, errors.Errorf(fmt.Sprintf("failed to decode the job: %s", string(e.Value)))
 			}
 			if jobNeedGC(job) {
-				return nil, sr.deleteRange(ctx, job, insertDeleteRangeForTable, insertDeleteRangeForIndex)
+				return nil, sr.deleteRange(job, insertDeleteRangeForTable, insertDeleteRangeForIndex)
 			}
 		}
 		return nil, nil
@@ -472,8 +472,8 @@ func (sr *SchemasReplace) RewriteKvEntry(ctx context.Context, e *kv.Entry, cf st
 	}
 }
 
-type InsertDeleteRangeForTable func(context.Context, int64, []int64, uint64) error
-type InsertDeleteRangeForIndex func(context.Context, int64, *int64, int64, []int64, uint64) error
+type InsertDeleteRangeForTable func(int64, []int64)
+type InsertDeleteRangeForIndex func(int64, *int64, int64, []int64)
 
 func jobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
@@ -488,7 +488,7 @@ func jobNeedGC(job *model.Job) bool {
 	return false
 }
 
-func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, insertDeleteRangeForTable InsertDeleteRangeForTable, insertDeleteRangeForIndex InsertDeleteRangeForIndex) error {
+func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable InsertDeleteRangeForTable, insertDeleteRangeForIndex InsertDeleteRangeForIndex) error {
 	dbReplace, exist := sr.DbMap[job.SchemaID]
 	if !exist {
 		return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldDBID")
@@ -500,7 +500,6 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 		return errors.Trace(err)
 	}
 
-	// TODO: `ts` in table `gc_delete_range` can be job.BinlogInfo.FinishedTS+1
 	switch job.Type {
 	case model.ActionDropSchema:
 		var tableIDs []int64
@@ -542,9 +541,7 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 			return errors.Errorf("DropSchema: try to drop a non-existent table/partition, whose oldID doesn't exist in tableReplace")
 		}
 
-		if err := insertDeleteRangeForTable(ctx, newJobID, newTableIDs, sr.RewriteTS); err != nil {
-			return errors.Trace(err)
-		}
+		insertDeleteRangeForTable(newJobID, newTableIDs)
 		return nil
 	// Truncate will generates new id for table or partition, so ts can be large enough
 	case model.ActionDropTable, model.ActionTruncateTable:
@@ -569,15 +566,11 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 				}
 				physicalTableIDs[i] = newPid
 			}
-			if err := insertDeleteRangeForTable(ctx, newJobID, physicalTableIDs, sr.RewriteTS); err != nil {
-				return errors.Trace(err)
-			}
+			insertDeleteRangeForTable(newJobID, physicalTableIDs)
 			return nil
 		}
 
-		if err := insertDeleteRangeForTable(ctx, newJobID, []int64{tableReplace.NewTableID}, sr.RewriteTS); err != nil {
-			return errors.Trace(err)
-		}
+		insertDeleteRangeForTable(newJobID, []int64{tableReplace.NewTableID})
 		return nil
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
@@ -596,9 +589,7 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 			}
 			physicalTableIDs[i] = newPid
 		}
-		if err := insertDeleteRangeForTable(ctx, newJobID, physicalTableIDs, sr.RewriteTS); err != nil {
-			return errors.Trace(err)
-		}
+		insertDeleteRangeForTable(newJobID, physicalTableIDs)
 		return nil
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
@@ -623,14 +614,10 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 					return errors.Errorf("AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldPartitionID")
 				}
 
-				if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, newPid, indexIDs, sr.RewriteTS); err != nil {
-					return errors.Trace(err)
-				}
+				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
 		} else {
-			if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, tableReplace.NewTableID, indexIDs, sr.RewriteTS); err != nil {
-				return errors.Trace(err)
-			}
+			insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
 		}
 		return nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
@@ -656,12 +643,10 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 					return errors.Errorf("DropIndex/DropPrimaryKey: try to drop a non-existent table, missing oldPartitionID")
 				}
 
-				if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, newPid, indexIDs, sr.RewriteTS); err != nil {
-					return errors.Trace(err)
-				}
+				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
-		} else if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, tableReplace.NewTableID, indexIDs, sr.RewriteTS); err != nil {
-			return errors.Trace(err)
+		} else {
+			insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
 		}
 		return nil
 	case model.ActionDropIndexes:
@@ -687,12 +672,10 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 				if !exist {
 					return errors.Errorf("DropIndexes: try to drop a non-existent table, missing oldPartitionID")
 				}
-				if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, newPid, indexIDs, sr.RewriteTS); err != nil {
-					return errors.Trace(err)
-				}
+				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
-		} else if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, tableReplace.NewTableID, indexIDs, sr.RewriteTS); err != nil {
-			return errors.Trace(err)
+		} else {
+			insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
 		}
 		return nil
 	case model.ActionDropColumn:
@@ -715,12 +698,10 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 					if !exist {
 						return errors.Errorf("DropColumn: try to drop a non-existent table, missing oldPartitionID")
 					}
-					if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, newPid, indexIDs, sr.RewriteTS); err != nil {
-						return errors.Trace(err)
-					}
+					insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 				}
-			} else if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, tableReplace.NewTableID, indexIDs, sr.RewriteTS); err != nil {
-				return errors.Trace(err)
+			} else {
+				insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
 			}
 		}
 		return nil
@@ -745,12 +726,10 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 					if !exist {
 						return errors.Errorf("DropColumns: try to drop a non-existent table, missing oldPartitionID")
 					}
-					if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, newPid, indexIDs, sr.RewriteTS); err != nil {
-						return errors.Trace(err)
-					}
+					insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 				}
-			} else if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, tableReplace.NewTableID, indexIDs, sr.RewriteTS); err != nil {
-				return errors.Trace(err)
+			} else {
+				insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
 			}
 		}
 	case model.ActionModifyColumn:
@@ -774,12 +753,10 @@ func (sr *SchemasReplace) deleteRange(ctx context.Context, job *model.Job, inser
 				if !exist {
 					return errors.Errorf("DropColumn: try to drop a non-existent table, missing oldPartitionID")
 				}
-				if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, newPid, indexIDs, sr.RewriteTS); err != nil {
-					return errors.Trace(err)
-				}
+				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
-		} else if err := insertDeleteRangeForIndex(ctx, newJobID, &elementID, tableReplace.NewTableID, indexIDs, sr.RewriteTS); err != nil {
-			return errors.Trace(err)
+		} else {
+			insertDeleteRangeForIndex(newJobID, &elementID, tableReplace.NewTableID, indexIDs)
 		}
 	}
 	return nil

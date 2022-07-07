@@ -272,13 +272,11 @@ var (
 
 type TableDeletQueryArgs struct {
 	tableIDs []int64
-	ts       uint64
 }
 
 type IndexDeleteQueryArgs struct {
 	tableID  int64
 	indexIDs []int64
-	ts       uint64
 }
 
 type mockInsertDeleteRange struct {
@@ -294,21 +292,17 @@ func newMockInsertDeleteRange() *mockInsertDeleteRange {
 	}
 }
 
-func (midr *mockInsertDeleteRange) mockInsertDeleteRangeForTable(ctx context.Context, jobID int64, tableIDs []int64, ts uint64) error {
+func (midr *mockInsertDeleteRange) mockInsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
 	midr.tableCh <- TableDeletQueryArgs{
 		tableIDs: tableIDs,
-		ts:       ts,
 	}
-	return nil
 }
 
-func (midr *mockInsertDeleteRange) mockInsertDeleteRangeForIndex(ctx context.Context, jobID int64, elementID *int64, tableID int64, indexIDs []int64, ts uint64) error {
+func (midr *mockInsertDeleteRange) mockInsertDeleteRangeForIndex(jobID int64, elementID *int64, tableID int64, indexIDs []int64) {
 	midr.indexCh <- IndexDeleteQueryArgs{
 		tableID:  tableID,
 		indexIDs: indexIDs,
-		ts:       ts,
 	}
-	return nil
 }
 
 func TestDeleteRangeForMDDLJob(t *testing.T) {
@@ -334,20 +328,16 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 		TableMap: tableMap,
 	}
 	schemaReplace.DbMap[mDDLJobDBOldID] = dbReplace
-	ts := uint64(123)
-	schemaReplace.RewriteTS = ts
 
 	midr := newMockInsertDeleteRange()
-	ctx := context.Background()
 
 	var targs TableDeletQueryArgs
 	var iargs IndexDeleteQueryArgs
 	var err error
 	// drop schema
-	err = schemaReplace.deleteRange(ctx, dropSchemaJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropSchemaJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	targs = <-midr.tableCh
-	require.Equal(t, targs.ts, ts)
 	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewTableIDSet))
 	for _, tableID := range targs.tableIDs {
 		_, exist := mDDLJobALLNewTableIDSet[tableID]
@@ -355,10 +345,9 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop table0
-	err = schemaReplace.deleteRange(ctx, dropTable0Job, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable0Job, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	targs = <-midr.tableCh
-	require.Equal(t, targs.ts, ts)
 	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewPartitionIDSet))
 	for _, tableID := range targs.tableIDs {
 		_, exist := mDDLJobALLNewPartitionIDSet[tableID]
@@ -366,27 +355,24 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop table1
-	err = schemaReplace.deleteRange(ctx, dropTable1Job, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable1Job, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	targs = <-midr.tableCh
-	require.Equal(t, targs.ts, ts)
 	require.Equal(t, len(targs.tableIDs), 1)
 	require.Equal(t, targs.tableIDs[0], mDDLJobTable1NewID)
 
 	// drop table partition1
-	err = schemaReplace.deleteRange(ctx, dropTable0Partition1Job, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable0Partition1Job, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	targs = <-midr.tableCh
-	require.Equal(t, targs.ts, ts)
 	require.Equal(t, len(targs.tableIDs), 1)
 	require.Equal(t, targs.tableIDs[0], mDDLJobPartition1NewID)
 
 	// roll back add index for table0
-	err = schemaReplace.deleteRange(ctx, rollBackTable0IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(rollBackTable0IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
-		require.Equal(t, iargs.ts, ts)
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), 1)
@@ -394,20 +380,18 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// roll back add index for table1
-	err = schemaReplace.deleteRange(ctx, rollBackTable1IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(rollBackTable1IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
-	require.Equal(t, iargs.ts, ts)
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), 1)
 	require.Equal(t, iargs.indexIDs[0], int64(2))
 
 	// drop index for table0
-	err = schemaReplace.deleteRange(ctx, dropTable0IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable0IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
-		require.Equal(t, iargs.ts, ts)
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), 1)
@@ -415,20 +399,18 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop index for table1
-	err = schemaReplace.deleteRange(ctx, dropTable1IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable1IndexJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
-	require.Equal(t, iargs.ts, ts)
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), 1)
 	require.Equal(t, iargs.indexIDs[0], int64(2))
 
 	// drop indexes for table0
-	err = schemaReplace.deleteRange(ctx, dropTable0IndexesJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable0IndexesJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
-		require.Equal(t, iargs.ts, ts)
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
@@ -439,10 +421,9 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes for table1
-	err = schemaReplace.deleteRange(ctx, dropTable1IndexesJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable1IndexesJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
-	require.Equal(t, iargs.ts, ts)
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
 	for _, indexID := range iargs.indexIDs {
@@ -451,11 +432,10 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop column for table0
-	err = schemaReplace.deleteRange(ctx, dropTable0ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable0ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
-		require.Equal(t, iargs.ts, ts)
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
@@ -466,10 +446,9 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop column for table1
-	err = schemaReplace.deleteRange(ctx, dropTable1ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable1ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
-	require.Equal(t, iargs.ts, ts)
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
 	for _, indexID := range iargs.indexIDs {
@@ -478,11 +457,10 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop columns for table0
-	err = schemaReplace.deleteRange(ctx, dropTable0ColumnsJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable0ColumnsJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
-		require.Equal(t, iargs.ts, ts)
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
@@ -493,10 +471,9 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop columns for table1
-	err = schemaReplace.deleteRange(ctx, dropTable1ColumnsJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(dropTable1ColumnsJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
-	require.Equal(t, iargs.ts, ts)
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
 	for _, indexID := range iargs.indexIDs {
@@ -505,11 +482,10 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop columns for table0
-	err = schemaReplace.deleteRange(ctx, modifyTable0ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(modifyTable0ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
 		iargs = <-midr.indexCh
-		require.Equal(t, iargs.ts, ts)
 		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 		require.True(t, exist)
 		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
@@ -520,10 +496,9 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop columns for table1
-	err = schemaReplace.deleteRange(ctx, modifyTable1ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
+	err = schemaReplace.deleteRange(modifyTable1ColumnJob, midr.mockInsertDeleteRangeForTable, midr.mockInsertDeleteRangeForIndex)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
-	require.Equal(t, iargs.ts, ts)
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
 	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
 	for _, indexID := range iargs.indexIDs {
