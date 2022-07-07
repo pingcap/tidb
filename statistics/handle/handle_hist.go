@@ -201,7 +201,6 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 	return h.handleOneItemTask(task, readerCtx, ctx)
 }
 
-// readStatsForOne reads hist for one column/index, TODO load data via kv-get asynchronously
 func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
 	item := task.TableItemID
 	oldCache := h.statsCache.Load().(statsCache)
@@ -281,6 +280,7 @@ func (h *Handle) getFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.
 	}
 }
 
+// readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
