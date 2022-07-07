@@ -55,7 +55,8 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *mo
 }
 
 func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
@@ -105,7 +106,8 @@ func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, er
 
 func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 	var ret []int64
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
@@ -175,8 +177,9 @@ func isDDLJobDone(test *testing.T, t *meta.Meta) bool {
 func testCheckSchemaState(test *testing.T, store kv.Storage, dbInfo *model.DBInfo, state model.SchemaState) {
 	isDropped := true
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	for {
-		err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			info, err := t.GetDatabase(dbInfo.ID)
 			require.NoError(test, err)
@@ -287,7 +290,9 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithLease(testLease),
 	)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
-		return testkit.NewTestKit(t, store).Session(), nil
+		session := testkit.NewTestKit(t, store).Session()
+		session.GetSessionVars().CommonGlobalLoaded = true
+		return session, nil
 	}, 20, 20, 5))
 	require.NoError(t, err)
 	defer func() {

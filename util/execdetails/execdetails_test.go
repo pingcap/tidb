@@ -47,11 +47,13 @@ func TestString(t *testing.T) {
 					"backoff2",
 				},
 			},
-			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
 			WriteSize:         1,
 			PrewriteRegionNum: 1,
 			TxnRetry:          1,
+			ResolveLock: util.ResolveLockDetail{
+				ResolveLockTime: 1000000000, // 10^9 ns = 1s
+			},
 		},
 		ScanDetail: &util.ScanDetail{
 			ProcessedKeys:             10,
@@ -188,11 +190,13 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 			CommitBackoffTime: int64(time.Second),
 			BackoffTypes:      []string{"backoff1", "backoff2", "backoff1"},
 		},
-		ResolveLockTime:   int64(time.Second),
 		WriteKeys:         3,
 		WriteSize:         66,
 		PrewriteRegionNum: 5,
 		TxnRetry:          2,
+		ResolveLock: util.ResolveLockDetail{
+			ResolveLockTime: int64(time.Second),
+		},
 	}
 	stats := &RuntimeStatsWithCommit{
 		Commit: commitDetail,
@@ -201,11 +205,10 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 
 	lockDetail := &util.LockKeysDetails{
-		TotalTime:       time.Second,
-		RegionNum:       2,
-		LockKeys:        10,
-		ResolveLockTime: int64(time.Second * 2),
-		BackoffTime:     int64(time.Second * 3),
+		TotalTime:   time.Second,
+		RegionNum:   2,
+		LockKeys:    10,
+		BackoffTime: int64(time.Second * 3),
 		Mu: struct {
 			sync.Mutex
 			BackoffTypes []string
@@ -217,6 +220,9 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		LockRPCTime:  int64(time.Second * 5),
 		LockRPCCount: 50,
 		RetryCount:   2,
+		ResolveLock: util.ResolveLockDetail{
+			ResolveLockTime: int64(time.Second * 2),
+		},
 	}
 	stats = &RuntimeStatsWithCommit{
 		LockKeys: lockDetail,

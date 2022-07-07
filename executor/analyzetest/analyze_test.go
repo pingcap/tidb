@@ -15,6 +15,7 @@
 package analyzetest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -169,9 +170,10 @@ func TestAnalyzeRestrict(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	ctx := tk.Session().(sessionctx.Context)
-	ctx.GetSessionVars().InRestrictedSQL = true
-	tk.MustExec("analyze table t")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+	require.Nil(t, err)
+	require.Nil(t, rs)
 }
 
 func TestAnalyzeParameters(t *testing.T) {

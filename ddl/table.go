@@ -1130,6 +1130,28 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 	return ver, nil
 }
 
+func (w *worker) onSetTiFlashMode(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var mode model.TiFlashMode
+	if err := job.DecodeArgs(&mode); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo.TiFlashMode = mode
+
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 	ctx, err := w.sessPool.get()
 	if err != nil {

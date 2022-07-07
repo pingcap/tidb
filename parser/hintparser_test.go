@@ -16,12 +16,11 @@ package parser_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseHint(t *testing.T) {

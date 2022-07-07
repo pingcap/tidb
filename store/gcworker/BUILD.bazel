@@ -36,6 +36,7 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -54,8 +55,8 @@ go_test(
         "//domain/infosync",
         "//kv",
         "//parser/model",
+        "//session",
         "//store/mockstore",
-        "//testkit",
         "//testkit/testmain",
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",

@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -49,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
-	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -58,6 +56,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -269,6 +268,17 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
 	ctx.setDDLLabelForTopSQL(job)
 }
 
+func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
+	if !exists {
+		ctx = NewJobContext()
+		dc.jobCtx.jobCtxMap[job.ID] = ctx
+	}
+	ctx.setDDLLabelForDiagnosis(job)
+}
+
 func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
@@ -431,6 +441,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -524,7 +535,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // GetNextDDLSeqNum return the next ddl seq num.
 func (d *ddl) GetNextDDLSeqNum() (uint64, error) {
 	var count uint64
-	err := kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		count, err = t.GetHistoryDDLCount()
@@ -580,7 +592,8 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
-	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(errors.New("gofail genGlobalIDs error"))
@@ -598,7 +611,8 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 
 func (d *ddl) genPlacementPolicyID() (int64, error) {
 	var ret int64
-	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenPlacementPolicyID()
@@ -724,6 +738,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
 			// The same job will be put to the DDL queue twice.
+			job = job.Clone()
 			task1 := &limitJobTask{job, make(chan error)}
 			d.limitJobCh <- task1
 			<-task.err
@@ -817,16 +832,6 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
-		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
-		if historyJob.IsCancelled() && (historyJob.Type == model.ActionAddColumns || historyJob.Type == model.ActionDropColumns || historyJob.Type == model.ActionDropIndexes) {
-			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
-				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-				}
-			}
-			logutil.BgLogger().Info("[ddl] DDL job is cancelled", zap.Int64("jobID", jobID))
-			return nil
-		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
@@ -866,7 +871,7 @@ func (d *ddl) SetHook(h Callback) {
 
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
-		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+		tidbutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 		d.wg.Done()
 	}()
 
@@ -971,10 +976,25 @@ type Info struct {
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
+// GetDDLInfoWithNewTxn returns DDL information using a new txn.
+func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
+	err := sessiontxn.NewTxn(context.Background(), s)
+	if err != nil {
+		return nil, err
+	}
+	info, err := GetDDLInfo(s)
+	s.RollbackTxn(context.Background())
+	return info, err
+}
+
 // GetDDLInfo returns DDL information.
-func GetDDLInfo(txn kv.Transaction) (*Info, error) {
+func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
+	txn, err := s.Txn(true)
+	if err != nil {
+		return nil, err
+	}
 	t := meta.NewMeta(txn)
 
 	info.Jobs = make([]*model.Job, 0, 2)
@@ -1105,22 +1125,10 @@ func GetAllDDLJobs(t *meta.Meta) ([]*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	jobs := append(generalJobs, addIdxJobs...)
-	sort.Sort(jobArray(jobs))
+	slices.SortFunc(jobs, func(i, j *model.Job) bool {
+		return i.ID < j.ID
+	})
 	return jobs, nil
-}
-
-type jobArray []*model.Job
-
-func (v jobArray) Len() int {
-	return len(v)
-}
-
-func (v jobArray) Less(i, j int) bool {
-	return v[i].ID < v[j].ID
-}
-
-func (v jobArray) Swap(i, j int) {
-	v[i], v[j] = v[j], v[i]
 }
 
 // MaxHistoryJobs is exported for testing.
@@ -1129,15 +1137,16 @@ const MaxHistoryJobs = 10
 // DefNumHistoryJobs is default value of the default number of history job
 const DefNumHistoryJobs = 10
 
-// GetHistoryDDLJobs returns the DDL history jobs and an error.
+const batchNumHistoryJobs = 128
+
+// GetLastNHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
-func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
-	t := meta.NewMeta(txn)
-	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
+func GetLastNHistoryDDLJobs(t *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
+	iterator, err := t.GetLastHistoryDDLJobsIterator()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return jobs, nil
+	return iterator.GetLastJobs(maxNumJobs, nil)
 }
 
 // IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
@@ -1177,7 +1186,26 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 
 // GetAllHistoryDDLJobs get all the done DDL jobs.
 func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
-	return m.GetAllHistoryDDLJobs()
+	iterator, err := m.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	allJobs := make([]*model.Job, 0, batchNumHistoryJobs)
+	for {
+		jobs, err := iterator.GetLastJobs(batchNumHistoryJobs, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		allJobs = append(allJobs, jobs...)
+		if len(jobs) < batchNumHistoryJobs {
+			break
+		}
+	}
+	// sort job.
+	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
+		return i.ID < j.ID
+	})
+	return allJobs, nil
 }
 
 // GetHistoryJobByID return history DDL job by ID.

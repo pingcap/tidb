@@ -81,6 +81,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 		return
 	}
 	if exist {
+		//nolint: gosec
 		file, err := os.Open(path)
 		if err != nil {
 			writeError(w, err)
