@@ -42,7 +42,7 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("alter table t add column b int default 2, add column c int default 3;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 
-	// Test add multiple columns in one spec.
+	// Test add multiple columns and constraints in one spec.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1);")
@@ -54,6 +54,24 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, 3);")
 	tk.MustExec("alter table t add column (d int default 4, e int default 5);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4 5"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("alter table t add column (index i(a), index i1(a));")
+	tk.MustQuery("select * from t use index (i, i1);").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("alter table t add column (b int default 2, index i(a), primary key (a));")
+	tk.MustQuery("select * from t use index (i, primary)").Check(testkit.Rows("1 2"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("alter table t add column (index i(a));")
+	tk.MustQuery("select * from t use index (i)").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int default 1);")
