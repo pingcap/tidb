@@ -712,6 +712,8 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
+	normal                "NORMAL"
+	fast                  "FAST"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1714,6 +1716,20 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableSetTiFlashReplica,
 			TiFlashReplica: tiflashReplicaSpec,
+		}
+	}
+|	"SET" "TIFLASH" "MODE" "NORMAL"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:          ast.AlterTableSetTiFlashMode,
+			TiFlashMode: model.TiFlashModeNormal,
+		}
+	}
+|	"SET" "TIFLASH" "MODE" "FAST"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:          ast.AlterTableSetTiFlashMode,
+			TiFlashMode: model.TiFlashModeFast,
 		}
 	}
 |	"CONVERT" "TO" CharsetKw CharsetName OptCollate
@@ -6394,6 +6410,8 @@ NotKeywordToken:
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
+|	"NORMAL"
+|	"FAST"
 
 /************************************************************************************
  *
