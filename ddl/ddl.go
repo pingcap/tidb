@@ -602,6 +602,11 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	}
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgWorkerCnt, reorgWorkerCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
+	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return()
+		}
+	})
 	d.wg.Run(d.startDispatchLoop)
 }
 
@@ -1603,6 +1608,11 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 	t := meta.NewMeta(txn)
 	job, err := t.GetHistoryDDLJob(id)
 	return job, errors.Trace(err)
+}
+
+// AddHistoryDDLJobForTest used for test.
+func AddHistoryDDLJobForTest(sess sessionctx.Context, t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	return AddHistoryDDLJob(newSession(sess), t, job, updateRawArgs, variable.EnableConcurrentDDL.Load())
 }
 
 // AddHistoryDDLJob record the history job.

@@ -361,7 +361,7 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	tk.MustExec("insert into t values ()")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -430,7 +430,7 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 	// Test cancel job with alter columns
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in write-reorg.
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -498,7 +498,7 @@ func TestMultiSchemaChangeChangeColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2)")
 	tk.MustExec("insert into t values ()")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -627,7 +627,7 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteOnly
 	})
 	dom.DDL().SetHook(hook)
@@ -641,7 +641,7 @@ func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {
 	// Test for cancelling the job in none state.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, index(a), unique index(b), index idx(a, b));")
-	hook = newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
 	dom.DDL().SetHook(hook)
@@ -737,7 +737,7 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2, index t(a))")
 	tk.MustExec("insert into t values ()")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
@@ -887,7 +887,7 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int, b int, c int, index i1(a), unique index i2(b), index i3(a, b));")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(hook)
@@ -986,7 +986,7 @@ func TestMultiSchemaChangeMixCancelled(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	origin := dom.DDL().GetHook()
-	cancelHook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	cancelHook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		return job.MultiSchemaInfo != nil &&
 			len(job.MultiSchemaInfo.SubJobs) > 8 &&
 			job.MultiSchemaInfo.SubJobs[8].SchemaState == model.StateWriteReorganization

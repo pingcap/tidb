@@ -15,19 +15,33 @@
 package ddl_test
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
 
-func TestDDLScheduling(t *testing.T) {
+func TestDDLSchedulingMultiTimes(t *testing.T) {
+	if !variable.EnableConcurrentDDL.Load() {
+		t.Skipf("test requires concurrent ddl")
+	}
+	for i := 0; i < 3; i++ {
+		testDDLScheduling(t)
+	}
+}
+
+// testDDLScheduling tests the DDL scheduling. See Concurrent DDL RFC for the rules of DDL scheduling.
+// This test checks the chosen job records to see if there are wrong scheduling, if job A and job B cannot run concurrently,
+// then the all the record of job A must before or after job B, no cross record between these 2 jobs should be in between.
+func testDDLScheduling(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -38,8 +52,6 @@ func TestDDLScheduling(t *testing.T) {
 	tk.MustExec("CREATE TABLE e3 (id INT NOT NULL);")
 
 	d := dom.DDL()
-
-	once := true
 
 	ddlJobs := []string{
 		"alter table e2 add index idx(id)",
@@ -57,9 +69,9 @@ func TestDDLScheduling(t *testing.T) {
 	hook := &ddl.TestDDLCallback{}
 	var wg util.WaitGroupWrapper
 	wg.Add(1)
+	var once sync.Once
 	hook.OnGetJobBeforeExported = func(jobType string) {
-		if once {
-			once = false
+		once.Do(func() {
 			for i, job := range ddlJobs {
 				wg.Run(func() {
 					tk := testkit.NewTestKit(t, store)
@@ -80,7 +92,7 @@ func TestDDLScheduling(t *testing.T) {
 				}
 			}
 			wg.Done()
-		}
+		})
 	}
 
 	record := make([]int64, 0, 16)

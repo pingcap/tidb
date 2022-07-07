@@ -2434,15 +2434,15 @@ func TestTopSQLResourceTag(t *testing.T) {
 		{"replace into t values (2,2), (4,4)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
 
 		// Test for DDL
-		{"create database test_db0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
-		{"create table test_db0.test_t0 (a int, b int, index idx(a))", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
-		{"create table test_db0.test_t1 (a int, b int, index idx(a))", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
-		{"alter  table test_db0.test_t0 add column c int", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
-		{"drop   table test_db0.test_t0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
-		{"drop   database test_db0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
-		{"alter  table t modify column b double", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan, tikvrpc.CmdCop}},
-		{"alter  table t add index idx2 (b,a)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan, tikvrpc.CmdCop}},
-		{"alter  table t drop index idx2", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"create database test_db0", false, []tikvrpc.CmdType{}},
+		{"create table test_db0.test_t0 (a int, b int, index idx(a))", false, []tikvrpc.CmdType{}},
+		{"create table test_db0.test_t1 (a int, b int, index idx(a))", false, []tikvrpc.CmdType{}},
+		{"alter  table test_db0.test_t0 add column c int", false, []tikvrpc.CmdType{}},
+		{"drop   table test_db0.test_t0", false, []tikvrpc.CmdType{}},
+		{"drop   database test_db0", false, []tikvrpc.CmdType{}},
+		{"alter  table t modify column b double", false, []tikvrpc.CmdType{tikvrpc.CmdScan, tikvrpc.CmdCop}},
+		{"alter  table t add index idx2 (b,a)", false, []tikvrpc.CmdType{tikvrpc.CmdScan, tikvrpc.CmdCop}},
+		{"alter  table t drop index idx2", false, []tikvrpc.CmdType{}},
 
 		// Test for transaction
 		{"begin", false, nil},
