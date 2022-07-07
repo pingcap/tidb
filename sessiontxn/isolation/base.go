@@ -121,7 +121,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if err != nil {
 		return err
 	}
-	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture().GetPreparedTSFuture() != nil
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
 		_, err = p.ActivateTxn()
 	}

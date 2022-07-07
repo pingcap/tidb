@@ -3055,8 +3055,12 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	return nil
 }
 
-// GetPreparedTxnFuture returns the TxnFuture
+// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
+// It returns nil otherwise.
 func (s *session) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	if !s.txn.validOrPending() {
+		return nil
+	}
 	return &s.txn
 }
 

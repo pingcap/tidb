@@ -61,9 +61,10 @@ type Context struct {
 
 type wrapTxn struct {
 	kv.Transaction
+	prepared bool
 }
 
-// Wait converts pending txn to valid
+// Wait creates a new kvTransaction
 func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
 	kvTxn, err := sctx.GetStore().Begin()
 	if err != nil {
@@ -71,11 +72,6 @@ func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transac
 	}
 	txn.Transaction = kvTxn
 	return txn, nil
-}
-
-// GetPreparedTSFuture returns the prepared ts future
-func (txn *wrapTxn) GetPreparedTSFuture() oracle.Future {
-	return nil
 }
 
 func (txn *wrapTxn) Valid() bool {
@@ -377,11 +373,16 @@ func (c *Context) HasLockedTables() bool {
 
 // PrepareTSFuture implements the sessionctx.Context interface.
 func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
+	c.txn.prepared = true
 	return nil
 }
 
-// GetPreparedTxnFuture returns the TxnFuture
+// GetPreparedTxnFuture returns the TxnFuture if it is prepared.
+// It returns nil otherwise.
 func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	if !c.txn.prepared {
+		return nil
+	}
 	return &c.txn
 }
 
