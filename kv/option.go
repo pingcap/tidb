@@ -89,6 +89,8 @@ const (
 	RequestSourceInternal
 	// RequestSourceType set request source type of the current statement.
 	RequestSourceType
+	// ReplicaReadAdjuster set the adjust function of cop requsts.
+	ReplicaReadAdjuster
 )
 
 // ReplicaReadType is the type of replica to read data from

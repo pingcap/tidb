@@ -68,7 +68,9 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	clientkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"golang.org/x/exp/slices"
 )
@@ -4652,6 +4654,9 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.err = err
 		return nil
 	}
+	if e.ctx.GetSessionVars().GetReplicaRead() == kv.ReplicaReadClosestAdaptive {
+		e.snapshot.SetOption(kv.ReplicaRead)
+	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
@@ -4737,6 +4742,21 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	e.base().maxChunkSize = capacity
 	e.buildVirtualColumnInfo()
 	return e
+}
+
+func newReplicaReadAdjuster(ctx sessionctx.Context, avgRowSize float64) txnkv.ReplicaReadAdjuster {
+	return func(count int) (tikv.StoreSelectorOption, clientkv.ReplicaReadType) {
+		if int64(avgRowSize*float64(count)) >= ctx.GetSessionVars().AdaptiveClosestReadThreshold {
+			return tikv.WithMatchLabels([]*metapb.StoreLabel{
+				{
+					Key:   placement.DCLabelKey,
+					Value: config.GetTxnScopeFromConfig(),
+				},
+			}), clientkv.ReplicaReadMixed
+		}
+		// fallback to read from leader if the request is small
+		return nil, clientkv.ReplicaReadLeader
+	}
 }
 
 func isCommonHandleRead(tbl *model.TableInfo, idx *model.IndexInfo) bool {
