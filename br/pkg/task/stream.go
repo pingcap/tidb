@@ -985,6 +985,9 @@ func RunStreamRestore(
 
 	// restore full snapshot.
 	if len(cfg.FullBackupStorage) > 0 {
+		if err := checkPiTRRequirements(ctx, g, cfg); err != nil {
+			return errors.Trace(err)
+		}
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
@@ -1456,4 +1459,26 @@ func ShiftTS(startTS uint64) uint64 {
 
 func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
+}
+
+func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig) error {
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
+	if len(userDBs) > 0 {
+		userDBNames := make([]string, 0, len(userDBs))
+		for _, db := range userDBs {
+			userDBNames = append(userDBNames, db.Name.O)
+		}
+		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
+			"databases %s existed in restored cluster, please drop them before execute PiTR",
+			strings.Join(userDBNames, ","))
+	}
+
+	return nil
 }
