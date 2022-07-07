@@ -135,45 +135,41 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 }
 
 func TestCheckTargetClusterFreshWithTable(t *testing.T) {
-	testFunc := func(targetDBName string) {
-		// cannot use shared `mc`, other parallel case may change it.
-		cluster := getStartedMockedCluster(t)
-		defer cluster.Stop()
+	// cannot use shared `mc`, other parallel case may change it.
+	cluster := getStartedMockedCluster(t)
+	defer cluster.Stop()
 
-		g := gluetidb.New()
-		client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
-		err := client.Init(g, cluster.Storage)
-		require.NoError(t, err)
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, cluster.Storage)
+	require.NoError(t, err)
 
-		ctx := context.Background()
-		info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
-		require.NoError(t, err)
-		dbSchema, isExist := info.SchemaByName(model.NewCIStr(targetDBName))
-		require.True(t, isExist)
-		intField := types.NewFieldType(mysql.TypeLong)
-		intField.SetCharset("binary")
-		table := &metautil.Table{
-			DB: dbSchema,
-			Info: &model.TableInfo{
-				ID:   int64(1),
-				Name: model.NewCIStr("t"),
-				Columns: []*model.ColumnInfo{{
-					ID:        1,
-					Name:      model.NewCIStr("id"),
-					FieldType: *intField,
-					State:     model.StatePublic,
-				}},
-				Charset: "utf8mb4",
-				Collate: "utf8mb4_bin",
-			},
-		}
-		_, _, err = client.CreateTables(cluster.Domain, []*metautil.Table{table}, 0)
-		require.NoError(t, err)
-
-		require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
+	ctx := context.Background()
+	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoError(t, err)
+	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
+	require.True(t, isExist)
+	intField := types.NewFieldType(mysql.TypeLong)
+	intField.SetCharset("binary")
+	table := &metautil.Table{
+		DB: dbSchema,
+		Info: &model.TableInfo{
+			ID:   int64(1),
+			Name: model.NewCIStr("t"),
+			Columns: []*model.ColumnInfo{{
+				ID:        1,
+				Name:      model.NewCIStr("id"),
+				FieldType: *intField,
+				State:     model.StatePublic,
+			}},
+			Charset: "utf8mb4",
+			Collate: "utf8mb4_bin",
+		},
 	}
-	testFunc("test")
-	testFunc(mysql.SystemDB)
+	_, _, err = client.CreateTables(cluster.Domain, []*metautil.Table{table}, 0)
+	require.NoError(t, err)
+
+	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
 func TestCheckSysTableCompatibility(t *testing.T) {

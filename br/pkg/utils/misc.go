@@ -18,20 +18,6 @@ import (
 	"github.com/pingcap/tidb/parser/types"
 )
 
-// TruncSliceForPrint truncate input slice for print
-// if it's length > max, append '...' to result slice
-func TruncSliceForPrint(slice []string, max int) []string {
-	res := make([]string, 0, max)
-	for _, s := range slice {
-		if len(res) == max {
-			res = append(res, "...")
-			break
-		}
-		res = append(res, s)
-	}
-	return res
-}
-
 // IsTypeCompatible checks whether type target is compatible with type src
 // they're compatible if
 // - same null/not null and unsigned flag(maybe we can allow src not null flag, target null flag later)

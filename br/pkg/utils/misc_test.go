@@ -21,15 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTruncSliceForPrint(t *testing.T) {
-	slice := []string{"1", "2", "3", "4"}
-	require.Len(t, TruncSliceForPrint(slice, 10), 4)
-	require.Len(t, TruncSliceForPrint(slice, 4), 4)
-	res := TruncSliceForPrint(slice, 3)
-	require.Len(t, res, 4)
-	require.EqualValues(t, []string{"1", "2", "3", "..."}, res)
-}
-
 func TestIsTypeCompatible(t *testing.T) {
 	{
 		// different unsigned flag

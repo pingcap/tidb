@@ -46,8 +46,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
@@ -850,66 +848,35 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 // if there's no user dbs or tables, we take it as a fresh cluster, although
 // user may have created some users or made other changes.
 func (rc *Client) CheckTargetClusterFresh(ctx context.Context) error {
-	querySchemaOrTables := func(query string) ([]string, error) {
-		rs, err := rc.db.QueryContext(ctx, query)
-		if err != nil {
-			return nil, err
-		}
-		schemas := make([]string, 0)
-		defer rs.Close()
-		req := rs.NewChunk(nil)
-		it := chunk.NewIterator4Chunk(req)
-		err = rs.Next(ctx, req)
-		for err == nil && req.NumRows() != 0 {
-			for row := it.Begin(); row != it.End(); row = it.Next() {
-				schema := row.GetString(0)
-				schemas = append(schemas, schema)
-			}
-			err = rs.Next(ctx, req)
-		}
-		return schemas, err
-	}
-
 	log.Info("checking whether target cluster is fresh")
-
-	schemas, err := querySchemaOrTables("select SCHEMA_NAME from INFORMATION_SCHEMA.SCHEMATA")
-	if err != nil {
-		return errors.Trace(err)
+	userDBs := GetExistedUserDBs(rc.dom)
+	if len(userDBs) == 0 {
+		return nil
 	}
-	userDbList := make([]string, 0)
-	for _, schema := range schemas {
-		// tidb create test db on fresh cluster
-		if !util.IsMemOrSysDB(strings.ToLower(schema)) && schema != "test" {
-			userDbList = append(userDbList, schema)
+
+	const maxPrintCount = 10
+	userTableOrDBNames := make([]string, 0, maxPrintCount+1)
+	addName := func(name string) bool {
+		if len(userTableOrDBNames) == maxPrintCount {
+			userTableOrDBNames = append(userTableOrDBNames, "...")
+			return false
+		}
+		userTableOrDBNames = append(userTableOrDBNames, name)
+		return true
+	}
+outer:
+	for _, db := range userDBs {
+		if !addName(db.Name.L) {
+			break outer
+		}
+		for _, tbl := range db.Tables {
+			if !addName(tbl.Name.L) {
+				break outer
+			}
 		}
 	}
-	if len(userDbList) > 0 {
-		dbNames := utils.TruncSliceForPrint(userDbList, 10)
-		log.Error("not fresh cluster", zap.Strings("user dbs", dbNames))
-		return errors.Annotatef(berrors.ErrRestoreNotFreshCluster, "user dbs: "+strings.Join(dbNames, ", "))
-	}
-
-	// user may create table in mysql database, so we need to check mysql db too,
-	// but checking mysql db will add extra maintenance burden since tidb may add new
-	// system tables in new version.
-	tables, err := querySchemaOrTables("select concat(TABLE_SCHEMA, '.', TABLE_NAME) " +
-		"from INFORMATION_SCHEMA.TABLES where TABLE_SCHEMA in ('mysql', 'test')")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	userTableList := make([]string, 0)
-	for _, tbl := range tables {
-		if _, ok := allSystemTableSet[tbl]; !ok {
-			userTableList = append(userTableList, tbl)
-		}
-	}
-	if len(userTableList) > 0 {
-		tableNames := utils.TruncSliceForPrint(userTableList, 10)
-		log.Error("not fresh cluster", zap.Strings("user tables", tableNames))
-		return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user tables: "+strings.Join(tableNames, ", "))
-	}
-
-	return nil
+	log.Error("not fresh cluster", zap.Strings("user tables", userTableOrDBNames))
+	return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user db/tables: "+strings.Join(userTableOrDBNames, ", "))
 }
 
 func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
