@@ -491,7 +491,7 @@ func jobNeedGC(job *model.Job) bool {
 func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable InsertDeleteRangeForTable, insertDeleteRangeForIndex InsertDeleteRangeForIndex) error {
 	dbReplace, exist := sr.DbMap[job.SchemaID]
 	if !exist {
-		return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldDBID")
+		return errors.Errorf("try to drop a non-existent range, missing oldDBID")
 	}
 
 	// allocate a new fake job id to avoid row conflicts in table `gc_delete_range`
