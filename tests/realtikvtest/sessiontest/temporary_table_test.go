@@ -301,22 +301,27 @@ func TestTemporaryTableInterceptor(t *testing.T) {
 
 	initTxnFuncs := []func() error{
 		func() error {
-			return sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
+			err := tk.Session().PrepareTxnCtx(context.TODO())
+			if err == nil {
+				err = sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
+			}
+			return err
 		},
 		func() error {
 			return sessiontxn.NewTxn(context.Background(), tk.Session())
 		},
 		func() error {
-			return tk.Session().NewStaleTxnWithStartTS(context.Background(), 0)
-		},
-		func() error {
-			return tk.Session().InitTxnWithStartTS(0)
+			return sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+				Type:        sessiontxn.EnterNewTxnWithBeginStmt,
+				StaleReadTS: 0,
+			})
 		},
 	}
 
 	for _, initFunc := range initTxnFuncs {
 		require.NoError(t, initFunc())
 
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		txn, err := tk.Session().Txn(true)
 		require.NoError(t, err)
 
@@ -332,7 +337,7 @@ func TestTemporaryTableInterceptor(t *testing.T) {
 	}
 
 	// Also check GetSnapshotWithTS
-	snap := tk.Session().GetSnapshotWithTS(0)
+	snap := sessiontxn.GetSnapshotWithTS(tk.Session(), 0)
 	val, err := snap.Get(context.Background(), k)
 	require.NoError(t, err)
 	require.Equal(t, []byte("v1"), val)

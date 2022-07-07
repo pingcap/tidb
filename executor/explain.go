@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // ExplainExec represents an explain executor.
