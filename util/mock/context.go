@@ -18,7 +18,6 @@ package mock
 import (
 	"context"
 	"fmt"
-	"github.com/tikv/client-go/v2/tikv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -391,6 +391,7 @@ func (c *Context) HasLockedTables() bool {
 
 // PrepareTSFuture implements the sessionctx.Context interface.
 func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
+	c.txn.Transaction = nil
 	c.txn.tsFuture = future
 	return nil
 }
