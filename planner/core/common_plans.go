@@ -22,9 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -38,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -52,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -194,15 +190,9 @@ type Execute struct {
 	TxtProtoVars []expression.Expression // parsed variables under text protocol
 	BinProtoVars []types.Datum           // parsed variables under binary protocol
 	ExecID       uint32
-	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
-	SnapshotTS uint64
-	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
-	IsStaleness bool
-	// Deprecated: ReadReplicaScope now is only used for asserting after refactoring stale read, it will be removed later.
-	ReadReplicaScope string
-	Stmt             ast.StmtNode
-	StmtType         string
-	Plan             Plan
+	Stmt         ast.StmtNode
+	StmtType     string
+	Plan         Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -274,29 +264,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 	}
 
-	// Just setting `e.SnapshotTS`, `e.ReadReplicaScope` and `e.IsStaleness` with the return value of `handleExecuteBuilderOption`
-	// for asserting the stale read context after refactoring is exactly the same with the previous logic.
-	snapshotTS, readReplicaScope, isStaleness, err := handleExecuteBuilderOption(sctx, preparedObj)
-	if err != nil {
-		return err
-	}
-	e.SnapshotTS = snapshotTS
-	e.ReadReplicaScope = readReplicaScope
-	e.IsStaleness = isStaleness
-
-	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
-		staleread.AssertStmtStaleness(sctx, isStaleness)
-		if isStaleness {
-			is2, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
-			if err != nil {
-				panic(err)
-			}
-
-			if is.SchemaMetaVersion() != is2.SchemaMetaVersion() {
-				panic(fmt.Sprintf("%d != %d", is.SchemaMetaVersion(), is2.SchemaMetaVersion()))
-			}
-		}
-	})
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -328,70 +295,12 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		prepared.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
 	}
-	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
+	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
 	e.Stmt = prepared.Stmt
 	return nil
-}
-
-// Deprecated: it will be removed later. Now it is only used for asserting
-func handleExecuteBuilderOption(sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
-	snapshotTS = 0
-	readReplicaScope = oracle.GlobalTxnScope
-	isStaleness = false
-	err = nil
-	vars := sctx.GetSessionVars()
-	readTS := vars.TxnReadTS.PeakTxnReadTS()
-	if readTS > 0 {
-		// It means we meet following case:
-		// 1. prepare p from 'select * from t as of timestamp now() - x seconds'
-		// 1. set transaction read only as of timestamp ts2
-		// 2. execute prepare p
-		// The execute statement would be refused due to timestamp conflict
-		if preparedObj.SnapshotTSEvaluator != nil {
-			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
-			return
-		}
-		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
-		isStaleness = true
-		readReplicaScope = config.GetTxnScopeFromConfig()
-		return
-	}
-	// It means we meet following case:
-	// 1. prepare p from 'select * from t as of timestamp ts1'
-	// 1. begin
-	// 2. execute prepare p
-	// The execute statement would be refused due to timestamp conflict
-	if preparedObj.SnapshotTSEvaluator != nil {
-		if vars.InTxn() {
-			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-			return
-		}
-		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
-		// which means its infoschema is specified by the SQL, not the current/latest infoschema
-		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
-		isStaleness = true
-		readReplicaScope = config.GetTxnScopeFromConfig()
-		return
-	}
-	// It means we meet following case:
-	// 1. prepare p from 'select * from t'
-	// 1. start transaction read only as of timestamp ts1
-	// 2. execute prepare p
-	if vars.InTxn() && vars.TxnCtx.IsStaleness {
-		isStaleness = true
-		snapshotTS = vars.TxnCtx.StartTS
-		readReplicaScope = vars.TxnCtx.TxnScope
-		return
-	}
-	return
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
@@ -1593,11 +1502,11 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
-		accessObject = plan.AccessObject(false)
+		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
 		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
-			accessObject = pa.accessObject(e.ctx)
+			accessObject = pa.accessObject(e.ctx).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}

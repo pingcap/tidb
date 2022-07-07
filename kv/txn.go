@@ -17,6 +17,7 @@ package kv
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"math"
 	"math/rand"
@@ -99,7 +100,7 @@ func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool)
 	}
 }
 
-// RunInNewTxn will run the f in a new transaction environment.
+// RunInNewTxn will run the f in a new transaction environment, should be used by inner txn only.
 func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx context.Context, txn Transaction) error) error {
 	var (
 		err           error
@@ -117,6 +118,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
 			return err
 		}
+		setRequestSourceForInnerTxn(ctx, txn)
 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {
@@ -187,4 +189,25 @@ func BackOff(attempts uint) int {
 	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond // #nosec G404
 	time.Sleep(sleep)
 	return int(sleep)
+}
+
+func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
+	if source := ctx.Value(RequestSourceKey); source != nil {
+		requestSource := source.(RequestSource)
+		if !requestSource.RequestSourceInternal {
+			logutil.Logger(ctx).Warn("`RunInNewTxn` should be used by inner txn only")
+		}
+		txn.SetOption(RequestSourceInternal, requestSource.RequestSourceInternal)
+		txn.SetOption(RequestSourceType, requestSource.RequestSourceType)
+	} else {
+		// panic in test mode in case there are requests without source in the future.
+		// log warnings in production mode.
+		if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil {
+			panic("unexpected no source type context, if you see this error, " +
+				"the `RequestSourceTypeKey` is missing in your context")
+		} else {
+			logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
+				"the `RequestSourceTypeKey` is missing in the context")
+		}
+	}
 }

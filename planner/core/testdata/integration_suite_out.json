@@ -1567,6 +1567,65 @@
     ]
   },
   {
+    "Name": "TestDecorrelateLimitInSubquery",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─HashJoin 7992.00 root  semi join, equal:[eq(test.test.id, test.test.id)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─HashJoin 7992.00 root  semi join, equal:[eq(test.test.id, test.test.id)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─Apply 10000.00 root  CARTESIAN semi join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 2.00 root  offset:1, count:2",
+          "    └─TableReader 3.00 root  data:Limit",
+          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
+          "        └─Selection 3.00 cop[tikv]  eq(test.test.id, test.test.id)",
+          "          └─TableFullScan 3000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN semi join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─Selection(Probe) 2.40 root  eq(9, test.t.c)",
+          "  └─Limit 3.00 root  offset:0, count:3",
+          "    └─TableReader 3.00 root  data:Limit",
+          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
+          "        └─Selection 3.00 cop[tikv]  lt(test.t.c, test.t.c)",
+          "          └─TableFullScan 3.75 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMultiColMaxOneRow",
     "Cases": [
       {
@@ -7031,6 +7090,166 @@
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#5",
           "      └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTiFlashFineGrainedShuffle",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 window w1 as (partition by c1 order by c1);",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#5, stream_count: 8",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#5 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2);",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#7, Column#6, stream_count: 8",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─Window 10000.00 mpp[tiflash]  rank()->Column#6 over(partition by test.t1.c2), stream_count: 8",
+          "              └─Sort 10000.00 mpp[tiflash]  test.t1.c2, stream_count: 8",
+          "                └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "                  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2) order by 1, 2 limit 10;",
+        "Plan": [
+          "Projection 10.00 root  Column#7, Column#6",
+          "└─TopN 10.00 root  Column#7, Column#6, offset:0, count:10",
+          "  └─TableReader 10.00 root  data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#7, Column#6, offset:0, count:10",
+          "        └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "          └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "            └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "              └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "                └─Window 10000.00 mpp[tiflash]  rank()->Column#6 over(partition by test.t1.c2), stream_count: 8",
+          "                  └─Sort 10000.00 mpp[tiflash]  test.t1.c2, stream_count: 8",
+          "                    └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "                      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c2 order by c2);",
+        "Plan": [
+          "TableReader 2666.67 root  data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4, stream_count: 8",
+          "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c2 order by test.t1.c2 rows between current row and current row), stream_count: 8",
+          "      └─Sort 2666.67 mpp[tiflash]  test.t1.c2, test.t1.c2, stream_count: 8",
+          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
+          "            └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c2",
+          "              └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#4, funcs:firstrow(test.t1.c2)->test.t1.c2",
+          "                └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
+          "                  └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary]",
+          "                    └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, count(c1) from t1 group by c2 having c2 > 10 window w1 as (partition by c1 order by c2);",
+        "Plan": [
+          "TableReader 2666.67 root  data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4, stream_count: 8",
+          "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row), stream_count: 8",
+          "      └─Sort 2666.67 mpp[tiflash]  test.t1.c1, test.t1.c2, stream_count: 8",
+          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c1, test.t1.c2",
+          "              └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#4, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
+          "                └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
+          "                  └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary]",
+          "                    └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c2, 10)",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 a join t1 b on a.c1 = b.c2 window w1 as (partition by a.c1);",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12487.50 mpp[tiflash]  Column#8, stream_count: 8",
+          "    └─Window 12487.50 mpp[tiflash]  row_number()->Column#8 over(partition by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 12487.50 mpp[tiflash]  test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 12487.50 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.c1, test.t1.c2)]",
+          "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "              │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.c1))",
+          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:a keep order:false, stats:pseudo",
+          "              └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.c2))",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:b keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 where c1 < 100 window w1 as (partition by c1 order by c1);",
+        "Plan": [
+          "TableReader 3323.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3323.33 mpp[tiflash]  Column#5, stream_count: 8",
+          "    └─Window 3323.33 mpp[tiflash]  row_number()->Column#5 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 3323.33 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 3323.33 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─Selection 3323.33 mpp[tiflash]  lt(test.t1.c1, 100)",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1;",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 window w1 as (order by c1);",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#5",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#5 over(order by test.t1.c1 rows between current row and current row)",
+          "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c1 order by c2);",
+        "Plan": [
+          "TableReader 2666.67 root  data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4",
+          "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row)",
+          "      └─Sort 2666.67 mpp[tiflash]  test.t1.c1, test.t1.c2",
+          "        └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c1, test.t1.c2",
+          "          └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#4, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
+          "            └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
+          "              └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary]",
+          "                └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
