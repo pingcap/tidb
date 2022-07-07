@@ -8,7 +8,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/sqlexec"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -33,8 +32,8 @@ type Glue interface {
 
 // Session is an abstraction of the session.Session interface.
 type Session interface {
-	Execute(ctx context.Context, sql string, args ...interface{}) error
-	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error)
+	Execute(ctx context.Context, sql string) error
+	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
