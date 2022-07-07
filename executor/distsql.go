@@ -446,9 +446,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	if e.partitionTableMode {
-		if e.keepOrder { // this case should be prevented by the optimizer
-			return errors.New("invalid execution plan: cannot keep order when accessing a partition table by IndexLookUpReader")
-		}
 		e.feedback.Invalidate() // feedback for partition tables is not ready
 		e.partitionKVRanges = make([][]kv.KeyRange, 0, len(e.prunedPartitions))
 		for _, p := range e.prunedPartitions {

@@ -442,6 +442,10 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
+
+	// constColsByCond records the constant part of the index columns caused by the access conds.
+	// e.g. the index is (a, b, c) and there's filter a = 1 and b = 2, then the column a and b are const part.
+	constColsByCond []bool
 }
 
 // Clone implements PhysicalPlan interface.
