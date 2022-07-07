@@ -334,6 +334,9 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 			cte.recursiveRef = false
 		}
 	}()
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select * from t1 natural join (t3 cross join t4)") {
+		fmt.Println(1)
+	}
 	if p, err = b.buildResultSetNode(ctx, from.TableRefs); err == nil && b.ctx.GetSessionVars().OptimizerEnableNewNameResolution {
 		// build join will add additional scope col into curScope, fullSchema is merged from bottom join up.
 		// eg: select * from (select * from t t1 join t t2 using(a)) as t3; we don't need to keep the fullSchema
@@ -3841,7 +3844,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select (select sum((select count(a)))) from t") {
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain SELECT one.a FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)") {
+		fmt.Println(1)
+	}
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain SELECT COUNT(*), a,(SELECT m FROM t2 WHERE m = count(*) LIMIT 1) FROM t1 GROUP BY a") {
 		fmt.Println(1)
 	}
 
@@ -3985,7 +3991,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	var hasAgg bool
 	if eNNR {
-		hasAgg = len(b.curScope.aggFuncs) != 0
+		hasAgg = len(b.curScope.aggFuncs) != 0 || sel.GroupBy != nil
 	} else {
 		hasAgg = b.detectSelectAgg(sel)
 	}
@@ -4024,6 +4030,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			}
 			// new name resolution will collect all the aggregate func in analyzing phase and build them instantly.
 			// in building phase, the rewriter will try to seek them in scope stack when encountering agg instead of using aggMapper.
+			p, err = b.buildGroupBy(ctx, p, sel.GroupBy)
+			if err != nil {
+				return nil, err
+			}
 			p, err = b.buildAggregation4NNR(ctx, p)
 			if err != nil {
 				return nil, err

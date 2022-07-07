@@ -442,20 +442,48 @@ type PlanBuilder struct {
 	outerScopes []*ScopeSchema
 	// curScope indicates all column that a select block can see in its level.
 	curScope *ScopeSchema
-	/**
-	This field is used as a work field during resolving to validate
-	the use of aggregate functions. For example in a query
-	SELECT ... FROM ...WHERE MIN(i) == 1 GROUP BY ... HAVING MIN(i) > 2
-	MIN(i) in the WHERE clause is not allowed since only non-aggregated data
-	is present, whereas MIN(i) in the HAVING clause is allowed because HAVING
-	operates on the output of a grouping operation.
-	Each query block is assigned a nesting level. This field is a bit field
-	that contains the value one in the position of that nesting level if
-	aggregate functions are allowed for that query block.
 
-	more usage detail ref structure of nestingMap
-	*/
+	// The bitmap contains 1 at n-th position if the query block at level "n"
+	//    allows a set function reference (i.e the current resolver context for
+	//    the query block is either in the SELECT list or in the HAVING or
+	//    ORDER BY clause).
+	//
+	//    Consider the query:
+	//    @code
+	//       SELECT SUM(t1.b) FROM t1 GROUP BY t1.a
+	//         HAVING t1.a IN (SELECT t2.c FROM t2 WHERE AVG(t1.b) > 20) AND
+	//                t1.a > (SELECT MIN(t2.d) FROM t2);
+	//    @endcode
+	//    when the set functions are resolved, allow_sum_func will contain:
+	//    - for SUM(t1.b) - 1 at position 0 (SUM is in SELECT list)
+	//    - for AVG(t1.b) - 1 at position 0 (subquery is in HAVING clause)
+	//                      0 at position 1 (AVG is in WHERE clause)
+	//    - for MIN(t2.d) - 1 at position 0 (subquery is in HAVING clause)
+	//                      1 at position 1 (MIN is in SELECT list)
+	//
+	// This field is used as a work field during resolving to validate
+	// the use of aggregate functions. For example in a query
+	// SELECT ... FROM ...WHERE MIN(i) == 1 GROUP BY ... HAVING MIN(i) > 2
+	// MIN(i) in the WHERE clause is not allowed since only non-aggregated data
+	// is present, whereas MIN(i) in the HAVING clause is allowed because HAVING
+	// operates on the output of a grouping operation.
+	// Each query block is assigned a nesting level. This field is a bit field
+	// that contains the value one in the position of that nesting level if
+	// aggregate functions are allowed for that query block.
 	allowAggFunc nestingMap
+
+	// This field is used as a work field to register column in outer scope during
+	// resolving to a correlated column when rewriting subq. For example in a query
+	// SELECT one.a FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)
+	// one.b is obviously a correlated column when analyzing main select block's order
+	// by clause.
+	// According to TiDB building rule, any clause after projection should register their
+	// correlated column to outer scope, in order to notify the projection OP to keep it
+	// for later usage.
+	// needRegister is inspired from allowAggFunc bit map from mysql, here we set the
+	// right bit exactly to 1 when we are analyzing distinct clause, window clause,
+	// order-by clause, limit clause.
+	needRegister nestingMap
 
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
@@ -524,6 +552,9 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+
+	// inAggFunc is used to record newest agg we are in.
+	inAggFunc *ast.AggregateFuncExpr
 }
 
 type handleColHelper struct {

@@ -262,6 +262,154 @@ func TestNameResolutionIssues(t *testing.T) {
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1111]Invalid use of group function")
 
+	tk.MustExec("SET @@sql_mode='';")
+	tk.MustQuery("explain SELECT a FROM t1 WHERE (SELECT COUNT(b) FROM DUAL) > 0 GROUP BY a order by a;").Check(testkit.Rows(
+		"Sort_12 8000.00 root  test.t1.a",
+		"└─HashAgg_15 8000.00 root  group by:test.t1.a, funcs:firstrow(test.t1.a)->test.t1.a",
+		"  └─Apply_17 10000.00 root  CARTESIAN inner join",
+		"    ├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+		"    │ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"    └─Selection_20(Probe) 0.80 root  gt(Column#4, 0)",
+		"      └─StreamAgg_22 1.00 root  funcs:count(test.t1.b)->Column#4",
+		"        └─TableDual_24 1.00 root  rows:1"))
+	tk.MustQuery("SELECT a FROM t1 WHERE (SELECT COUNT(b) FROM DUAL) > 0 GROUP BY a order by a;").Check(testkit.Rows(
+		"1", "2"))
+
+	// Close issue 35347
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("CREATE TABLE t1 (a INT);")
+	tk.MustExec("CREATE TABLE t2 (x INT);")
+	tk.MustExec("INSERT INTO t1 values (1),(1),(1),(1);")
+	tk.MustExec("INSERT INTO t1 values (1000),(1001),(1002);")
+	err = tk.ExecToErr("SELECT SUM( (SELECT COUNT(a) FROM t2) ) FROM t1;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1111]Invalid use of group function")
+
+	// Close issue 35099
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	// old plan:
+	// +----------------------------------+----------+-----------+---------------+-------------------------------------------------+
+	// | id                               | estRows  | task      | access object | operator info                                   |
+	// +----------------------------------+----------+-----------+---------------+-------------------------------------------------+
+	// | Projection_10                    | 3333.33  | root      |               | 1->Column#8                                     |
+	// | └─HashAgg_11                     | 3333.33  | root      |               | group by:Column#7, funcs:firstrow(1)->Column#11 |
+	// |   └─Apply_13                     | 3333.33  | root      |               | CARTESIAN left outer join                       |
+	// |     ├─TableReader_16(Build)      | 3333.33  | root      |               | data:Selection_15                               |
+	// |     │ └─Selection_15             | 3333.33  | cop[tikv] |               | gt(test.t.b, 0)                                 |
+	// |     │   └─TableFullScan_14       | 10000.00 | cop[tikv] | table:n       | keep order:false, stats:pseudo                  |
+	// |     └─HashAgg_17(Probe)          | 1.00     | root      |               | funcs:count(test.t.b)->Column#7                 |
+	// |       └─TableReader_23           | 10000.00 | root      |               | data:TableFullScan_22                           |
+	// |         └─TableFullScan_22       | 10000.00 | cop[tikv] | table:t       | keep order:false, stats:pseudo                  |
+	// +----------------------------------+----------+-----------+---------------+-------------------------------------------------+
+	// 9 rows in set, 2 warnings (0.02 sec)
+	tk.MustQuery("explain select 1 from t n where b>0 group by (select count(n.b) from t);").Check(testkit.Rows(
+		"Projection_10 3333.33 root  1->Column#4",
+		"└─HashAgg_11 3333.33 root  group by:Column#8, funcs:firstrow(1)->Column#11",
+		"  └─Apply_13 3333.33 root  CARTESIAN left outer join",
+		"    ├─TableReader_16(Build) 3333.33 root  data:Selection_15",
+		"    │ └─Selection_15 3333.33 cop[tikv]  gt(test.t.b, 0)",
+		"    │   └─TableFullScan_14 10000.00 cop[tikv] table:n keep order:false, stats:pseudo",
+		"    └─HashAgg_17(Probe) 1.00 root  funcs:count(test.t.b)->Column#8",
+		"      └─TableReader_23 10000.00 root  data:TableFullScan_22",
+		"        └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	// some explanation:
+	// subq's count(n.b) couldn't be extracted to outer scope because it's context is in the group by clause, so it evaluated in subq.
+	// having's count(n.b) can be extracted to outer scope because it's context is in the having clause.
+	tk.MustQuery("explain select 1 from t n where b>0 group by (select count(n.b) from t) having count(n.b) >0;").Check(testkit.Rows(
+		"Projection_14 2666.67 root  1->Column#10",
+		"└─Selection_15 2666.67 root  gt(Column#9, 0)",
+		"  └─HashAgg_16 3333.33 root  group by:Column#8, funcs:count(test.t.b)->Column#9",
+		"    └─Apply_18 3333.33 root  CARTESIAN left outer join",
+		"      ├─TableReader_21(Build) 3333.33 root  data:Selection_20",
+		"      │ └─Selection_20 3333.33 cop[tikv]  gt(test.t.b, 0)",
+		"      │   └─TableFullScan_19 10000.00 cop[tikv] table:n keep order:false, stats:pseudo",
+		"      └─HashAgg_22(Probe) 1.00 root  funcs:count(test.t.b)->Column#8",
+		"        └─TableReader_28 10000.00 root  data:TableFullScan_27",
+		"          └─TableFullScan_27 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	// Close issue 26945
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2;")
+	tk.MustExec("CREATE TABLE t1 (a INT, b INT);")
+	tk.MustExec("CREATE TABLE t2 (a INT, b INT);")
+	tk.MustExec("INSERT INTO t1 VALUES (1, 1);")
+	tk.MustExec("INSERT INTO t2 VALUES (1, 1);")
+	// old plan
+	// +----------------------------------+----------+-----------+---------------+--------------------------------+
+	// | id                               | estRows  | task      | access object | operator info                  |
+	// +----------------------------------+----------+-----------+---------------+--------------------------------+
+	// | Projection_16                    | 10000.00 | root      |               | test.t1.a                      |
+	// | └─Sort_17                        | 10000.00 | root      |               | test.t2.b                      |
+	// |   └─Apply_20                     | 10000.00 | root      |               | CARTESIAN left outer join      |
+	// |     ├─TableReader_22(Build)      | 10000.00 | root      |               | data:TableFullScan_21          |
+	// |     │ └─TableFullScan_21         | 10000.00 | cop[tikv] | table:one     | keep order:false, stats:pseudo |
+	// |     └─MaxOneRow_23(Probe)        | 1.00     | root      |               |                                |
+	// |       └─TableReader_26           | 2.00     | root      |               | data:Selection_25              |
+	// |         └─Selection_25           | 2.00     | cop[tikv] |               | eq(test.t2.a, test.t1.b)       |
+	// |           └─TableFullScan_24     | 2000.00  | cop[tikv] | table:two     | keep order:false, stats:pseudo |
+	// +----------------------------------+----------+-----------+---------------+--------------------------------+
+	//9 rows in set (0.01 sec)
+	tk.MustQuery("explain SELECT one.a FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b);").Check(testkit.Rows(
+		"Projection_10 10000.00 root  test.t1.a",
+		"└─Sort_11 10000.00 root  test.t2.b",
+		"  └─Apply_14 10000.00 root  CARTESIAN left outer join",
+		"    ├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
+		"    │ └─TableFullScan_15 10000.00 cop[tikv] table:one keep order:false, stats:pseudo",
+		"    └─MaxOneRow_17(Probe) 1.00 root  ",
+		"      └─TableReader_20 2.00 root  data:Selection_19",
+		"        └─Selection_19 2.00 cop[tikv]  eq(test.t2.a, test.t1.b)",
+		"          └─TableFullScan_18 2000.00 cop[tikv] table:two keep order:false, stats:pseudo"))
+	tk.MustQuery("SELECT one.a FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b);").Check(testkit.Rows(
+		"1"))
+
+	// Close issue 30957
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("CREATE TABLE t1 (a int, b int);")
+	tk.MustExec("CREATE TABLE t2 (m int, n int);")
+	tk.MustExec("INSERT INTO t1 VALUES (2,2), (2,2), (3,3), (3,3), (3,3), (4,4);")
+	tk.MustExec("INSERT INTO t2 VALUES (1,11), (2,22), (3,32), (4,44), (4,44);")
+	tk.MustQuery("explain SELECT COUNT(*), a,(SELECT m FROM t2 WHERE m = count(*) LIMIT 1) FROM t1 GROUP BY a;").Check(testkit.Rows(
+		"Apply_16 8000.00 root  CARTESIAN left outer join",
+		"├─HashAgg_17(Build) 8000.00 root  group by:test.t1.a, funcs:count(1)->Column#4, funcs:firstrow(test.t1.a)->test.t1.a",
+		"│ └─TableReader_19 10000.00 root  data:TableFullScan_18",
+		"│   └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─Limit_20(Probe) 1.00 root  offset:0, count:1",
+		"  └─TableReader_25 1.00 root  data:Limit_24",
+		"    └─Limit_24 1.00 cop[tikv]  offset:0, count:1",
+		"      └─Selection_23 1.00 cop[tikv]  eq(test.t2.m, Column#4)",
+		"        └─TableFullScan_22 1000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustQuery("SELECT COUNT(*), a,(SELECT m FROM t2 WHERE m = count(*) LIMIT 1) FROM t1 GROUP BY a order by a").Check(testkit.Rows(
+		"2 2 2", "3 3 3", "1 4 1"))
+
+	// Close issue 29084
+	tk.MustExec("DROP TABLE if exists t1,t2,t3;")
+	tk.MustExec("create table t1 (col1 int, col2 varchar(5), col_t1 int);")
+	tk.MustExec("create table t2 (col1 int, col2 varchar(5), col_t2 int);")
+	tk.MustExec("create table t3 (col1 int, col2 varchar(5), col_t3 int);")
+	tk.MustExec("insert into t1 values(10,'hello',10);")
+	tk.MustExec("insert into t1 values(20,'hello',20);")
+	tk.MustExec("insert into t1 values(30,'hello',30);")
+	tk.MustExec("insert into t1 values(10,'bye',10);")
+	tk.MustExec("insert into t1 values(10,'sam',10);")
+	tk.MustExec("insert into t1 values(10,'bob',10);")
+	tk.MustExec("insert into t2 select * from t1;")
+	tk.MustQuery("explain select sum(col1) from t1 group by col_t1,col1 having col_t1 in" +
+		" (select sum(t2.col1) from t2 group by t2.col2, t2.col1 having t2.col1 = t1.col1) order by sum(col1);").Check(testkit.Rows(
+		"Sort_15 6393.60 root  Column#5",
+		"└─HashJoin_17 6393.60 root  semi join, equal:[eq(test.t1.col1, test.t2.col1) eq(Column#13, Column#10)]",
+		"  ├─HashAgg_31(Build) 7992.00 root  group by:Column#27, Column#28, funcs:sum(Column#25)->Column#10, funcs:firstrow(Column#26)->test.t2.col1",
+		"  │ └─Projection_40 9990.00 root  cast(test.t2.col1, decimal(10,0) BINARY)->Column#25, test.t2.col1, test.t2.col2, test.t2.col1",
+		"  │   └─TableReader_38 9990.00 root  data:Selection_37",
+		"  │     └─Selection_37 9990.00 cop[tikv]  not(isnull(test.t2.col1))",
+		"  │       └─TableFullScan_36 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─Projection_18(Probe) 7992.00 root  Column#5, test.t1.col1, cast(test.t1.col_t1, decimal(20,0) BINARY)->Column#13",
+		"    └─HashAgg_21 7992.00 root  group by:Column#23, Column#24, funcs:sum(Column#20)->Column#5, funcs:firstrow(Column#21)->test.t1.col1, funcs:firstrow(Column#22)->test.t1.col_t1",
+		"      └─Projection_39 9990.00 root  cast(test.t1.col1, decimal(10,0) BINARY)->Column#20, test.t1.col1, test.t1.col_t1, test.t1.col_t1, test.t1.col1",
+		"        └─TableReader_28 9990.00 root  data:Selection_27",
+		"          └─Selection_27 9990.00 cop[tikv]  not(isnull(test.t1.col1))",
+		"            └─TableFullScan_26 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select sum(col1) from t1 group by col_t1,col1 having col_t1 in (select sum(t2.col1) from t2 group by t2.col2, t2.col1 having t2.col1 = t1.col1) order by sum(col1);").Check(testkit.Rows(
+		"20", "30", "40"))
 }
 
 func TestCorrelatedAggEvalContextCheck(t *testing.T) {

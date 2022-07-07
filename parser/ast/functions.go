@@ -808,7 +808,7 @@ func (n *AggregateFuncExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AggregateFuncExpr)
-	for i, val := range n.Args {
+	for i, val := range n.Args { //select (select sum(count(t.a))) from t
 		node, ok := val.Accept(v)
 		if !ok {
 			return n, false

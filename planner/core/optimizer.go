@@ -466,7 +466,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		if strings.HasPrefix(logic.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select (select 1 from t order by count(n.a) limit 1) from t n") && i == 13 {
+		if strings.HasPrefix(logic.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain SELECT one.a FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)") {
 			fmt.Println(1)
 		}
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
