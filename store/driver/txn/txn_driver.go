@@ -16,7 +16,6 @@ package txn
 
 import (
 	"context"
-	"github.com/tikv/client-go/v2/txnkv"
 	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
@@ -35,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
