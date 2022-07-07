@@ -383,6 +383,33 @@ func TestTiFlashReplicaAvailable(t *testing.T) {
 	require.False(t, ok)
 }
 
+// set TiFlash mode shall be eventually available.
+func TestSetTiFlashModeAvailable(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash mode fast")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	tiflashmode := tb.Meta().TiFlashMode
+	require.NotNil(t, tiflashmode)
+	require.Equal(t, tiflashmode, model.TiFlashModeFast)
+
+	tk.MustExec("alter table ddltiflash set tiflash mode normal")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	tiflashmode = tb.Meta().TiFlashMode
+	require.NotNil(t, tiflashmode)
+	require.Equal(t, tiflashmode, model.TiFlashModeNormal)
+}
+
 // Truncate partition shall not block.
 func TestTiFlashTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)

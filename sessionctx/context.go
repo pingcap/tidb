@@ -53,12 +53,6 @@ type SessionStatesHandler interface {
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	SessionStatesHandler
-	// NewTxn creates a new transaction for further execution.
-	// If old transaction is valid, it is committed first.
-	// It's used in BEGIN statement and DDL statements to commit old transaction.
-	NewTxn(context.Context) error
-	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
-	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
 	// SetDiskFullOpt set the disk full opt when tikv disk full happened.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// RollbackTxn rolls back the current transaction.
@@ -149,7 +143,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error
-	// GetPreparedTxnFuture returns the prepared ts future
+	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
+	// It returns nil otherwise.
 	GetPreparedTxnFuture() TxnFuture
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
