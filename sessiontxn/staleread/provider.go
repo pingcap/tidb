@@ -89,7 +89,7 @@ func (p *StalenessTxnContextProvider) OnInitialize(ctx context.Context, tp sessi
 // with the staleness snapshot ts. After that, it sets the relevant context variables.
 func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	var err error
-	if err = sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
+	if err = sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 		return err
 	}
 

@@ -57,18 +57,6 @@ type baseTxnContextProvider struct {
 	enterNewTxnType sessiontxn.EnterNewTxnType
 }
 
-// prepareTxnWhenSnapshotTSSet is an optimization for just calling p.prepareTxn(false).
-// If warmup is called, it has already prepared txn. In case of snapshotTS being set, we cannot use that preparation as
-// we need the latest ts in some cases. Otherwise, we reuse the txn preparation and do nothing here.
-func (p *baseTxnContextProvider) prepareTxnWhenSnapshotTSSet() error {
-	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS == 0 {
-		// If snapshotTS is not set, we can reuse the
-		return nil
-	}
-	p.isTxnPrepared = false
-	return p.prepareTxn(false)
-}
-
 // OnInitialize is the hook that should be called when enter a new txn with this provider
 func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn.EnterNewTxnType) (err error) {
 	if p.getStmtReadTSFunc == nil || p.getStmtForUpdateTSFunc == nil {
@@ -80,18 +68,26 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	activeNow := true
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault:
-		if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
+		// As we will enter a new txn, we need to commit the old txn if it's still valid.
+		// There are two main steps here to enter a new txn:
+		// 1. prepareTxnWithOracleTS
+		// 2. ActivateTxn
+		if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
-		if err := p.prepareTxn(false); err != nil {
+		if err := p.prepareTxnWithOracleTS(); err != nil {
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
 		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
-			if err := sessiontxn.CheckBeforeNewTxn(p.ctx, p.sctx); err != nil {
+			// As we will enter a new txn, we need to commit the old txn if it's still valid.
+			// There are two main steps here to enter a new txn:
+			// 1. prepareTxnWithOracleTS
+			// 2. ActivateTxn
+			if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 				return err
 			}
-			if err := p.prepareTxnWhenSnapshotTSSet(); err != nil {
+			if err := p.prepareTxnWithOracleTS(); err != nil {
 				return err
 			}
 		}
@@ -219,7 +215,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return p.txn, nil
 	}
 
-	if err := p.prepareTxn(true); err != nil {
+	if err := p.prepareTxn(); err != nil {
 		return nil, err
 	}
 
@@ -270,16 +266,27 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	return txn, nil
 }
 
-func (p *baseTxnContextProvider) prepareTxn(considerSnapshotTS bool) error {
+// prepareTxn prepares txn with an oracle ts future. If the snapshotTS is set,
+// the txn is prepared with it.
+func (p *baseTxnContextProvider) prepareTxn() error {
 	if p.isTxnPrepared {
 		return nil
 	}
 
-	// Sometimes, we need to prepare the latest oracle ts future even the SnapshotTS is set.
-	if considerSnapshotTS {
-		if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-			return p.prepareTxnWithTS(snapshotTS)
-		}
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		return p.prepareTxnWithTS(snapshotTS)
+	}
+
+	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	return p.replaceTxnTsFuture(future)
+}
+
+// prepareTxnWithOracleTS
+// The difference between prepareTxnWithOracleTS and prepareTxn is that prepareTxnWithOracleTS
+// does not consider snapshotTS
+func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
+	if p.isTxnPrepared {
+		return nil
 	}
 
 	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
@@ -326,7 +333,7 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
 		return nil
 	}
-	return p.prepareTxn(true)
+	return p.prepareTxn()
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan

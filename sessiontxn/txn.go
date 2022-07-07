@@ -74,9 +74,9 @@ func CanReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
 }
 
-// CheckBeforeNewTxn is called before entering a new transaction. It checks whether the old
+// CommitBeforeEnterNewTxn is called before entering a new transaction. It checks whether the old
 // txn is valid in which case we should commit it first.
-func CheckBeforeNewTxn(ctx context.Context, sctx sessionctx.Context) error {
+func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionctx.Context) error {
 	txn, err := sctx.Txn(false)
 	if err != nil {
 		return err

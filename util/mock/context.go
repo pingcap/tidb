@@ -18,6 +18,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"github.com/tikv/client-go/v2/tikv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -61,16 +62,33 @@ type Context struct {
 
 type wrapTxn struct {
 	kv.Transaction
-	prepared bool
+	tsFuture oracle.Future
+}
+
+func (txn *wrapTxn) validOrPending() bool {
+	return txn.tsFuture != nil || txn.Transaction.Valid()
+}
+
+func (txn *wrapTxn) pending() bool {
+	return txn.Transaction == nil && txn.tsFuture != nil
 }
 
 // Wait creates a new kvTransaction
 func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
-	kvTxn, err := sctx.GetStore().Begin()
-	if err != nil {
-		return nil, errors.Trace(err)
+	if !txn.validOrPending() {
+		return txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
-	txn.Transaction = kvTxn
+	if txn.pending() {
+		ts, err := txn.tsFuture.Wait()
+		if err != nil {
+			return nil, err
+		}
+		kvTxn, err := sctx.GetStore().Begin(tikv.WithStartTS(ts))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		txn.Transaction = kvTxn
+	}
 	return txn, nil
 }
 
@@ -373,14 +391,14 @@ func (c *Context) HasLockedTables() bool {
 
 // PrepareTSFuture implements the sessionctx.Context interface.
 func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
-	c.txn.prepared = true
+	c.txn.tsFuture = future
 	return nil
 }
 
 // GetPreparedTxnFuture returns the TxnFuture if it is prepared.
 // It returns nil otherwise.
 func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
-	if !c.txn.prepared {
+	if !c.txn.validOrPending() {
 		return nil
 	}
 	return &c.txn
