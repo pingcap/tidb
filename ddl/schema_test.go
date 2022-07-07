@@ -290,7 +290,9 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithLease(testLease),
 	)
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
-		return testkit.NewTestKit(t, store).Session(), nil
+		session := testkit.NewTestKit(t, store).Session()
+		session.GetSessionVars().CommonGlobalLoaded = true
+		return session, nil
 	}, 20, 20, 5))
 	require.NoError(t, err)
 	defer func() {
