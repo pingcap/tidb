@@ -23,9 +23,12 @@ type EC2Session struct {
 }
 
 func NewEC2Session() (*EC2Session, error) {
-	awsConfig := aws.NewConfig()
-	// NOTE: we do not need credential. TiDB Operator need make sure we have the correct permission to access
-	// ec2 snapshot. we may change this behaviour in the future.
+	// aws-sdk has builtin exponential backoff retry mechanism, see:
+	// https://github.com/aws/aws-sdk-go/blob/db4388e8b9b19d34dcde76c492b17607cd5651e2/aws/client/default_retryer.go#L12-L16
+	// with default retryer & max-retry=9, we will wait for at least 30s in total
+	awsConfig := aws.NewConfig().WithMaxRetries(9)
+	// TiDB Operator need make sure we have the correct permission to call aws api(through aws env variables)
+	// we may change this behaviour in the future.
 	sessionOptions := session.Options{Config: *awsConfig}
 	sess, err := session.NewSessionWithOptions(sessionOptions)
 	if err != nil {
@@ -74,8 +77,7 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[s
 				},
 			})
 			if err != nil {
-				// TODO: build an retry mechanism for EBS backup
-				// consider remove the exists starts snapshots outside.
+				// todo: consider remove the exists starts snapshots outside.
 				return snapIDMap, errors.Trace(err)
 			}
 			log.Info("snapshot creating", zap.Stringer("snap", resp))
@@ -110,7 +112,6 @@ func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[string]string, progress 
 			SnapshotIds: pendingSnapshots,
 		})
 		if err != nil {
-			// TODO build retry mechanism
 			return 0, errors.Trace(err)
 		}
 
@@ -126,6 +127,25 @@ func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[string]string, progress 
 			}
 		}
 		pendingSnapshots = uncompletedSnapshots
+	}
+}
+
+func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
+	pendingSnaps := make([]*string, 0, len(snapIDMap))
+	for volID := range snapIDMap {
+		snapID := snapIDMap[volID]
+		pendingSnaps = append(pendingSnaps, &snapID)
+	}
+
+	for _, snapID := range pendingSnaps {
+		// todo: concurrent delete
+		_, err2 := e.ec2.DeleteSnapshot(&ec2.DeleteSnapshotInput{
+			SnapshotId: snapID,
+		})
+		if err2 != nil {
+			log.Error("failed to delete volume", zap.Error(err2))
+			// todo: we can only retry for a few times, might fail still, need to handle error from outside.
+		}
 	}
 }
 
@@ -150,7 +170,6 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 			req.SetSnapshotId(oldVol.SnapshotID)
 			resp, err := e.ec2.CreateVolume(&req)
 			if err != nil {
-				// TODO: build an retry mechanism
 				return newVolumeIDMap, errors.Trace(err)
 			}
 			log.Info("new volume creating", zap.Stringer("snap", resp))
@@ -177,7 +196,6 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 			VolumeIds: pendingVolumes,
 		})
 		if err != nil {
-			// TODO build retry mechanism
 			return 0, errors.Trace(err)
 		}
 
@@ -206,12 +224,13 @@ func (e *EC2Session) DeleteVolumes(volumeIDMap map[string]string) {
 	}
 
 	for _, volID := range pendingVolumes {
+		// todo: concurrent delete
 		_, err2 := e.ec2.DeleteVolume(&ec2.DeleteVolumeInput{
 			VolumeId: volID,
 		})
 		if err2 != nil {
 			log.Error("failed to delete volume", zap.Error(err2))
-			// todo: retry delete. we can only retry for a few times, might fail still, need to handle error from outside.
+			// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 		}
 	}
 }
