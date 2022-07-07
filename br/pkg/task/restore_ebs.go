@@ -119,8 +119,7 @@ type restoreEBSMetaHelper struct {
 }
 
 // we don't call close of fields on failure, outer logic should call helper.close.
-// that's why we call it initFields to differ with init which call close of fields normally.
-func (h *restoreEBSMetaHelper) initFields(ctx context.Context) error {
+func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	_, externStorage, err := GetStorage(ctx, h.cfg.Config.Storage, &h.cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
@@ -139,6 +138,9 @@ func (h *restoreEBSMetaHelper) initFields(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	h.metaInfo = metaInfo
+
+	// todo: check whether target cluster is compatible with the backup
+	// but cluster hasn't bootstrapped, we cannot get cluster version from pd now.
 
 	return nil
 }
@@ -172,7 +174,7 @@ func (h *restoreEBSMetaHelper) restore() error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	if err = h.initFields(ctx); err != nil {
+	if err = h.preRestore(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
