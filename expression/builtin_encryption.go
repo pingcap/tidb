@@ -581,6 +581,7 @@ func (b *builtinRandomBytesSig) evalString(row chunk.Row) (string, bool, error) 
 		return "", false, types.ErrOverflow.GenWithStackByArgs("length", "random_bytes")
 	}
 	buf := make([]byte, val)
+	//nolint: gosec
 	if n, err := rand.Read(buf); err != nil {
 		return "", true, err
 	} else if int64(n) != val {

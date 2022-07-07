@@ -120,11 +120,16 @@ nogo(
                "@org_golang_x_tools//go/analysis/passes/unreachable:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unsafeptr:go_default_library",
                "@org_golang_x_tools//go/analysis/passes/unusedresult:go_default_library",
+               "//build/linter/asciicheck:asciicheck",
                "//build/linter/durationcheck:durationcheck",
                "//build/linter/exportloopref:exportloopref",
                "//build/linter/gofmt:gofmt",
+               "//build/linter/gci:gci",
+               "//build/linter/gosec:gosec",
                "//build/linter/ineffassign:ineffassign",
+               "//build/linter/misspell:misspell",
                "//build/linter/prealloc:prealloc",
+               "//build/linter/predeclared:predeclared",
                "//build/linter/unconvert:unconvert",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({

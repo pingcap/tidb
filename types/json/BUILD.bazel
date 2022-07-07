@@ -18,6 +18,7 @@ go_library(
         "//util/kvcache",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
     ],
 )
 
