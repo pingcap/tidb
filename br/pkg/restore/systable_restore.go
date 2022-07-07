@@ -44,45 +44,6 @@ var unRecoverableTable = map[string]struct{}{
 	"schema_index_usage": {},
 }
 
-// system table is defined in session/bootstrap.go, but tidb didn't define them
-// as defined constant, so we list them here.
-// todo: tidb may add new system table later, and we have to maintain this list,
-// maybe maintain this set in tidb side and br refer it in later pr.
-var allSystemTableSet = map[string]bool{
-	"mysql.user":                             true,
-	"mysql.global_priv":                      true,
-	"mysql.db":                               true,
-	"mysql.tables_priv":                      true,
-	"mysql.columns_priv":                     true,
-	"mysql.GLOBAL_VARIABLES":                 true,
-	"mysql.tidb":                             true,
-	"mysql.help_topic":                       true,
-	"mysql.stats_meta":                       true,
-	"mysql.stats_histograms":                 true,
-	"mysql.stats_buckets":                    true,
-	"mysql.gc_delete_range":                  true,
-	"mysql.gc_delete_range_done":             true,
-	"mysql.stats_feedback":                   true,
-	"mysql.bind_info":                        true,
-	"mysql.role_edges":                       true,
-	"mysql.default_roles":                    true,
-	"mysql.stats_top_n":                      true,
-	"mysql.stats_fm_sketch":                  true,
-	"mysql.expr_pushdown_blacklist":          true,
-	"mysql.opt_rule_blacklist":               true,
-	"mysql.stats_extended":                   true,
-	"mysql.schema_index_usage":               true,
-	"mysql.global_grants":                    true,
-	"mysql.capture_plan_baselines_blacklist": true,
-	"mysql.column_stats_usage":               true,
-	"mysql.table_cache_meta":                 true,
-	"mysql.analyze_options":                  true,
-	"mysql.stats_history":                    true,
-	"mysql.stats_meta_history":               true,
-	"mysql.analyze_jobs":                     true,
-	"mysql.advisory_locks":                   true,
-}
-
 var sysPrivilegeTableSet = map[string]bool{
 	"user":          true, // since v1.0.0
 	"db":            true, // since v1.0.0
