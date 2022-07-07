@@ -4655,7 +4655,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		return nil
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead() == kv.ReplicaReadClosestAdaptive {
-		e.snapshot.SetOption(kv.ReplicaRead)
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, plan.GetAvgRowSize()))
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}

@@ -1210,6 +1210,18 @@ func (p *BatchPointGetPlan) GetNetworkCost() float64 {
 	return float64(len(p.IndexValues)) * p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 }
 
+// GetAvgRowSize return the average row size.
+func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
+	cols := p.accessCols
+	if cols == nil {
+		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
+	}
+	if p.IndexInfo == nil {
+		return p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
+	}
+	return p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
+}
+
 // GetCost returns cost of the PointGetPlan.
 func (p *PointGetPlan) GetCost() float64 {
 	cols := p.accessCols
@@ -1242,6 +1254,11 @@ func (p *PointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uint64) 
 
 // GetNetworkCost calculates the cost of the plan in network data transfer.
 func (p *PointGetPlan) GetNetworkCost() float64 {
+	return p.GetAvgRowSize()
+}
+
+// GetAvgRowSize return the average row size.
+func (p *PointGetPlan) GetAvgRowSize() float64 {
 	cols := p.accessCols
 	if cols == nil {
 		return 0 // the cost of PointGet generated in fast plan optimization is always 0
