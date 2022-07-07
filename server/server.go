@@ -33,6 +33,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"io"
 	"math/rand"
 	"net"
@@ -240,6 +241,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
+
+	// Start the loader to load signing certs periodically.
+	sessionstates.StartCertLoader()
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)

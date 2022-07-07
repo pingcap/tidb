@@ -15,6 +15,7 @@
 package sessionstates
 
 import (
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -27,15 +28,16 @@ import (
 )
 
 var (
-	mockValidateTokenTime = "github.com/pingcap/tidb/sessionctx/sessionstates/mockValidateTokenTime"
-	mockLoadCertTime      = "github.com/pingcap/tidb/sessionctx/sessionstates/mockLoadCertTime"
+	//mockValidateTokenTime = "github.com/pingcap/tidb/sessionctx/sessionstates/mockValidateTokenTime"
+	//mockLoadCertTime      = "github.com/pingcap/tidb/sessionctx/sessionstates/mockLoadCertTime"
+	mockNowOffset = "github.com/pingcap/tidb/sessionctx/sessionstates/mockNowOffset"
 )
 
 func TestSetCertAndKey(t *testing.T) {
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
 	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err := util.CreateTLSCertificates(certPath, keyPath, 4096)
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
 
 	// no cert and no key
@@ -57,36 +59,97 @@ func TestSetCertAndKey(t *testing.T) {
 	// When the key and cert don't match, it will still use the old pair.
 	certPath2 := filepath.Join(tempDir, "test2_cert.pem")
 	keyPath2 := filepath.Join(tempDir, "test2_key.pem")
-	err = util.CreateTLSCertificates(certPath2, keyPath2, 4096)
+	err = util.CreateCertificates(certPath2, keyPath2, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
 	SetKeyPath(keyPath2)
 	_, err = CreateSessionToken("test_user")
 	require.NoError(t, err)
 }
 
-func TestSignAndCheck(t *testing.T) {
+func TestVariousAlgo(t *testing.T) {
+	tests := []struct {
+		pubKeyAlgo x509.PublicKeyAlgorithm
+		signAlgos  []x509.SignatureAlgorithm
+		keySizes   []int
+	}{
+		{
+			pubKeyAlgo: x509.RSA,
+			signAlgos: []x509.SignatureAlgorithm{
+				x509.SHA256WithRSA,
+				//x509.SHA384WithRSA,
+				x509.SHA512WithRSA,
+				x509.SHA256WithRSAPSS,
+				x509.SHA384WithRSAPSS,
+				x509.SHA512WithRSAPSS,
+			},
+			keySizes: []int{
+				1024,
+				2048,
+				4096,
+			},
+		},
+		{
+			pubKeyAlgo: x509.ECDSA,
+			signAlgos: []x509.SignatureAlgorithm{
+				x509.ECDSAWithSHA256,
+				x509.ECDSAWithSHA384,
+				x509.ECDSAWithSHA512,
+			},
+			keySizes: []int{
+				4096,
+			},
+		},
+		{
+			pubKeyAlgo: x509.Ed25519,
+			signAlgos: []x509.SignatureAlgorithm{
+				x509.PureEd25519,
+			},
+			keySizes: []int{
+				4096,
+			},
+		},
+	}
+
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
 	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err := util.CreateTLSCertificates(certPath, keyPath, 4096)
+	SetKeyPath(keyPath)
+	SetCertPath(certPath)
+	for _, test := range tests {
+		for _, signAlgo := range test.signAlgos {
+			for _, keySize := range test.keySizes {
+				err := util.CreateCertificates(certPath, keyPath, keySize, test.pubKeyAlgo, signAlgo)
+				require.NoError(t, err)
+				globalSigningCert.lockAndLoad()
+				_, tokenBytes := createNewToken(t, "test_user")
+				err = ValidateSessionToken(tokenBytes, "test_user")
+				require.NoError(t, err, fmt.Sprintf("pubKeyAlgo: %s, signAlgo: %s, keySize: %d", test.pubKeyAlgo.String(),
+					signAlgo.String(), keySize))
+			}
+		}
+	}
+}
+
+func TestVerifyToken(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
 	SetKeyPath(keyPath)
 	SetCertPath(certPath)
 
 	// check succeeds
-	token, err := CreateSessionToken("test_user")
-	require.NoError(t, err)
-	tokenBytes, err := json.Marshal(token)
-	require.NoError(t, err)
+	token, tokenBytes := createNewToken(t, "test_user")
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, err)
 	// the token expires
-	tm := time.Now().Add(time.Hour).Format(time.RFC3339)
-	require.NoError(t, failpoint.Enable(mockValidateTokenTime, fmt.Sprintf(`return("%s")`, tm)))
+	timeOffset := uint64(tokenLifetime + time.Minute)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	err = ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockValidateTokenTime))
+	require.NoError(t, failpoint.Disable(mockNowOffset))
 	require.ErrorContains(t, err, "token expired")
-	// wrong user name
+	// the current user is different with the token
 	err = ValidateSessionToken(tokenBytes, "another_user")
 	require.ErrorContains(t, err, "username does not match")
 	// forge the user name
@@ -102,36 +165,56 @@ func TestSignAndCheck(t *testing.T) {
 	require.NoError(t, err)
 	err = ValidateSessionToken(tokenBytes2, "test_user")
 	require.ErrorContains(t, err, "verification error")
+}
+
+func TestCertExpire(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+	SetKeyPath(keyPath)
+	SetCertPath(certPath)
+
+	_, tokenBytes := createNewToken(t, "test_user")
+	err = ValidateSessionToken(tokenBytes, "test_user")
+	require.NoError(t, err)
 	// replace the cert, but the old cert is still valid for a while
 	certPath2 := filepath.Join(tempDir, "test2_cert.pem")
 	keyPath2 := filepath.Join(tempDir, "test2_key.pem")
-	err = util.CreateTLSCertificates(certPath2, keyPath2, 4096)
+	err = util.CreateCertificates(certPath2, keyPath2, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
 	SetKeyPath(keyPath2)
 	SetCertPath(certPath2)
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, err)
-	// the old cert expires
-	require.NoError(t, failpoint.Enable(mockLoadCertTime, fmt.Sprintf(`return("%s")`, tm)))
+	// the old cert expires and the original token is invalid
+	timeOffset := uint64(oldCertValidTime + time.Minute)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	err = ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockLoadCertTime))
+	require.NoError(t, failpoint.Disable(mockNowOffset))
 	require.ErrorContains(t, err, "verification error")
-	// the new cert expires but is not overwritten
-	token, err = CreateSessionToken("test_user")
-	require.NoError(t, err)
-	tokenBytes, err = json.Marshal(token)
-	require.NoError(t, err)
-	tm = time.Now().Add(50 * 24 * time.Hour).Format(time.RFC3339)
-	require.NoError(t, failpoint.Enable(mockLoadCertTime, fmt.Sprintf(`return("%s")`, tm)))
+	// the new cert expires but is not rotated
+	_, tokenBytes = createNewToken(t, "test_user")
+	timeOffset += uint64(loadCertInterval + time.Minute)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	err = ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockLoadCertTime))
+	require.NoError(t, failpoint.Disable(mockNowOffset))
+	require.ErrorContains(t, err, "token expired")
+	// the cert expires again and is rotated
+	err = util.CreateCertificates(certPath2, keyPath2, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
-	// the cert expires again and is overwritten
-	err = util.CreateTLSCertificates(certPath2, keyPath2, 4096)
-	require.NoError(t, err)
-	tm = time.Now().Add(100 * 24 * time.Hour).Format(time.RFC3339)
-	require.NoError(t, failpoint.Enable(mockLoadCertTime, fmt.Sprintf(`return("%s")`, tm)))
+	timeOffset += uint64(loadCertInterval + time.Minute)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	err = ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockLoadCertTime))
+	require.NoError(t, failpoint.Disable(mockNowOffset))
 	require.ErrorContains(t, err, "verification error")
+}
+
+func createNewToken(t *testing.T, username string) (*SessionToken, []byte) {
+	token, err := CreateSessionToken(username)
+	require.NoError(t, err)
+	tokenBytes, err := json.Marshal(token)
+	require.NoError(t, err)
+	return token, tokenBytes
 }

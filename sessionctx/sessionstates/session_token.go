@@ -34,13 +34,34 @@ import (
 	"go.uber.org/zap"
 )
 
+// Token-based authentication is used in session migration. We don't use typical authentication because the proxy
+// cannot store the user passwords for security issues.
+//
+// The process of token-based authentication:
+// 1. Before migrating the session, the proxy requires a token from server A.
+// 2. Server A generates a token and signs it with a private key defined in the certificate.
+// 3. The proxy authenticates with server B and sends the signed token as the password.
+// 4. Server B checks the signature with the public key defined in the certificate and then verifies the token.
+//
+// The highlight is that the certificates on all the servers should be the same all the time.
+// However, the certificates should be rotated periodically. Just in case of using different certificates to
+// sign and check, a server should keep the old certificate for a while. A server will try both
+// the 2 certificates to check the signature.
 const (
 	// A token needs a lifetime to avoid brute force attack.
 	tokenLifetime = time.Minute
-	// Reload the certificate periodically because it may be replaced.
-	certLifetime = 30 * 24 * time.Hour
-	// After the new certificate takes effect, the old certificate can still take effect for a while.
-	oldCertValidTime = time.Minute
+	// Reload the certificate periodically because it may be rotated.
+	loadCertInterval = 10 * time.Minute
+	// After a certificate is replaced, it's still valid for oldCertValidTime.
+	// oldCertValidTime must be a little longer than loadCertInterval, because the previous server may
+	// sign with the old cert but the new server checks with the new cert.
+	// - server A loads the old cert at 00:00:00.
+	// - the cert is rotated at 00:00:01 on all servers.
+	// - server B loads the new cert at 00:00:02.
+	// - server A signs token with the old cert at 00:10:00.
+	// - server B reloads the same new cert again at 00:10:01, and it has 3 certs now.
+	// - server B receives the token at 00:10:02, so the old cert should be valid for more than 10m after replacement.
+	oldCertValidTime = 15 * time.Minute
 )
 
 // SessionToken represents the token used to authenticate with the new server.
@@ -53,7 +74,7 @@ type SessionToken struct {
 
 // CreateSessionToken creates a token for the proxy.
 func CreateSessionToken(username string) (*SessionToken, error) {
-	now := time.Now()
+	now := getNow()
 	token := &SessionToken{
 		Username:   username,
 		SignTime:   now,
@@ -63,7 +84,7 @@ func CreateSessionToken(username string) (*SessionToken, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if token.Signature, err = globalSigningCert.Sign(tokenBytes); err != nil {
+	if token.Signature, err = globalSigningCert.sign(tokenBytes); err != nil {
 		return nil, ErrCannotMigrateSession.GenWithStackByArgs(err.Error())
 	}
 	return token, nil
@@ -81,17 +102,10 @@ func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
 	if tokenBytes, err = json.Marshal(token); err != nil {
 		return errors.Trace(err)
 	}
-	if err = globalSigningCert.CheckSignature(tokenBytes, signature); err != nil {
+	if err = globalSigningCert.checkSignature(tokenBytes, signature); err != nil {
 		return ErrCannotMigrateSession.GenWithStackByArgs(err.Error())
 	}
-	now := time.Now()
-	failpoint.Inject("mockValidateTokenTime", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			if t, err := time.Parse(time.RFC3339, s); err == nil {
-				now = t
-			}
-		}
-	})
+	now := getNow()
 	if now.After(token.ExpireTime) {
 		return ErrCannotMigrateSession.GenWithStackByArgs("token expired")
 	}
@@ -104,83 +118,91 @@ func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
 	return nil
 }
 
+// SetKeyPath sets the path of key.pem and force load the certificate again.
 func SetKeyPath(keyPath string) {
 	globalSigningCert.setKeyPath(keyPath)
 }
 
+// SetCertPath sets the path of key.pem and force load the certificate again.
 func SetCertPath(certPath string) {
 	globalSigningCert.setCertPath(certPath)
 }
 
-var globalSigningCert SigningCert
+// StartCertLoader starts a goroutine to load the certificate periodically.
+// It's impossible to know when the old certificate should expire without this goroutine:
+// - If the certificate is rotated a minute ago, the old certificate should be still valid for a while.
+// - If the certificate is rotated a month ago, the old certificate should expire for safety.
+func StartCertLoader() {
+	go func() {
+		for range time.Tick(loadCertInterval) {
+			globalSigningCert.checkAndLoadCert()
+		}
+	}()
+}
 
-// SigningCert represents the parsed certificate used for token-based auth.
-type SigningCert struct {
+var globalSigningCert signingCert
+
+// signingCert represents the parsed certificate used for token-based auth.
+type signingCert struct {
 	sync.RWMutex
 	certPath string
 	keyPath  string
-	/**/ expireTime time.Time
-	cert            *x509.Certificate
-	privKey         crypto.PrivateKey
-	// The cert file may happen to be replaced between signing and checking, so we keep the old cert for a while.
-	lastCertExpireTime time.Time
-	lastCert           *x509.Certificate
+	// The cert file may happen to be rotated between signing and checking, so we keep the old cert for a while.
+	// certs contain all the certificates that are not expired yet.
+	certs []*certInfo
 }
 
-// We cannot guarantee that the cert and key are set at the same time because they are set in the system variables.
-func (sc *SigningCert) setCertPath(certPath string) {
+type certInfo struct {
+	cert       *x509.Certificate
+	privKey    crypto.PrivateKey
+	expireTime time.Time
+}
+
+// We cannot guarantee that the cert and key paths are set at the same time because they are set through system variables.
+func (sc *signingCert) setCertPath(certPath string) {
 	sc.Lock()
+	// Just in case of repeatedly loading global variables, we check the path to avoid useless loading.
 	if certPath != sc.certPath {
 		sc.certPath = certPath
 		// It may fail expectedly because the key path is not set yet.
-		_ = sc.checkAndLoadCert(true)
+		sc.checkAndLoadCert()
 	}
 	sc.Unlock()
 }
 
-func (sc *SigningCert) setKeyPath(keyPath string) {
+func (sc *signingCert) setKeyPath(keyPath string) {
 	sc.Lock()
 	if keyPath != sc.keyPath {
 		sc.keyPath = keyPath
 		// It may fail expectedly because the cert path is not set yet.
-		_ = sc.checkAndLoadCert(true)
+		sc.checkAndLoadCert()
 	}
 	sc.Unlock()
 }
 
-func (sc *SigningCert) checkAndLoadCert(force bool) error {
-	if len(sc.certPath) == 0 || len(sc.keyPath) == 0 {
-		return nil
-	}
-	now := time.Now()
-	failpoint.Inject("mockLoadCertTime", func(val failpoint.Value) {
-		if s := val.(string); len(s) > 0 {
-			if t, err := time.Parse(time.RFC3339, s); err == nil {
-				now = t
-			}
-		}
-	})
-	var err error
-	if force || now.After(sc.expireTime) {
-		err = sc.loadCert(force)
-		if err != nil {
-			logutil.BgLogger().Warn("loading signing cert failed",
-				zap.String("cert path", sc.certPath),
-				zap.String("key path", sc.keyPath),
-				zap.Error(err))
-		} else {
-			logutil.BgLogger().Info("signing cert is loaded successfully",
-				zap.String("cert path", sc.certPath),
-				zap.String("key path", sc.keyPath))
-		}
-	}
-	if sc.lastCert != nil && now.After(sc.lastCertExpireTime) {
-		sc.lastCert = nil
-	}
-	return err
+func (sc *signingCert) lockAndLoad() {
+	sc.Lock()
+	sc.checkAndLoadCert()
+	sc.Unlock()
 }
 
-func (sc *SigningCert) loadCert(force bool) error {
+func (sc *signingCert) checkAndLoadCert() {
+	if len(sc.certPath) == 0 || len(sc.keyPath) == 0 {
+		return
+	}
+	if err := sc.loadCert(); err != nil {
+		logutil.BgLogger().Warn("loading signing cert failed",
+			zap.String("cert path", sc.certPath),
+			zap.String("key path", sc.keyPath),
+			zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("signing cert is loaded successfully",
+			zap.String("cert path", sc.certPath),
+			zap.String("key path", sc.keyPath))
+	}
+}
+
+func (sc *signingCert) loadCert() error {
 	tlsCert, err := tls.LoadX509KeyPair(sc.certPath, sc.keyPath)
 	if err != nil {
 		return errors.Wrapf(err, "load x509 failed, cert path: %s, key path: %s", sc.certPath, sc.keyPath)
@@ -194,50 +216,44 @@ func (sc *SigningCert) loadCert(force bool) error {
 		}
 	}
 
-	if force {
-		// If it's force loaded by replacing the path, start the countdown from now.
-		now := time.Now()
-		sc.expireTime = now.Add(certLifetime)
-		if sc.cert != nil {
-			sc.lastCert = sc.cert
-			sc.lastCertExpireTime = now.Add(oldCertValidTime)
+	// rotate certs
+	now := getNow()
+	newCerts := make([]*certInfo, 0, len(sc.certs)+1)
+	newCerts = append(newCerts, &certInfo{
+		cert:       cert,
+		privKey:    tlsCert.PrivateKey,
+		expireTime: now.Add(loadCertInterval + oldCertValidTime),
+	})
+	for i := 0; i < len(sc.certs); i++ {
+		if now.After(sc.certs[i].expireTime) {
+			break
 		}
-	} else {
-		// If it's loaded because of expiration, the original cert must exist.
-		sc.lastCert = sc.cert
-		sc.lastCertExpireTime = sc.expireTime.Add(oldCertValidTime)
-		sc.expireTime = sc.expireTime.Add(certLifetime)
+		newCerts = append(newCerts, sc.certs[i])
 	}
-	sc.cert = cert
-	sc.privKey = tlsCert.PrivateKey
+	sc.certs = newCerts
 	return nil
 }
 
 // Sign generates a signature with the content and the private key.
-func (sc *SigningCert) Sign(content []byte) ([]byte, error) {
-	sc.Lock()
-	err := sc.checkAndLoadCert(false)
-	sc.Unlock()
-	if err != nil {
-		return nil, err
-	}
-
+func (sc *signingCert) sign(content []byte) ([]byte, error) {
 	var (
 		signer crypto.Signer
 		opts   crypto.SignerOpts
 	)
 	sc.RLock()
 	defer sc.RUnlock()
-	if sc.cert == nil {
+	if len(sc.certs) == 0 {
 		return nil, errors.New("no certificate or key file to sign the data")
 	}
-	switch sc.privKey.(type) {
+	// Always sign the token with the latest cert.
+	certInfo := sc.certs[0]
+	switch certInfo.privKey.(type) {
 	case ed25519.PrivateKey:
-		signer = sc.privKey.(ed25519.PrivateKey)
+		signer = certInfo.privKey.(ed25519.PrivateKey)
 	case *rsa.PrivateKey:
-		signer = sc.privKey.(*rsa.PrivateKey)
+		signer = certInfo.privKey.(*rsa.PrivateKey)
 		var pssHash crypto.Hash
-		switch sc.cert.SignatureAlgorithm {
+		switch certInfo.cert.SignatureAlgorithm {
 		case x509.SHA256WithRSAPSS:
 			pssHash = crypto.SHA256
 		case x509.SHA384WithRSAPSS:
@@ -256,31 +272,40 @@ func (sc *SigningCert) Sign(content []byte) ([]byte, error) {
 			opts = crypto.SHA256
 		}
 	case *ecdsa.PrivateKey:
-		signer = sc.privKey.(*ecdsa.PrivateKey)
+		signer = certInfo.privKey.(*ecdsa.PrivateKey)
 	default:
-		return nil, errors.Errorf("not supported private key type '%s' for signing", sc.cert.SignatureAlgorithm.String())
+		return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 	}
 	return signer.Sign(rand.Reader, content, opts)
 }
 
 // CheckSignature checks the signature and the content.
-func (sc *SigningCert) CheckSignature(content, signature []byte) error {
-	sc.Lock()
-	err := sc.checkAndLoadCert(false)
-	sc.Unlock()
-	if err != nil {
-		return err
-	}
-
+func (sc *signingCert) checkSignature(content, signature []byte) error {
 	sc.RLock()
 	defer sc.RUnlock()
-	if sc.cert == nil {
-		return errors.New("no certificate or key file to check the signature")
+	now := getNow()
+	var err error
+	for _, cert := range sc.certs {
+		if now.After(cert.expireTime) {
+			break
+		}
+		if err = cert.cert.CheckSignature(cert.cert.SignatureAlgorithm, content, signature); err == nil {
+			return nil
+		}
 	}
-	err = sc.cert.CheckSignature(sc.cert.SignatureAlgorithm, content, signature)
-	// The content might be signed with the older certificate, so we also try the old one.
-	if err != nil && sc.lastCert != nil && time.Now().Before(sc.lastCertExpireTime) {
-		return sc.lastCert.CheckSignature(sc.lastCert.SignatureAlgorithm, content, signature)
+	// no certs (possible) or all certs are expired (impossible)
+	if err == nil {
+		return errors.Errorf("no valid certificate to check the signature, cached certificates: %d", len(sc.certs))
 	}
 	return err
+}
+
+func getNow() time.Time {
+	now := time.Now()
+	failpoint.Inject("mockNowOffset", func(val failpoint.Value) {
+		if s := val.(uint64); s > 0 {
+			now = now.Add(time.Duration(s))
+		}
+	})
+	return now
 }
