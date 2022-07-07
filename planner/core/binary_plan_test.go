@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/golang/snappy"
@@ -312,12 +313,12 @@ func TestLongBinaryPlan(t *testing.T) {
 		`where query like "%th t1 join th t2 join th t3%" and query not like "%like%" ` +
 		"limit 1;").Rows())
 	require.Len(t, result, 1)
-	s := result[0]
+	s1 := result[0]
 	// The binary plan in this test case is expected to be slightly smaller than MaxEncodedPlanSizeInBytes.
 	// If the size of the binary plan changed and this case failed in the future, you can adjust the partition numbers in the CREATE TABLE statement above.
-	require.Less(t, len(s), stmtsummary.MaxEncodedPlanSizeInBytes)
-	require.Greater(t, len(s), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.85))
-	b, err := base64.StdEncoding.DecodeString(s)
+	require.Less(t, len(s1), stmtsummary.MaxEncodedPlanSizeInBytes)
+	require.Greater(t, len(s1), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.85))
+	b, err := base64.StdEncoding.DecodeString(s1)
 	require.NoError(t, err)
 	b, err = snappy.Decode(nil, b)
 	require.NoError(t, err)
@@ -332,17 +333,150 @@ func TestLongBinaryPlan(t *testing.T) {
 		`where QUERY_SAMPLE_TEXT like "%th t1 join th t2 join th t3%" and QUERY_SAMPLE_TEXT not like "%like%" ` +
 		"limit 1;").Rows())
 	require.Len(t, result, 1)
-	s = result[0]
-	require.Less(t, len(s), stmtsummary.MaxEncodedPlanSizeInBytes)
-	require.Greater(t, len(s), int(float64(stmtsummary.MaxEncodedPlanSizeInBytes)*0.85))
-	b, err = base64.StdEncoding.DecodeString(s)
+	s2 := result[0]
+	require.Equal(t, s1, s2)
+}
+
+func TestBinaryPlanOfPreparedStmt(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t value(30,30);")
+	tk.MustExec(`prepare stmt from "select sleep(1), b from t where a > ?"`)
+	tk.MustExec("set @a = 20")
+	tk.MustQuery("execute stmt using @a")
+
+	result := testdata.ConvertRowsToStrings(tk.MustQuery("select binary_plan from information_schema.slow_query " +
+		`where query like "%select sleep%" and query not like "%like%" ` +
+		"limit 1;").Rows())
+	require.Len(t, result, 1)
+	s1 := result[0]
+	b, err := base64.StdEncoding.DecodeString(s1)
 	require.NoError(t, err)
 	b, err = snappy.Decode(nil, b)
 	require.NoError(t, err)
-	binary = &tipb.ExplainData{}
+	binary := &tipb.ExplainData{}
 	err = binary.Unmarshal(b)
 	require.NoError(t, err)
 	require.False(t, binary.DiscardedDueToTooLong)
 	require.True(t, binary.WithRuntimeStats)
 	require.NotNil(t, binary.Main)
+
+	result = testdata.ConvertRowsToStrings(tk.MustQuery("select binary_plan from information_schema.statements_summary " +
+		`where QUERY_SAMPLE_TEXT like "%select sleep%" and QUERY_SAMPLE_TEXT not like "%like%" ` +
+		"limit 1;").Rows())
+	require.Len(t, result, 1)
+	s2 := result[0]
+	require.Equal(t, s1, s2)
+}
+
+// TestDecodeBinaryPlan asserts that the result of EXPLAIN ANALYZE FORMAT = 'verbose' is the same as tidb_decode_binary_plan().
+func TestDecodeBinaryPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Prepare the slow log
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, f.Close())
+		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
+	}()
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0;")
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold=300;")
+	}()
+
+	tk.MustExec("create table t(a int, b int, c int, index ia(a));")
+	tk.MustExec("insert into t value(1,1,1), (10,10,10), (123,234,345), (-213, -234, -234);")
+	cases := []string{
+		"explain analyze format = 'verbose' select * from t",
+		"explain analyze format = 'verbose' select * from t where a > 10",
+		"explain analyze format = 'verbose' select /*+ inl_join(t1) */ * from t t1 join t t2 where t1.a = t2.a",
+		"explain analyze format = 'verbose' WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM cte WHERE n < 5) SELECT * FROM cte",
+	}
+
+	for _, c := range cases {
+		comment := fmt.Sprintf("sql:%s", c)
+
+		var res1, res2 []string
+
+		explainResult := tk.MustQuery(c).Rows()
+		for _, row := range explainResult {
+			for _, val := range row {
+				str := val.(string)
+				str = strings.TrimSpace(str)
+				if len(str) > 0 {
+					res1 = append(res1, str)
+				}
+			}
+		}
+
+		slowLogResult := testdata.ConvertRowsToStrings(tk.MustQuery("select binary_plan from information_schema.slow_query " +
+			`where query = "` + c + `;" ` +
+			"order by time desc limit 1").Rows())
+		require.Lenf(t, slowLogResult, 1, comment)
+		decoded := testdata.ConvertRowsToStrings(tk.MustQuery(`select tidb_decode_binary_plan('` + slowLogResult[0] + `')`).Rows())[0]
+		decodedRows := strings.Split(decoded, "\n")
+		// remove the first newline and the title row
+		decodedRows = decodedRows[2:]
+		for _, decodedRow := range decodedRows {
+			vals := strings.Split(decodedRow, "|")
+			for _, val := range vals {
+				val = strings.TrimSpace(val)
+				if len(val) > 0 {
+					res2 = append(res2, val)
+				}
+			}
+		}
+
+		require.Equalf(t, res1, res2, comment)
+	}
+}
+
+func TestInvalidDecodeBinaryPlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	str1 := "some random bytes"
+	str2 := base64.StdEncoding.EncodeToString([]byte(str1))
+	str3 := base64.StdEncoding.EncodeToString(snappy.Encode(nil, []byte(str1)))
+
+	tk.MustQuery(`select tidb_decode_binary_plan('` + str1 + `')`).Check(testkit.Rows(""))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 illegal base64 data at input byte 4"))
+	tk.MustQuery(`select tidb_decode_binary_plan('` + str2 + `')`).Check(testkit.Rows(""))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 snappy: corrupt input"))
+	tk.MustQuery(`select tidb_decode_binary_plan('` + str3 + `')`).Check(testkit.Rows(""))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 proto: illegal wireType 7"))
 }

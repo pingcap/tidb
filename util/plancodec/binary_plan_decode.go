@@ -40,7 +40,7 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	// 1. decode the protobuf into strings
 	rows := decodeBinaryOperator(pb.Main, "", true, pb.WithRuntimeStats, nil)
 	for _, cte := range pb.Ctes {
-		rows = decodeBinaryOperator(cte, texttree.Indent4Child("", true), true, pb.WithRuntimeStats, rows)
+		rows = decodeBinaryOperator(cte, "", true, pb.WithRuntimeStats, rows)
 	}
 	if len(rows) == 0 {
 		return "", nil
@@ -247,10 +247,12 @@ func printAccessObject(op *tipb.ExplainOperator) string {
 		if len(AOs) == 0 {
 			return ""
 		}
+		// If it only involves one table, just print the partitions.
 		if len(AOs) == 1 {
 			return printDynamicPartitionObject(AOs[0])
 		}
 		var b strings.Builder
+		// If it involves multiple tables, we also need to print the table name.
 		for i, access := range AOs {
 			if access == nil {
 				continue

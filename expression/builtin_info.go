@@ -974,7 +974,7 @@ type builtinTiDBDecodeBinaryPlanSig struct {
 }
 
 func (b *builtinTiDBDecodeBinaryPlanSig) Clone() builtinFunc {
-	newSig := &builtinTiDBDecodePlanSig{}
+	newSig := &builtinTiDBDecodeBinaryPlanSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -984,9 +984,10 @@ func (b *builtinTiDBDecodeBinaryPlanSig) evalString(row chunk.Row) (string, bool
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	planTree, _ := plancodec.DecodeBinaryPlan(planString)
+	planTree, err := plancodec.DecodeBinaryPlan(planString)
 	if err != nil {
-		return "", false, err
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", false, nil
 	}
 	return planTree, false, nil
 }
