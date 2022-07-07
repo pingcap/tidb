@@ -2560,8 +2560,6 @@ const (
 	AlterTableOrderByColumns
 	// AlterTableSetTiFlashReplica uses to set the table TiFlash replica.
 	AlterTableSetTiFlashReplica
-	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
-	AlterTableSetTiFlashMode
 	// A tombstone for `AlterTablePlacement`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
 	__DEPRECATED_AlterTablePlacement
@@ -2571,6 +2569,8 @@ const (
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
+	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
+	AlterTableSetTiFlashMode
 )
 
 // LockType is the type for AlterTableSpec.
