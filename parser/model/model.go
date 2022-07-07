@@ -14,6 +14,7 @@
 package model
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -1367,6 +1368,39 @@ func (fk *FKInfo) Clone() *FKInfo {
 	copy(nfk.Cols, fk.Cols)
 
 	return &nfk
+}
+
+func (fk *FKInfo) String(db, tb string) string {
+	buf := bytes.Buffer{}
+	buf.WriteString("`" + db + "`.`")
+	buf.WriteString(tb + "`, CONSTRAINT `")
+	buf.WriteString(fk.Name.O + "` FOREIGN KEY (")
+	for i, col := range fk.Cols {
+		if i > 0 {
+			buf.WriteByte(byte(','))
+		}
+		buf.WriteString("`" + col.O + "`")
+	}
+	buf.WriteString(") REFERENCES `")
+	buf.WriteString(fk.RefTable.O)
+	buf.WriteString("` (")
+	for i, col := range fk.RefCols {
+		if i > 0 {
+			buf.WriteByte(byte(','))
+		}
+		buf.WriteString("`" + col.O + "`")
+	}
+	buf.WriteString(")")
+	// TODO: fix me
+	//if onDelete := ast.ReferOptionType(fk.OnDelete); onDelete != ast.ReferOptionNoOption {
+	//	buf.WriteString(" ON DELETE ")
+	//	buf.WriteString(onDelete.String())
+	//}
+	//if onUpdate := ast.ReferOptionType(fk.OnUpdate); onUpdate != ast.ReferOptionNoOption {
+	//	buf.WriteString(" ON UPDATE ")
+	//	buf.WriteString(onUpdate.String())
+	//}
+	return buf.String()
 }
 
 // CitedFKInfo provides the cited foreign key in the child table.

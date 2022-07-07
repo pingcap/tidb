@@ -3391,6 +3391,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	insertPlan := Insert{
+		DBName:        tn.DBInfo.Name,
 		Table:         tableInPlan,
 		Columns:       insert.Columns,
 		tableSchema:   schema,

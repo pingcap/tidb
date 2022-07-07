@@ -838,6 +838,8 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 
 	ivs := &InsertValues{
 		baseExecutor:              baseExec,
+		is:                        b.is,
+		DBName:                    v.DBName,
 		Table:                     v.Table,
 		Columns:                   v.Columns,
 		Lists:                     v.Lists,
@@ -872,6 +874,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 	insertVal := &InsertValues{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		is:           b.is,
 		Table:        tbl,
 		Columns:      v.Columns,
 		GenExprs:     v.GenCols.Exprs,

@@ -968,7 +968,7 @@ type InsertGeneratedColumns struct {
 // Insert represents an insert plan.
 type Insert struct {
 	baseSchemaProducer
-
+	DBName        model.CIStr
 	Table         table.Table
 	tableSchema   *expression.Schema
 	tableColNames types.NameSlice

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
 	"math"
 	"sync"
 	"time"
@@ -52,6 +53,7 @@ import (
 // nolint:structcheck
 type InsertValues struct {
 	baseExecutor
+	is infoschema.InfoSchema
 
 	rowCount       uint64
 	curBatchCnt    uint64
@@ -60,6 +62,7 @@ type InsertValues struct {
 
 	SelectExec Executor
 
+	DBName  model.CIStr
 	Table   table.Table
 	Columns []*ast.ColumnName
 	Lists   [][]expression.Expression
@@ -96,6 +99,8 @@ type InsertValues struct {
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
 	txnInUse   sync.Mutex
+
+	fkChecker []*foreignKeyChecker
 }
 
 type defaultVal struct {
@@ -1056,6 +1061,58 @@ func (e *InsertValues) checkForeignKeyConstrain(ctx context.Context, rows [][]ty
 	fKeys := e.Table.Meta().ForeignKeys
 	if len(fKeys) == 0 {
 		return nil
+	}
+	return nil
+}
+
+type foreignKeyChecker struct {
+	fkInfo             *model.FKInfo
+	colsOffsets        []int
+	referTbInfo        *model.TableInfo
+	referTbIdx         table.Index
+	valueNeedToChecked [][]types.Datum
+}
+
+func (e *InsertValues) initForeignKeyChecker(ctx context.Context) error {
+	tbInfo := e.Table.Meta()
+	if len(tbInfo.ForeignKeys) == 0 {
+		return nil
+	}
+	for _, fk := range tbInfo.ForeignKeys {
+		idx := model.FindIndexByColumns(tbInfo.Indices, fk.Cols...)
+		if idx == nil {
+			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
+		}
+		colsOffsets := make([]int, 0, len(fk.Cols))
+		for i := range fk.Cols {
+			colsOffsets[i] = idx.Columns[i].Offset
+		}
+
+		referTable, err := e.is.TableByName(fk.RefSchema, fk.RefSchema)
+		if err != nil {
+			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
+		}
+		referTbInfo := referTable.Meta()
+		referTbIdxInfo := model.FindIndexByColumns(referTbInfo.Indices, fk.RefCols...)
+		if referTbIdxInfo == nil {
+			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
+		}
+		var referTbIdx table.Index
+		for _, idx := range referTable.Indices() {
+			if idx.Meta().ID == referTbIdxInfo.ID {
+				referTbIdx = idx
+			}
+		}
+		if referTbIdx == nil {
+			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
+		}
+
+		e.fkChecker = append(e.fkChecker, &foreignKeyChecker{
+			fkInfo:      fk,
+			colsOffsets: colsOffsets,
+			referTbInfo: referTbInfo,
+			referTbIdx:  referTbIdx,
+		})
 	}
 	return nil
 }
