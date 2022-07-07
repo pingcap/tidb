@@ -294,6 +294,86 @@ From the plan, you can't see any information about the foreign key constrain whi
 
 I think this is a MySQL issue, do we need to be compatible with it, or make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table.
 
+##### CockroachDB DML Execution Plan
+
+```sql
+CREATE TABLE customers_2 (
+    id INT PRIMARY KEY
+  );
+
+CREATE TABLE orders_2 (
+                          id INT PRIMARY KEY,
+                          customer_id INT REFERENCES customers_2(id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+INSERT INTO customers_2 VALUES (1), (2), (3);
+INSERT INTO orders_2 VALUES (100,1), (101,2), (102,3), (103,1);
+```
+
+```sql
+> explain analyze UPDATE customers_2 SET id = 23 WHERE id = 1;
+                       info
+--------------------------------------------------
+  planning time: 494µs
+  execution time: 5ms
+  distribution: local
+  vectorized: true
+  rows read from KV: 6 (170 B)
+  cumulative time spent in KV: 978µs
+  maximum memory usage: 100 KiB
+  network usage: 0 B (0 messages)
+  regions: us-east1
+
+  • root
+  │
+  ├── • update
+  │   │ nodes: n1
+  │   │ regions: us-east1
+  │   │ actual row count: 1
+  │   │ table: customers_2
+  │   │ set: id
+  │   │
+  │   └── • buffer
+  │       │ label: buffer 1
+  │       │
+  │       └── • render
+  │           │ nodes: n1
+  │           │ regions: us-east1
+  │           │ actual row count: 1
+  │           │ KV rows read: 1
+  │           │ KV bytes read: 27 B
+  │           │
+  │           └── • scan
+  │                 nodes: n1
+  │                 regions: us-east1
+  │                 actual row count: 1
+  │                 KV rows read: 1
+  │                 KV bytes read: 27 B
+  │                 missing stats
+  │                 table: customers_2@primary
+  │                 spans: [/1 - /1]
+  │                 locking strength: for update
+  │
+  └── • fk-cascade
+        fk: fk_customer_id_ref_customers_2
+        input: buffer 1
+```
+
+##### PostgreSQL DML Execution Plan
+
+```sql
+postgres=# explain analyze UPDATE customers_2 SET id = 20 WHERE id = 23;
+                                                             QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------
+ Update on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.039..0.039 rows=0 loops=1)
+   ->  Index Scan using customers_2_pkey on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.016..0.016 rows=1 loops=1)
+         Index Cond: (id = 23)
+ Planning Time: 0.057 ms
+ Trigger for constraint orders_2_customer_id_fkey on customers_2: time=0.045 calls=1
+ Trigger for constraint orders_2_customer_id_fkey on orders_2: time=0.023 calls=2
+ Execution Time: 0.129 ms
+```
+
 ### Some special case
 
 #### Self-Referencing Tables
