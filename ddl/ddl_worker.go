@@ -292,8 +292,29 @@ func (d *ddl) limitDDLJobs() {
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
+	var err error
+	if variable.EnableConcurrentDDL.Load() {
+		err = d.addBatchDDLJobs2Table(tasks)
+	} else {
+		err = d.addBatchDDLJobs2Queue(tasks)
+	}
+	var jobs string
+	for _, task := range tasks {
+		task.err <- err
+		jobs += task.job.String() + "; "
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
+			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	}
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+	}
+}
+
+func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err := t.GenGlobalIDs(len(tasks))
 		if err != nil {
@@ -325,18 +346,6 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		})
 		return nil
 	})
-	var jobs string
-	for _, task := range tasks {
-		task.err <- err
-		jobs += task.job.String() + "; "
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
-			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}
-	if err != nil {
-		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
-	}
 }
 
 func injectModifyJobArgFailPoint(job *model.Job) {
@@ -363,16 +372,41 @@ func setJobStateToQueueing(job *model.Job) {
 	job.State = model.JobStateQueueing
 }
 
-// getHistoryDDLJob gets a DDL job with job's ID from history queue.
-func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	se, err := d.sessPool.get()
-	if err != nil {
-		return nil, errors.Trace(err)
+// addBatchDDLJobs2Table gets global job IDs and puts the DDL jobs in the DDL job table.
+func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
+	var ids []int64
+	var err error
+	startTS := uint64(0)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ids, err = t.GenGlobalIDs(len(tasks))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startTS = txn.StartTS()
+		return nil
+	})
+	if err == nil {
+		jobTasks := make([]*model.Job, len(tasks))
+		for i, task := range tasks {
+			job := task.job
+			job.Version = currentVersion
+			job.StartTS = startTS
+			job.ID = ids[i]
+			setJobStateToQueueing(job)
+			jobTasks[i] = job
+			injectModifyJobArgFailPoint(job)
+		}
+		sess, err1 := d.sessPool.get()
+		if err1 == nil {
+			sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			err1 = insertDDLJobs2Table(newSession(sess), jobTasks, true)
+			d.sessPool.put(sess)
+		}
+		err = err1
 	}
-	defer d.sessPool.put(se)
-	job, err := GetHistoryJobByID(se, id)
-
-	return job, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 func injectFailPointForGetJob(job *model.Job) {
@@ -425,7 +459,13 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 		logutil.Logger(w.logCtx).Info("[ddl] meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
+	var err error
+	if w.concurrentDDL {
+		err = updateDDLJob2Table(w.sess, job, updateRawArgs)
+	} else {
+		err = t.UpdateDDLJob(0, job, updateRawArgs)
+	}
+	return errors.Trace(err)
 }
 
 func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
@@ -508,8 +548,11 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	_, err = t.DeQueueDDLJob()
+	if w.concurrentDDL {
+		err = w.deleteDDLJob(job)
+	} else {
+		_, err = t.DeQueueDDLJob()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -524,7 +567,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 	w.writeDDLSeqNum(job)
 	w.removeJobCtx(job)
-	err = t.AddHistoryDDLJob(job, updateRawArgs)
+	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs, w.concurrentDDL)
 	return errors.Trace(err)
 }
 
@@ -660,6 +703,8 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
 	w.setDDLLabelForTopSQL(job)
+	w.setDDLSourceForDiagnosis(job)
+	jobContext := w.jobContext(job)
 	if tagger := w.getResourceGroupTaggerForTopSQL(job); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
@@ -675,6 +720,9 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()
+
+	// set request source type to DDL type
+	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
@@ -1021,10 +1069,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	if job.IsFinished() {
+		logutil.Logger(w.logCtx).Debug("[ddl] finish DDL job", zap.String("job", job.String()))
 		return
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
+		logutil.Logger(w.logCtx).Debug("[ddl] cancel DDL job", zap.String("job", job.String()))
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 

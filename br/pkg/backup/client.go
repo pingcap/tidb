@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -472,7 +473,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
@@ -481,12 +482,46 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
+	backupSchemaVersion, err := snapMeta.GetSchemaVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// we need use the version - 1 if the correlation diff is empty.
+	// consider the following case:
+	//           t1						t2				t3
+	//  		 |						|				|
+	//  schema version commit		    | 			diff commit
+	// 								 backupTS
+	// DDL job is not done at t2, but schema version can be seen at t2, so if we use the schema as the boundary, we may filter in
+	// the job which done at t3. So, we need make version -= 1.It is safe because at t2, we can not see the job.
+	diff, err := lastSnapMeta.GetSchemaDiff(lastSchemaVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if diff == nil {
+		lastSchemaVersion -= 1
+	}
+
+	diff, err = snapMeta.GetSchemaDiff(backupSchemaVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if diff == nil {
+		backupSchemaVersion -= 1
+	}
+
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
+	allJobs, err := ddl.GetAllDDLJobs(se, newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -500,7 +535,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 		}
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
 			if job.BinlogInfo.DBInfo != nil {
 				// ignore all placement policy info during incremental backup for now.
 				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil

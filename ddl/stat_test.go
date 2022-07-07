@@ -95,9 +95,9 @@ func TestGetDDLInfo(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	sess := testkit.NewTestKit(t, store).Session()
-	_, err := sess.Execute(context.Background(), "begin")
-	require.NoError(t, err)
+	tk := testkit.NewTestKit(t, store)
+	sess := tk.Session()
+	tk.MustExec("begin")
 	txn, err := sess.Txn(true)
 	require.NoError(t, err)
 
@@ -139,8 +139,7 @@ func TestGetDDLInfo(t *testing.T) {
 	require.Equal(t, job1, info.Jobs[1])
 	require.Nil(t, info.ReorgHandle)
 
-	_, err = sess.Execute(context.Background(), "rollback")
-	require.NoError(t, err)
+	tk.MustExec("rollback")
 }
 
 func addDDLJobs(sess session.Session, txn kv.Transaction, job *model.Job) error {

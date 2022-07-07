@@ -68,11 +68,7 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.DDL, job *model.Job
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
 			// imitate DoDDLJob's logic, quit only find history
-			err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				history, err = meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
-				return err
-			})
-			require.NoError(t, err)
+			history, _ = ddl.GetHistoryJobByID(ctx, job.ID)
 			if history != nil {
 				err = history.Error
 			}

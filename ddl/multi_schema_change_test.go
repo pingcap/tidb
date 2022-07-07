@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"context"
 	"strconv"
 	"testing"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,7 +141,7 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1);")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'c' is in write-reorg.
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization
 	})
@@ -223,7 +223,7 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4);")
 	tk.MustExec("insert into t values ();")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
@@ -237,7 +237,7 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4);")
 	tk.MustExec("insert into t values ();")
-	hook = newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in public.
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
@@ -259,7 +259,7 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4, " +
 		"index(a), index(b), index(c), index(d));")
 	tk.MustExec("insert into t values ();")
-	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	hook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel job when the column 'a' is in delete-reorg.
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
 	})
@@ -558,7 +558,7 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	cancelHook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+	cancelHook := newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel the job when index 't2' is in write-reorg.
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
@@ -576,7 +576,7 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
-	cancelHook = newCancelJobHook(store, dom, func(job *model.Job) bool {
+	cancelHook = newCancelJobHook(t, store, dom, func(job *model.Job) bool {
 		// Cancel the job when index 't1' is in public.
 		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
 	})
@@ -1160,6 +1160,7 @@ type cancelOnceHook struct {
 	triggered bool
 	cancelErr error
 	pred      func(job *model.Job) bool
+	s         sessionctx.Context
 
 	ddl.TestDDLCallback
 }
@@ -1169,15 +1170,12 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	c.cancelErr = kv.RunInNewTxn(ctx, c.store, false,
-		func(ctx context.Context, txn kv.Transaction) error {
-			errs, err := ddl.CancelJobs(txn, []int64{job.ID})
-			if errs[0] != nil {
-				return errs[0]
-			}
-			return err
-		})
+	errs, err := ddl.CancelJobs(c.s, c.store, []int64{job.ID})
+	if errs[0] != nil {
+		c.cancelErr = errs[0]
+		return
+	}
+	c.cancelErr = err
 }
 
 func (c *cancelOnceHook) MustCancelDone(t *testing.T) {
@@ -1190,12 +1188,15 @@ func (c *cancelOnceHook) MustCancelFailed(t *testing.T) {
 	require.Contains(t, c.cancelErr.Error(), strconv.Itoa(errno.ErrCannotCancelDDLJob))
 }
 
-func newCancelJobHook(store kv.Storage, dom *domain.Domain,
+func newCancelJobHook(t *testing.T, store kv.Storage, dom *domain.Domain,
 	pred func(job *model.Job) bool) *cancelOnceHook {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	return &cancelOnceHook{
 		store:           store,
 		pred:            pred,
 		TestDDLCallback: ddl.TestDDLCallback{Do: dom},
+		s:               tk.Session(),
 	}
 }
 
