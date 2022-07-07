@@ -68,10 +68,6 @@ type partition struct {
 	TableCommon
 }
 
-func (p *partition) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
-	panic("implement me")
-}
-
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (p *partition) GetPhysicalID() int64 {
 	return p.physicalTableID

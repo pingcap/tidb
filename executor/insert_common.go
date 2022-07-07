@@ -651,7 +651,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if !tableFound {
 			return nil, errors.Errorf("insert record TableByID Failed")
 		}
-		canExchange, err := pt.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionDefId)
+		canExchange, err := pt.(table.PartitionedTable).CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionDefId)
 		if err != nil {
 			return nil, err
 		}

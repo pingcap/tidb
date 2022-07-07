@@ -17,7 +17,6 @@ package infoschema
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/types"
 	"golang.org/x/exp/slices"
 	"strconv"
 	"strings"
@@ -143,10 +142,6 @@ func GenLabelConditionValues(values set.StringSet) string {
 // metricSchemaTable stands for the fake table all its data is in the memory.
 type metricSchemaTable struct {
 	infoschemaTable
-}
-
-func (m metricSchemaTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
-	panic("implement me")
 }
 
 func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

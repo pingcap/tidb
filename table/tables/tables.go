@@ -75,10 +75,6 @@ type TableCommon struct {
 	indexPrefix  kv.Key
 }
 
-func (t *TableCommon) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
-	panic("implement me")
-}
-
 // MockTableFromMeta only serves for test.
 func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	columns := make([]*table.Column, 0, len(tblInfo.Columns))

@@ -1909,10 +1909,6 @@ type infoschemaTable struct {
 	tp   table.Type
 }
 
-func (it *infoschemaTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) (bool, error) {
-	panic("implement me")
-}
-
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	is := ctx.GetInfoSchema().(InfoSchema)
 	dbs := is.AllSchemas()

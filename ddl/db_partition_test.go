@@ -2380,13 +2380,13 @@ func TestExchangePartitionHook(t *testing.T) {
 	hookFunc = func(job *model.Job) {
 		if job.Type == model.ActionExchangeTablePartition {
 			tkCancel.MustExec("use test")
-			tkCancel.MustExec("insert into nt values (5)")
+			tkCancel.MustGetErrMsg("insert into nt values (5)", "insert data doesn't match partition constraint during exchange partition with table")
 		}
 	}
 	hook.OnJobUpdatedExported = hookFunc
 
 	tk.MustExec("alter table pt exchange partition p0 with table nt")
-	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1]\n[2"))
+	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("0"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {
