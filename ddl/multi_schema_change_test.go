@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -308,12 +309,14 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustGetErrCode("alter table t add index t(a), add index t(b)", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
 
 	// Test add indexes with drop column.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
 	tk.MustGetErrCode("alter table t add index t(a), drop column a", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t add index t(a, b), drop column a", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
 
 	// Test add index failed.
 	tk.MustExec("drop table if exists t;")
@@ -475,6 +478,46 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 	tk.MustGetErrCode("select * from t use index(b);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(c);", errno.ErrKeyDoesNotExist)
 	tk.MustExec("admin check table t;")
+}
+
+func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 2), (2, 1);")
+	tk.MustGetErrCode("alter table t drop column a, add unique index idx((a + b));", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add column c int, change column a d bigint, add index idx((a + a));", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a + b));",
+		errno.ErrDupEntry)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2", "2 1"))
+
+	originHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test;")
+			_, checkErr = tk2.Exec("update t set a = 3 where a = 1;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk2.Exec("insert into t values (10, 10);")
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a + b));")
+	require.NoError(t, checkErr)
+	dom.DDL().SetHook(originHook)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 2), (2, 1);")
+	tk.MustExec("alter table t add column c int default 10, add index idx1((a + b)), add unique index idx2((a*10 + b));")
+	tk.MustQuery("select * from t use index(idx1, idx2);").Check(testkit.Rows("1 2 10", "2 1 10"))
 }
 
 type cancelOnceHook struct {
