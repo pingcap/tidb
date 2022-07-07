@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // MVCCStore is a wrapper of badger.DB to provide MVCC functions.
@@ -174,13 +175,13 @@ func (store *MVCCStore) getDBItems(reqCtx *requestCtx, mutations []*kvrpcpb.Muta
 }
 
 func sortMutations(mutations []*kvrpcpb.Mutation) []*kvrpcpb.Mutation {
-	fn := func(i, j int) bool {
-		return bytes.Compare(mutations[i].Key, mutations[j].Key) < 0
+	fn := func(i, j *kvrpcpb.Mutation) bool {
+		return bytes.Compare(i.Key, j.Key) < 0
 	}
-	if sort.SliceIsSorted(mutations, fn) {
+	if slices.IsSortedFunc(mutations, fn) {
 		return mutations
 	}
-	sort.Slice(mutations, fn)
+	slices.SortFunc(mutations, fn)
 	return mutations
 }
 
@@ -214,13 +215,13 @@ func (sorter pessimisticPrewriteSorter) Swap(i, j int) {
 }
 
 func sortKeys(keys [][]byte) [][]byte {
-	less := func(i, j int) bool {
-		return bytes.Compare(keys[i], keys[j]) < 0
+	less := func(i, j []byte) bool {
+		return bytes.Compare(i, j) < 0
 	}
-	if sort.SliceIsSorted(keys, less) {
+	if slices.IsSortedFunc(keys, less) {
 		return keys
 	}
-	sort.Slice(keys, less)
+	slices.SortFunc(keys, less)
 	return keys
 }
 
@@ -1412,8 +1413,8 @@ func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.M
 	if err != nil {
 		return nil, err
 	}
-	sort.Slice(mvccInfo.Writes, func(i, j int) bool {
-		return mvccInfo.Writes[i].CommitTs > mvccInfo.Writes[j].CommitTs
+	slices.SortFunc(mvccInfo.Writes, func(i, j *kvrpcpb.MvccWrite) bool {
+		return i.CommitTs > j.CommitTs
 	})
 	mvccInfo.Values = make([]*kvrpcpb.MvccValue, len(mvccInfo.Writes))
 	for i := 0; i < len(mvccInfo.Writes); i++ {

@@ -16,7 +16,6 @@ package restore
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type TableRestore struct {
@@ -285,7 +285,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		for engineID, engine := range cp.Engines {
 			allEngines = append(allEngines, engineCheckpoint{engineID: engineID, checkpoint: engine})
 		}
-		sort.Slice(allEngines, func(i, j int) bool { return allEngines[i].engineID < allEngines[j].engineID })
+		slices.SortFunc(allEngines, func(i, j engineCheckpoint) bool { return i.engineID < j.engineID })
 
 		for _, ecp := range allEngines {
 			engineID := ecp.engineID
