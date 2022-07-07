@@ -189,8 +189,9 @@ func (a *recordSet) OnFetchReturned() {
 
 // TelemetryInfo records some telemetry information during execution.
 type TelemetryInfo struct {
-	UseNonRecursive bool
-	UseRecursive    bool
+	UseNonRecursive      bool
+	UseRecursive         bool
+	UseMultiSchemaChange bool
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
