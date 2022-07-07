@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tidbutil "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
 )
 
@@ -456,8 +457,8 @@ func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
 	databases := dom.InfoSchema().AllSchemas()
 	existedDatabases := make([]*model.DBInfo, 0, 16)
 	for _, db := range databases {
-		dbName, _ := utils.GetSysDBName(db.Name)
-		if utils.IsInSysDBs(dbName) {
+		dbName := db.Name.L
+		if tidbutil.IsMemOrSysDB(dbName) {
 			continue
 		} else if dbName == "test" && len(db.Tables) == 0 {
 			continue
