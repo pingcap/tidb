@@ -213,14 +213,14 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	var wrapper *statsWrapper
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
-		if !ok || index.Len() > 0 {
+		if !ok || index.IsFullLoad() {
 			h.writeToResultChan(task.ResultCh, item)
 			return nil, nil
 		}
 		wrapper.idx = index
 	} else {
 		col, ok := tbl.Columns[item.ID]
-		if !ok || col.Len() > 0 {
+		if !ok || col.IsFullLoad() {
 			h.writeToResultChan(task.ResultCh, item)
 			return nil, nil
 		}
