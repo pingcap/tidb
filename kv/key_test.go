@@ -17,12 +17,13 @@ package kv_test
 import (
 	"bytes"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/assert"
@@ -125,7 +126,7 @@ func TestHandle(t *testing.T) {
 	assert.Equal(t, -1, ih.Compare(ih2))
 	assert.Equal(t, "100", ih.String())
 
-	ch := testkit.MustNewCommonHandle(t, 100, "abc")
+	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	assert.False(t, ch.IsInt())
 
 	ch2 := ch.Next()
@@ -174,7 +175,7 @@ func TestHandleMap(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, v)
 
-	ch := testkit.MustNewCommonHandle(t, 100, "abc")
+	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
 	assert.True(t, ok)
@@ -186,9 +187,9 @@ func TestHandleMap(t *testing.T) {
 	assert.Nil(t, v)
 
 	m.Set(ch, "a")
-	ch2 := testkit.MustNewCommonHandle(t, 101, "abc")
+	ch2 := testutil.MustNewCommonHandle(t, 101, "abc")
 	m.Set(ch2, "b")
-	ch3 := testkit.MustNewCommonHandle(t, 99, "def")
+	ch3 := testutil.MustNewCommonHandle(t, 99, "def")
 	m.Set(ch3, "c")
 	assert.Equal(t, 3, m.Len())
 
@@ -219,5 +220,85 @@ func BenchmarkIsPoint(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		kr.IsPoint()
+	}
+}
+
+var result int
+
+var inputs = []struct {
+	input int
+}{
+	{input: 1},
+	{input: 100},
+	{input: 10000},
+	{input: 1000000},
+}
+
+func memAwareIntMap(size int, handles []Handle) int {
+	var x int
+	m := NewMemAwareHandleMap[int]()
+	for j := 0; j < size; j++ {
+		m.Set(handles[j], j)
+	}
+	for j := 0; j < size; j++ {
+		x, _ = m.Get(handles[j])
+	}
+	return x
+}
+
+func nativeIntMap(size int, handles []Handle) int {
+	var x int
+	m := make(map[Handle]int)
+	for j := 0; j < size; j++ {
+		m[handles[j]] = j
+	}
+
+	for j := 0; j < size; j++ {
+		x = m[handles[j]]
+	}
+	return x
+}
+
+func BenchmarkMemAwareHandleMap(b *testing.B) {
+	var sc stmtctx.StatementContext
+	for _, s := range inputs {
+		handles := make([]Handle, s.input)
+		for i := 0; i < s.input; i++ {
+			if i%2 == 0 {
+				handles[i] = IntHandle(i)
+			} else {
+				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handles[i], _ = NewCommonHandle(handleBytes)
+			}
+		}
+		b.Run("MemAwareIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
+			var x int
+			for i := 0; i < b.N; i++ {
+				x = memAwareIntMap(s.input, handles)
+			}
+			result = x
+		})
+	}
+}
+
+func BenchmarkNativeHandleMap(b *testing.B) {
+	var sc stmtctx.StatementContext
+	for _, s := range inputs {
+		handles := make([]Handle, s.input)
+		for i := 0; i < s.input; i++ {
+			if i%2 == 0 {
+				handles[i] = IntHandle(i)
+			} else {
+				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handles[i], _ = NewCommonHandle(handleBytes)
+			}
+		}
+		b.Run("NativeIntMap_"+strconv.Itoa(s.input), func(b *testing.B) {
+			var x int
+			for i := 0; i < b.N; i++ {
+				x = nativeIntMap(s.input, handles)
+			}
+			result = x
+		})
 	}
 }

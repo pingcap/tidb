@@ -15,6 +15,7 @@
 package types
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -322,7 +323,7 @@ func TestRoundWithHalfEven(t *testing.T) {
 		err := dec.FromString([]byte(ca.input))
 		require.NoError(t, err)
 		var rounded MyDecimal
-		err = dec.Round(&rounded, ca.scale, ModeHalfEven)
+		err = dec.Round(&rounded, ca.scale, ModeHalfUp)
 		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
 		require.Equal(t, ca.output, string(result))
@@ -393,7 +394,7 @@ func TestRoundWithCeil(t *testing.T) {
 		err := dec.FromString([]byte(ca.input))
 		require.NoError(t, err)
 		var rounded MyDecimal
-		err = dec.Round(&rounded, ca.scale, modeCeiling)
+		err = dec.Round(&rounded, ca.scale, ModeCeiling)
 		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
 		require.Equal(t, ca.output, string(result))
@@ -991,4 +992,23 @@ func TestFromStringMyDecimal(t *testing.T) {
 
 	// reset
 	wordBufLen = maxWordBufLen
+}
+
+func TestMarshalMyDecimal(t *testing.T) {
+	cases := []string{
+		"12345",
+		"12345.",
+		".00012345000098765",
+		".12345000098765",
+		"-.000000012345000098765",
+		"123E-2",
+	}
+	for _, tt := range cases {
+		var v1, v2 MyDecimal
+		require.NoError(t, v1.FromString([]byte(tt)))
+		j, err := json.Marshal(&v1)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(j, &v2))
+		require.Equal(t, 0, v1.Compare(&v2))
+	}
 }

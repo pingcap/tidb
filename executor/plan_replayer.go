@@ -119,9 +119,9 @@ func (e *PlanReplayerSingleExec) Next(ctx context.Context, req *chunk.Chunk) err
 // |_explain
 //     |-explain.txt
 //
-func (e *PlanReplayerSingleExec) dumpSingle(path string) (string, error) {
+func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err error) {
 	// Create path
-	err := os.MkdirAll(path, os.ModePerm)
+	err = os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		return "", errors.AddStack(err)
 	}
@@ -129,12 +129,13 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (string, error) {
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
+	//nolint: gosec
 	_, err = rand.Read(b)
 	if err != nil {
 		return "", err
 	}
 	key := base64.URLEncoding.EncodeToString(b)
-	fileName := fmt.Sprintf("replayer_single_%v_%v.zip", key, time)
+	fileName = fmt.Sprintf("replayer_single_%v_%v.zip", key, time)
 	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
 		return "", errors.AddStack(err)
@@ -143,13 +144,13 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (string, error) {
 	// Create zip writer
 	zw := zip.NewWriter(zf)
 	defer func() {
-		err := zw.Close()
+		err = zw.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
+			logutil.BgLogger().Error("Closing zip writer failed", zap.Error(err), zap.String("filename", fileName))
 		}
 		err = zf.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("Closing zip file failed", zap.Error(err))
+			logutil.BgLogger().Error("Closing zip file failed", zap.Error(err), zap.String("filename", fileName))
 		}
 	}()
 
@@ -525,6 +526,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			if err != nil {
 				return errors.AddStack(err)
 			}
+			//nolint: errcheck
 			defer v.Close()
 			_, err = toml.DecodeReader(v, &varMap)
 			if err != nil {
@@ -556,6 +558,7 @@ func createSchemaAndTables(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return errors.AddStack(err)
 	}
+	//nolint: errcheck
 	defer r.Close()
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(r)
@@ -589,6 +592,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	if err != nil {
 		return errors.AddStack(err)
 	}
+	//nolint: errcheck
 	defer r.Close()
 	buf := new(bytes.Buffer)
 	_, err = buf.ReadFrom(r)

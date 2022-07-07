@@ -125,3 +125,8 @@ func (s *HDFSStorage) URI() string {
 func (s *HDFSStorage) Create(ctx context.Context, path string) (ExternalFileWriter, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
+
+// Rename a file name from oldFileName to newFileName.
+func (s *HDFSStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
+}

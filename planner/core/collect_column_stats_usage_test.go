@@ -16,16 +16,17 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func getColumnName(c *C, is infoschema.InfoSchema, tblColID model.TableColumnID, comment CommentInterface) (string, bool) {
+func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableColumnID, comment string) string {
 	var tblInfo *model.TableInfo
 	var prefix string
 	if tbl, ok := is.TableByID(tblColID.TableID); ok {
@@ -33,7 +34,7 @@ func getColumnName(c *C, is infoschema.InfoSchema, tblColID model.TableColumnID,
 		prefix = tblInfo.Name.L + "."
 	} else {
 		db, exists := is.SchemaByName(model.NewCIStr("test"))
-		c.Assert(exists, IsTrue, comment)
+		require.True(t, exists, comment)
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil {
@@ -50,19 +51,21 @@ func getColumnName(c *C, is infoschema.InfoSchema, tblColID model.TableColumnID,
 				break
 			}
 		}
-		if tblInfo == nil {
-			return "", false
-		}
+
+		require.NotNil(t, tblInfo, comment)
 	}
+
+	var colName string
 	for _, col := range tblInfo.Columns {
 		if tblColID.ColumnID == col.ID {
-			return prefix + col.Name.L, true
+			colName = prefix + col.Name.L
 		}
 	}
-	return "", false
+	require.NotEmpty(t, colName, comment)
+	return colName
 }
 
-func checkColumnStatsUsage(c *C, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment CommentInterface) {
+func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment string) {
 	var tblColIDs []model.TableColumnID
 	if histNeededOnly {
 		_, tblColIDs = CollectColumnStatsUsage(lp, false, true)
@@ -71,16 +74,14 @@ func checkColumnStatsUsage(c *C, is infoschema.InfoSchema, lp LogicalPlan, histN
 	}
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
-		col, ok := getColumnName(c, is, tblColID, comment)
-		c.Assert(ok, IsTrue, comment)
+		col := getColumnName(t, is, tblColID, comment)
 		cols = append(cols, col)
 	}
 	sort.Strings(cols)
-	c.Assert(cols, DeepEquals, expected, comment)
+	require.Equal(t, expected, cols, comment)
 }
 
-func (s *testPlanSuite) TestCollectPredicateColumns(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCollectPredicateColumns(t *testing.T) {
 	tests := []struct {
 		pruneMode string
 		sql       string
@@ -245,32 +246,32 @@ func (s *testPlanSuite) TestCollectPredicateColumns(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
+		comment := fmt.Sprintf("sql: %s", tt.sql)
 		if len(tt.pruneMode) > 0 {
 			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
 		}
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		lp, ok := p.(LogicalPlan)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
-		checkColumnStatsUsage(c, s.is, lp, false, tt.res, comment)
+		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
 		lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
-		c.Assert(err, IsNil, comment)
-		checkColumnStatsUsage(c, s.is, lp, false, tt.res, comment)
+		require.NoError(t, err, comment)
+		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
 	}
 }
 
-func (s *testPlanSuite) TestCollectHistNeededColumns(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCollectHistNeededColumns(t *testing.T) {
 	tests := []struct {
 		pruneMode string
 		sql       string
@@ -320,27 +321,28 @@ func (s *testPlanSuite) TestCollectHistNeededColumns(c *C) {
 		},
 	}
 
+	s := createPlannerSuite()
 	ctx := context.Background()
 	for _, tt := range tests {
-		comment := Commentf("for %s", tt.sql)
+		comment := fmt.Sprintf("sql: %s", tt.sql)
 		if len(tt.pruneMode) > 0 {
 			s.ctx.GetSessionVars().PartitionPruneMode.Store(tt.pruneMode)
 		}
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
 		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
-		c.Assert(err, IsNil, comment)
+		require.NoError(t, err, comment)
 		lp, ok := p.(LogicalPlan)
-		c.Assert(ok, IsTrue, comment)
+		require.True(t, ok, comment)
 		flags := builder.GetOptFlag()
 		// JoinReOrder may need columns stats so collecting hist-needed columns must happen before JoinReOrder.
-		// Hence we disable JoinReOrder and PruneColumnsAgain here.
+		// Hence, we disable JoinReOrder and PruneColumnsAgain here.
 		flags &= ^(flagJoinReOrder | flagPrunColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
-		c.Assert(err, IsNil, comment)
-		checkColumnStatsUsage(c, s.is, lp, true, tt.res, comment)
+		require.NoError(t, err, comment)
+		checkColumnStatsUsage(t, s.is, lp, true, tt.res, comment)
 	}
 }

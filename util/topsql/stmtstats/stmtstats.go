@@ -33,6 +33,9 @@ type StatementObserver interface {
 	OnExecutionBegin(sqlDigest, planDigest []byte)
 
 	// OnExecutionFinished should be called after the statement is executed.
+	// WARNING: Currently Only call StatementObserver API when TopSQL is enabled,
+	// there is no guarantee that both OnExecutionBegin and OnExecutionFinished will be called for a SQL,
+	// such as TopSQL is enabled during a SQL execution.
 	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration)
 }
 

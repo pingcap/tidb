@@ -94,13 +94,13 @@ func IsTemporalWithDate(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	return ft.Collate == charset.CollationBin && IsString(ft.Tp)
+	return ft.GetCollate() == charset.CollationBin && IsString(ft.GetType())
 }
 
 // IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && IsString(ft.Tp) {
+	if ft.GetCollate() != charset.CollationBin && IsString(ft.GetType()) {
 		return true
 	}
 	return false
@@ -111,7 +111,7 @@ func IsNonBinaryStr(ft *FieldType) bool {
 func NeedRestoredData(ft *FieldType) bool {
 	if collate.NewCollationEnabled() &&
 		IsNonBinaryStr(ft) &&
-		!(collate.IsBinCollation(ft.Collate) && !IsTypeVarchar(ft.Tp)) {
+		!(collate.IsBinCollation(ft.GetCollate()) && !IsTypeVarchar(ft.GetType())) {
 		return true
 	}
 	return false

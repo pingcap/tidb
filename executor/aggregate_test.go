@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
@@ -702,6 +701,7 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
 	tk.MustExec("create table x(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
@@ -743,16 +743,22 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
 	err = tk.ExecToErr("select count(b), c from t")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
+	tk.MustQuery("select count(b), any_value(c) from t")
+	tk.MustQuery("select count(b), any_value(c) + 2 from t")
 	err = tk.ExecToErr("select distinct a, b, count(a) from t")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
+	err = tk.ExecToErr("select b*rand() from t group by b")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	tk.MustQuery("select b as e from t group by b")
 	tk.MustQuery("select b+c from t group by b+c")
 	tk.MustQuery("select b+c, min(a) from t group by b+c, b-c")
 	tk.MustQuery("select b+c, min(a) from t group by b, c")
 	tk.MustQuery("select b+c from t group by b,c")
+	err = tk.ExecToErr("select b+c from (select b, b+rand() as c from t) t group by b")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	tk.MustQuery("select b between c and d from t group by b,c,d")
 	tk.MustQuery("select case b when 1 then c when 2 then d else d end from t group by b,c,d")
 	tk.MustQuery("select c > (select b from t) from t group by c")
@@ -780,8 +786,7 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d")
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.a group by t.b, t.d")
 	tk.MustQuery("select t.b, x.* from t, x where t.b = x.a group by t.b")
-	err = tk.ExecToErr("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
+	tk.MustQuery("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
 	// test functional dependency derived from keys in join
 	tk.MustQuery("select t.*, x.* from t inner join x on t.a = x.a group by t.a")
 	tk.MustQuery("select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d")
@@ -795,11 +800,10 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	err = tk.ExecToErr("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 
-	// FixMe: test functional dependency of derived table
-	// tk.MustQuery("select * from (select * from t) as e group by a")
-	// tk.MustQuery("select * from (select * from t) as e group by b,d")
-	// err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
-	// c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
+	tk.MustQuery("select * from (select * from t) as e group by a")
+	tk.MustQuery("select * from (select * from t) as e group by b,d")
+	err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
@@ -926,18 +930,6 @@ func TestHaving(t *testing.T) {
 	tk.MustQuery("select sum(c1) as s from t group by c1 having sum(c1) order by s").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select sum(c1) - 1 as s from t group by c1 having sum(c1) - 1 order by s").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
-}
-
-func TestIssue26496(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists UK_NSPRE_19416")
-	tk.MustExec("CREATE TABLE `UK_NSPRE_19416` (  `COL1` binary(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL,  UNIQUE KEY `UK_COL1` (`COL1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	tk.MustExec("insert into `UK_NSPRE_19416`(col1) values (0xc5b428e2ebc1b78f0b183899a8df55c88a333f86), (0x004dad637b37cc4a9742484ab93f97ede2ab8bd5), (0x550c4a4390ba14fd6d382dd29063e10210c99381)")
-	tk.MustQuery("select t1.col1, count(t2.col1) from UK_NSPRE_19416 as t1 left join UK_NSPRE_19416 as t2 on t1.col1 = t2.col1 where t1.col1 in (0x550C4A4390BA14FD6D382DD29063E10210C99381, 0x004DAD637B37CC4A9742484AB93F97EDE2AB8BD5, 0xC5B428E2EBC1B78F0B183899A8DF55C88A333F86) group by t1.col1, t2.col1 having t1.col1 in (0x9B4B48FEBA9225BACF8F9ADEAEE810AEC26DC7A2, 0x25A6C4FAD832F8E0267AAA504CFAE767565C8B84, 0xE26E5B0080EC5A8156DACE67D13B239500E540E6)").Check(nil)
 }
 
 func TestAggEliminator(t *testing.T) {
@@ -1390,7 +1382,7 @@ func TestIssue20658(t *testing.T) {
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL.String()))
 
-	mustParseAndSort := func(rows [][]interface{}, cmt CommentInterface) []float64 {
+	mustParseAndSort := func(rows [][]interface{}, cmt string) []float64 {
 		ret := make([]float64, len(rows))
 		for i := 0; i < len(rows); i++ {
 			rowStr := rows[i][0].(string)
@@ -1408,9 +1400,9 @@ func TestIssue20658(t *testing.T) {
 	for _, sql := range sqls {
 		tk.MustExec("set @@tidb_streamagg_concurrency = 1;")
 		exp := tk.MustQuery(sql).Rows()
-		expected := mustParseAndSort(exp, Commentf("sql: %s; seed: %d", sql, randSeed))
+		expected := mustParseAndSort(exp, fmt.Sprintf("sql: %s; seed: %d", sql, randSeed))
 		for _, con := range []int{2, 4, 8} {
-			comment := Commentf("sql: %s; concurrency: %d, seed: %d", sql, con, randSeed)
+			comment := fmt.Sprintf("sql: %s; concurrency: %d, seed: %d", sql, con, randSeed)
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
 			er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
 			ok := false
@@ -1596,4 +1588,58 @@ func TestRandomPanicAggConsume(t *testing.T) {
 		}
 		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 	}
+}
+
+func TestIssue35295(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t100")
+	// This bug only happens on partition prune mode = 'static'
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`CREATE TABLE t100 (
+ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+col1 int(10) NOT NULL DEFAULT '0' COMMENT 'test',
+money bigint(20) NOT NULL COMMENT 'test',
+logtime datetime NOT NULL COMMENT '记录时间',
+PRIMARY KEY (ID,logtime)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=1 COMMENT='test'
+PARTITION BY RANGE COLUMNS(logtime) (
+PARTITION p20220608 VALUES LESS THAN ("20220609"),
+PARTITION p20220609 VALUES LESS THAN ("20220610"),
+PARTITION p20220610 VALUES LESS THAN ("20220611"),
+PARTITION p20220611 VALUES LESS THAN ("20220612"),
+PARTITION p20220612 VALUES LESS THAN ("20220613"),
+PARTITION p20220613 VALUES LESS THAN ("20220614"),
+PARTITION p20220614 VALUES LESS THAN ("20220615"),
+PARTITION p20220615 VALUES LESS THAN ("20220616"),
+PARTITION p20220616 VALUES LESS THAN ("20220617"),
+PARTITION p20220617 VALUES LESS THAN ("20220618"),
+PARTITION p20220618 VALUES LESS THAN ("20220619"),
+PARTITION p20220619 VALUES LESS THAN ("20220620"),
+PARTITION p20220620 VALUES LESS THAN ("20220621"),
+PARTITION p20220621 VALUES LESS THAN ("20220622"),
+PARTITION p20220622 VALUES LESS THAN ("20220623"),
+PARTITION p20220623 VALUES LESS THAN ("20220624"),
+PARTITION p20220624 VALUES LESS THAN ("20220625")
+ );`)
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-09 00:00:00');")
+	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-10 00:00:00');")
+	tk.MustQuery("SELECT /*+STREAM_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+	tk.MustQuery("SELECT /*+HASH_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
+}
+
+// https://github.com/pingcap/tidb/issues/27751
+func TestIssue27751(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table test.t(nname char(20));")
+	tk.MustExec("insert into test.t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');")
+	tk.MustExec("set @@group_concat_max_len=0;")
+	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
+	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
 }

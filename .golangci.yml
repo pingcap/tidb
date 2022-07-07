@@ -31,6 +31,11 @@ linters-settings:
     checks: ["S1002","S1004","S1007","S1009","S1010","S1012","S1019","S1020","S1021","S1024","S1030","SA2*","SA3*","SA4009","SA5*","SA6000","SA6001","SA6005", "-SA2002"]
   stylecheck:
     checks: ["-ST1003"]
+  gosec:
+    severity: "low"
+    confidence: "low"
+    excludes:
+      - G101
 issues:
   exclude-rules:
     - path: _test\.go

@@ -18,13 +18,13 @@ import (
 	"context"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type collectPredicateColumnsPoint struct{}
@@ -78,7 +78,7 @@ func RequestLoadColumnStats(ctx sessionctx.Context, neededColumns []model.TableC
 	if sessMaxExecutionTime <= 0 {
 		sessMaxExecutionTime = maxDuration
 	}
-	waitTime := mathutil.MinInt64(syncWait, mathutil.MinInt64(hintMaxExecutionTime, sessMaxExecutionTime))
+	waitTime := mathutil.Min(syncWait, hintMaxExecutionTime, sessMaxExecutionTime)
 	var timeout = time.Duration(waitTime)
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededColumns, timeout)
 	if err != nil {

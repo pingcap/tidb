@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -54,7 +56,7 @@ const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv |
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
 	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
-	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv,Trigger_priv FROM mysql.db ORDER BY host, db, user"
 	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
@@ -566,7 +568,7 @@ func (p *MySQLPrivilege) LoadDefaultRoles(ctx sessionctx.Context) error {
 
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -653,7 +655,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			} else {
 				value.AuthPlugin = mysql.AuthNativePassword
 			}
-		case f.Column.Tp == mysql.TypeEnum:
+		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
@@ -734,7 +736,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 		case f.ColumnAsName.L == "db":
 			value.DB = row.GetString(i)
 			value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBytes(strings.ToUpper(value.DB), '\\')
-		case f.Column.Tp == mysql.TypeEnum:
+		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
 			}
@@ -1168,7 +1170,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 }
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
-	var gs []string // nolint: prealloc
+	var gs []string //nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
@@ -1257,7 +1259,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show table scope grants.
 	sortFromIdx = len(gs)
@@ -1291,7 +1293,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			gs = append(gs, s)
 		}
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show column scope grants, column and table are combined.
 	// A map of "DB.Table" => Priv(col1, col2 ...)
@@ -1310,7 +1312,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
-	sort.Strings(gs[sortFromIdx:])
+	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.
 	graphKey := user + "@" + host
@@ -1324,7 +1326,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			tmp := fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
 			sortedRes = append(sortedRes, tmp)
 		}
-		sort.Strings(sortedRes)
+		slices.Sort(sortedRes)
 		for i, r := range sortedRes {
 			g += r
 			if i != len(sortedRes)-1 {
@@ -1370,12 +1372,12 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 
 	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
 	if len(dynamicPrivs) > 0 {
-		sort.Strings(dynamicPrivs)
+		slices.Sort(dynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}
 	if len(grantableDynamicPrivs) > 0 {
-		sort.Strings(grantableDynamicPrivs)
+		slices.Sort(grantableDynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}

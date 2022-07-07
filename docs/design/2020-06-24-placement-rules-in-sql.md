@@ -112,7 +112,7 @@ Behavior notes:
 - Placement policies are globally unique names. Thus, a policy named `companyplacementpolicy` can apply to the db `test` as well as `userdb`. The namespace does not overlap with other DB objects.
 - Placement Policy names are case insensitive, and follow the same rules as tables/other identifiers for length (64 chars) and special characters.
 - The full placement policy can be seen with `SHOW CREATE PLACEMENT POLICY x`. This is useful for shorthand usage by DBAs, and consistent with other database objects.
-- It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1}";` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in PD.
+- It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,+region=us-east-2: 1}";` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in PD.
 - The statement `RENAME PLACEMENT POLICY x TO y` renames a placement policy. The `SHOW CREATE TABLE` output of all databases, tables and partitions that used this placement policy should be updated to the new name.
 
 #### Advanced Placement
@@ -124,22 +124,13 @@ Consider the case where a user wants to allocate placement based on the label `d
 ALTER PLACEMENT POLICY `standardplacement` CONSTRAINTS="[+disk=ssd]";
 ```
 
-The following two placement policies are considered equal:
+When the constraints are specified as a dictionary (`{}`) numeric counts for each region must be specified and `FOLLOWERS=n` is disallowed:
 
 ```sql
-CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
-CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
+ALTER PLACEMENT POLICY `standardplacement3` LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,+region=us-east-2: 1,+region=us-west-1: 1}";
 ```
 
-When the constraints is specified as a dictionary (`{}`) numeric counts for each region must be specified and `FOLLOWERS=n` is disallowed. The special `+any` constraint permits additional followers to be added with no constraints:
-
-```sql
-ALTER PLACEMENT POLICY `standardplacement3` LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1,+region=us-west-1:1,+any:1}";
-```
-
-The placement policy above has 4 followers:
-- 1 each in the regions us-east-1, us-east-2 and us-west-1
-- 1 that has no constraints and may reside in any location (including the previously specified regions)
+The placement policy above has 3 followers: 1 each in the regions us-east-1, us-east-2 and us-west-1.
 
 Behavior notes:
 
@@ -311,7 +302,7 @@ The constraints syntax (described as "Advanced Placement" above) allows placemen
 `CONSTRAINTS` should be a string and in one of these formats:
 
 - List: `[{+|-}key=value,...]`, e.g. `[+region=us-east-1,-disk=hdd]`
-- Dictionary: `{"{+|-}key=value,...":count,...}`, e.g. `{"+region=us-east-1,-disk=hdd":1, +region=us-east-2:2}`
+- Dictionary: `{"{+|-}key=value,...":count,...}`, e.g. `{"+region=us-east-1,-disk=hdd": 1, +region=us-east-2: 2}`
 
 The prefix `+` indicates that data can only be placed on the stores whose labels contain such labels, and `-` indicates that data can’t be placed on the stores whose labels contain such labels. For example, `+region=us-east-1,+region=us-east-2` indicates to place data only in `us-east-1` and `us-east-2` regions.
 
@@ -326,19 +317,19 @@ Then `+region=us-east-1` matches this store while `+disk=ssd` doesn't.
 
 In the dictionary format, `count` must be specified, which indicates a quantity which must match. When the prefix is `-`, the `count` is still meaningful.
 
-For example, `FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}"` indicates to place at least 1 follower in `us-east-1`, 2 replicas in anywhere but `us-east-2` (by definition this will be `us-east-1` since there are no other regions available).
+For example, `FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,-region=us-east-2: 2}"` indicates to place at least 1 follower in `us-east-1`, 2 replicas in anywhere but `us-east-2` (by definition this will be `us-east-1` since there are no other regions available).
 
 In the list format, `count` is not specified. The number of followers for each constraint is not limited, but the total number of instances should still conform to the definition.
 
-For example, `FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=3` indicates to place 3 followers on either `us-east-1` or `us-east-1`. There may be 2 replicas on `us-east-1` and 1 in `us-east-2`, or 2 in `us-east-2` and 1 in `us-east-1`. It's up to PD (see "Schedule Property" for additional details).
+For example, `FOLLOWER_CONSTRAINTS="[+region=us-east-1]" FOLLOWERS=3` indicates to place 3 followers on either `us-east-1`.
 
 Label constraints can be implemented by defining `label_constraints` field in PD placement rule configuration. `+` and `-` correspond to property `op`. Specifically, `+` is equivalent to `in` and `-` is equivalent to `notIn`.
 
-For example, `+region=us-east-1,+region=us-east-2,-disk=hdd` is equivalent to:
+For example, `+region=us-east-1,-disk=hdd` is equivalent to:
 
 ```
 "label_constraints": [
-	{"key": "region", "op": "in", "values": ["us-east-1", "us-east-2"]},
+	{"key": "region", "op": "in", "values": ["us-east-1"]},
 	{"key": "disk", "op": "notIn", "values": ["hdd"]}
 ]
 ```
@@ -351,28 +342,25 @@ The roles `FOLLOWERS` and `LEARNERS` also support an optional count in *list* fo
 
 ```sql
 CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
-CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
+CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWER_CONSTRAINTS="[+region=us-east-2]" FOLLOWERS=4;
 ```
 
 If the constraints is specified as a dictionary (e.g. `{"+region=us-east-1":1}`) the count is not applicable and an error is returned:
 
 ```sql
-FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=3; -- technically accurate, but an error
-FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=2; -- an error
+FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,-region=us-east-2: 2}" FOLLOWERS=3; -- technically accurate, but an error
+FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,-region=us-east-2: 2}" FOLLOWERS=2; -- an error
 ```
 
-For dictionary format, the count is inferred by the constraint. The following constraint creates 4 followers:
+For dictionary format, the count is inferred by the constraint. The following constraint creates 3 followers:
 
 ```sql
-FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2,+any:1}"
+FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,-region=us-east-2: 2}"
 ```
 
 Explanation:
 - 1 follower in `us-east-1`
 - 2 followers not in `us-east-2`
-- 1 follower in any region (a special label of `+any`)
-
-`+any` changes an earlier proposal where the `FOLLOWERS` count could also be specified. This has been removed to reduce the risk of discrepancies and misconfiguration. See also "Policy Validation" below.
 
 #### Schedule Property
 
@@ -380,7 +368,6 @@ When using either the syntactic sugar or list format for placement rules, PD is 
 
 ```sql
 CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
-CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
 ```
 
 - Are each of the followers split equally in us-east-1 and us-east-2?
@@ -413,14 +400,12 @@ When placement policies are specified, they should be validated for correctness:
 2. A policy that is impossible based on the current topology (region=us-east-1 and followers=2, but there is only 1 store in us-east-1) should be a warning. This allows for some transitional topologies.
 3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
 
-#### Skipping Policy Validation
+#### Skipping Placement Options
 
-It should be possible to skip policy validation. This can be seen as similar to skipping foreign key checks, which is often used by logical dumpers:
+It should be possible to skip placement options. This can be seen as similar to skipping foreign key checks, which is often used by logical dumpers:
 
 ```sql
-SET FOREIGN_KEY_CHECKS=0;
 SET tidb_placement_mode='IGNORE';
-
 CREATE TABLE t3 (a int) PLACEMENT POLICY `mycompanypolicy`;
 ```
 
@@ -434,16 +419,10 @@ The following two policies are not identical:
 
 ```sql
 CREATE PLACEMENT POLICY p1 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=2;
-CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:1}";
+CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,-region=us-east-2: 1}";
 ```
 
 This is because p2 explicitly requires a follower count of 1 per region, whereas p1 allows for 2 in any of the above (see "Schedule Property" above for an explanation).
-
-This is useful in the case that you want to ensure that `FOLLOWERS=2` exists in any of a list of zones:
-
-```sql
-CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2,+region=us-west-1]" FOLLOWERS=2;
-```
 
 ### Additional Semantics
 
@@ -643,7 +622,7 @@ However, an object (database, table, partition) may have multiple rules for a si
 
 ```sql
 CREATE PLACEMENT POLICY p1
-	FOLLOWER_CONSTRAINTS="{+region=us-east-1:2,+region=us-east-2:1}";
+	FOLLOWER_CONSTRAINTS="{+region=us-east-1: 2,+region=us-east-2: 1}";
 CREATE TABLE t1 (a int) PLACEMENT POLICY p1;
 ```
 
@@ -815,7 +794,7 @@ In such a way, the most granular rule always works.
 
 This optimization is straight forward:
 ```sql
-CREATE PLACEMENT POLICY local_stale_reads FOLLOWER_CONSTRAINTS="{+us-east-1:1,+us-east-2:1,+us-west-1:1,+us-west-2:1}";
+CREATE PLACEMENT POLICY local_stale_reads FOLLOWER_CONSTRAINTS="{+us-east-1: 1,+us-east-2: 1,+us-west-1: 1,+us-west-2: 1}";
 CREATE TABLE t (a int, b int) PLACEMENT POLICY=`local_stale_reads`;
 ```
 

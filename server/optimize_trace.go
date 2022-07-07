@@ -30,6 +30,7 @@ type OptimizeTraceHandler struct {
 	infoGetter *infosync.InfoSyncer
 	address    string
 	statusPort uint
+	scheme     string
 }
 
 func (s *Server) newOptimizeTraceHandler() *OptimizeTraceHandler {
@@ -37,9 +38,13 @@ func (s *Server) newOptimizeTraceHandler() *OptimizeTraceHandler {
 	oth := &OptimizeTraceHandler{
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
+		scheme:     "http",
 	}
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		oth.infoGetter = s.dom.InfoSyncer()
+	}
+	if len(cfg.Security.ClusterSSLCA) > 0 {
+		oth.scheme = "https"
 	}
 	return oth
 }
@@ -55,6 +60,7 @@ func (oth OptimizeTraceHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 		statusPort:         oth.statusPort,
 		urlPath:            fmt.Sprintf("optimize_trace/dump/%s", name),
 		downloadedFilename: "optimize_trace",
+		scheme:             oth.scheme,
 	}
 	handleDownloadFile(handler, w, req)
 }

@@ -15,6 +15,7 @@
 package unistore
 
 import (
+	"context"
 	"io"
 	"math"
 	"os"
@@ -35,7 +36,6 @@ import (
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -52,6 +52,9 @@ type RPCClient struct {
 	persistent bool
 	closed     int32
 }
+
+// CheckResourceTagForTopSQLInGoTest is used to identify whether check resource tag for TopSQL.
+var CheckResourceTagForTopSQLInGoTest bool
 
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook func(*tikvrpc.Request)
@@ -94,6 +97,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	storeID, err := c.usSvr.GetStoreIDByAddr(addr)
 	if err != nil {
 		return nil, err
+	}
+
+	if CheckResourceTagForTopSQLInGoTest {
+		err = checkResourceTagForTopSQL(req)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	resp := &tikvrpc.Response{}
@@ -402,6 +412,11 @@ func (c *RPCClient) Close() error {
 		err := os.RemoveAll(c.path)
 		_ = err
 	}
+	return nil
+}
+
+// CloseAddr implements tikv.Client interface and it does nothing.
+func (c *RPCClient) CloseAddr(addr string) error {
 	return nil
 }
 

@@ -58,8 +58,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -86,19 +86,30 @@ type Domain struct {
 	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
-	wg                   sync.WaitGroup
+	wg                   util.WaitGroupWrapper
 	statsUpdating        atomicutil.Int32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
-	planReplayer         *planReplayer
+	dumpFileGcChecker    *dumpFileGcChecker
 	expiredTimeStamp4PC  types.Time
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	renewLeaseCh         chan func()      // It is used to call the renewLease function of the cache table.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+
+	sysProcesses SysProcesses
+}
+
+// InfoCache export for test.
+func (do *Domain) InfoCache() *infoschema.InfoCache {
+	return do.infoCache
+}
+
+// EtcdClient export for test.
+func (do *Domain) EtcdClient() *clientv3.Client {
+	return do.etcdClient
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -153,17 +164,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
-
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -285,7 +291,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -311,7 +318,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
 		return true
 	}
 	return false
@@ -319,6 +326,11 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
+	if do.infoCache == nil {
+		// Return nil is for test purpose where domain is not well initialized in session context.
+		// In real implementation, the code will not reach here.
+		return nil
+	}
 	return do.infoCache.GetLatest()
 }
 
@@ -717,7 +729,7 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, planReplayerGCLease time.Duration, factory pools.Factory, onClose func()) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, onClose func()) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -727,14 +739,15 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
-		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
-		renewLeaseCh:        make(chan func(), 10),
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
+	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
 }
 
@@ -786,7 +799,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	sysFac := func() (pools.Resource, error) {
 		return sysExecutorFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
+	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -809,6 +822,25 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			do.ddl = d
 		}
 	})
+
+	if config.GetGlobalConfig().EnableGlobalKill {
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
+			} else {
+				do.isLostConnectionToPD.Store(0)
+			}
+
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
+	}
+
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
@@ -837,24 +869,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		return err
 	}
 
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
-		if do.etcdClient != nil {
-			err := do.acquireServerID(ctx)
-			if err != nil {
-				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
-			} else {
-				do.isLostConnectionToPD.Store(0)
-			}
-
-			do.wg.Add(1)
-			go do.serverIDKeeper()
-		} else {
-			// set serverID for standalone deployment to enable 'KILL'.
-			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
-		}
-	}
-
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
@@ -862,10 +876,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(4)
+	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
-	go do.renewLease()
 	go do.globalConfigSyncerKeeper()
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
@@ -901,12 +914,24 @@ func (p *sessionPool) Get() (resource pools.Resource, err error) {
 	default:
 		resource, err = p.factory()
 	}
+
+	// Put the internal session to the map of SessionManager
+	failpoint.Inject("mockSessionPoolReturnError", func() {
+		err = errors.New("mockSessionPoolReturnError")
+	})
+
+	if nil == err {
+		infosync.StoreInternalSession(resource)
+	}
+
 	return
 }
 
 func (p *sessionPool) Put(resource pools.Resource) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
 	if p.mu.closed {
 		resource.Close()
 		return
@@ -938,6 +963,11 @@ func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
 }
 
+// SysProcTracker returns the system processes tracker.
+func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
+	return &do.sysProcesses
+}
+
 // GetEtcdClient returns the etcd client.
 func (do *Domain) GetEtcdClient() *clientv3.Client {
 	return do.etcdClient
@@ -945,14 +975,15 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "set @@autocommit = 1")
+func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sctx.GetSessionVars().InRestrictedSQL = true
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "set @@autocommit = 1")
 	if err != nil {
 		return err
 	}
 	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(ctx)
+	err = do.privHandle.Update(sctx)
 	if err != nil {
 		return err
 	}
@@ -991,7 +1022,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(ctx)
+			err := do.privHandle.Update(sctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -1216,23 +1247,23 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
-// PlanReplayerLoop creates a goroutine that handles `exit` and `gc`.
-func (do *Domain) PlanReplayerLoop() {
+// DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
+func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
 	go func() {
-		gcTicker := time.NewTicker(do.planReplayer.planReplayerGCLease)
+		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanReplayerLoop exited.")
-			util.Recover(metrics.LabelDomain, "PlanReplayerLoop", nil, false)
+			logutil.BgLogger().Info("dumpFileGcChecker exited.")
+			util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
 		}()
 		for {
 			select {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.planReplayer.planReplayerGC(time.Hour)
+				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
 			}
 		}
 	}()
@@ -1245,7 +1276,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1267,15 +1298,21 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
-var RunAutoAnalyze = true
+// LoadAndUpdateStatsLoop loads and updates stats info.
+func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
+		return err
+	}
+	do.StartLoadStatsSubWorkers(ctxs[1:])
+	return nil
+}
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1283,8 +1320,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Add(1)
-		go do.loadStatsWorker()
+		do.wg.Run(do.loadStatsWorker)
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1294,17 +1330,14 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	if do.statsLease <= 0 {
 		return nil
 	}
-	do.wg.Add(1)
 	do.SetStatsUpdating(true)
-	go do.updateStatsWorker(ctx, owner)
-	if RunAutoAnalyze {
-		do.wg.Add(1)
-		go do.autoAnalyzeWorker(owner)
-	}
+	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
+	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
 	return nil
 }
 
-// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently
+// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for i, ctx := range ctxList {
@@ -1339,7 +1372,6 @@ func (do *Domain) loadStatsWorker() {
 	loadTicker := time.NewTicker(lease)
 	defer func() {
 		loadTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	statsHandle := do.StatsHandle()
@@ -1417,7 +1449,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		do.SetStatsUpdating(false)
-		do.wg.Done()
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
 	for {
@@ -1475,14 +1506,39 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+	const gcInterval = time.Hour
+	statsHandle := do.StatsHandle()
+	gcTicker := time.NewTicker(gcInterval)
+	defer func() {
+		gcTicker.Stop()
+		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+	}()
+	for {
+		select {
+		case <-gcTicker.C:
+			if owner.IsOwner() {
+				const DaysToKeep = 7
+				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
+				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				if err != nil {
+					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+				}
 			}
 		case <-do.exit:
 			return
@@ -1657,7 +1713,8 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 
 	for {
-		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // get a random serverID: [1, MaxServerID] #nosec G404
+		// get a random serverID: [1, MaxServerID]
+		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // #nosec G404
 		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"
@@ -1780,30 +1837,11 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
-// MockInfoCacheAndLoadInfoSchema only used in unit test
-func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
-	do.infoCache = infoschema.NewCache(16)
-	do.infoCache.Insert(is, 0)
-}
-
-func (do *Domain) renewLease() {
-	defer func() {
-		do.wg.Done()
-		logutil.BgLogger().Info("renew lease goroutine exited.")
-	}()
-	for {
-		select {
-		case <-do.exit:
-			close(do.renewLeaseCh)
-			return
-		case op := <-do.renewLeaseCh:
-			op()
-		}
-	}
-}
-
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (
@@ -1813,3 +1851,56 @@ var (
 	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
+
+// SysProcesses holds the sys processes infos
+type SysProcesses struct {
+	mu      *sync.RWMutex
+	procMap map[uint64]sessionctx.Context
+}
+
+// Track tracks the sys process into procMap
+func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
+		return errors.Errorf("The ID is in use: %v", id)
+	}
+	s.procMap[id] = proc
+	proc.GetSessionVars().ConnectionID = id
+	atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	return nil
+}
+
+// UnTrack removes the sys process from procMap
+func (s *SysProcesses) UnTrack(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		delete(s.procMap, id)
+		proc.GetSessionVars().ConnectionID = 0
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	}
+}
+
+// GetSysProcessList gets list of system ProcessInfo
+func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, proc := range s.procMap {
+		// if session is still tracked in this map, it's not returned to sysSessionPool yet
+		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+// KillSysProcess kills sys process with specified ID
+func (s *SysProcesses) KillSysProcess(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+	}
+}

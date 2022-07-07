@@ -45,7 +45,6 @@ import (
 	"io"
 	"net"
 	"os/user"
-	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -77,6 +76,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
@@ -170,19 +171,24 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt           *packetIO         // a helper to read and write data in packet format.
-	bufReadConn   *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
-	tlsConn       *tls.Conn         // TLS connection, nil if not TLS.
-	server        *Server           // a reference of server instance.
-	capability    uint32            // client capability affects the way server handles client request.
-	connectionID  uint64            // atomically allocated by a global variable, unique in process scope.
-	user          string            // user of the client.
-	dbname        string            // default database name.
-	salt          []byte            // random bytes used for authentication.
-	alloc         arena.Allocator   // an memory allocator for reducing memory allocation.
-	chunkAlloc    chunk.Allocator
-	lastPacket    []byte            // latest sql query string, currently used for logging error.
-	ctx           *TiDBContext      // an interface to execute sql statements.
+	pkt          *packetIO         // a helper to read and write data in packet format.
+	bufReadConn  *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
+	server       *Server           // a reference of server instance.
+	capability   uint32            // client capability affects the way server handles client request.
+	connectionID uint64            // atomically allocated by a global variable, unique in process scope.
+	user         string            // user of the client.
+	dbname       string            // default database name.
+	salt         []byte            // random bytes used for authentication.
+	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
+	chunkAlloc   chunk.Allocator
+	lastPacket   []byte // latest sql query string, currently used for logging error.
+	// ShowProcess() and mysql.ComChangeUser both visit this field, ShowProcess() read information through
+	// the TiDBContext and mysql.ComChangeUser re-create it, so a lock is required here.
+	ctx struct {
+		sync.RWMutex
+		*TiDBContext // an interface to execute sql statements.
+	}
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
 	peerHost      string            // peer host
 	peerPort      string            // peer port
@@ -200,6 +206,18 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+}
+
+func (cc *clientConn) getCtx() *TiDBContext {
+	cc.ctx.RLock()
+	defer cc.ctx.RUnlock()
+	return cc.ctx.TiDBContext
+}
+
+func (cc *clientConn) setCtx(ctx *TiDBContext) {
+	cc.ctx.Lock()
+	cc.ctx.TiDBContext = ctx
+	cc.ctx.Unlock()
 }
 
 func (cc *clientConn) String() string {
@@ -318,10 +336,16 @@ func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	if cc.bufReadConn != nil {
 		err := cc.bufReadConn.Close()
-		terror.Log(err)
+		if err != nil {
+			// We need to expect connection might have already disconnected.
+			// This is because closeConn() might be called after a connection read-timeout.
+			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+		}
 	}
-	if cc.ctx != nil {
-		return cc.ctx.Close()
+	// Close statements and session
+	// This will release advisory locks, row locks, etc.
+	if ctx := cc.getCtx(); ctx != nil {
+		return ctx.Close()
 	}
 	return nil
 }
@@ -367,7 +391,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data = append(data, cc.salt[8:]...)
 	data = append(data, 0)
 	// auth-plugin name
-	if cc.ctx == nil {
+	if ctx := cc.getCtx(); ctx == nil {
 		if err := cc.openSession(); err != nil {
 			return err
 		}
@@ -384,7 +408,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	if err = cc.ctx.Close(); err != nil {
 		return err
 	}
-	cc.ctx = nil
+	cc.setCtx(nil)
 
 	data = append(data, 0)
 	if err = cc.writePacket(data); err != nil {
@@ -394,6 +418,9 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
+	if cc.getCtx() != nil {
+		cc.pkt.setMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
+	}
 	return cc.pkt.readPacket()
 }
 
@@ -666,7 +693,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				return err
 			}
 		}
-	} else if config.GetGlobalConfig().Security.RequireSecureTransport {
+	} else if tlsutil.RequireSecureTransport.Load() && !cc.isUnixSocket {
+		// If it's not a socket connection, we should reject the connection
+		// because TLS is required.
 		err := errSecureTransportRequired.FastGenByArgs()
 		terror.Log(err)
 		return err
@@ -794,11 +823,11 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	var err error
-	cc.ctx, err = cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
 		return err
 	}
+	cc.setCtx(ctx)
 
 	err = cc.server.checkConnectionCount()
 	if err != nil {
@@ -809,7 +838,7 @@ func (cc *clientConn) openSession() error {
 
 func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) error {
 	// Open a context unless this was done before.
-	if cc.ctx == nil {
+	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
 		if err != nil {
 			return err
@@ -846,7 +875,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeResponse41) ([]byte, error) {
 	// Open a context unless this was done before.
-	if cc.ctx == nil {
+	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
 		if err != nil {
 			return nil, err
@@ -1021,25 +1050,17 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run(ctx context.Context) {
-	const size = 4096
 	defer func() {
 		r := recover()
 		if r != nil {
-			buf := make([]byte, size)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("connection running loop panic",
 				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
 				zap.String("err", fmt.Sprintf("%v", r)),
-				zap.String("stack", string(buf)),
+				zap.Stack("stack"),
 			)
 			err := cc.writeError(ctx, errors.New(fmt.Sprintf("%v", r)))
 			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
-		}
-		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
-			err := cc.Close()
-			terror.Log(err)
 		}
 	}()
 
@@ -1065,12 +1086,21 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					idleTime := time.Since(start)
-					logutil.Logger(ctx).Info("read packet timeout, close this connection",
-						zap.Duration("idle", idleTime),
-						zap.Uint64("waitTimeout", waitTimeout),
-						zap.Error(err),
-					)
+					if atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
+					} else {
+						idleTime := time.Since(start)
+						logutil.Logger(ctx).Info("read packet timeout, close this connection",
+							zap.Duration("idle", idleTime),
+							zap.Uint64("waitTimeout", waitTimeout),
+							zap.Error(err),
+						)
+					}
+				} else if errors.ErrorEqual(err, errNetPacketTooLarge) {
+					err := cc.writeError(ctx, err)
+					if err != nil {
+						terror.Log(err)
+					}
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
@@ -1105,16 +1135,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
 			var txnMode string
-			if cc.ctx != nil {
-				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+			if ctx := cc.getCtx(); ctx != nil {
+				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
 			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
 				var startTS uint64
-				if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
-					startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
+				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil && ctx.GetSessionVars().TxnCtx != nil {
+					startTS = ctx.GetSessionVars().TxnCtx.StartTS
 				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
@@ -1291,8 +1321,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	token := cc.server.getToken()
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
-		if cc.ctx != nil {
-			cc.ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
+		if ctx := cc.getCtx(); ctx != nil {
+			ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
 		}
 
 		cc.server.releaseToken(token)
@@ -1421,8 +1451,8 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 func (cc *clientConn) flush(ctx context.Context) error {
 	defer func() {
 		trace.StartRegion(ctx, "FlushClientConn").End()
-		if cc.ctx != nil && cc.ctx.WarningCount() > 0 {
-			for _, err := range cc.ctx.GetWarnings() {
+		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
+			for _, err := range ctx.GetWarnings() {
 				var warn *errors.Error
 				if ok := goerr.As(err.Err, &warn); ok {
 					code := uint16(warn.Code())
@@ -1650,7 +1680,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.StartStopWatcher()
 	// let stop watcher goroutine quit
 	defer loadDataInfo.ForceQuit()
-	err = loadDataInfo.Ctx.NewTxn(ctx)
+	err = sessiontxn.NewTxn(ctx, loadDataInfo.Ctx)
 	if err != nil {
 		return err
 	}
@@ -1845,6 +1875,21 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+			if txnErr != nil {
+				err = txnErr
+				break
+			}
+
+			if retryable && action == sessiontxn.StmtActionRetryReady {
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+				if err != nil {
+					break
+				}
+				continue
+			}
 			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
 				break
 			}
@@ -1891,8 +1936,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 	}
 	pointPlans := make([]plannercore.Plan, len(stmts))
-	var idxKeys []kv.Key // nolint: prealloc
-	var rowKeys []kv.Key // nolint: prealloc
+	var idxKeys []kv.Key //nolint: prealloc
+	var rowKeys []kv.Key //nolint: prealloc
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
 		switch stmt.(type) {
@@ -1904,7 +1949,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		// TODO: handle the PreprocessorReturn.
-		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
+		if err = plannercore.Preprocess(cc.getCtx(), stmt); err != nil {
 			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
@@ -1923,7 +1968,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				}
 				if pp.IndexInfo != nil {
 					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
 					if err1 != nil {
 						return nil, err1
 					}
@@ -1952,7 +1997,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	}
 	if vars.TxnCtx.IsPessimistic {
 		allKeys := append(rowKeys, idxKeys...)
-		err = executor.LockKeys(ctx, cc.ctx, vars.LockWaitTimeout, allKeys...)
+		err = executor.LockKeys(ctx, cc.getCtx(), vars.LockWaitTimeout, allKeys...)
 		if err != nil {
 			// suppress the lock error, we are not going to handle it here for simplicity.
 			err = nil
@@ -2105,10 +2150,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		}
 		// TODO(jianzhang.zj: add metrics here)
 		runErr = errors.Errorf("%v", r)
-		buf := make([]byte, 4096)
-		stackSize := runtime.Stack(buf, false)
-		buf = buf[:stackSize]
-		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
+		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 	cc.initResultEncoder(ctx)
 	defer cc.rsEncoder.clean()
@@ -2326,6 +2368,12 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
+	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
+	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
+	err := cc.openSession()
+	if err != nil {
+		return err
+	}
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err
 	}
@@ -2343,10 +2391,11 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	cc.ctx, err = cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
 		return err
 	}
+	cc.setCtx(tidbCtx)
 	if !cc.ctx.AuthWithoutVerification(user) {
 		return errors.New("Could not reset connection")
 	}

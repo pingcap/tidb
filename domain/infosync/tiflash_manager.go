@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -60,7 +61,7 @@ type TiFlashPlacementManager interface {
 
 // TiFlashPDPlacementManager manages placement with pd for TiFlash.
 type TiFlashPDPlacementManager struct {
-	addrs []string
+	etcdCli *clientv3.Client
 }
 
 // Close is called to close TiFlashPDPlacementManager.
@@ -75,7 +76,7 @@ func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule p
 	}
 	j, _ := json.Marshal(rule)
 	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rule"), "POST", buf)
+	res, err := doRequest(ctx, "SetPlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule"), "POST", buf)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -87,7 +88,7 @@ func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule p
 
 // DeletePlacementRule is to delete placement rule for certain group.
 func (m *TiFlashPDPlacementManager) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
-	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
+	res, err := doRequest(ctx, "DeletePlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -99,7 +100,7 @@ func (m *TiFlashPDPlacementManager) DeletePlacementRule(ctx context.Context, gro
 
 // GetGroupRules to get all placement rule in a certain group.
 func (m *TiFlashPDPlacementManager) GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
-	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
+	res, err := doRequest(ctx, "GetGroupRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -132,7 +133,7 @@ func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, 
 		return errors.Trace(err)
 	}
 	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, m.addrs, "/pd/api/v1/regions/accelerate-schedule", "POST", buf)
+	res, err := doRequest(ctx, "PostAccelerateSchedule", m.etcdCli.Endpoints(), "/pd/api/v1/regions/accelerate-schedule", "POST", buf)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -152,7 +153,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s",
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
-	res, err := doRequest(ctx, m.addrs, p, "GET", nil)
+	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -170,7 +171,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	var storesStat helper.StoresStat
-	res, err := doRequest(ctx, m.addrs, pdapi.Stores, "GET", nil)
+	res, err := doRequest(ctx, "GetStoresStat", m.etcdCli.Endpoints(), pdapi.Stores, "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -276,7 +277,6 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
-		logutil.BgLogger().Info("Mock TiFlash returns", zap.Bool("ok", ok), zap.Int("tableID", tableID))
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))
@@ -523,6 +523,13 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	tiflash.PdEnabled = enabled
+}
+
+// SetMockTiFlash is set a mock TiFlash server.
+func (m *mockTiFlashPlacementManager) SetMockTiFlash(tiflash *MockTiFlash) {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflash = tiflash
 }
 
 // SetPlacementRule is a helper function to set placement rule.

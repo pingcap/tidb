@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // Key represents high-level Key type.
@@ -157,7 +158,15 @@ type Handle interface {
 	Data() ([]types.Datum, error)
 	// String implements the fmt.Stringer interface.
 	String() string
+	// MemUsage returns the memory usage of a handle.
+	MemUsage() uint64
+	// ExtraMemSize returns the memory usage of objects that are pointed to by the Handle.
+	ExtraMemSize() uint64
 }
+
+var _ Handle = IntHandle(0)
+var _ Handle = &CommonHandle{}
+var _ Handle = PartitionHandle{}
 
 // IntHandle implement the Handle interface for int64 type handle.
 type IntHandle int64
@@ -226,6 +235,16 @@ func (ih IntHandle) Data() ([]types.Datum, error) {
 // String implements the Handle interface.
 func (ih IntHandle) String() string {
 	return strconv.FormatInt(int64(ih), 10)
+}
+
+// MemUsage implements the Handle interface.
+func (ih IntHandle) MemUsage() uint64 {
+	return 8
+}
+
+// ExtraMemSize implements the Handle interface.
+func (ih IntHandle) ExtraMemSize() uint64 {
+	return 0
 }
 
 // CommonHandle implements the Handle interface for non-int64 type handle.
@@ -347,6 +366,18 @@ func (ch *CommonHandle) String() string {
 	return fmt.Sprintf("{%s}", strings.Join(strs, ", "))
 }
 
+// MemUsage implements the Handle interface.
+func (ch *CommonHandle) MemUsage() uint64 {
+	// 48 is used by the 2 slice fields.
+	return 48 + ch.ExtraMemSize()
+}
+
+// ExtraMemSize implements the Handle interface.
+func (ch *CommonHandle) ExtraMemSize() uint64 {
+	// colEndOffsets is a slice of uint16.
+	return uint64(cap(ch.encoded) + cap(ch.colEndOffsets)*2)
+}
+
 // HandleMap is the map for Handle.
 type HandleMap struct {
 	ints map[int64]interface{}
@@ -419,6 +450,65 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 	}
 }
 
+// MemAwareHandleMap is similar to HandleMap, but it's aware of its memory usage and doesn't support delete.
+// It only tracks the actual sizes. Objects that are pointed to by the key or value are not tracked.
+// Those should be tracked by the caller.
+type MemAwareHandleMap[V any] struct {
+	ints set.MemAwareMap[int64, V]
+	strs set.MemAwareMap[string, strHandleValue[V]]
+}
+
+type strHandleValue[V any] struct {
+	h   Handle
+	val V
+}
+
+// NewMemAwareHandleMap creates a new map for handle.
+func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
+	// Initialize the two maps to avoid checking nil.
+	return &MemAwareHandleMap[V]{
+		ints: set.NewMemAwareMap[int64, V](),
+		strs: set.NewMemAwareMap[string, strHandleValue[V]](),
+	}
+}
+
+// Get gets a value by a Handle.
+func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
+	if h.IsInt() {
+		v, ok = m.ints.Get(h.IntValue())
+	} else {
+		var strVal strHandleValue[V]
+		strVal, ok = m.strs.Get(string(h.Encoded()))
+		v = strVal.val
+	}
+	return
+}
+
+// Set sets a value with a Handle.
+func (m *MemAwareHandleMap[V]) Set(h Handle, val V) int64 {
+	if h.IsInt() {
+		return m.ints.Set(h.IntValue(), val)
+	}
+	return m.strs.Set(string(h.Encoded()), strHandleValue[V]{
+		h:   h,
+		val: val,
+	})
+}
+
+// Range iterates the MemAwareHandleMap with fn, the fn returns true to continue, returns false to stop.
+func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val interface{}) bool) {
+	for h, val := range m.ints.M {
+		if !fn(IntHandle(h), val) {
+			return
+		}
+	}
+	for _, strVal := range m.strs.M {
+		if !fn(strVal.h, strVal.val) {
+			return
+		}
+	}
+}
+
 // PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
 // Now only used in global index.
 // TODO: support PartitionHandle in HandleMap.
@@ -455,4 +545,14 @@ func (ph PartitionHandle) Compare(h Handle) int {
 		return ph.Handle.Compare(ph2.Handle)
 	}
 	panic("PartitonHandle compares to non-parition Handle")
+}
+
+// MemUsage implements the Handle interface.
+func (ph PartitionHandle) MemUsage() uint64 {
+	return ph.Handle.MemUsage() + 8
+}
+
+// ExtraMemSize implements the Handle interface.
+func (ph PartitionHandle) ExtraMemSize() uint64 {
+	return ph.Handle.ExtraMemSize()
 }

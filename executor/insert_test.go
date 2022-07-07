@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,6 +40,19 @@ func TestInsertOnDuplicateKey(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	testInsertOnDuplicateKey(t, tk)
+}
+
+func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	failpoint.Enable("github.com/pingcap/tidb/table/tables/forceWriteBinlog", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/table/tables/forceWriteBinlog")
+	testInsertOnDuplicateKey(t, tk)
+}
+
+func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 
 	tk.MustExec(`drop table if exists t1, t2;`)
@@ -219,20 +232,20 @@ func TestInsertOnDuplicateKey(t *testing.T) {
 	tk.MustExec("insert into b values (2, '12:34:56', 'c', 10), (3, '01:23:45', 'd', 20)")
 	tk.MustExec("insert into a (id) select id from b on duplicate key update a.a2 = b.b2, a.a3 = 3.3")
 	require.Equal(t, uint64(3), tk.Session().AffectedRows())
-	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+	tk.MustQuery("select * from a").Check(testkit.RowsWithSep("/",
 		"1/2022-01-04 07:02:04/a/1.1",
 		"2/2022-01-04 07:02:05/c/3.3",
 		"3/<nil>/<nil>/<nil>"))
 	tk.MustExec("insert into a (id) select 4 from b where b3 = 20 on duplicate key update a.a3 = b.b3")
 	require.Equal(t, uint64(1), tk.Session().AffectedRows())
-	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+	tk.MustQuery("select * from a").Check(testkit.RowsWithSep("/",
 		"1/2022-01-04 07:02:04/a/1.1",
 		"2/2022-01-04 07:02:05/c/3.3",
 		"3/<nil>/<nil>/<nil>",
 		"4/<nil>/<nil>/<nil>"))
 	tk.MustExec("insert into a (a2, a3) select 'x', 1.2 from b on duplicate key update a.a2 = b.b3")
 	require.Equal(t, uint64(2), tk.Session().AffectedRows())
-	tk.MustQuery("select * from a").Check(testutil.RowsWithSep("/",
+	tk.MustQuery("select * from a").Check(testkit.RowsWithSep("/",
 		"1/2022-01-04 07:02:04/a/1.1",
 		"2/2022-01-04 07:02:05/c/3.3",
 		"3/<nil>/<nil>/<nil>",
@@ -1139,7 +1152,7 @@ func TestInsertFloatOverflow(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
 	require.NoError(t, err)
-	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "2"))
+	tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "2"))
 	tk.MustQuery("select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1").Check(testkit.Rows("340282346638528860000000000000000000000 -340282346638528860000000000000000000000"))
 	tk.MustExec("drop table if exists t,t1")
 }
@@ -1214,6 +1227,50 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 	_, err = tk.Exec(`insert into io(b) values (null),(null),(null)`)
 	require.Error(t, err)
 	require.EqualError(t, err, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
+}
+
+// Fix https://github.com/pingcap/tidb/issues/32601.
+func TestTextTooLongError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Set strict sql_mode
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_ALL_TABLES,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
+
+	// For max_allowed_packet default value is big enough to ensure tinytext, text can test correctly.
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 TINYTEXT CHARACTER SET utf8mb4);")
+	_, err := tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 128));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 Text CHARACTER SET utf8mb4);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 mediumtext);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 8777215));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	// For long text, max_allowed_packet default value can not allow 4GB package, skip the test case.
+
+	// Set non strict sql_mode, we are not supposed to raise an error but to truncate the value.
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 TINYTEXT CHARACTER SET utf8mb4);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 128));")
+	require.NoError(t, err)
+	tk.MustQuery(`select length(c1) from t1;`).Check(testkit.Rows("254"))
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 Text CHARACTER SET utf8mb4);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));")
+	require.NoError(t, err)
+	tk.MustQuery(`select length(c1) from t1;`).Check(testkit.Rows("65534"))
+	// For mediumtext or bigger size, for tikv limit, we will get:ERROR 8025 (HY000): entry too large, the max entry size is 6291456, the size of data is 16777247, no need to test.
 }
 
 func TestAutoRandomID(t *testing.T) {
@@ -1587,7 +1644,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 		tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci, b char(20) collate utf8mb4_general_ci, c int(11), primary key (a, b, c), unique key (a));")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
-		tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+		tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
 
 		tk.MustExec("begin pessimistic;")
 		tk.MustExec("insert into t values ('a7', 'a', 10);")
@@ -1852,7 +1909,7 @@ func TestStringtoDecimal(t *testing.T) {
 	tk.MustGetErrCode("insert into t values('1.2.')", errno.ErrTruncatedWrongValueForField)
 	tk.MustGetErrCode("insert into t values('1,999.00')", errno.ErrTruncatedWrongValueForField)
 	tk.MustExec("insert into t values('12e-3')")
-	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '0.012'"))
 	tk.MustQuery("select id from t").Check(testkit.Rows("0"))
 	tk.MustExec("drop table if exists t")
 }
@@ -1873,7 +1930,7 @@ func TestIssue17745(t *testing.T) {
 	tk.MustExec("drop table if exists tt1")
 	tk.MustGetErrCode("insert into tt1 values(4556414e723532)", errno.ErrIllegalValueForType)
 	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
-	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
 }
 
 // TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
@@ -1923,4 +1980,40 @@ func TestReplaceAllocatingAutoID(t *testing.T) {
 	tk.MustExec("INSERT INTO t1 VALUES (127,'maxvalue');")
 	// Note that this error is different from MySQL's duplicated primary key error.
 	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
+}
+
+func TestInsertIntoSelectError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(NULL));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(-1));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
+	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustExec("DROP TABLE t1;")
+}
+
+// https://github.com/pingcap/tidb/issues/32213.
+func TestIssue32213(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("create table test.t1(c1 float)")
+	tk.MustExec("insert into test.t1 values(999.99)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(4, 1)) from test.t1").Check(testkit.Rows("999.9"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 1)) from test.t1").Check(testkit.Rows("1000.0"))
+
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(c1 decimal(6, 4))")
+	tk.MustExec("insert into test.t1 values(99.9999)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
 }

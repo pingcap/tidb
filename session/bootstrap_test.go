@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -54,7 +54,8 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
+	r.Close()
 
 	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
 	require.True(t, ok)
@@ -175,18 +176,18 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")
 	require.NoError(t, r.Close())
 
 	mustExec(t, se, "USE test")
 	// Check privilege tables.
-	mustExec(t, se, "SELECT * from mysql.global_priv")
-	mustExec(t, se, "SELECT * from mysql.db")
-	mustExec(t, se, "SELECT * from mysql.tables_priv")
-	mustExec(t, se, "SELECT * from mysql.columns_priv")
+	mustExec(t, se, "SELECT * from mysql.global_priv").Close()
+	mustExec(t, se, "SELECT * from mysql.db").Close()
+	mustExec(t, se, "SELECT * from mysql.tables_priv").Close()
+	mustExec(t, se, "SELECT * from mysql.columns_priv").Close()
 	// Check role tables.
-	mustExec(t, se, "SELECT * from mysql.role_edges")
-	mustExec(t, se, "SELECT * from mysql.default_roles")
+	mustExec(t, se, "SELECT * from mysql.role_edges").Close()
+	mustExec(t, se, "SELECT * from mysql.default_roles").Close()
 	// Check global variables.
 	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
 	req = r.NewChunk(nil)
@@ -209,13 +210,6 @@ func TestBootstrapWithError(t *testing.T) {
 
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -296,12 +290,6 @@ func TestUpgrade(t *testing.T) {
 }
 
 func TestIssue17979_1(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -332,18 +320,11 @@ func TestIssue17979_1(t *testing.T) {
 	r := mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, "log", req.GetRow(0).GetString(0))
-	require.Equal(t, config.OOMActionLog, config.GetGlobalConfig().OOMAction)
+	require.Equal(t, variable.OOMActionLog, req.GetRow(0).GetString(0))
 	domV4.Close()
 }
 
 func TestIssue17979_2(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -377,64 +358,15 @@ func TestIssue17979_2(t *testing.T) {
 	req := r.NewChunk(nil)
 	require.NoError(t, r.Next(ctx, req))
 	require.Equal(t, 0, req.NumRows())
-	require.Equal(t, config.OOMActionCancel, config.GetGlobalConfig().OOMAction)
 }
 
-func TestIssue20900_1(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
-	ctx := context.Background()
-
-	store, dom := createStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	// test issue 20900, upgrade from v3.0 to v4.0.9+
-	seV3 := createSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(38))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	mustExec(t, seV3, "update mysql.tidb set variable_value=38 where variable_name='tidb_server_version'")
-	mustExec(t, seV3, "delete from mysql.tidb where variable_name='default_memory_quota_query'")
-	mustExec(t, seV3, "commit")
-	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV3)
-	require.NoError(t, err)
-	require.Equal(t, int64(38), ver)
-	dom.Close()
-	domV4, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domV4.Close()
-	seV4 := createSessionAndSetID(t, store)
-	ver, err = getBootstrapVersion(seV4)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-	r := mustExec(t, seV4, "select @@tidb_mem_quota_query")
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, "34359738368", req.GetRow(0).GetString(0))
-	r = mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
-	req = r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, "34359738368", req.GetRow(0).GetString(0))
-	require.Equal(t, int64(34359738368), seV4.GetSessionVars().MemQuotaQuery)
-}
+// TestIssue20900_2 tests that a user can upgrade from TiDB 2.1 to latest,
+// and their configuration remains similar. This helps protect against the
+// case that a user had a 32G query memory limit in 2.1, but it is now a 1G limit
+// in TiDB 4.0+. I tested this process, and it does correctly upgrade from 2.1 -> 4.0,
+// but from 4.0 -> 5.0, the new default is picked up.
 
 func TestIssue20900_2(t *testing.T) {
-	oomAction := config.GetGlobalConfig().OOMAction
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = oomAction
-		})
-	}()
-
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
@@ -582,7 +514,7 @@ func TestUpdateBindInfo(t *testing.T) {
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
 	for _, bindCase := range bindCases {
-		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
+		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
 			bindCase.originText,
 			bindCase.bindText,
 			bindCase.db,
@@ -597,7 +529,7 @@ func TestUpdateBindInfo(t *testing.T) {
 		require.Equal(t, bindCase.originWithDB, row.GetString(0))
 		require.Equal(t, bindCase.bindWithDB, row.GetString(1))
 		require.Equal(t, "", row.GetString(2))
-		require.Equal(t, "using", row.GetString(3))
+		require.Equal(t, bindinfo.Enabled, row.GetString(3))
 		require.NoError(t, r.Close())
 		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
 		mustExec(t, se, sql)
@@ -619,14 +551,14 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-	mustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	// The latest one.
-	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
 	mustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	mustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'using', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'enabled', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
 	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'using', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'enabled', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
 
 	upgradeToVer67(se, version66)
 
@@ -638,19 +570,19 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t`", row.GetString(0))
 	require.Equal(t, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, "using", row.GetString(3))
+	require.Equal(t, bindinfo.Enabled, row.GetString(3))
 	require.Equal(t, "2021-01-04 14:50:58.257", row.GetTime(4).String())
 	row = req.GetRow(1)
 	require.Equal(t, "select * from `test` . `t` where `a` < ?", row.GetString(0))
 	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, "using", row.GetString(3))
+	require.Equal(t, bindinfo.Enabled, row.GetString(3))
 	require.Equal(t, "2021-06-04 17:04:43.335", row.GetTime(4).String())
 	row = req.GetRow(2)
 	require.Equal(t, "select * from `test` . `t` where `a` <= ?", row.GetString(0))
 	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1", row.GetString(1))
 	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, "using", row.GetString(3))
+	require.Equal(t, bindinfo.Enabled, row.GetString(3))
 	require.Equal(t, "2021-06-04 17:04:45.334", row.GetTime(4).String())
 
 	require.NoError(t, r.Close())
@@ -1067,5 +999,57 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 				require.Equal(t, int64(0), row.GetInt64(0))
 			}
 		}()
+	}
+}
+
+func TestUpgradeToVer85(t *testing.T) {
+	ctx := context.Background()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t1', 'select /*+ use_index(t1, idx_a)*/ * from t1', 'test', 'enabled', '2021-01-05 14:50:58.257', '2021-01-05 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t2', 'select /*+ use_index(t2, idx_a)*/ * from t2', 'test', 'disabled', '2021-01-06 14:50:58.257', '2021-01-06 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t3', 'select /*+ use_index(t3, idx_a)*/ * from t3', 'test', 'deleted', '2021-01-07 14:50:58.257', '2021-01-07 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t4', 'select /*+ use_index(t4, idx_a)*/ * from t4', 'test', 'invalid', '2021-01-08 14:50:58.257', '2021-01-08 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	upgradeToVer85(se, version84)
+
+	r := mustExec(t, se, `select count(*) from mysql.bind_info where status = 'enabled'`)
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, int64(2), row.GetInt64(0))
+
+	require.NoError(t, r.Close())
+	mustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
+}
+
+func TestTiDBEnablePagingVariable(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	se := createSessionAndSetID(t, store)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	for _, sql := range []string{
+		"select @@global.tidb_enable_paging",
+		"select @@session.tidb_enable_paging",
+	} {
+		r := mustExec(t, se, sql)
+		require.NotNil(t, r)
+
+		req := r.NewChunk(nil)
+		err := r.Next(context.Background(), req)
+		require.NoError(t, err)
+		require.NotEqual(t, 0, req.NumRows())
+
+		rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
+		if variable.DefTiDBEnablePaging {
+			match(t, rows, "1")
+		} else {
+			match(t, rows, "0")
+		}
+		r.Close()
 	}
 }

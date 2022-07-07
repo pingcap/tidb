@@ -18,6 +18,7 @@ import (
 	"context"
 	"sort"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -46,6 +47,9 @@ type SampleItem struct {
 	// This property is used to calculate Ordinal in fast analyze.
 	Handle kv.Handle
 }
+
+// EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
+const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 // CopySampleItems returns a deep copy of SampleItem slice.
 func CopySampleItems(items []*SampleItem) []*SampleItem {
@@ -101,6 +105,7 @@ type SampleCollector struct {
 	CMSketch      *CMSketch
 	TopN          *TopN
 	TotalSize     int64 // TotalSize is the total size of column.
+	MemSize       int64 // major memory size of this sample collector.
 }
 
 // MergeSampleCollector merges two sample collectors.
@@ -136,7 +141,8 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	return collector
 }
 
-const maxSampleValueLength = mysql.MaxFieldVarCharLength / 2
+// MaxSampleValueLength defines the max length of the useful samples. If one sample value exceeds the max length, we drop it before building the stats.
+const MaxSampleValueLength = mysql.MaxFieldVarCharLength / 2
 
 // SampleCollectorFromProto converts SampleCollector from its protobuf representation.
 func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector {
@@ -151,7 +157,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	s.CMSketch, s.TopN = CMSketchAndTopNFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
-		if len(val) <= maxSampleValueLength {
+		if len(val) <= MaxSampleValueLength {
 			item := &SampleItem{Value: types.NewBytesDatum(val)}
 			s.Samples = append(s.Samples, item)
 		}

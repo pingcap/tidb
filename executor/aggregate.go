@@ -18,12 +18,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -41,10 +39,12 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -61,13 +61,6 @@ type baseHashAggWorker struct {
 	memTracker *memory.Tracker
 	BInMap     int // indicate there are 2^BInMap buckets in Golang Map.
 }
-
-const (
-	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
-	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
-	// The bucket size may be changed by golang implement in the future.
-	defBucketMemoryUsage = 8*(1+16+24) + 16
-)
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
 	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
@@ -332,7 +325,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.bInMap = 0
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	e.memTracker.Consume(defBucketMemoryUsage*(1<<e.bInMap) + setSize)
+	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
@@ -395,7 +388,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		}
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
-		e.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
+		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.PartialStats = append(e.stats.PartialStats, w.stats)
@@ -425,7 +418,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKeys:           make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
-		e.memTracker.Consume(defBucketMemoryUsage*(1<<w.BInMap) + setSize)
+		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<w.BInMap) + setSize)
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
@@ -505,7 +498,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 	for _, key := range groupKey {
 		mem += int64(cap(key))
 	}
-	mem += 12 * int64(cap(groupKey))
+	mem += aggfuncs.DefSliceSize * int64(cap(groupKey))
 	return mem
 }
 
@@ -582,9 +575,9 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 		// This check is used to avoid error during the execution of `EncodeDecimal`.
-		if item.GetType().Tp == mysql.TypeNewDecimal {
+		if item.GetType().GetType() == mysql.TypeNewDecimal {
 			newTp := *tp
-			newTp.Flen = 0
+			newTp.SetFlen(0)
 			tp = &newTp
 		}
 		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
@@ -609,13 +602,13 @@ func (w *baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, group
 		for _, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
-			allMemDelta += memDelta
+			allMemDelta += memDelta + 8 // the memory usage of PartialResult
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 		allMemDelta += int64(len(groupKey[i]))
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
+		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper) > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.memTracker.Consume(defBucketMemoryUsage * (1 << w.BInMap))
+			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 			w.BInMap++
 		}
 	}
@@ -834,6 +827,17 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	fetchChildWorkerWaitGroup.Add(1)
 	go e.fetchChildData(ctx, fetchChildWorkerWaitGroup)
 
+	// We get the pointers here instead of when we are all finished and adding the time because:
+	// (1) If there is Apply in the plan tree, executors may be reused (Open()ed and Close()ed multiple times)
+	// (2) we don't wait all goroutines of HashAgg to exit in HashAgg.Close()
+	// So we can't write something like:
+	//     atomic.AddInt64(&e.stats.PartialWallTime, int64(time.Since(partialStart)))
+	// Because the next execution of HashAgg may have started when this goroutine haven't exited and then there will be data race.
+	var partialWallTimePtr, finalWallTimePtr *int64
+	if e.stats != nil {
+		partialWallTimePtr = &e.stats.PartialWallTime
+		finalWallTimePtr = &e.stats.FinalWallTime
+	}
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
@@ -842,8 +846,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
-		if e.stats != nil {
-			atomic.AddInt64(&e.stats.PartialWallTime, int64(time.Since(partialStart)))
+		if partialWallTimePtr != nil {
+			atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
 		}
 	}()
 	finalWorkerWaitGroup := &sync.WaitGroup{}
@@ -854,8 +858,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	}
 	go func() {
 		finalWorkerWaitGroup.Wait()
-		if e.stats != nil {
-			atomic.AddInt64(&e.stats.FinalWallTime, int64(time.Since(finalStart)))
+		if finalWallTimePtr != nil {
+			atomic.AddInt64(finalWallTimePtr, int64(time.Since(finalStart)))
 		}
 	}()
 
@@ -1084,7 +1088,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 		allMemDelta += int64(len(groupKey))
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will doubled.
 		if len(e.partialResultMap) > (1<<e.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			e.memTracker.Consume(defBucketMemoryUsage * (1 << e.bInMap))
+			e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.bInMap))
 			e.bInMap++
 		}
 	}
@@ -1094,7 +1098,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 }
 
 func (e *HashAggExec) initRuntimeStats() {
-	if e.runtimeStats != nil && e.stats == nil {
+	if e.runtimeStats != nil {
 		stats := &HashAggRuntimeStats{
 			PartialConcurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
 			FinalConcurrency:   e.ctx.GetSessionVars().HashAggFinalConcurrency(),
@@ -1153,7 +1157,7 @@ func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, con
 		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
 	n := len(workerStats)
 	if n > 0 {
-		sort.Slice(workerStats, func(i, j int) bool { return workerStats[i].WorkerTime < workerStats[j].WorkerTime })
+		slices.SortFunc(workerStats, func(i, j *AggWorkerStat) bool { return i.WorkerTime < j.WorkerTime })
 		buf.WriteString(fmt.Sprintf(", max:%v, p95:%v",
 			time.Duration(workerStats[n-1].WorkerTime), time.Duration(workerStats[n*19/20].WorkerTime)))
 	}
@@ -1673,14 +1677,14 @@ func (e *vecGroupChecker) getFirstAndLastRowDatum(item expression.Expression, ch
 		if !firstRowIsNull {
 			// make a copy to avoid DATA RACE
 			firstDatum := string([]byte(firstRowVal))
-			firstRowDatum.SetString(firstDatum, tp.Collate)
+			firstRowDatum.SetString(firstDatum, tp.GetCollate())
 		} else {
 			firstRowDatum.SetNull()
 		}
 		if !lastRowIsNull {
 			// make a copy to avoid DATA RACE
 			lastDatum := string([]byte(lastRowVal))
-			lastRowDatum.SetString(lastDatum, tp.Collate)
+			lastRowDatum.SetString(lastDatum, tp.GetCollate())
 		} else {
 			lastRowDatum.SetNull()
 		}

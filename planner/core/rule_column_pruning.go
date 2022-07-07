@@ -115,6 +115,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	}
 	appendColumnPruneTraceStep(la, prunedColumns, opt)
 	appendFunctionPruneTraceStep(la, prunedFunctions, opt)
+	//nolint: prealloc
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
@@ -198,7 +199,7 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (b
 				pruned = false
 				byItems = append(byItems, byItem)
 			}
-		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
+		} else if byItem.Expr.GetType().GetType() == mysql.TypeNull {
 			// do nothing, should be filtered
 		} else {
 			pruned = false
@@ -292,6 +293,11 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
+	}
+	for _, col := range p.Schema().Columns {
+		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
+			parentUsedCols = append(parentUsedCols, col)
+		}
 	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
@@ -479,16 +485,15 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols, opt)
 	}
 
-	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, there is an extra partition ID column.
-		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
-	}
-
-	for _, cols := range p.tblID2Handle {
+	for tblID, cols := range p.tblID2Handle {
 		for _, col := range cols {
 			for i := 0; i < col.NumCols(); i++ {
 				parentUsedCols = append(parentUsedCols, col.GetCol(i))
 			}
+		}
+		if physTblIDCol, ok := p.tblID2PhysTblIDCol[tblID]; ok {
+			// If the children include partitioned tables, there is an extra partition ID column.
+			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
 	return p.children[0].PruneColumns(parentUsedCols, opt)

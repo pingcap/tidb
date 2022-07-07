@@ -86,7 +86,7 @@ func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
-		switch dataType.Tp {
+		switch dataType.GetType() {
 		case mysql.TypeString:
 			val := row.GetString(0)
 			memDeltas = append(memDeltas, int64(len(val)))

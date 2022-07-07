@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -128,13 +129,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	stmtID := binary.LittleEndian.Uint32(data[0:4])
 	pos += 4
 
-	if topsqlstate.TopSQLEnabled() {
-		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
-		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil, false)
-		}
-	}
-
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
@@ -205,6 +199,19 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+	if err != nil {
+		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(sessiontxn.StmtErrAfterQuery, err)
+		if txnErr != nil {
+			return txnErr
+		}
+
+		if retryable && action == sessiontxn.StmtActionRetryReady {
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
+			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+			return err
+		}
+	}
 	_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	if allowTiFlashFallback && err != nil && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
 		// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
@@ -278,7 +285,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if topsqlstate.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)
+			ctx = topsql.AttachAndRegisterSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, false)
 		}
 	}
 	sql := ""

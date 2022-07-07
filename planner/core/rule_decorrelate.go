@@ -154,6 +154,21 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				return s.optimize(ctx, p, opt)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
+			allConst := true
+			for _, expr := range proj.Exprs {
+				if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
+					allConst = false
+					break
+				}
+			}
+			if allConst && apply.JoinType == LeftOuterJoin {
+				// If the projection just references some constant. We cannot directly pull it up when the APPLY is an outer join.
+				//  e.g. select (select 1 from t1 where t1.a=t2.a) from t2; When the t1.a=t2.a is false the join's output is NULL.
+				//       But if we pull the projection upon the APPLY. It will return 1 since the projection is evaluated after the join.
+				// We disable the decorrelation directly for now.
+				// TODO: Actually, it can be optimized. We need to first push the projection down to the selection. And then the APPLY can be decorrelated.
+				goto NoOptimize
+			}
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
@@ -174,6 +189,24 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			}
 			appendRemoveProjTraceStep(apply, proj, opt)
 			return s.optimize(ctx, p, opt)
+		} else if li, ok := innerPlan.(*LogicalLimit); ok {
+			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
+			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
+			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
+			if apply.JoinType != SemiJoin && apply.JoinType != LeftOuterSemiJoin && apply.JoinType != AntiSemiJoin && apply.JoinType != AntiLeftOuterSemiJoin {
+				goto NoOptimize
+			}
+			// If subquery has some filter condition, we will not optimize limit.
+			if len(apply.LeftConditions) > 0 || len(apply.RightConditions) > 0 || len(apply.OtherConditions) > 0 || len(apply.EqualConditions) > 0 {
+				goto NoOptimize
+			}
+			// Limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the exist subquery.
+			if li.Offset == 0 {
+				innerPlan = li.children[0]
+				apply.SetChildren(outerPlan, innerPlan)
+				appendRemoveLimitTraceStep(li, opt)
+				return s.optimize(ctx, p, opt)
+			}
 		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0]
@@ -209,7 +242,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 							}
 						case *expression.ScalarFunction:
 							expr.RetType = expr.RetType.Clone()
-							expr.RetType.Flag &= ^mysql.NotNullFlag
+							expr.RetType.DelFlag(mysql.NotNullFlag)
 							aggArgs = append(aggArgs, expr)
 						default:
 							aggArgs = append(aggArgs, expr)
@@ -315,6 +348,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			return s.optimize(ctx, p, opt)
 		}
 	}
+NoOptimize:
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		np, err := s.optimize(ctx, child, opt)
@@ -359,6 +393,16 @@ func appendRemoveMaxOneRowTraceStep(m *LogicalMaxOneRow, opt *logicalOptimizeOp)
 		return ""
 	}
 	opt.appendStepToCurrent(m.ID(), m.TP(), reason, action)
+}
+
+func appendRemoveLimitTraceStep(limit *LogicalLimit, opt *logicalOptimizeOp) {
+	action := func() string {
+		return fmt.Sprintf("%v_%v removed from plan tree", limit.TP(), limit.ID())
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v in 'exists' subquery need to remove in order to keep plan optimal", limit.TP(), limit.ID())
+	}
+	opt.appendStepToCurrent(limit.ID(), limit.TP(), reason, action)
 }
 
 func appendRemoveProjTraceStep(p *LogicalApply, proj *LogicalProjection, opt *logicalOptimizeOp) {

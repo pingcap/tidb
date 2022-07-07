@@ -24,7 +24,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -33,12 +32,15 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -163,7 +165,7 @@ func (e *InsertValues) initInsertColumns() error {
 		}
 		if col.Name.L == model.ExtraHandleName.L {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
 			}
 			e.hasExtraHandle = true
 		}
@@ -230,7 +232,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -296,7 +298,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		colName string
 	)
 	if col != nil {
-		colTp = col.Tp
+		colTp = col.GetType()
 		colName = col.Name.String()
 	}
 
@@ -404,7 +406,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 		d, err := e.getColDefaultValue(i, c)
 		if err == nil {
 			row[i] = d
-			if !mysql.HasAutoIncrementFlag(c.Flag) {
+			if !mysql.HasAutoIncrementFlag(c.GetFlag()) {
 				// It is an interesting behavior in MySQL.
 				// If the value of auto ID is not explicit, MySQL use 0 value for auto ID when it is
 				// evaluated by another column, but it should be used once only.
@@ -433,7 +435,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
@@ -505,7 +507,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
@@ -558,7 +560,17 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 // fillColValue fills the column value if it is not set in the insert statement.
 func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx int, column *table.Column, hasValue bool) (types.Datum,
 	error) {
-	if mysql.HasAutoIncrementFlag(column.Flag) {
+	if mysql.HasAutoIncrementFlag(column.GetFlag()) {
+		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
+			vars := e.ctx.GetSessionVars()
+			sc := vars.StmtCtx
+			if !vars.StrictSQLMode {
+				sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))
+			} else {
+				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
+			}
+		}
+
 		if e.lazyFillAutoID {
 			// Handle hasValue info in autoIncrement column previously for lazy handle.
 			if !hasValue {
@@ -623,7 +635,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			if row[i], err = e.fillColValue(ctx, row[i], i, c, hasValue[i]); err != nil {
 				return nil, err
 			}
-			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.Flag)) {
+			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
 				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
 					return nil, err
 				}
@@ -673,7 +685,7 @@ func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table
 
 func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int, found bool) {
 	for i, c := range t.Cols() {
-		if mysql.HasAutoIncrementFlag(c.Flag) {
+		if mysql.HasAutoIncrementFlag(c.GetFlag()) {
 			return c, i, true
 		}
 	}
@@ -681,7 +693,7 @@ func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int,
 }
 
 func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
-	d.SetAutoID(id, col.Flag)
+	d.SetAutoID(id, col.GetFlag())
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
 	if err == nil && d.GetInt64() < id {
@@ -844,7 +856,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 
 func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
 	var recordID int64
-	switch target.Tp {
+	switch target.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		f := d.GetFloat64()
 		if isInsert {
@@ -855,7 +867,7 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		recordID = d.GetInt64()
 	default:
-		return 0, errors.Errorf("unexpected field type [%v]", target.Tp)
+		return 0, errors.Errorf("unexpected field type [%v]", target.GetType())
 	}
 
 	return recordID, nil
@@ -888,7 +900,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
-			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+			return types.Datum{}, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
 		}
 		err = e.rebaseAutoRandomID(ctx, recordID, &c.FieldType)
 		if err != nil {
@@ -977,7 +989,7 @@ func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, h
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		if !e.ctx.GetSessionVars().AllowWriteRowID {
-			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
 		}
 		err = e.rebaseImplicitRowID(ctx, recordID)
 		if err != nil {
@@ -1063,6 +1075,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if err != nil {
 		return err
 	}
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)

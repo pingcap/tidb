@@ -15,14 +15,15 @@
 package core_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,8 +128,8 @@ func TestValidator(t *testing.T) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
-		{"create table t", false, ddl.ErrTableMustHaveColumns},
-		{"create table t (unique(c))", false, ddl.ErrTableMustHaveColumns},
+		{"create table t", false, dbterror.ErrTableMustHaveColumns},
+		{"create table t (unique(c))", false, dbterror.ErrTableMustHaveColumns},
 
 		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
@@ -223,7 +225,7 @@ func TestValidator(t *testing.T) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
-		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")},
+		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, dbterror.ErrViewSelectClause.GenWithStackByArgs("INFO")},
 		{"CREATE VIEW V AS SELECT 5 FOR UPDATE", false, nil},
 		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
@@ -250,11 +252,11 @@ func TestValidator(t *testing.T) {
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
 		// issue 21082
-		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
 		{"CREATE TABLE t (a int);", false, nil},
 		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
-		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"ALTER TABLE t ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 
 		// issue 20295
 		// issue 11193
@@ -264,6 +266,10 @@ func TestValidator(t *testing.T) {
 		{"select CONVERT( 2, DECIMAL(28,29) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+
+		// issue 34713
+		{"SELECT CAST(1 AS DATETIME(7));", true, types.ErrTooBigPrecision.GenWithStackByArgs(7, "CAST", types.MaxFsp)},
+		{"SELECT CAST(1 AS DATETIME(31));", true, types.ErrTooBigPrecision.GenWithStackByArgs(31, "CAST", types.MaxFsp)},
 
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
@@ -340,4 +346,87 @@ func TestErrKeyPart0(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("alter table t add index (b(0))")
 	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
+}
+
+// For issue #30328
+func TestLargeVarcharAutoConv(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
+		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
+
+	tk.MustExec("SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	warnCnt := tk.Session().GetSessionVars().StmtCtx.WarningCount()
+	// It is only 3. For the first stmt, charset of column b is not resolved, so ddl will append a warning for it
+	require.Equal(t, uint16(3), warnCnt)
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	for i := range warns {
+		require.True(t, terror.ErrorEqual(warns[i].Err, dbterror.ErrAutoConvert))
+	}
+}
+
+func TestPreprocessCTE(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t, t1, t2;")
+	tk.MustExec("create table t  (c int);insert into t values (1), (2), (3), (4), (5);")
+	tk.MustExec("create table t1 (a int);insert into t1 values (0), (1), (2), (3), (4);")
+	tk.MustExec("create table t2 (b int);insert into t2 values (1), (2), (3), (4), (5);")
+	tk.MustExec("create table t11111 (d int);insert into t11111 values (1), (2), (3), (4), (5);")
+	tk.MustExec("drop table if exists tbl_1;\nCREATE TABLE `tbl_1` (\n  `col_2` char(65) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n  `col_3` int(11) NOT NULL\n);")
+	testCases := []struct {
+		before string
+		after  string
+	}{
+		{
+			"create view v1 as WITH t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;",
+			"CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `test`.`v1` AS WITH `t1` AS (SELECT `a` FROM `test`.`t2` WHERE `t2`.`a`=3 UNION SELECT `t2`.`a`+1 FROM (`test`.`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`a`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t1 AS ( SELECT(WITH t1 AS ( WITH qn AS ( SELECT 10 * a AS a FROM t1 ) SELECT 10 * a AS a FROM qn ) SELECT *  FROM t1  LIMIT 1  )  FROM t2  WHERE t2.b = 3 UNION SELECT t2.b + 1  FROM t1, t2 WHERE t1.a = t2.b) SELECT * FROM t1",
+			"WITH `t1` AS (SELECT (WITH `t1` AS (WITH `qn` AS (SELECT 10*`a` AS `a` FROM `test`.`t1`) SELECT 10*`a` AS `a` FROM `qn`) SELECT * FROM `t1` LIMIT 1) FROM `test`.`t2` WHERE `t2`.`b`=3 UNION SELECT `t2`.`b`+1 FROM (`test`.`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`b`) SELECT * FROM `t1`",
+		},
+		{
+			"with recursive cte_8932 (col_34891,col_34892) AS ( with recursive cte_8932 (col_34893,col_34894,col_34895) AS ( with tbl_1 (col_34896,col_34897,col_34898,col_34899) AS ( select 1, \"2\",3,col_3 from tbl_1 ) select cte_as_8958.col_34896,cte_as_8958.col_34898,cte_as_8958.col_34899 from tbl_1 as cte_as_8958 UNION DISTINCT select col_34893 + 1,concat(col_34894, 1),col_34895 + 1 from cte_8932 where col_34893 < 5 ) select cte_as_8959.col_34893,cte_as_8959.col_34895 from cte_8932 as cte_as_8959 ) select * from cte_8932 as cte_as_8960 order by cte_as_8960.col_34891,cte_as_8960.col_34892;",
+			"WITH RECURSIVE `cte_8932` (`col_34891`, `col_34892`) AS (WITH RECURSIVE `cte_8932` (`col_34893`, `col_34894`, `col_34895`) AS (WITH `tbl_1` (`col_34896`, `col_34897`, `col_34898`, `col_34899`) AS (SELECT 1,_UTF8MB4'2',3,`col_3` FROM `test`.`tbl_1`) SELECT `cte_as_8958`.`col_34896`,`cte_as_8958`.`col_34898`,`cte_as_8958`.`col_34899` FROM `tbl_1` AS `cte_as_8958` UNION SELECT `col_34893`+1,CONCAT(`col_34894`, 1),`col_34895`+1 FROM `cte_8932` WHERE `col_34893`<5) SELECT `cte_as_8959`.`col_34893`,`cte_as_8959`.`col_34895` FROM `cte_8932` AS `cte_as_8959`) SELECT * FROM `cte_8932` AS `cte_as_8960` ORDER BY `cte_as_8960`.`col_34891`,`cte_as_8960`.`col_34892`",
+		},
+		{
+			"with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;",
+			"WITH `t1` AS (WITH `t11` AS (SELECT * FROM `test`.`t`) SELECT * FROM (`test`.`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"with t1 as (with t1 as (select * from t) select * from t1, t2) select * from t1;",
+			"WITH `t1` AS (WITH `t1` AS (SELECT * FROM `test`.`t`) SELECT * FROM (`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t1 AS ( WITH t1 AS ( SELECT * FROM t ) SELECT ( WITH t2 AS ( SELECT * FROM t ) SELECT * FROM t limit 1 ) FROM t1, t2 ) \n\nSELECT\n* \nFROM\n\tt1;",
+			"WITH `t1` AS (WITH `t1` AS (SELECT * FROM `test`.`t`) SELECT (WITH `t2` AS (SELECT * FROM `test`.`t`) SELECT * FROM `test`.`t` LIMIT 1) FROM (`t1`) JOIN `test`.`t2`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t123 AS (WITH t11111 AS ( SELECT * FROM test.t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, test.t2 ) SELECT * FROM t11111;",
+			"WITH `t123` AS (WITH `t11111` AS (SELECT * FROM `test`.`t1`) SELECT (WITH `t2` AS (SELECT (WITH `t23` AS (SELECT * FROM `t11111`) SELECT * FROM `t23` LIMIT 1) FROM `t11111`) SELECT * FROM `t2` LIMIT 1) FROM (`t11111`) JOIN `test`.`t2`) SELECT * FROM `test`.`t11111`",
+		},
+	}
+	for _, tc := range testCases {
+		stmts, warnings, err := parser.New().ParseSQL(tc.before)
+		require.Len(t, warnings, 0)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+
+		err = core.Preprocess(tk.Session(), stmts[0])
+		require.NoError(t, err)
+
+		var rs strings.Builder
+		err = stmts[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &rs))
+		require.NoError(t, err)
+		require.Equal(t, tc.after, rs.String())
+	}
 }

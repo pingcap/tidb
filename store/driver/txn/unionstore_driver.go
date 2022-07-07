@@ -43,6 +43,10 @@ func (m *memBuffer) Delete(k kv.Key) error {
 	return m.MemDB.Delete(k)
 }
 
+func (m *memBuffer) RemoveFromBuffer(k kv.Key) {
+	m.MemDB.RemoveFromBuffer(k)
+}
+
 func (m *memBuffer) DeleteWithFlags(k kv.Key, ops ...kv.FlagsOp) error {
 	err := m.MemDB.DeleteWithFlags(k, getTiKVFlagsOps(ops)...)
 	return derr.ToTiDBErr(err)

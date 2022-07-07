@@ -13,7 +13,6 @@
 // limitations under the License.
 
 //go:build !freebsd && !windows
-// +build !freebsd,!windows
 
 package local
 

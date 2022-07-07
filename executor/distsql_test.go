@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -98,7 +97,7 @@ func TestCopClientSend(t *testing.T) {
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
-	region, _ := cluster.GetRegionByKey(key)
+	region, _, _ := cluster.GetRegionByKey(key)
 	peerID := cluster.AllocID()
 	cluster.Split(region.GetId(), cluster.AllocID(), key, []uint64{peerID}, peerID)
 
@@ -316,12 +315,12 @@ func TestPartitionTableIndexLookUpReader(t *testing.T) {
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a").Check(testkit.Rows("1 1", "2 2", "11 11", "12 12"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t where a>=1 and a<15 order by a limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
+	tk.MustQuery("select * from t where a>=1 and a<15 limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
+	tk.MustQuery("select * from t where a between 1 and 15 limit 3").Check(testkit.Rows("1 1", "2 2", "11 11"))
+	tk.MustQuery("select * from t where a between 1 and 15 limit 3 offset 1").Check(testkit.Rows("2 2", "11 11", "12 12"))
 }
 
 func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -370,7 +369,7 @@ func TestIndexLookUpStats(t *testing.T) {
 	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 2}", stats.String())
+	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 1}", stats.String())
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {
@@ -389,9 +388,6 @@ func TestIndexLookUpGetResultChunk(t *testing.T) {
 }
 
 func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

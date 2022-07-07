@@ -5,7 +5,7 @@
 set -eu
 
 run_sql "drop database if exists primary_key"
-run_sql "create database primary_key"
+run_sql "create database primary_key DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 export DUMPLING_TEST_DATABASE=primary_key
 
 for data in "$DUMPLING_BASE_NAME"/data/*; do

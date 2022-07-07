@@ -16,9 +16,11 @@ package executor
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,4 +66,37 @@ func TestConcurrentMap(t *testing.T) {
 
 	_, ok = m.Get(uint64(mod + 1))
 	require.False(t, ok)
+}
+
+func TestConcurrentMapMemoryUsage(t *testing.T) {
+	m := newConcurrentMap()
+	const iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen
+	var memUsage int64
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	// Using go routines insert 1000 entries into the map.
+	go func() {
+		defer wg.Done()
+		var memDelta int64
+		for i := 0; i < iterations/2; i++ {
+			// Add entry to map.
+			memDelta += m.Insert(uint64(i*ShardCount), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+		}
+		atomic.AddInt64(&memUsage, memDelta)
+	}()
+
+	go func() {
+		defer wg.Done()
+		var memDelta int64
+		for i := iterations / 2; i < iterations; i++ {
+			// Add entry to map.
+			memDelta += m.Insert(uint64(i*ShardCount), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
+		}
+		atomic.AddInt64(&memUsage, memDelta)
+	}()
+	wg.Wait()
+
+	// The first bucket memory usage will be recorded in concurrentMapHashTable, here only test the memory delta.
+	require.Equal(t, int64(1023)*hack.DefBucketMemoryUsageForMapIntToPtr, memUsage)
+	require.Equal(t, int64(10), m.getShard(0).bInMap)
 }

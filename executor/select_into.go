@@ -53,7 +53,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 	}
 
 	// MySQL-compatible behavior: allow files to be group-readable
-	f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640) // # nosec G302
+	f, err := os.OpenFile(s.intoOpt.FileName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0640) // #nosec G302
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -163,11 +163,11 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.enclosed = false
 			}
 			s.fieldBuf = s.fieldBuf[:0]
-			switch col.GetType().Tp {
+			switch col.GetType().GetType() {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeYear:
 				s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 			case mysql.TypeLonglong:
-				if mysql.HasUnsignedFlag(col.GetType().Flag) {
+				if mysql.HasUnsignedFlag(col.GetType().GetFlag()) {
 					s.fieldBuf = strconv.AppendUint(s.fieldBuf, row.GetUint64(j), 10)
 				} else {
 					s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
@@ -187,7 +187,7 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 				s.fieldBuf = append(s.fieldBuf, row.GetTime(j).String()...)
 			case mysql.TypeDuration:
-				s.fieldBuf = append(s.fieldBuf, row.GetDuration(j, col.GetType().Decimal).String()...)
+				s.fieldBuf = append(s.fieldBuf, row.GetDuration(j, col.GetType().GetDecimal()).String()...)
 			case mysql.TypeEnum:
 				s.fieldBuf = append(s.fieldBuf, row.GetEnum(j).String()...)
 			case mysql.TypeSet:
@@ -240,8 +240,8 @@ const (
 // DumpRealOutfile dumps a real number to lineBuf.
 func DumpRealOutfile(realBuf, lineBuf []byte, v float64, tp *types.FieldType) ([]byte, []byte) {
 	prec := types.UnspecifiedLength
-	if tp.Decimal > 0 && tp.Decimal != mysql.NotFixedDec {
-		prec = tp.Decimal
+	if tp.GetDecimal() > 0 && tp.GetDecimal() != mysql.NotFixedDec {
+		prec = tp.GetDecimal()
 	}
 	absV := math.Abs(v)
 	if prec == types.UnspecifiedLength && (absV >= expFormatBig || (absV != 0 && absV < expFormatSmall)) {

@@ -77,7 +77,7 @@ func testWindowFunc(t *testing.T, p windowTest) {
 		err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 		require.NoError(t, err)
 		dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[i], collate.GetCollator(desc.RetTp.Collate))
+		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[i], collate.GetCollator(desc.RetTp.GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, result)
 		resultChk.Reset()

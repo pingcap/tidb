@@ -123,6 +123,10 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.interceptor = val.(kv.SnapshotInterceptor)
 	case kv.RPCInterceptor:
 		s.KVSnapshot.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+	case kv.RequestSourceInternal:
+		s.KVSnapshot.SetRequestSourceInternal(val.(bool))
+	case kv.RequestSourceType:
+		s.KVSnapshot.SetRequestSourceType(val.(string))
 	}
 }
 
@@ -137,6 +141,8 @@ func getTiKVIsolationLevel(level kv.IsoLevel) txnsnapshot.IsoLevel {
 		return txnsnapshot.SI
 	case kv.RC:
 		return txnsnapshot.RC
+	case kv.RCCheckTS:
+		return txnsnapshot.RCCheckTS
 	default:
 		return txnsnapshot.SI
 	}

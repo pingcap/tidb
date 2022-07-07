@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -153,7 +151,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 
 	if order {
 		sort.Slice(results, func(i, j int) bool {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return results[i].(int64) < results[j].(int64)
 			case mysql.TypeDouble:
@@ -170,7 +168,7 @@ func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
 }
 
 func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
-	switch typ.Tp {
+	switch typ.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
 	case mysql.TypeFloat:
@@ -226,7 +224,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 		idx := i / m.maxChunkSize
 		retTypes := retTypes(m)
 		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
-			switch retTypes[colIdx].Tp {
+			switch retTypes[colIdx].GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
 			case mysql.TypeFloat:
@@ -292,7 +290,7 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	plan.SetSchema(schema)
 	plan.Init(ctx, nil, 0)
 	plan.SetChildren(nil)
-	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	hashAgg := exec.(*HashAggExec)
 	hashAgg.children[0] = src
@@ -344,7 +342,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		plan = sg
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	return b.build(plan)
 }
 
@@ -527,7 +525,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		default:
 			args = append(args, partitionBy[0])
 		}
-		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args)
+		desc, _ := aggregation.NewWindowFuncDesc(ctx, windowFunc, args, false)
 
 		win.WindowFuncDescs = append(win.WindowFuncDescs, desc)
 		winSchema.Append(&expression.Column{
@@ -567,8 +565,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
-			Tails:        []plannercore.PhysicalPlan{tail},
-			DataSources:  []plannercore.PhysicalPlan{src},
+			Tails:        []core.PhysicalPlan{tail},
+			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
 			ByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx, nil, 0)
@@ -577,7 +575,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		plan = win
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
+	b := newExecutorBuilder(ctx, nil, nil)
 	exec := b.build(plan)
 	return exec
 }
@@ -824,7 +822,7 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		cas.ndv = ndv
 		cas.windowFunc = windowFunc.aggFunc
 		cas.frame = frame
-		cas.columns[0].RetType.Tp = windowFunc.aggColTypes
+		cas.columns[0].RetType.SetType(windowFunc.aggColTypes)
 		cas.pipelined = pipelined
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkWindowExecWithCase(b, cas)
@@ -950,7 +948,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 		rows: casTest.rows,
 		ctx:  casTest.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
@@ -1151,7 +1149,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeVarString:
@@ -1288,7 +1286,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 		rows:   rows,
 		ctx:    tc.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeDouble:
@@ -1317,7 +1315,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		keyOff2IdxOff[i] = i
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1391,7 +1389,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 
-	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil).
 		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
 	if err != nil {
 		return nil, err
@@ -1701,7 +1699,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		rows:   numOuterRows,
 		ctx:    tc.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeDouble:
@@ -1720,7 +1718,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		ctx:    tc.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			row = row / numInnerDup
-			switch typ.Tp {
+			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
 			case mysql.TypeDouble:

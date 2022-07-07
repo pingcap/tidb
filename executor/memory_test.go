@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"runtime/debug"
 	"testing"
 
 	"github.com/pingcap/tidb/executor"
@@ -26,6 +27,8 @@ import (
 )
 
 func TestPBMemoryLeak(t *testing.T) {
+	debug.SetGCPercent(1000)
+	defer debug.SetGCPercent(100)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

@@ -58,6 +58,10 @@ func TestPreferRangeScan(t *testing.T) {
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("analyze table test;")
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -175,7 +179,9 @@ func TestEncodeDecodePlan(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
+	tk.MustExec("create table tp (a int ,b int,c int) partition by hash(b) partitions 5;")
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
+	tk.MustExec("set tidb_partition_prune_mode='static';")
 
 	tk.Session().GetSessionVars().PlanID = 0
 	getPlanTree := func() string {
@@ -190,28 +196,37 @@ func TestEncodeDecodePlan(t *testing.T) {
 	}
 	tk.MustExec("select max(a) from t1 where a>0;")
 	planTree := getPlanTree()
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
 
 	tk.MustExec("insert into t1 values (1,1,1);")
 	planTree = getPlanTree()
-	require.True(t, strings.Contains(planTree, "Insert"))
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "Insert")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
 
 	tk.MustExec("with cte(a) as (select 1) select * from cte")
 	planTree = getPlanTree()
-	require.True(t, strings.Contains(planTree, "CTE"))
-	require.True(t, strings.Contains(planTree, "1->Column#1"))
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "CTE")
+	require.Contains(t, planTree, "1->Column#1")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
 
 	tk.MustExec("with cte(a) as (select 2) select * from cte")
 	planTree = getPlanTree()
-	require.True(t, strings.Contains(planTree, "CTE"))
-	require.True(t, strings.Contains(planTree, "2->Column#1"))
-	require.True(t, strings.Contains(planTree, "time"))
-	require.True(t, strings.Contains(planTree, "loops"))
+	require.Contains(t, planTree, "CTE")
+	require.Contains(t, planTree, "2->Column#1")
+	require.Contains(t, planTree, "time")
+	require.Contains(t, planTree, "loops")
+
+	tk.MustExec("select * from tp")
+	planTree = getPlanTree()
+	require.Contains(t, planTree, "PartitionUnion")
+
+	tk.MustExec("select row_number() over (partition by c) from t1;")
+	planTree = getPlanTree()
+	require.Contains(t, planTree, "Shuffle")
+	require.Contains(t, planTree, "ShuffleReceiver")
 }
 
 func TestNormalizedDigest(t *testing.T) {
@@ -486,7 +501,7 @@ func TestNthPlanHint(t *testing.T) {
 
 	tk.MustExec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range."))
+		"Warning 1105 The parameter of nth_plan() is out of range"))
 
 	// Test hints for nth_plan(x).
 	tk.MustExec("drop table if exists t")
@@ -500,11 +515,11 @@ func TestNthPlanHint(t *testing.T) {
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range."))
+		"Warning 1105 The parameter of nth_plan() is out of range"))
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range."))
+		"Warning 1105 The parameter of nth_plan() is out of range"))
 
 	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
@@ -529,10 +544,10 @@ func TestNthPlanHint(t *testing.T) {
 	// Make sure nth_plan() doesn't affect separately executed subqueries by asserting there's only one warning.
 	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where (select count(1) from t, tt) > 1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range."))
+		"Warning 1105 The parameter of nth_plan() is out of range"))
 	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range."))
+		"Warning 1105 The parameter of nth_plan() is out of range"))
 }
 
 func BenchmarkDecodePlan(b *testing.B) {
@@ -663,7 +678,7 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
 			"Limit 4.00 root  offset:0, count:960",
-			"└─IndexLookUp 4.00 root  paging:true",
+			"└─IndexLookUp 4.00 root  ",
 			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
 			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
 			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
@@ -674,7 +689,7 @@ func TestCopPaging(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
 			"Limit 3.20 root  offset:0, count:960",
-			"└─IndexLookUp 3.20 root  paging:true",
+			"└─IndexLookUp 3.20 root  ",
 			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
 			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
 			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
@@ -848,4 +863,73 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	mixedAggFuncs = append(mixedAggFuncs, groupConcatAggFuncs...)
 	checkResult(ctx, mixedAggFuncs, emptyGroupByItems)
 	checkResult(ctx, mixedAggFuncs, groupByItems)
+}
+
+func TestIssue34863(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists c")
+	tk.MustExec("drop table if exists o")
+	tk.MustExec("create table c(c_id bigint);")
+	tk.MustExec("create table o(o_id bigint, c_id bigint);")
+	tk.MustExec("insert into c values(1),(2),(3),(4),(5);")
+	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2);")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1")
+	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustExec("set @@tidb_opt_agg_push_down=0")
+	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
+	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
+}
+
+func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
+	window := &core.PhysicalWindow{}
+	newPlan, err := window.Clone()
+	require.NoError(t, err)
+	newWindow, ok := newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	window.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = window.Clone()
+	require.NoError(t, err)
+	newWindow, ok = newPlan.(*core.PhysicalWindow)
+	require.Equal(t, ok, true)
+	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
+
+	sort := &core.PhysicalSort{}
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok := newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+
+	sort.TiFlashFineGrainedShuffleStreamCount = 8
+	newPlan, err = sort.Clone()
+	require.NoError(t, err)
+	newSort, ok = newPlan.(*core.PhysicalSort)
+	require.Equal(t, ok, true)
+	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+}
+
+// https://github.com/pingcap/tidb/issues/35527.
+func TestTableDualAsSubQuery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
+	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0 IS NULL) LIKE(NULL);").Check(testkit.Rows())
+	tk.MustQuery("SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);").Check(testkit.Rows())
 }

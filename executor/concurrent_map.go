@@ -16,6 +16,8 @@ package executor
 
 import (
 	"sync"
+
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // ShardCount controls the shard maps within the concurrent map
@@ -28,14 +30,15 @@ type concurrentMap []*concurrentMapShared
 // A "thread" safe string to anything map.
 type concurrentMapShared struct {
 	items        map[uint64]*entry
-	sync.RWMutex // Read Write mutex, guards access to internal map.
+	sync.RWMutex       // Read Write mutex, guards access to internal map.
+	bInMap       int64 // indicate there are 2^bInMap buckets in items
 }
 
 // newConcurrentMap creates a new concurrent map.
 func newConcurrentMap() concurrentMap {
 	m := make(concurrentMap, ShardCount)
 	for i := 0; i < ShardCount; i++ {
-		m[i] = &concurrentMapShared{items: make(map[uint64]*entry)}
+		m[i] = &concurrentMapShared{items: make(map[uint64]*entry), bInMap: 0}
 	}
 	return m
 }
@@ -46,17 +49,18 @@ func (m concurrentMap) getShard(hashKey uint64) *concurrentMapShared {
 }
 
 // Insert inserts a value in a shard safely
-func (m concurrentMap) Insert(key uint64, value *entry) {
+func (m concurrentMap) Insert(key uint64, value *entry) (memDelta int64) {
 	shard := m.getShard(key)
 	shard.Lock()
-	v, ok := shard.items[key]
-	if !ok {
-		shard.items[key] = value
-	} else {
-		value.next = v
-		shard.items[key] = value
+	oldValue := shard.items[key]
+	value.next = oldValue
+	shard.items[key] = value
+	if len(shard.items) > (1<<shard.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+		memDelta = hack.DefBucketMemoryUsageForMapIntToPtr * (1 << shard.bInMap)
+		shard.bInMap++
 	}
 	shard.Unlock()
+	return memDelta
 }
 
 // UpsertCb : Callback to return new element to be inserted into the map

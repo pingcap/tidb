@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -514,7 +513,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.R)
+		er.err = errors.Errorf("Unknown compare type %T", v.R)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -775,6 +774,17 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	}
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+
+	// Currently, firstrow agg function is treated like the exact representation of aggregate group key,
+	// so the data type is the same with group key, even if the group key is not null.
+	// However, the return type of firstrow should be nullable, we clear the null flag here instead of
+	// during invoking NewAggFuncDesc, in order to keep compatibility with the existing presumption
+	// that the return type firstrow does not change nullability, whatsoever.
+	// Cloning it because the return type is the same object with argument's data type.
+	newRetTp := firstRowFunc.RetTp.Clone()
+	newRetTp.DelFlag(mysql.NotNullFlag)
+	firstRowFunc.RetTp = newRetTp
+
 	firstRowResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
@@ -797,7 +807,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	defer resetCTECheckForSubQuery(ci)
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown exists type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -871,7 +881,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown compare type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -927,7 +937,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
 	lt, rt := lexpr.GetType(), rexpr.GetType()
-	collFlag := collate.CompatibleCollate(lt.Collate, rt.Collate)
+	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
 
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
@@ -954,7 +964,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
-			join.setPreferredJoinType(er.b.TableHints())
+			join.setPreferredJoinTypeAndOrder(er.b.TableHints())
 		}
 		er.p = join
 	} else {
@@ -1056,9 +1066,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		retType := v.Type.Clone()
 		switch v.Datum.Kind() {
 		case types.KindNull:
-			retType.Flag &= ^mysql.NotNullFlag
+			retType.DelFlag(mysql.NotNullFlag)
 		default:
-			retType.Flag |= mysql.NotNullFlag
+			retType.AddFlag(mysql.NotNullFlag)
 		}
 		v.Datum.SetValue(v.Datum.GetValue(), retType)
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
@@ -1075,7 +1085,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
-		value, er.err = expression.ParamMarkerExpression(er.sctx, v)
+		value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
 		if er.err != nil {
 			return retNode, false
 		}
@@ -1127,7 +1137,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
-			if v.Tp.Charset == charset.CharsetASCII {
+			if v.Tp.GetCharset() == charset.CharsetASCII {
 				castFunction.SetRepertoire(expression.ASCII)
 			} else {
 				castFunction.SetRepertoire(expression.UNICODE)
@@ -1181,7 +1191,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			if collInfo, er.err = collate.GetCollationByName(v.Collate); er.err != nil {
 				break
 			}
-			chs := arg.GetType().Charset
+			chs := arg.GetType().GetCharset()
 			if chs != "" && collInfo.CharsetName != chs {
 				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
 				break
@@ -1189,18 +1199,22 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		// SetCollationExpr sets the collation explicitly, even when the evaluation type of the expression is non-string.
 		if _, ok := arg.(*expression.Column); ok {
+			if arg.GetType().GetType() == mysql.TypeEnum || arg.GetType().GetType() == mysql.TypeSet {
+				er.err = ErrNotSupportedYet.GenWithStackByArgs("use collate clause for enum or set")
+				break
+			}
 			// Wrap a cast here to avoid changing the original FieldType of the column expression.
 			exprType := arg.GetType().Clone()
-			exprType.Collate = v.Collate
+			exprType.SetCollate(v.Collate)
 			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
 			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
 		} else {
 			// For constant and scalar function, we can set its collate directly.
-			arg.GetType().Collate = v.Collate
+			arg.GetType().SetCollate(v.Collate)
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
-		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType().Charset, arg.GetType().Collate)
+		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType().GetCharset(), arg.GetType().GetCollate())
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1225,14 +1239,14 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 		return
 	}
 	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
-		telemetry.BuiltinFunctionsUsage(er.b.ctx.GetBuiltinFunctionUsage()).Inc(scalarFunc.Function.PbCode().String())
+		er.b.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
 	}
 	return
 }
 
 func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
-	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
-		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
+	if ft.EvalType() == types.ETDuration && ft.GetDecimal() > types.MaxFsp {
+		return errTooBigPrecision.GenWithStackByArgs(ft.GetDecimal(), "CAST", types.MaxFsp)
 	}
 	return nil
 }
@@ -1265,7 +1279,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		sessionVars.UsersLock.RUnlock()
 		if !ok {
 			tp = types.NewFieldType(mysql.TypeVarString)
-			tp.Flen = mysql.MaxFieldVarCharLength
+			tp.SetFlen(mysql.MaxFieldVarCharLength)
 		}
 		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
 		if err != nil {
@@ -1287,12 +1301,16 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		}
 		return
 	}
+	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
+		// The variable does nothing, append a warning to the statement output.
+		sessionVars.StmtCtx.AppendWarning(ErrGettingNoopVariable.GenWithStackByArgs(sysVar.Name))
+	}
 	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
 		er.b.visitInfo = appendDynamicVisitInfo(er.b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
 	}
 	if v.ExplicitScope && !sysVar.HasNoneScope() {
-		if v.IsGlobal && !sysVar.HasGlobalScope() {
+		if v.IsGlobal && !(sysVar.HasGlobalScope() || sysVar.HasInstanceScope()) {
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
@@ -1316,8 +1334,10 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	nativeVal, nativeType, nativeFlag := sysVar.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
-	e.GetType().Charset, _ = sessionVars.GetSystemVar(variable.CharacterSetConnection)
-	e.GetType().Collate, _ = sessionVars.GetSystemVar(variable.CollationConnection)
+	charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
+	e.GetType().SetCharset(charset)
+	collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
+	e.GetType().SetCollate(collate)
 	er.ctxStackAppend(e, types.EmptyName)
 }
 
@@ -1452,7 +1472,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	}
 	args := er.ctxStack[stkLen-lLen-1:]
 	leftFt := args[0].GetType()
-	leftEt, leftIsNull := leftFt.EvalType(), leftFt.Tp == mysql.TypeNull
+	leftEt, leftIsNull := leftFt.EvalType(), leftFt.GetType() == mysql.TypeNull
 	if leftIsNull {
 		er.ctxStackPop(lLen + 1)
 		er.ctxStackAppend(expression.NewNull(), types.EmptyName)
@@ -1484,7 +1504,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	}
 	allSameType := true
 	for _, arg := range args[1:] {
-		if arg.GetType().Tp != mysql.TypeNull && expression.GetAccurateCmpType(args[0], arg) != leftEt {
+		if arg.GetType().GetType() != mysql.TypeNull && expression.GetAccurateCmpType(args[0], arg) != leftEt {
 			allSameType = false
 			break
 		}
@@ -1545,13 +1565,14 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 		return
 	}
 	for i := stkLen - elemCnt; i < stkLen; i++ {
+		// todo: consider refining the code and reusing expression.BuildCollationFunction here
 		if er.ctxStack[i].GetType().EvalType() == types.ETString {
 			rowFunc, ok := er.ctxStack[i].(*expression.ScalarFunction)
 			if ok && rowFunc.FuncName.String() == ast.RowFunc {
 				continue
 			}
 			// Don't convert it if it's charset is binary. So that we don't convert 0x12 to a string.
-			if er.ctxStack[i].GetType().Collate == coll.Collation {
+			if er.ctxStack[i].GetType().GetCollate() == coll.Collation {
 				continue
 			}
 			tp := er.ctxStack[i].GetType().Clone()
@@ -1561,8 +1582,17 @@ func (er *expressionRewriter) castCollationForIn(colLen int, elemCnt int, stkLen
 				} else {
 					continue
 				}
+			} else if coll.Charset == charset.CharsetBin {
+				// When cast character string to binary string, if we still use fixed length representation,
+				// then 0 padding will be used, which can affect later execution.
+				// e.g. https://github.com/pingcap/tidb/pull/35053#pullrequestreview-1008757770 gives an unexpected case.
+				// On the other hand, we can not directly return origin expr back,
+				// since we need binary collation to do string comparison later.
+				// Here we use VarString type of cast, i.e `cast(a as binary)`, to avoid this problem.
+				tp.SetType(mysql.TypeVarString)
 			}
-			tp.Charset, tp.Collate = coll.Charset, coll.Collation
+			tp.SetCharset(coll.Charset)
+			tp.SetCollate(coll.Collation)
 			er.ctxStack[i] = expression.BuildCastFunction(er.sctx, er.ctxStack[i], tp)
 			er.ctxStack[i].SetCoercibility(expression.CoercibilityExplicit)
 		}
@@ -1793,12 +1823,12 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		arg1 := er.ctxStack[stackLen-2]
 		col, isColumn := arg1.(*expression.Column)
 		var isEnumSet bool
-		if arg1.GetType().Tp == mysql.TypeEnum || arg1.GetType().Tp == mysql.TypeSet {
+		if arg1.GetType().GetType() == mysql.TypeEnum || arg1.GetType().GetType() == mysql.TypeSet {
 			isEnumSet = true
 		}
 		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
 		// this column.
-		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.Flag) {
+		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
 			name := er.ctxNameStk[stackLen-2]
 			newCol := col.Clone().(*expression.Column)
 			er.ctxStackPop(len(v.Args))
@@ -1823,7 +1853,9 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		}
 		// NULL
 		nullTp := types.NewFieldType(mysql.TypeNull)
-		nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+		flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
+		nullTp.SetFlen(flen)
+		nullTp.SetDecimal(decimal)
 		paramNull := &expression.Constant{
 			Value:   types.NewDatum(nil),
 			RetType: nullTp,
@@ -2014,14 +2046,14 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	isCurrentTimestamp := hasCurrentDatetimeDefault(col)
 	var val *expression.Constant
 	switch {
-	case isCurrentTimestamp && (col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp):
-		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.Tp, col.Decimal)
+	case isCurrentTimestamp && (col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp):
+		t, err := expression.GetTimeValue(er.sctx, ast.CurrentTimestamp, col.GetType(), col.GetDecimal())
 		if err != nil {
 			return
 		}
 		val = &expression.Constant{
 			Value:   t,
-			RetType: types.NewFieldType(col.Tp),
+			RetType: types.NewFieldType(col.GetType()),
 		}
 	default:
 		// for other columns, just use what it is
@@ -2043,9 +2075,10 @@ func hasCurrentDatetimeDefault(col *table.Column) bool {
 }
 
 func decodeKeyFromString(ctx sessionctx.Context, s string) string {
+	sc := ctx.GetSessionVars().StmtCtx
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 		return s
 	}
 	// Auto decode byte if needed.
@@ -2055,39 +2088,44 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 	}
 	tableID := tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 		return s
 	}
 	dm := domain.GetDomain(ctx)
 	if dm == nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("domain not found when decoding record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("domain not found when decoding key: %X", key))
 		return s
 	}
-	tbl, _ := dm.InfoSchema().TableByID(tableID)
+	is := dm.InfoSchema()
+	if is == nil {
+		sc.AppendWarning(errors.Errorf("infoschema not found when decoding key: %X", key))
+		return s
+	}
+	tbl, _ := is.TableByID(tableID)
 	loc := ctx.GetSessionVars().Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsIndexKey(key) {
 		ret, err := decodeIndexKey(key, tableID, tbl, loc)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
-		ret, err := decodeTableKey(key, tableID, tbl, loc)
+		ret, err := decodeTableKey(key, tableID)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	}
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+	sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 	return s
 }
 
@@ -2100,7 +2138,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret := make(map[string]interface{})
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
 		// When the clustered index is enabled, we should show the PK name.
-		if tbl.Meta().HasClusteredIndex() {
+		if tbl != nil && tbl.Meta().HasClusteredIndex() {
 			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
 		} else {
 			ret["_tidb_rowid"] = handle.IntValue()
@@ -2235,7 +2273,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	return string(retStr), nil
 }
 
-func decodeTableKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
+func decodeTableKey(key []byte, tableID int64) (string, error) {
 	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {

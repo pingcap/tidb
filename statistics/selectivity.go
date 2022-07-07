@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"math"
 	"math/bits"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -125,7 +125,7 @@ func pseudoSelectivity(coll *HistColl, exprs []expression.Expression) float64 {
 				continue
 			}
 			colExists[col.Info.Name.L] = true
-			if mysql.HasUniKeyFlag(col.Info.Flag) {
+			if mysql.HasUniKeyFlag(col.Info.GetFlag()) {
 				return 1.0 / float64(coll.Count)
 			}
 		case ast.GE, ast.GT, ast.LE, ast.LT:
@@ -317,6 +317,34 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 	}
 
+	// Try to cover Constants
+	if mask > 0 {
+		for i, expr := range remainedExprs {
+			if mask&(1<<uint64(i)) == 0 {
+				continue
+			}
+			if c, ok := expr.(*expression.Constant); ok {
+				if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{c}) {
+					continue
+				}
+				if c.Value.IsNull() {
+					// c is null
+					ret *= 0
+					mask &^= 1 << uint64(i)
+				} else if isTrue, err := c.Value.ToBool(sc); err == nil {
+					if isTrue == 0 {
+						// c is false
+						ret *= 0
+					}
+					// c is true, no need to change ret
+					mask &^= 1 << uint64(i)
+				}
+				// Not expected to come here:
+				// err != nil, no need to do anything.
+			}
+		}
+	}
+
 	// Now we try to cover those still not covered DNF conditions using independence assumption,
 	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
 	if mask > 0 {
@@ -353,24 +381,6 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				_, ok := cond.(*expression.CorrelatedColumn)
 				if ok {
 					continue
-				}
-				// where {"0" / 0 / "false" / false / null} or A or B ... the '0' constant item should be ignored.
-				if c, ok := cond.(*expression.Constant); ok {
-					if !expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{cond}) {
-						if c.Value.IsNull() {
-							// constant is null
-							continue
-						}
-						if isTrue, err := c.Value.ToBool(sc); err == nil {
-							if isTrue == 0 {
-								// constant == 0
-								continue
-							}
-							// constant == 1
-							selectivity = 1.0
-							break
-						}
-					}
 				}
 
 				var cnfItems []expression.Expression
@@ -459,11 +469,11 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 
 // GetUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
-	sort.Slice(nodes, func(i int, j int) bool {
-		if r := compareType(nodes[i].Tp, nodes[j].Tp); r != 0 {
+	slices.SortFunc(nodes, func(i, j *StatsNode) bool {
+		if r := compareType(i.Tp, j.Tp); r != 0 {
 			return r < 0
 		}
-		return nodes[i].ID < nodes[j].ID
+		return i.ID < j.ID
 	})
 	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)

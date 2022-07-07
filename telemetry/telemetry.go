@@ -24,10 +24,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -122,7 +123,8 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 
 	// TODO: We should use the context from domain, so that when request is blocked for a long time it will not
 	// affect TiDB shutdown.
-	reqCtx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
+	reqCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTelemetry)
+	reqCtx, cancel := context.WithTimeout(reqCtx, uploadTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "POST", apiEndpoint, bytes.NewReader(rawJSON))

@@ -139,7 +139,7 @@ func TestAdjustBackendNotSet(t *testing.T) {
 	cfg := config.NewConfig()
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	require.EqualError(t, err, "tikv-importer.backend must not be empty!")
+	require.EqualError(t, err, "[Lightning:Config:ErrInvalidConfig]tikv-importer.backend must not be empty!")
 }
 
 func TestAdjustInvalidBackend(t *testing.T) {
@@ -147,34 +147,46 @@ func TestAdjustInvalidBackend(t *testing.T) {
 	cfg.TikvImporter.Backend = "no_such_backend"
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
-	require.EqualError(t, err, "invalid config: unsupported `tikv-importer.backend` (no_such_backend)")
+	require.EqualError(t, err, "[Lightning:Config:ErrInvalidConfig]unsupported `tikv-importer.backend` (no_such_backend)")
 }
 
 func TestCheckAndAdjustFilePath(t *testing.T) {
 	tmpDir := t.TempDir()
 	// use slashPath in url to be compatible with windows
 	slashPath := filepath.ToSlash(tmpDir)
+	pwd, err := os.Getwd()
+	require.NoError(t, err)
+	specialDir, err := os.MkdirTemp(tmpDir, "abc??bcd")
+	require.NoError(t, err)
+	specialDir1, err := os.MkdirTemp(tmpDir, "abc%3F%3F%3Fbcd")
+	require.NoError(t, err)
 
 	cfg := config.NewConfig()
-	cases := []string{
-		tmpDir,
-		".",
-		"file://" + slashPath,
-		"local://" + slashPath,
-		"s3://bucket_name",
-		"s3://bucket_name/path/to/dir",
-		"gcs://bucketname/path/to/dir",
-		"gs://bucketname/path/to/dir",
-		"noop:///",
-	}
 
+	cases := []struct {
+		test   string
+		expect string
+	}{
+		{tmpDir, tmpDir},
+		{".", filepath.ToSlash(pwd)},
+		{specialDir, specialDir},
+		{specialDir1, specialDir1},
+		{"file://" + slashPath, slashPath},
+		{"local://" + slashPath, slashPath},
+		{"s3://bucket_name", ""},
+		{"s3://bucket_name/path/to/dir", "/path/to/dir"},
+		{"gcs://bucketname/path/to/dir", "/path/to/dir"},
+		{"gs://bucketname/path/to/dir", "/path/to/dir"},
+		{"noop:///", "/"},
+	}
 	for _, testCase := range cases {
-		cfg.Mydumper.SourceDir = testCase
-
-		err := cfg.CheckAndAdjustFilePath()
+		cfg.Mydumper.SourceDir = testCase.test
+		err = cfg.CheckAndAdjustFilePath()
 		require.NoError(t, err)
+		u, err := url.Parse(cfg.Mydumper.SourceDir)
+		require.NoError(t, err)
+		require.Equal(t, testCase.expect, u.Path)
 	}
-
 }
 
 func TestAdjustFileRoutePath(t *testing.T) {
@@ -227,7 +239,7 @@ func TestInvalidSetting(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	require.EqualError(t, err, "invalid `tidb.port` setting")
+	require.EqualError(t, err, "[Lightning:Config:ErrInvalidConfig]invalid `tidb.port` setting")
 }
 
 func TestInvalidPDAddr(t *testing.T) {
@@ -242,7 +254,7 @@ func TestInvalidPDAddr(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
-	require.EqualError(t, err, "invalid `tidb.pd-addr` setting")
+	require.EqualError(t, err, "[Lightning:Config:ErrInvalidConfig]invalid `tidb.pd-addr` setting")
 }
 
 func TestAdjustWillNotContactServerIfEverythingIsDefined(t *testing.T) {
@@ -365,7 +377,7 @@ func TestInvalidCSV(t *testing.T) {
 				[mydumper.csv]
 				separator = ''
 			`,
-			err: "invalid config: `mydumper.csv.separator` must not be empty",
+			err: "[Lightning:Config:ErrInvalidConfig]`mydumper.csv.separator` must not be empty",
 		},
 		{
 			input: `
@@ -373,7 +385,7 @@ func TestInvalidCSV(t *testing.T) {
 				separator = 'hello'
 				delimiter = 'hel'
 			`,
-			err: "invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
+			err: "[Lightning:Config:ErrInvalidConfig]`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
 		},
 		{
 			input: `
@@ -381,7 +393,7 @@ func TestInvalidCSV(t *testing.T) {
 				separator = 'hel'
 				delimiter = 'hello'
 			`,
-			err: "invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
+			err: "[Lightning:Config:ErrInvalidConfig]`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
 		},
 		{
 			input: `
@@ -434,7 +446,7 @@ func TestInvalidCSV(t *testing.T) {
 				separator = '|'
 				delimiter = '|'
 			`,
-			err: "invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
+			err: "[Lightning:Config:ErrInvalidConfig]`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other",
 		},
 		{
 			input: `
@@ -442,7 +454,7 @@ func TestInvalidCSV(t *testing.T) {
 				separator = '\'
 				backslash-escape = true
 			`,
-			err: "invalid config: cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true",
 		},
 		{
 			input: `
@@ -450,14 +462,14 @@ func TestInvalidCSV(t *testing.T) {
 				delimiter = '\'
 				backslash-escape = true
 			`,
-			err: "invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
+			err: "[Lightning:Config:ErrInvalidConfig]cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true",
 		},
 		{
 			input: `
 				[tidb]
 				sql-mode = "invalid-sql-mode"
 			`,
-			err: "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE: ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'invalid-sql-mode'",
+			err: "[Lightning:Config:ErrInvalidConfig]`mydumper.tidb.sql_mode` must be a valid SQL_MODE: ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'invalid-sql-mode'",
 		},
 		{
 			input: `
@@ -465,7 +477,7 @@ func TestInvalidCSV(t *testing.T) {
 				schema-pattern = ""
 				table-pattern = "shard_table_*"
 			`,
-			err: "schema pattern of table route rule should not be empty",
+			err: "[Lightning:Config:ErrInvalidConfig]file route rule is invalid: schema pattern of table route rule should not be empty",
 		},
 		{
 			input: `
@@ -473,7 +485,7 @@ func TestInvalidCSV(t *testing.T) {
 				schema-pattern = "schema_*"
 				table-pattern = ""
 			`,
-			err: "target schema of table route rule should not be empty",
+			err: "[Lightning:Config:ErrInvalidConfig]file route rule is invalid: target schema of table route rule should not be empty",
 		},
 	}
 
@@ -505,7 +517,7 @@ func TestInvalidTOML(t *testing.T) {
 		delimiter = '\'
 		backslash-escape = true
 	`))
-	require.EqualError(t, err, "Near line 0 (last key parsed ''): bare keys cannot contain '['")
+	require.EqualError(t, err, "toml: line 2: expected '.' or '=', but got '[' instead")
 }
 
 func TestTOMLUnusedKeys(t *testing.T) {
@@ -553,7 +565,7 @@ func TestDuplicateResolutionAlgorithm(t *testing.T) {
 
 func TestLoadConfig(t *testing.T) {
 	cfg, err := config.LoadGlobalConfig([]string{"-tidb-port", "sss"}, nil)
-	require.EqualError(t, err, `invalid value "sss" for flag -tidb-port: parse error`)
+	require.EqualError(t, err, `[Lightning:Common:ErrInvalidArgument]invalid argument: invalid value "sss" for flag -tidb-port: parse error`)
 	require.Nil(t, cfg)
 
 	cfg, err = config.LoadGlobalConfig([]string{"-V"}, nil)
@@ -566,7 +578,7 @@ func TestLoadConfig(t *testing.T) {
 	require.Nil(t, cfg)
 
 	cfg, err = config.LoadGlobalConfig([]string{"--server-mode"}, nil)
-	require.EqualError(t, err, "If server-mode is enabled, the status-addr must be a valid listen address")
+	require.EqualError(t, err, "[Lightning:Config:ErrInvalidConfig]If server-mode is enabled, the status-addr must be a valid listen address")
 	require.Nil(t, cfg)
 
 	path, _ := filepath.Abs(".")
@@ -624,7 +636,7 @@ func TestLoadConfig(t *testing.T) {
 func TestDefaultImporterBackendValue(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
-	cfg.TikvImporter.Backend = "importer"
+	cfg.TikvImporter.Backend = "local"
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	require.NoError(t, err)
@@ -646,7 +658,7 @@ func TestDefaultTidbBackendValue(t *testing.T) {
 func TestDefaultCouldBeOverwritten(t *testing.T) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
-	cfg.TikvImporter.Backend = "importer"
+	cfg.TikvImporter.Backend = "local"
 	cfg.App.IndexConcurrency = 20
 	cfg.App.TableConcurrency = 60
 	cfg.TiDB.DistSQLScanConcurrency = 1
@@ -662,7 +674,7 @@ func TestLoadFromInvalidConfig(t *testing.T) {
 		ConfigFileContent: []byte("invalid toml"),
 	})
 	require.Error(t, err)
-	require.Regexp(t, "Near line 1.*", err.Error())
+	require.Regexp(t, "line 1.*", err.Error())
 }
 
 func TestTomlPostRestore(t *testing.T) {
@@ -743,7 +755,7 @@ func TestAdjustWithLegacyBlackWhiteList(t *testing.T) {
 	require.False(t, cfg.HasLegacyBlackWhiteList())
 
 	cfg.BWList.DoDBs = []string{"test"}
-	require.EqualError(t, cfg.Adjust(ctx), "invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
+	require.EqualError(t, cfg.Adjust(ctx), "[Lightning:Config:ErrInvalidConfig]`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 
 	cfg.Mydumper.Filter = config.DefaultFilter
 	require.NoError(t, cfg.Adjust(ctx))
@@ -919,7 +931,7 @@ func TestCheckAndAdjustForLocalBackend(t *testing.T) {
 
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = ""
-	require.EqualError(t, cfg.CheckAndAdjustForLocalBackend(), "tikv-importer.sorted-kv-dir must not be empty!")
+	require.EqualError(t, cfg.CheckAndAdjustForLocalBackend(), "[Lightning:Config:ErrInvalidConfig]tikv-importer.sorted-kv-dir must not be empty!")
 
 	// non exists dir is legal
 	cfg.TikvImporter.SortedKVDir = "./not-exists"

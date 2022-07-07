@@ -21,8 +21,9 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
+	"path"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/joho/sqltocsv"
@@ -33,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
-	"modernc.org/mathutil"
+	"golang.org/x/exp/slices"
 )
 
 type CheckpointStatus uint8
@@ -430,6 +433,7 @@ type ChunkCheckpointMerger struct {
 	Pos               int64
 	RowID             int64
 	ColumnPermutation []int
+	EndOffset         int64 // For test only.
 }
 
 func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
@@ -460,7 +464,7 @@ type RebaseCheckpointMerger struct {
 
 func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasRebase = true
-	cpd.allocBase = mathutil.MaxInt64(cpd.allocBase, merger.AllocBase)
+	cpd.allocBase = mathutil.Max(cpd.allocBase, merger.AllocBase)
 }
 
 type DestroyedTableCheckpoint struct {
@@ -490,7 +494,7 @@ type DB interface {
 	// It assumes the entire table has not been imported before and will fill in
 	// default values for the column permutations and checksums.
 	InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error
-	Update(checkpointDiffs map[string]*TableCheckpointDiff) error
+	Update(taskCtx context.Context, checkpointDiffs map[string]*TableCheckpointDiff) error
 
 	RemoveCheckpoint(ctx context.Context, tableName string) error
 	// MoveCheckpoints renames the checkpoint schema to include a suffix
@@ -513,22 +517,26 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
-		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		db, err := common.ConnectMySQL(cfg.Checkpoint.DSN)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
 		if err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, errors.Trace(err)
 		}
 		return cpdb, nil
 
 	case config.CheckpointDriverFile:
-		return NewFileCheckpointsDB(cfg.Checkpoint.DSN), nil
+		cpdb, err := NewFileCheckpointsDB(ctx, cfg.Checkpoint.DSN)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return cpdb, nil
 
 	default:
-		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+		return nil, common.ErrUnknownCheckpointDriver.GenWithStackByArgs(cfg.Checkpoint.Driver)
 	}
 }
 
@@ -542,12 +550,14 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer db.Close()
 		checkSQL := "SHOW DATABASES WHERE `DATABASE` = ?"
 		rows, err := db.QueryContext(ctx, checkSQL, cfg.Checkpoint.Schema)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer rows.Close()
 		result := rows.Next()
 		if err := rows.Err(); err != nil {
@@ -556,16 +566,18 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 		return result, nil
 
 	case config.CheckpointDriverFile:
-		_, err := os.Stat(cfg.Checkpoint.DSN)
-		if err == nil {
-			return true, err
-		} else if os.IsNotExist(err) {
-			return false, nil
+		s, fileName, err := createExstorageByCompletePath(ctx, cfg.Checkpoint.DSN)
+		if err != nil {
+			return false, errors.Trace(err)
 		}
-		return false, errors.Trace(err)
+		result, err := s.FileExists(ctx, fileName)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		return result, nil
 
 	default:
-		return false, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+		return false, common.ErrUnknownCheckpointDriver.GenWithStackByArgs(cfg.Checkpoint.Driver)
 	}
 }
 
@@ -599,7 +611,7 @@ func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _
 	return nil
 }
 
-func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) error {
+func (*NullCheckpointsDB) Update(context.Context, map[string]*TableCheckpointDiff) error {
 	return nil
 }
 
@@ -612,7 +624,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 	schema := common.EscapeIdentifier(schemaName)
 	sql := common.SQLWithRetry{
 		DB:           db,
-		Logger:       log.With(zap.String("schema", schemaName)),
+		Logger:       log.FromContext(ctx).With(zap.String("schema", schemaName)),
 		HideQueryLog: true,
 	}
 	err := sql.Exec(ctx, "create checkpoints database", fmt.Sprintf(CreateDBTemplate, schema))
@@ -649,12 +661,13 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
 	// We can have at most 65535 placeholders https://stackoverflow.com/q/4922345/
 	// Since this step is not performance critical, we just insert the rows one-by-one.
-	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
+	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.FromContext(ctx)}
 	err := s.Transact(ctx, "insert checkpoints", func(c context.Context, tx *sql.Tx) error {
 		taskStmt, err := tx.PrepareContext(c, fmt.Sprintf(InitTaskTemplate, cpdb.schema, CheckpointTableNameTask))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer taskStmt.Close()
 		_, err = taskStmt.ExecContext(ctx, cfg.TaskID, cfg.Mydumper.SourceDir, cfg.TikvImporter.Backend,
 			cfg.TikvImporter.Addr, cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.PdAddr, cfg.TikvImporter.SortedKVDir,
@@ -673,6 +686,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer stmt.Close()
 
 		for _, db := range dbInfo {
@@ -697,7 +711,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 func (cpdb *MySQLCheckpointsDB) TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error) {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
-		Logger: log.L(),
+		Logger: log.FromContext(ctx),
 	}
 
 	taskQuery := fmt.Sprintf(ReadTaskTemplate, cpdb.schema, CheckpointTableNameTask)
@@ -726,7 +740,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
-		Logger: log.With(zap.String("table", tableName)),
+		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	err := s.Transact(ctx, "read checkpoint", func(c context.Context, tx *sql.Tx) error {
 		// 1. Populate the engines.
@@ -736,6 +750,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer engineRows.Close()
 		for engineRows.Next() {
 			var (
@@ -760,6 +775,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer chunkRows.Close()
 		for chunkRows.Next() {
 			var (
@@ -815,19 +831,21 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
-		Logger: log.With(zap.String("table", tableName)),
+		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	err := s.Transact(ctx, "update engine checkpoints", func(c context.Context, tx *sql.Tx) error {
 		engineStmt, err := tx.PrepareContext(c, fmt.Sprintf(ReplaceEngineTemplate, cpdb.schema, CheckpointTableNameEngine))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer engineStmt.Close()
 
 		chunkStmt, err := tx.PrepareContext(c, fmt.Sprintf(ReplaceChunkTemplate, cpdb.schema, CheckpointTableNameChunk))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer chunkStmt.Close()
 
 		for engineID, engine := range checkpoints {
@@ -861,39 +879,44 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 	return nil
 }
 
-func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) error {
+func (cpdb *MySQLCheckpointsDB) Update(taskCtx context.Context, checkpointDiffs map[string]*TableCheckpointDiff) error {
 	chunkQuery := fmt.Sprintf(UpdateChunkTemplate, cpdb.schema, CheckpointTableNameChunk)
 	rebaseQuery := fmt.Sprintf(UpdateTableRebaseTemplate, cpdb.schema, CheckpointTableNameTable)
 	tableStatusQuery := fmt.Sprintf(UpdateTableStatusTemplate, cpdb.schema, CheckpointTableNameTable)
 	tableChecksumQuery := fmt.Sprintf(UpdateTableChecksumTemplate, cpdb.schema, CheckpointTableNameTable)
 	engineStatusQuery := fmt.Sprintf(UpdateEngineTemplate, cpdb.schema, CheckpointTableNameEngine)
 
-	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
-	return s.Transact(context.Background(), "update checkpoints", func(c context.Context, tx *sql.Tx) error {
+	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.FromContext(taskCtx)}
+	return s.Transact(taskCtx, "update checkpoints", func(c context.Context, tx *sql.Tx) error {
 		chunkStmt, e := tx.PrepareContext(c, chunkQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer chunkStmt.Close()
 		rebaseStmt, e := tx.PrepareContext(c, rebaseQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer rebaseStmt.Close()
 		tableStatusStmt, e := tx.PrepareContext(c, tableStatusQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer tableStatusStmt.Close()
 		tableChecksumStmt, e := tx.PrepareContext(c, tableChecksumQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer tableChecksumStmt.Close()
 		engineStatusStmt, e := tx.PrepareContext(c, engineStatusQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer engineStatusStmt.Close()
 		for tableName, cpd := range checkpointDiffs {
 			if cpd.hasStatus {
@@ -940,46 +963,135 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 type FileCheckpointsDB struct {
 	lock        sync.Mutex // we need to ensure only a thread can access to `checkpoints` at a time
 	checkpoints checkpointspb.CheckpointsModel
+	ctx         context.Context
 	path        string
+	fileName    string
+	exStorage   storage.ExternalStorage
 }
 
-func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
+func newFileCheckpointsDB(
+	ctx context.Context,
+	path string,
+	exStorage storage.ExternalStorage,
+	fileName string,
+) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
-		path: path,
 		checkpoints: checkpointspb.CheckpointsModel{
 			TaskCheckpoint: &checkpointspb.TaskCheckpointModel{},
 			Checkpoints:    map[string]*checkpointspb.TableCheckpointModel{},
 		},
+		ctx:       ctx,
+		path:      path,
+		fileName:  fileName,
+		exStorage: exStorage,
 	}
-	// ignore all errors -- file maybe not created yet (and it is fine).
-	content, err := os.ReadFile(path)
-	if err == nil {
-		err2 := cpdb.checkpoints.Unmarshal(content)
-		if err2 != nil {
-			log.L().Error("checkpoint file is broken", zap.String("path", path), zap.Error(err2))
-		}
-		// FIXME: patch for empty map may need initialize manually, because currently
-		// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
-		if cpdb.checkpoints.Checkpoints == nil {
-			cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
-		}
-		for _, table := range cpdb.checkpoints.Checkpoints {
-			if table.Engines == nil {
-				table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
-			}
-			for _, engine := range table.Engines {
-				if engine.Chunks == nil {
-					engine.Chunks = map[string]*checkpointspb.ChunkCheckpointModel{}
-				}
-			}
-		}
-	} else {
-		log.L().Info("open checkpoint file failed, going to create a new one",
+
+	if cpdb.fileName == "" {
+		return nil, errors.Errorf("the checkpoint DSN '%s' must not be a directory", path)
+	}
+
+	exist, err := cpdb.exStorage.FileExists(ctx, cpdb.fileName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !exist {
+		log.FromContext(ctx).Info("open checkpoint file failed, going to create a new one",
 			zap.String("path", path),
 			log.ShortError(err),
 		)
+		return cpdb, nil
 	}
-	return cpdb
+	content, err := cpdb.exStorage.ReadFile(ctx, cpdb.fileName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = cpdb.checkpoints.Unmarshal(content)
+	if err != nil {
+		log.FromContext(ctx).Error("checkpoint file is broken", zap.String("path", path), zap.Error(err))
+	}
+	// FIXME: patch for empty map may need initialize manually, because currently
+	// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
+	if cpdb.checkpoints.Checkpoints == nil {
+		cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
+	}
+	for _, table := range cpdb.checkpoints.Checkpoints {
+		if table.Engines == nil {
+			table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
+		}
+		for _, engine := range table.Engines {
+			if engine.Chunks == nil {
+				engine.Chunks = map[string]*checkpointspb.ChunkCheckpointModel{}
+			}
+		}
+	}
+	return cpdb, nil
+}
+
+func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
+	// init ExternalStorage
+	s, fileName, err := createExstorageByCompletePath(ctx, path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newFileCheckpointsDB(ctx, path, s, fileName)
+}
+
+func NewFileCheckpointsDBWithExstorageFileName(
+	ctx context.Context,
+	path string,
+	s storage.ExternalStorage,
+	fileName string,
+) (*FileCheckpointsDB, error) {
+	return newFileCheckpointsDB(ctx, path, s, fileName)
+}
+
+// createExstorageByCompletePath create ExternalStorage by completePath and return fileName.
+func createExstorageByCompletePath(ctx context.Context, completePath string) (storage.ExternalStorage, string, error) {
+	if completePath == "" {
+		return nil, "", nil
+	}
+	fileName, newPath, err := separateCompletePath(completePath)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	u, err := storage.ParseBackend(newPath, nil)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	return s, fileName, nil
+}
+
+// separateCompletePath separates fileName from completePath, returns fileName and newPath.
+func separateCompletePath(completePath string) (string, string, error) {
+	if completePath == "" {
+		return "", "", nil
+	}
+	var fileName, newPath string
+	purl, err := storage.ParseRawURL(completePath)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	// not url format, we don't use url library to avoid being escaped or unescaped
+	if purl.Scheme == "" {
+		// no fileName, just path
+		if strings.HasSuffix(completePath, "/") {
+			return "", completePath, nil
+		}
+		fileName = path.Base(completePath)
+		newPath = path.Dir(completePath)
+	} else {
+		if strings.HasSuffix(purl.Path, "/") {
+			return "", completePath, nil
+		}
+		fileName = path.Base(purl.Path)
+		purl.Path = path.Dir(purl.Path)
+		newPath = purl.String()
+	}
+	return fileName, newPath, nil
 }
 
 func (cpdb *FileCheckpointsDB) save() error {
@@ -987,16 +1099,7 @@ func (cpdb *FileCheckpointsDB) save() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// because `os.WriteFile` is not atomic, directly write into it may reset the file
-	// to an empty file if write is not finished.
-	tmpPath := cpdb.path + ".tmp"
-	if err := os.WriteFile(tmpPath, serialized, 0o600); err != nil {
-		return errors.Trace(err)
-	}
-	if err := os.Rename(tmpPath, cpdb.path); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return cpdb.exStorage.WriteFile(cpdb.ctx, cpdb.fileName, serialized)
 }
 
 func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
@@ -1115,8 +1218,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		sort.Slice(engine.Chunks, func(i, j int) bool {
-			return engine.Chunks[i].Key.less(&engine.Chunks[j].Key)
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
+			return i.Key.less(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine
@@ -1164,7 +1267,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 	return errors.Trace(cpdb.save())
 }
 
-func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) error {
+func (cpdb *FileCheckpointsDB) Update(_ context.Context, checkpointDiffs map[string]*TableCheckpointDiff) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
@@ -1241,7 +1344,7 @@ func (*NullCheckpointsDB) DumpChunks(context.Context, io.Writer) error {
 func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
-		Logger: log.With(zap.String("table", tableName)),
+		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 
 	if tableName == allTables {
@@ -1273,7 +1376,7 @@ func (cpdb *MySQLCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int6
 	newSchema := fmt.Sprintf("`%s.%d.bak`", cpdb.schema[1:len(cpdb.schema)-1], taskID)
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
-		Logger: log.With(zap.Int64("taskID", taskID)),
+		Logger: log.FromContext(ctx).With(zap.Int64("taskID", taskID)),
 	}
 
 	createSchemaQuery := "CREATE SCHEMA IF NOT EXISTS " + newSchema
@@ -1313,12 +1416,13 @@ func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[
 		CheckpointStatusMaxInvalid, CheckpointStatusIndexImported,
 		CheckpointStatusMaxInvalid, CheckpointStatusImported)
 
-	err := common.Retry("get local storing tables", log.L(), func() error {
+	err := common.Retry("get local storing tables", log.FromContext(ctx), func() error {
 		targetTables = make(map[string][]int32)
 		rows, err := cpdb.db.QueryContext(ctx, query) // #nosec G201
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer rows.Close()
 		for rows.Next() {
 			var (
@@ -1352,16 +1456,19 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		colName = columnTableName
 	}
 
+	// nolint:gosec
 	engineQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, CheckpointTableNameEngine, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
+
+	// nolint:gosec
 	tableQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, CheckpointTableNameTable, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
 
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
-		Logger: log.With(zap.String("table", tableName)),
+		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	err := s.Transact(ctx, "ignore error checkpoints", func(c context.Context, tx *sql.Tx) error {
 		if _, e := tx.ExecContext(c, engineQuery, tableName); e != nil {
@@ -1398,12 +1505,18 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		WHERE %[2]s = ? AND t.status <= %[3]d
 		GROUP BY t.table_name;
 	`, cpdb.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine)
+
+	// nolint:gosec
 	deleteChunkQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameChunk, CheckpointTableNameTable)
+
+	// nolint:gosec
 	deleteEngineQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameEngine, CheckpointTableNameTable)
+
+	// nolint:gosec
 	deleteTableQuery := fmt.Sprintf(`
 		DELETE FROM %s.%s WHERE %s = ? AND status <= %d
 	`, cpdb.schema, CheckpointTableNameTable, colName, CheckpointStatusMaxInvalid)
@@ -1412,7 +1525,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
-		Logger: log.With(zap.String("table", tableName)),
+		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	err := s.Transact(ctx, "destroy error checkpoints", func(c context.Context, tx *sql.Tx) error {
 		// Obtain the list of tables
@@ -1421,6 +1534,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer rows.Close()
 		for rows.Next() {
 			var dtc DestroyedTableCheckpoint
@@ -1468,6 +1582,7 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer rows.Close()
 
 	return errors.Trace(sqltocsv.Write(writer, rows))
@@ -1487,6 +1602,7 @@ func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Write
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer rows.Close()
 
 	return errors.Trace(sqltocsv.Write(writer, rows))
@@ -1518,6 +1634,7 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer rows.Close()
 
 	return errors.Trace(sqltocsv.Write(writer, rows))
@@ -1529,7 +1646,7 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 
 	if tableName == allTables {
 		cpdb.checkpoints.Reset()
-		return errors.Trace(os.Remove(cpdb.path))
+		return errors.Trace(cpdb.exStorage.DeleteFile(cpdb.ctx, cpdb.fileName))
 	}
 
 	delete(cpdb.checkpoints.Checkpoints, tableName)
@@ -1540,8 +1657,8 @@ func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	newPath := fmt.Sprintf("%s.%d.bak", cpdb.path, taskID)
-	return errors.Trace(os.Rename(cpdb.path, newPath))
+	newFileName := fmt.Sprintf("%s.%d.bak", cpdb.fileName, taskID)
+	return cpdb.exStorage.Rename(cpdb.ctx, cpdb.fileName, newFileName)
 }
 
 func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context) (map[string][]int32, error) {

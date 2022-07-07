@@ -19,6 +19,11 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 )
 
+const (
+	UserNameMaxLength = 32
+	HostNameMaxLength = 255
+)
+
 // UserIdentity represents username and hostname.
 type UserIdentity struct {
 	Username     string
@@ -58,6 +63,9 @@ func (user *UserIdentity) String() string {
 // It matches the login user.
 func (user *UserIdentity) LoginString() string {
 	// TODO: Escape username and hostname.
+	if user == nil {
+		return ""
+	}
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 

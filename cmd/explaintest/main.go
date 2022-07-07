@@ -535,8 +535,8 @@ func (t *tester) executeStmt(query string) error {
 			}
 			t.buf.WriteString("\n")
 		}
-		err = rows.Err()
-		if err != nil {
+
+		if err = rows.Err(); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -721,6 +721,8 @@ func main() {
 		"set @@tidb_projection_concurrency=4",
 		"set @@tidb_distsql_scan_concurrency=15",
 		"set @@global.tidb_enable_clustered_index=0;",
+		"set @@global.tidb_mem_quota_query=34359738368",
+		"set @@tidb_mem_quota_query=34359738368",
 	}
 	for _, sql := range resets {
 		if _, err = mdb.Exec(sql); err != nil {
@@ -763,7 +765,7 @@ func main() {
 	log.Info("Explain test passed")
 }
 
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with"}
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with", "trace"}
 
 func trimSQL(sql string) string {
 	// Trim space.

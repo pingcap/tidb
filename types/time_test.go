@@ -15,6 +15,7 @@
 package types_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -333,8 +334,9 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, types.MinFsp)
+		duration, isNull, err := types.ParseDuration(sc, test.Input, types.MinFsp)
 		require.NoError(t, err)
+		require.False(t, isNull)
 		require.Equal(t, test.Expect, duration.String())
 	}
 
@@ -348,8 +350,24 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
 		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
+	}
+
+	table = []struct {
+		Input  string
+		Expect string
+	}{
+		{"0x", "00:00:00.000000"},
+		{"1x", "00:00:01.000000"},
+		{"0000-00-00", "00:00:00.000000"},
+	}
+
+	for _, test := range table {
+		duration, isNull, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		require.False(t, isNull)
+		require.True(t, types.ErrTruncatedWrongVal.Equal(err))
 		require.Equal(t, test.Expect, duration.String())
 	}
 
@@ -360,11 +378,11 @@ func TestTime(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(sc, test, types.DefaultFsp)
+		_, _, err := types.ParseDuration(sc, test, types.DefaultFsp)
 		require.Error(t, err)
 	}
 
-	duration, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
+	duration, _, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
 	require.Error(t, err)
 	require.Equal(t, "838:59:59", duration.String())
 
@@ -407,15 +425,15 @@ func TestDurationAdd(t *testing.T) {
 		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
 	}
 	for _, test := range table {
-		duration, err := types.ParseDuration(nil, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(nil, test.Input, test.Fsp)
 		require.NoError(t, err)
-		ta, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
+		ta, _, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
 		require.NoError(t, err)
 		result, err := duration.Add(ta)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, result.String())
 	}
-	duration, err := types.ParseDuration(nil, "00:00:00", 0)
+	duration, _, err := types.ParseDuration(nil, "00:00:00", 0)
 	require.NoError(t, err)
 	ta := new(types.Duration)
 	result, err := duration.Add(*ta)
@@ -423,7 +441,7 @@ func TestDurationAdd(t *testing.T) {
 	require.Equal(t, "00:00:00", result.String())
 
 	duration = types.Duration{Duration: math.MaxInt64, Fsp: 0}
-	tatmp, err := types.ParseDuration(nil, "00:01:00", 0)
+	tatmp, _, err := types.ParseDuration(nil, "00:01:00", 0)
 	require.NoError(t, err)
 	_, err = duration.Add(tatmp)
 	require.Error(t, err)
@@ -443,9 +461,9 @@ func TestDurationSub(t *testing.T) {
 		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
 	}
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
-		ta, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
+		ta, _, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
 		require.NoError(t, err)
 		result, err := duration.Sub(ta)
 		require.NoError(t, err)
@@ -474,7 +492,7 @@ func TestTimeFsp(t *testing.T) {
 	}
 
 	for _, test := range table {
-		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		duration, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, duration.String())
 	}
@@ -487,7 +505,7 @@ func TestTimeFsp(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		_, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.Error(t, err)
 	}
 }
@@ -752,7 +770,7 @@ func TestToNumber(t *testing.T) {
 	}
 
 	for _, test := range tblDuration {
-		v, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		v, _, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		require.NoError(t, err)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
 		require.Equal(t, test.Expect, v.ToNumber().String())
@@ -896,7 +914,7 @@ func TestRoundFrac(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
+		v, _, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
 		nv, err := v.RoundFrac(tt.Fsp, sc.TimeZone)
 		require.NoError(t, err)
@@ -958,7 +976,7 @@ func TestConvert(t *testing.T) {
 	// test different time zone.
 	sc.TimeZone = time.UTC
 	for _, tt := range tblDuration {
-		v, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
+		v, _, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
 		require.NoError(t, err)
 		year, month, day := time.Now().In(sc.TimeZone).Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
@@ -1009,7 +1027,7 @@ func TestCompare(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		v1, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
+		v1, _, err := types.ParseDuration(nil, tt.Arg1, types.MaxFsp)
 		require.NoError(t, err)
 
 		ret, err := v1.CompareString(nil, tt.Arg2)
@@ -1033,7 +1051,7 @@ func TestDurationClock(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		d, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
+		d, _, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.Hour, d.Hour())
 		require.Equal(t, tt.Minute, d.Minute())
@@ -1150,7 +1168,7 @@ func TestTimeAdd(t *testing.T) {
 	for _, tt := range tbl {
 		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
-		dur, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
+		dur, _, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
 		require.NoError(t, err)
 		result, err := types.ParseTime(sc, tt.Ret, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
@@ -1351,7 +1369,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "MINUTE_SECOND",
 			format: "61:61",
-			ans:    "01:02:01.000000",
+			ans:    "01:02:01",
 		},
 		{
 			unit:   "HOUR_MICROSECOND",
@@ -1361,7 +1379,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "HOUR_SECOND",
 			format: "01:61:01",
-			ans:    "02:01:01.000000",
+			ans:    "02:01:01",
 		},
 		{
 			unit:   "HOUr_MINUTE",
@@ -1376,7 +1394,7 @@ func TestExtractDurationValue(t *testing.T) {
 		{
 			unit:   "DAY_SeCOND",
 			format: "1 02:03:04",
-			ans:    "26:03:04.000000",
+			ans:    "26:03:04",
 		},
 		{
 			unit:   "DAY_MINUTE",
@@ -1614,45 +1632,47 @@ func TestParseDurationValue(t *testing.T) {
 		res2   int64
 		res3   int64
 		res4   int64
+		res5   int
 		err    *terror.Error
 	}{
-		{"52", "WEEK", 0, 0, 52 * 7, 0, nil},
-		{"12", "DAY", 0, 0, 12, 0, nil},
-		{"04", "MONTH", 0, 04, 0, 0, nil},
-		{"1", "QUARTER", 0, 1 * 3, 0, 0, nil},
-		{"2019", "YEAR", 2019, 0, 0, 0, nil},
-		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
-		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, nil},
-		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -10567890000, nil},
-		{"35:10567890", "MINUTE_SECOND", 0, 0, 122, 29190000000000, nil},      // 122 * 3600 * 24 + 29190 = 35 * 60 + 10567890
-		{"3510567890", "MINUTE_SECOND", 0, 0, 40631, 49490000000000, nil},     // 40631 * 3600 * 24 + 49490 = 3510567890
-		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 41710567890000, nil}, // = (11 * 3600 + 35 * 60) * 1000000000 + 10567890000
-		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 567890000, nil},
-		{"14:00", "HOUR_MINUTE", 0, 0, 0, 50400000000000, nil},
-		{"14", "HOUR_MINUTE", 0, 0, 0, 840000000000, nil},
-		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 50400345000000, nil},
-		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 50400000000000, nil},
-		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 50400000000000, nil},
-		{"12 14", "DAY_HOUR", 0, 0, 12, 50400000000000, nil},
-		{"1:1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
-		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3600000000000, nil},
-		{"-1:1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
-		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3600000000000, nil},
-		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0, nil},
-		{"1 1", "YEAR_MONTH", 1, 1, 0, 0, nil},
-		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0, nil},
-		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, nil},
-		{"1.111", "MICROSECOND", 0, 0, 0, 1000, types.ErrTruncatedWrongVal},
-		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongVal},
+		{"52", "WEEK", 0, 0, 52 * 7, 0, 0, nil},
+		{"12", "DAY", 0, 0, 12, 0, 0, nil},
+		{"04", "MONTH", 0, 04, 0, 0, 0, nil},
+		{"1", "QUARTER", 0, 1 * 3, 0, 0, 0, nil},
+		{"2019", "YEAR", 2019, 0, 0, 0, 0, nil},
+		{"10567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, 6, nil},
+		{"10.567890", "SECOND_MICROSECOND", 0, 0, 0, 10567890000, 6, nil},
+		{"-10.567890", "SECOND_MICROSECOND", 0, 0, 0, -10567890000, 6, nil},
+		{"35:10567890", "MINUTE_SECOND", 0, 0, 122, 29190000000000, 0, nil},      // 122 * 3600 * 24 + 29190 = 35 * 60 + 10567890
+		{"3510567890", "MINUTE_SECOND", 0, 0, 40631, 49490000000000, 0, nil},     // 40631 * 3600 * 24 + 49490 = 3510567890
+		{"11:35:10.567890", "HOUR_MICROSECOND", 0, 0, 0, 41710567890000, 6, nil}, // = (11 * 3600 + 35 * 60) * 1000000000 + 10567890000
+		{"567890", "HOUR_MICROSECOND", 0, 0, 0, 567890000, 6, nil},
+		{"14:00", "HOUR_MINUTE", 0, 0, 0, 50400000000000, 0, nil},
+		{"14", "HOUR_MINUTE", 0, 0, 0, 840000000000, 0, nil},
+		{"12 14:00:00.345", "DAY_MICROSECOND", 0, 0, 12, 50400345000000, 6, nil},
+		{"12 14:00:00", "DAY_SECOND", 0, 0, 12, 50400000000000, 0, nil},
+		{"12 14:00", "DAY_MINUTE", 0, 0, 12, 50400000000000, 0, nil},
+		{"12 14", "DAY_HOUR", 0, 0, 12, 50400000000000, 0, nil},
+		{"1:1", "DAY_HOUR", 0, 0, 1, 3600000000000, 0, nil},
+		{"aa1bb1", "DAY_HOUR", 0, 0, 1, 3600000000000, 0, nil},
+		{"-1:1", "DAY_HOUR", 0, 0, -1, -3600000000000, 0, nil},
+		{"-aa1bb1", "DAY_HOUR", 0, 0, -1, -3600000000000, 0, nil},
+		{"2019-12", "YEAR_MONTH", 2019, 12, 0, 0, 0, nil},
+		{"1 1", "YEAR_MONTH", 1, 1, 0, 0, 0, nil},
+		{"aa1bb1", "YEAR_MONTH", 1, 1, 0, 0, 0, nil},
+		{"-1 1", "YEAR_MONTH", -1, -1, 0, 0, 0, nil},
+		{"-aa1bb1", "YEAR_MONTH", -1, -1, 0, 0, 0, nil},
+		{" \t\n\r\n - aa1bb1 \t\n ", "YEAR_MONTH", -1, -1, 0, 0, 0, nil},
+		{"1.111", "MICROSECOND", 0, 0, 0, 1000, 6, types.ErrTruncatedWrongVal},
+		{"1.111", "DAY", 0, 0, 1, 0, 0, types.ErrTruncatedWrongVal},
 	}
 	for _, col := range tbl {
-		res1, res2, res3, res4, err := types.ParseDurationValue(col.unit, col.format)
+		res1, res2, res3, res4, res5, err := types.ParseDurationValue(col.unit, col.format)
 		require.Equalf(t, col.res1, res1, "Extract %v Unit %v", col.format, col.unit)
 		require.Equalf(t, col.res2, res2, "Extract %v Unit %v", col.format, col.unit)
 		require.Equalf(t, col.res3, res3, "Extract %v Unit %v", col.format, col.unit)
 		require.Equalf(t, col.res4, res4, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res5, res5, "Extract %v Unit %v", col.format, col.unit)
 		if col.err == nil {
 			require.NoErrorf(t, err, "Extract %v Unit %v", col.format, col.unit)
 		} else {
@@ -1682,9 +1702,68 @@ func TestIsClockUnit(t *testing.T) {
 		{"DAY_MINUTE", true},
 		{"DAY_HOUR", true},
 		{"TEST", false},
+		{"SOME_MICROSECOND", false},
 	}
 	for _, col := range tbl {
 		output := types.IsClockUnit(col.input)
+		require.Equal(t, col.expected, output)
+	}
+}
+
+func TestIsDateUnit(t *testing.T) {
+	tbl := []struct {
+		input    string
+		expected bool
+	}{
+		{"Day", true},
+		{"Week", true},
+		{"month", true},
+		{"quarter", true},
+		{"YEAR", true},
+		{"DAY_MICROSECOND", true},
+		{"DAY_SECOND", true},
+		{"DAY_MINUTE", true},
+		{"DAY_HOUR", true},
+		{"YEAR_MONTH", true},
+		{"MICROSECOND", false},
+		{"SECOND", false},
+		{"MINUTE", false},
+		{"HOUR", false},
+		{"TEST", false},
+		{"SOME_DAY", false},
+	}
+	for _, col := range tbl {
+		output := types.IsDateUnit(col.input)
+		require.Equal(t, col.expected, output)
+	}
+}
+
+func TestIsMicrosecondUnit(t *testing.T) {
+	tbl := []struct {
+		input    string
+		expected bool
+	}{
+		{"Microsecond", true},
+		{"Second_microsecond", true},
+		{"minute_microsecond", true},
+		{"hour_microsecond", true},
+		{"DAY_MICROSECOND", true},
+		{"SECOND", false},
+		{"MINUTE", false},
+		{"HOUR", false},
+		{"DAY_SECOND", false},
+		{"DAY_MINUTE", false},
+		{"DAY_HOUR", false},
+		{"DAY", false},
+		{"WEEK", false},
+		{"MONTH", false},
+		{"QUARTER", false},
+		{"YEAR", false},
+		{"TEST", false},
+		{"SOME_MICROSECOND", false},
+	}
+	for _, col := range tbl {
+		output := types.IsMicrosecondUnit(col.input)
 		require.Equal(t, col.expected, output)
 	}
 }
@@ -1723,6 +1802,94 @@ func TestParseTimeFromInt64(t *testing.T) {
 	require.Equal(t, 00, output.Minute())
 	require.Equal(t, 00, output.Second())
 	require.Equal(t, 00, output.Microsecond())
+}
+
+func TestParseTimeFromFloat64(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+
+	cases := []struct {
+		f   float64
+		t   byte // type: date or datetime.
+		Y   int
+		M   int
+		D   int
+		h   int
+		m   int
+		s   int
+		us  int
+		err *terror.Error
+	}{
+		{20000102, mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{20000102.9, mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{0.0, mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
+		{20000102030405, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
+		{20000102030405.015625, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
+		{20000102030405.0078125, mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{2000, mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
+		{20000000000000, mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
+	}
+
+	for _, c := range cases {
+		res, err := types.ParseTimeFromFloat64(sc, c.f)
+		require.Equalf(t, c.t, res.Type(), "Type mismatch for case %v", c)
+		require.Equalf(t, c.Y, res.Year(), "Year mismatch for case %v", c)
+		require.Equalf(t, c.M, res.Month(), "Month mismatch for case %v", c)
+		require.Equalf(t, c.D, res.Day(), "Day mismatch for case %v", c)
+		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
+		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
+		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
+		require.Equalf(t, c.us, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		if c.err == nil {
+			require.NoErrorf(t, err, "Unexpected error for case %v", c)
+		} else {
+			require.Truef(t, c.err.Equal(err), "Error mismatch for case %v", c)
+		}
+	}
+}
+
+func TestParseTimeFromDecimal(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+
+	cases := []struct {
+		d   *types.MyDecimal
+		t   byte // type: date or datetime.
+		Y   int
+		M   int
+		D   int
+		h   int
+		m   int
+		s   int
+		us  int
+		err *terror.Error
+	}{
+		{types.NewDecFromStringForTest("20000102"), mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("20000102.9"), mysql.TypeDate, 2000, 1, 2, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("0.0"), mysql.TypeDate, 0, 0, 0, 0, 0, 0, 0, nil},
+		{types.NewDecFromStringForTest("20000102030405"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 0, nil},
+		{types.NewDecFromStringForTest("20000102030405.015625"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 15625, nil},
+		{types.NewDecFromStringForTest("20000102030405.0078125"), mysql.TypeDatetime, 2000, 1, 2, 3, 4, 5, 7812, nil},
+		{types.NewDecFromStringForTest("2000"), mysql.TypeDatetime, 0, 0, 0, 0, 0, 0, 0, types.ErrTruncatedWrongVal},
+		{types.NewDecFromStringForTest("20000000000000"), mysql.TypeDatetime, 2000, 0, 0, 0, 0, 0, 0, nil},
+	}
+
+	for _, c := range cases {
+		res, err := types.ParseTimeFromDecimal(sc, c.d)
+		require.Equalf(t, c.t, res.Type(), "Type mismatch for case %v", c)
+		require.Equalf(t, c.Y, res.Year(), "Year mismatch for case %v", c)
+		require.Equalf(t, c.M, res.Month(), "Month mismatch for case %v", c)
+		require.Equalf(t, c.D, res.Day(), "Day mismatch for case %v", c)
+		require.Equalf(t, c.h, res.Hour(), "Hour mismatch for case %v", c)
+		require.Equalf(t, c.m, res.Minute(), "Minute mismatch for case %v", c)
+		require.Equalf(t, c.s, res.Second(), "Second mismatch for case %v", c)
+		require.Equalf(t, c.us, res.Microsecond(), "Microsecond mismatch for case %v", c)
+		if c.err == nil {
+			require.NoErrorf(t, err, "Unexpected error for case %v", c)
+		} else {
+			require.Truef(t, c.err.Equal(err), "Error mismatch for case %v", c)
+		}
+	}
 }
 
 func TestGetFormatType(t *testing.T) {
@@ -1826,7 +1993,7 @@ func TestTimeSub(t *testing.T) {
 		require.NoError(t, err)
 		v2, err := types.ParseTime(sc, tt.Arg2, mysql.TypeDatetime, types.MaxFsp)
 		require.NoError(t, err)
-		dur, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
+		dur, _, err := types.ParseDuration(sc, tt.Ret, types.MaxFsp)
 		require.NoError(t, err)
 		rec := v1.Sub(sc, &v2)
 		require.Equal(t, dur, rec)
@@ -2033,6 +2200,17 @@ func TestParseWithTimezone(t *testing.T) {
 	}
 }
 
+func TestMarshalTime(t *testing.T) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	v1, err := types.ParseTime(sc, "2017-01-18 01:01:01.123456", mysql.TypeDatetime, types.MaxFsp)
+	require.NoError(t, err)
+	j, err := json.Marshal(v1)
+	require.NoError(t, err)
+	var v2 types.Time
+	require.NoError(t, json.Unmarshal(j, &v2))
+	require.Equal(t, 0, v1.Compare(v2))
+}
+
 func BenchmarkFormat(b *testing.B) {
 	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	for i := 0; i < b.N; i++ {
@@ -2048,7 +2226,7 @@ func BenchmarkTimeAdd(b *testing.B) {
 		TimeZone: time.UTC,
 	}
 	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp)
-	arg2, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
+	arg2, _, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
 	for i := 0; i < b.N; i++ {
 		_, err := arg1.Add(sc, arg2)
 		if err != nil {
