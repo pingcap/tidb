@@ -812,9 +812,16 @@ func TestCollateStringFunction(t *testing.T) {
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
 	// MySQL return 0 here, I believe it is a bug in MySQL since 'ß' == 's' under utf8mb4_general_ci collation.
 	tk.MustQuery("select locate('ß', 's' collate utf8mb4_general_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select locate('S', 's' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
 	tk.MustQuery("select locate('S', 'a' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 	tk.MustQuery("select locate('ß', 'ss' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('world', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("7"))
+	tk.MustQuery("select locate(' ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("6"))
+	tk.MustQuery("select locate('  ', 'hello world' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 
 	tk.MustExec("truncate table t1;")
 	tk.MustExec("insert into t1 (a) values (1);")
