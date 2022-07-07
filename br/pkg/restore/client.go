@@ -1985,7 +1985,7 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 
 const (
 	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
-	insertDeleteRangeSQLValue  = "(%d, %d, %s, %s, %%[1]d)"
+	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
 
 	batchInsertDeleteRangeSize = 256
 )
