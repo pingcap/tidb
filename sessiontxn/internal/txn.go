@@ -17,12 +17,11 @@ package internal
 import (
 	"context"
 
-	"github.com/pingcap/tidb/table/temptable"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
