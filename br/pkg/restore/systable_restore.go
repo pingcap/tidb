@@ -200,8 +200,8 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 		if rc.fullClusterRestore && sysPrivilegeTableSet[tableName] {
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
-			replaceIntoSQL := fmt.Sprintf("DELETE FROM %s;", utils.EncloseDBAndTable(db.Name.L, tableName))
-			if err := execSQL(replaceIntoSQL); err != nil {
+			deleteSQL := fmt.Sprintf("DELETE FROM %s;", utils.EncloseDBAndTable(db.Name.L, tableName))
+			if err := execSQL(deleteSQL); err != nil {
 				return err
 			}
 		}
