@@ -237,6 +237,9 @@
       "GOROOT/": "ignore code",
       "/cgo/": "ignore cgo",
       "tools/": "ignore tool code",
+      "parser/goyacc/": "ignore goyacc code",
+      "parser/ast/": "ignore parser/ast code",
+      "parser/test_driver/": "ignore parser/test_driver code",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
     },

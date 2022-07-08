@@ -367,7 +367,7 @@ func printRuleBody(f format.Formatter, rule *parser.Rule) error {
 				return err
 			}
 		}
-		counter += 1
+		counter++
 	}
 	if err := checkInconsistencyInYaccParser(f, rule, counter); err != nil {
 		return err

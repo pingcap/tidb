@@ -54,7 +54,7 @@ var collationsIDMap = make(map[int]*Collation)
 var collationsNameMap = make(map[string]*Collation)
 var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 
-// CharacterSetInfos: All the supported charsets should be in the following table.
+// CharacterSetInfos All the supported charsets should be in the following table.
 var CharacterSetInfos = map[string]*Charset{
 	CharsetUTF8:    {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
 	CharsetUTF8MB4: {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
@@ -160,7 +160,7 @@ func GetCharsetInfo(cs string) (*Charset, error) {
 }
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
-func GetCharsetInfoByID(coID int) (string, string, error) {
+func GetCharsetInfoByID(coID int) (defaultCharset string, defaultCollationName string, err error) {
 	if coID == mysql.DefaultCollationID {
 		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
 	}
@@ -180,6 +180,7 @@ func GetCollations() []*Collation {
 	return collations
 }
 
+// GetCollationByName returns the collation by name.
 func GetCollationByName(name string) (*Collation, error) {
 	collation, ok := collationsNameMap[strings.ToLower(name)]
 	if !ok {
@@ -209,8 +210,9 @@ const (
 	CollationASCII = "ascii_bin"
 	// CollationLatin1 is the default collation for CharsetLatin1.
 	CollationLatin1 = "latin1_bin"
-
-	CollationGBKBin       = "gbk_bin"
+	// CollationGBKBin is the default collation for CollationGBKBin.
+	CollationGBKBin = "gbk_bin"
+	// CollationGBKChineseCI is the default collation for CollationGBKChineseCI.
 	CollationGBKChineseCI = "gbk_chinese_ci"
 )
 
@@ -226,42 +228,42 @@ const (
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
 
-	CharsetARMSCII8 = "armscii8"
-	CharsetBig5     = "big5"
-	CharsetCP1250   = "cp1250"
-	CharsetCP1251   = "cp1251"
-	CharsetCP1256   = "cp1256"
-	CharsetCP1257   = "cp1257"
-	CharsetCP850    = "cp850"
-	CharsetCP852    = "cp852"
-	CharsetCP866    = "cp866"
-	CharsetCP932    = "cp932"
-	CharsetDEC8     = "dec8"
-	CharsetEUCJPMS  = "eucjpms"
-	CharsetEUCKR    = "euckr"
-	CharsetGB18030  = "gb18030"
-	CharsetGB2312   = "gb2312"
-	CharsetGBK      = "gbk"
-	CharsetGEOSTD8  = "geostd8"
-	CharsetGreek    = "greek"
-	CharsetHebrew   = "hebrew"
-	CharsetHP8      = "hp8"
-	CharsetKEYBCS2  = "keybcs2"
-	CharsetKOI8R    = "koi8r"
-	CharsetKOI8U    = "koi8u"
-	CharsetLatin2   = "latin2"
-	CharsetLatin5   = "latin5"
-	CharsetLatin7   = "latin7"
-	CharsetMacCE    = "macce"
-	CharsetMacRoman = "macroman"
-	CharsetSJIS     = "sjis"
-	CharsetSWE7     = "swe7"
-	CharsetTIS620   = "tis620"
-	CharsetUCS2     = "ucs2"
-	CharsetUJIS     = "ujis"
-	CharsetUTF16    = "utf16"
-	CharsetUTF16LE  = "utf16le"
-	CharsetUTF32    = "utf32"
+	CharsetARMSCII8 = "armscii8" //nolint: revive
+	CharsetBig5     = "big5"     //nolint: revive
+	CharsetCP1250   = "cp1250"   //nolint: revive
+	CharsetCP1251   = "cp1251"   //nolint: revive
+	CharsetCP1256   = "cp1256"   //nolint: revive
+	CharsetCP1257   = "cp1257"   //nolint: revive
+	CharsetCP850    = "cp850"    //nolint: revive
+	CharsetCP852    = "cp852"    //nolint: revive
+	CharsetCP866    = "cp866"    //nolint: revive
+	CharsetCP932    = "cp932"    //nolint: revive
+	CharsetDEC8     = "dec8"     //nolint: revive
+	CharsetEUCJPMS  = "eucjpms"  //nolint: revive
+	CharsetEUCKR    = "euckr"    //nolint: revive
+	CharsetGB18030  = "gb18030"  //nolint: revive
+	CharsetGB2312   = "gb2312"   //nolint: revive
+	CharsetGBK      = "gbk"      //nolint: revive
+	CharsetGEOSTD8  = "geostd8"  //nolint: revive
+	CharsetGreek    = "greek"    //nolint: revive
+	CharsetHebrew   = "hebrew"   //nolint: revive
+	CharsetHP8      = "hp8"      //nolint: revive
+	CharsetKEYBCS2  = "keybcs2"  //nolint: revive
+	CharsetKOI8R    = "koi8r"    //nolint: revive
+	CharsetKOI8U    = "koi8u"    //nolint: revive
+	CharsetLatin2   = "latin2"   //nolint: revive
+	CharsetLatin5   = "latin5"   //nolint: revive
+	CharsetLatin7   = "latin7"   //nolint: revive
+	CharsetMacCE    = "macce"    //nolint: revive
+	CharsetMacRoman = "macroman" //nolint: revive
+	CharsetSJIS     = "sjis"     //nolint: revive
+	CharsetSWE7     = "swe7"     //nolint: revive
+	CharsetTIS620   = "tis620"   //nolint: revive
+	CharsetUCS2     = "ucs2"     //nolint: revive
+	CharsetUJIS     = "ujis"     //nolint: revive
+	CharsetUTF16    = "utf16"    //nolint: revive
+	CharsetUTF16LE  = "utf16le"  //nolint: revive
+	CharsetUTF32    = "utf32"    //nolint: revive
 )
 
 var charsets = map[string]*Charset{
