@@ -3079,7 +3079,7 @@ func allSupported(specs []*ast.AlterTableSpec) bool {
 	for _, s := range specs {
 		switch s.Tp {
 		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey,
-			ast.AlterTableAddConstraint:
+			ast.AlterTableAddConstraint, ast.AlterTableModifyColumn, ast.AlterTableChangeColumn, ast.AlterTableRenameColumn:
 		default:
 			return false
 		}
@@ -4469,7 +4469,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		CtxVars: []interface{}{needChangeColData},
-		Args:    []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }

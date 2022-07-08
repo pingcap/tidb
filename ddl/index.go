@@ -1536,17 +1536,41 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func findIndexesByColName(indexes []*model.IndexInfo, colName string) ([]*model.IndexInfo, []int) {
-	idxInfos := make([]*model.IndexInfo, 0, len(indexes))
-	offsets := make([]int, 0, len(indexes))
-	for _, idxInfo := range indexes {
-		for i, c := range idxInfo.Columns {
-			if strings.EqualFold(colName, c.Name.L) {
-				idxInfos = append(idxInfos, idxInfo)
-				offsets = append(offsets, i)
+type indexesToChange struct {
+	indexInfo *model.IndexInfo
+	idxOffset int // index offset in tblInfo.Indices
+	colOffset int // column offset in idxInfo.Columns
+}
+
+// findIndexesByColName finds the indexes that covering the given column, and deduplicate
+// the indexes by original name.
+func findIndexesByColName(tblInfo *model.TableInfo, colName model.CIStr) []indexesToChange {
+	var result []indexesToChange
+	for i, idxInfo := range tblInfo.Indices {
+		origName := getChangingIndexOriginName(idxInfo)
+		for j, idxCol := range idxInfo.Columns {
+			if idxCol.Name.L != colName.L {
+				continue
+			}
+			r := indexesToChange{indexInfo: idxInfo, idxOffset: i, colOffset: j}
+			if !idxInfo.IsGenerated {
+				result = append(result, r)
 				break
 			}
+			// Deduplicate the index info by original name.
+			var dedup bool
+			for k, rs := range result {
+				if !rs.indexInfo.IsGenerated && origName == rs.indexInfo.Name.O {
+					result[k] = r
+					dedup = true
+					break
+				}
+			}
+			if !dedup {
+				result = append(result, r)
+			}
+			break
 		}
 	}
-	return idxInfos, offsets
+	return result
 }
