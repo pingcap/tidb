@@ -2179,7 +2179,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(ctx context.Context, columns []*ColumnInfo, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
@@ -2233,7 +2233,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
-			if err = cc.writeColumnInfo(ctx, columns, serverStatus); err != nil {
+			if err = cc.writeColumnInfo(columns, serverStatus); err != nil {
 				return false, err
 			}
 			gotColumnInfo = true

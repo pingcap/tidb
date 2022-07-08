@@ -246,7 +246,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		cc.initResultEncoder(ctx)
 		defer cc.rsEncoder.clean()
 		stmt.StoreResultSet(rs)
-		err = cc.writeColumnInfo(ctx, rs.Columns(), mysql.ServerStatusCursorExists)
+		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
 			return false, err
 		}
