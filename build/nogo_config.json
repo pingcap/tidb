@@ -237,13 +237,12 @@
       "GOROOT/": "ignore code",
       "/cgo/": "ignore cgo",
       "tools/": "ignore tool code",
-      "util/ranger": "ignore util/ranger code",
-      "parser/": "ignore goyacc code",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
       "util/": "util code",
+      "parser/": "parser code",
       "meta/": "parser code"
     }
   },
