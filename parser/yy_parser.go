@@ -148,8 +148,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	parser.src = sql
 	parser.result = parser.result[:0]
 
-	var l yyLexer
-	l = &parser.lexer
+	var l yyLexer = &parser.lexer
 	yyParse(l, parser)
 
 	warns, errs := l.Errors()

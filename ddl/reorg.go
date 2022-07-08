@@ -62,18 +62,16 @@ type reorgCtx struct {
 	// 0: job is not canceled.
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
-	// doneHandle is used to simulate the handle that has been processed.
-
+	// doneKey is used to record the key that has been processed.
 	doneKey atomic.Value // nullable kv.Key
 
 	// element is used to record the current element in the reorg process, it can be
 	// accessed by reorg-worker and daemon-worker concurrently.
 	element atomic.Value
 
-	// warnings is used to store the warnings when doing the reorg job under
-	// a certain SQL Mode.
 	mu struct {
 		sync.Mutex
+		// warnings are used to store the warnings when doing the reorg job under certain SQL modes.
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}
@@ -183,7 +181,7 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 // the additional ddl round.
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
-func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+func (w *worker) runReorgJob(rh *reorgHandler, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
 	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
@@ -241,7 +239,6 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
-		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
@@ -260,7 +257,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		case model.ActionModifyColumn:
 			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
 		}
-		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
 		}
@@ -283,7 +280,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a reorgInfo's handle.
 		// Since daemon-worker is triggered by timer to store the info half-way.
 		// you should keep these infos is read-only (like job) / atomic (like doneKey & element) / concurrent safe.
-		err := t.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
+		err := rh.UpdateDDLReorgStartHandle(job, currentElement, doneKey)
 
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
 			zap.Duration("waitTime", waitTimeout),
@@ -356,7 +353,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 
 func (dc *ddlCtx) isReorgRunnable(job *model.Job) error {
 	if isChanClosed(dc.ctx.Done()) {
-		// Worker is closed. So it can't do the reorganizational job.
+		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
@@ -461,6 +458,8 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	builder.Request.ResourceGroupTagger = ctx.getResourceGroupTaggerForTopSQL()
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
+	builder.RequestSource.RequestSourceInternal = true
+	builder.RequestSource.RequestSourceType = ctx.ddlJobSourceType()
 
 	kvReq, err := builder.Build()
 	if err != nil {
@@ -578,7 +577,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -592,7 +591,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		// Third step, we need to remove the element information to make sure we can save the reorganized information to storage.
 		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 3, 4) {
-				if err := t.RemoveReorgElement(job); err != nil {
+				if err := rh.RemoveReorgElement(job); err != nil {
 					failpoint.Return(nil, errors.Trace(err))
 				}
 				info.first = true
@@ -627,7 +626,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = rh.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -640,14 +639,14 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 			// Second step, we need to remove the element information to make sure we can get the error of "ErrDDLReorgElementNotExist".
 			// However, since "txn.Reset()" will be called later, the reorganized information cannot be saved to storage.
 			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 2, 3) {
-				if err := t.RemoveReorgElement(job); err != nil {
+				if err := rh.RemoveReorgElement(job); err != nil {
 					failpoint.Return(nil, errors.Trace(err))
 				}
 			}
 		})
 
 		var err error
-		element, start, end, pid, err = t.GetDDLReorgHandle(job)
+		element, start, end, pid, err = rh.GetDDLReorgHandle(job)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -670,7 +669,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -696,7 +695,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		err = rh.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -705,7 +704,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *m
 		element = elements[0]
 	} else {
 		var err error
-		element, start, end, pid, err = t.GetDDLReorgHandle(job)
+		element, start, end, pid, err = rh.GetDDLReorgHandle(job)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -733,12 +732,47 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
 		return nil
 	}
 
-	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		rh := newReorgHandler(meta.NewMeta(txn))
+		return errors.Trace(rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// reorgHandler is used to handle the reorg information duration reorganization DDL job.
+type reorgHandler struct {
+	m *meta.Meta
+}
+
+func newReorgHandler(t *meta.Meta) *reorgHandler {
+	return &reorgHandler{m: t}
+}
+
+// UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
+func (r *reorgHandler) UpdateDDLReorgStartHandle(job *model.Job, element *meta.Element, startKey kv.Key) error {
+	return r.m.UpdateDDLReorgStartHandle(job, element, startKey)
+}
+
+// UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
+func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
+	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+}
+
+// RemoveReorgElement removes the element of the reorganization information.
+func (r *reorgHandler) RemoveReorgElement(job *model.Job) error {
+	return r.m.RemoveReorgElement(job)
+}
+
+// RemoveDDLReorgHandle removes the job reorganization related handles.
+func (r *reorgHandler) RemoveDDLReorgHandle(job *model.Job, elements []*meta.Element) error {
+	return r.m.RemoveDDLReorgHandle(job, elements)
+}
+
+// GetDDLReorgHandle gets the latest processed DDL reorganize position.
+func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
+	return r.m.GetDDLReorgHandle(job)
 }

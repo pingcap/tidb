@@ -454,7 +454,7 @@ func (mgr *Mgr) Close() {
 			mgr.dom.Close()
 		}
 		tikv.StoreShuttingDown(1)
-		mgr.storage.Close()
+		_ = mgr.storage.Close()
 	}
 
 	mgr.PdController.Close()

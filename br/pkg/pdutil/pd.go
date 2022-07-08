@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -36,6 +38,7 @@ const (
 	regionCountPrefix    = "pd/api/v1/stats/region"
 	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
+	regionLabelPrefix    = "pd/api/v1/config/region-label/rule"
 	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	scheduleConfigPrefix = "pd/api/v1/config/schedule"
 	configPrefix         = "pd/api/v1/config"
@@ -94,6 +97,9 @@ var (
 	// see https://github.com/tikv/pd/pull/3088
 	pauseConfigVersion = semver.Version{Major: 4, Minor: 0, Patch: 8}
 
+	// After v6.1.0 version, we can pause schedulers by key range with TTL.
+	minVersionForRegionLabelTTL = semver.Version{Major: 6, Minor: 1, Patch: 0}
+
 	// Schedulers represent region/leader schedulers which can impact on performance.
 	Schedulers = map[string]struct{}{
 		"balance-leader-scheduler":     {},
@@ -130,9 +136,9 @@ var (
 )
 
 // pdHTTPRequest defines the interface to send a request to pd and return the result in bytes.
-type pdHTTPRequest func(context.Context, string, string, *http.Client, string, io.Reader) ([]byte, error)
+type pdHTTPRequest func(ctx context.Context, addr string, prefix string, cli *http.Client, method string, body io.Reader) ([]byte, error)
 
-// pdRequest is a func to send a HTTP to pd and return the result bytes.
+// pdRequest is a func to send an HTTP to pd and return the result bytes.
 func pdRequest(
 	ctx context.Context,
 	addr string, prefix string,
@@ -707,6 +713,142 @@ func (p *PdController) doRemoveSchedulersWith(
 		removedSchedulers, err = p.pauseSchedulersAndConfigWith(ctx, needRemoveSchedulers, nil, pdRequest)
 	}
 	return removedSchedulers, err
+}
+
+// RegionLabel is the label of a region. This struct is partially copied from
+// https://github.com/tikv/pd/blob/783d060861cef37c38cbdcab9777fe95c17907fe/server/schedule/labeler/rules.go#L31.
+type RegionLabel struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	TTL     string `json:"ttl,omitempty"`
+	StartAt string `json:"start_at,omitempty"`
+}
+
+// LabelRule is the rule to assign labels to a region. This struct is partially copied from
+// https://github.com/tikv/pd/blob/783d060861cef37c38cbdcab9777fe95c17907fe/server/schedule/labeler/rules.go#L41.
+type LabelRule struct {
+	ID       string        `json:"id"`
+	Labels   []RegionLabel `json:"labels"`
+	RuleType string        `json:"rule_type"`
+	Data     interface{}   `json:"data"`
+}
+
+// KeyRangeRule contains the start key and end key of the LabelRule. This struct is partially copied from
+// https://github.com/tikv/pd/blob/783d060861cef37c38cbdcab9777fe95c17907fe/server/schedule/labeler/rules.go#L62.
+type KeyRangeRule struct {
+	StartKeyHex string `json:"start_key"` // hex format start key, for marshal/unmarshal
+	EndKeyHex   string `json:"end_key"`   // hex format end key, for marshal/unmarshal
+}
+
+// CreateOrUpdateRegionLabelRule creates or updates a region label rule.
+func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule LabelRule) error {
+	reqData, err := json.Marshal(&rule)
+	if err != nil {
+		panic(err)
+	}
+	var lastErr error
+	for i, addr := range p.addrs {
+		_, lastErr = pdRequest(ctx, addr, regionLabelPrefix,
+			p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+		if lastErr == nil {
+			return nil
+		}
+		if berrors.IsContextCanceled(lastErr) {
+			return errors.Trace(lastErr)
+		}
+
+		if i < len(p.addrs) {
+			log.Warn("failed to create or update region label rule, will try next pd address",
+				zap.Error(lastErr), zap.String("pdAddr", addr))
+		}
+	}
+	return errors.Trace(lastErr)
+}
+
+func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string) error {
+	var lastErr error
+	for i, addr := range p.addrs {
+		_, lastErr = pdRequest(ctx, addr, fmt.Sprintf("%s/%s", regionLabelPrefix, ruleID),
+			p.cli, http.MethodDelete, nil)
+		if lastErr == nil {
+			return nil
+		}
+		if berrors.IsContextCanceled(lastErr) {
+			return errors.Trace(lastErr)
+		}
+
+		if i < len(p.addrs) {
+			log.Warn("failed to delete region label rule, will try next pd address",
+				zap.Error(lastErr), zap.String("pdAddr", addr))
+		}
+	}
+	return errors.Trace(lastErr)
+}
+
+// PauseSchedulersByKeyRange will pause schedulers for regions in the specific key range.
+// This function will spawn a goroutine to keep pausing schedulers periodically until the context is done.
+// The return done channel is used to notify the caller that the background goroutine is exited.
+func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context, startKey, endKey []byte) (done <-chan struct{}, err error) {
+	return p.pauseSchedulerByKeyRangeWithTTL(ctx, startKey, endKey, pauseTimeout)
+}
+
+func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
+	rule := LabelRule{
+		ID: uuid.New().String(),
+		Labels: []RegionLabel{{
+			Key:   "schedule",
+			Value: "deny",
+			TTL:   ttl.String(),
+		}},
+		RuleType: "key-range",
+		// Data should be a list of KeyRangeRule when rule type is key-range.
+		// See https://github.com/tikv/pd/blob/783d060861cef37c38cbdcab9777fe95c17907fe/server/schedule/labeler/rules.go#L169.
+		Data: []KeyRangeRule{{
+			StartKeyHex: hex.EncodeToString(startKey),
+			EndKeyHex:   hex.EncodeToString(endKey),
+		}},
+	}
+	done := make(chan struct{})
+	if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+		close(done)
+		return nil, errors.Trace(err)
+	}
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(ttl / 3)
+		defer ticker.Stop()
+	loop:
+		for {
+			select {
+			case <-ticker.C:
+				if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+					if berrors.IsContextCanceled(err) {
+						break loop
+					}
+					log.Warn("pause scheduler by key range failed, ignore it and wait next time pause", zap.Error(err))
+				}
+			case <-ctx.Done():
+				break loop
+			}
+		}
+		// Use a new context to avoid the context is canceled by the caller.
+		recoverCtx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		// Set ttl to 0 to remove the rule.
+		rule.Labels[0].TTL = time.Duration(0).String()
+		if err := p.DeleteRegionLabelRule(recoverCtx, rule.ID); err != nil {
+			log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
+				zap.String("rule-id", rule.ID), zap.Duration("ttl", ttl), zap.Error(err))
+		}
+	}()
+	return done, nil
+}
+
+// CanPauseSchedulerByKeyRange returns whether the scheduler can be paused by key range.
+func (p *PdController) CanPauseSchedulerByKeyRange() bool {
+	// We need ttl feature to ensure scheduler can recover from pause automatically.
+	return p.version.Compare(minVersionForRegionLabelTTL) >= 0
 }
 
 // Close close the connection to pd.

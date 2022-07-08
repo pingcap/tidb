@@ -10,11 +10,10 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -194,7 +193,7 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 		defer func() {
 			lastErr = err
 			if err != nil {
-				IncCounter(w.metrics.errorCount, conf.Labels)
+				IncCounter(w.metrics.errorCount)
 			}
 		}()
 		retryTime++
@@ -218,7 +217,9 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return err
 			}
 		}
-		defer ir.Close()
+		defer func() {
+			_ = ir.Close()
+		}()
 		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }

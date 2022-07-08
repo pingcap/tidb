@@ -17,9 +17,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
@@ -27,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 const (
@@ -779,7 +778,9 @@ func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	conn, err := db.Conn(context.Background())
 	if err == nil {
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
 			return tidbConfig.Store == "tikv", nil
@@ -1512,7 +1513,7 @@ func GetCharsetAndDefaultCollation(ctx context.Context, db *sql.Conn) (map[strin
 	if err = rows.Close(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
-	if rows.Err() != nil {
+	if err = rows.Err(); err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return charsetAndDefaultCollation, err

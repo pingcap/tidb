@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -166,7 +167,6 @@ func TestTestDataLockWaits(t *testing.T) {
 		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
-
 	tk := s.newTestKitWithRoot(t)
 
 	// Execute one of the query once, so it's stored into statements_summary.
@@ -397,6 +397,39 @@ func TestStmtSummaryEvictedCountTable(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil))
 	require.NoError(t, tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED"))
+}
+
+func TestStmtSummaryIssue35340(t *testing.T) {
+	var clean func()
+	s := new(clusterTablesSuite)
+	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
+	for i := 0; i < 100; i++ {
+		user := "user" + strconv.Itoa(i)
+		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
+	}
+	tk.MustExec("flush privileges")
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := s.newTestKitWithRoot(t)
+			for j := 0; j < 100; j++ {
+				user := "user" + strconv.Itoa(j)
+				require.True(t, tk.Session().Auth(&auth.UserIdentity{
+					Username: user,
+					Hostname: "localhost",
+				}, nil, nil))
+				tk.MustQuery("select count(*) from information_schema.statements_summary;")
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {

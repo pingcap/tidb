@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +48,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -345,7 +345,7 @@ const batchInsertSize = 10
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	mapper := h.sweepIdxUsageList()
 	type FullIndexUsageInformation struct {
 		id          GlobalIndexID
@@ -519,14 +519,14 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := context.TODO()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(context.Background(), exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 
 	txn, err := h.mu.ctx.Txn(true)
@@ -579,9 +579,10 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	if len(values) == 0 {
 		return nil
 	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.execRestrictedSQL(context.Background(), sql)
+	_, _, err := h.execRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
 
@@ -631,9 +632,10 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 	if fb.Tp == statistics.IndexType {
 		isIndex = 1
 	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	const sql = "insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values (%?, %?, %?, %?)"
 	h.mu.Lock()
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, fb.PhysicalID, fb.Hist.ID, isIndex, vals)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, fb.PhysicalID, fb.Hist.ID, isIndex, vals)
 	h.mu.Unlock()
 	if err != nil {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
@@ -751,7 +753,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	tables, _, err := h.execRestrictedSQL(ctx, "SELECT distinct table_id from mysql.stats_feedback")
 	if err != nil {
 		return errors.Trace(err)
@@ -817,7 +819,6 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
 	var topN *statistics.TopN
-	var fms *statistics.FMSketch
 	var statsVer int64 = statistics.Version1
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
@@ -846,7 +847,6 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
-			fms = col.FMSketch
 		}
 	}
 	// The column or index has been deleted.
@@ -860,7 +860,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err1))
 		}
 	}
-	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, fms, statsVer)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN, statsVer)
 	return errors.Trace(err)
 }
 
@@ -868,9 +868,10 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	hasData := true
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	for hasData {
 		sql := "delete from mysql.stats_feedback where table_id = %? and hist_id = %? and is_index = %? limit 10000"
-		_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tableID, histID, isIndex)
+		_, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, tableID, histID, isIndex)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -879,7 +880,7 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	return nil
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
 	// feedback for partition is not ready.
 	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, int(statsVersion), 0, false)
@@ -910,11 +911,11 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 	for id, t := range colMap {
 		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	sort.Slice(pairs, func(i, j int) bool {
-		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
-			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+	slices.SortFunc(pairs, func(i, j pair) bool {
+		if i.tblColID.TableID == j.tblColID.TableID {
+			return i.tblColID.ColumnID < j.tblColID.ColumnID
 		}
-		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
+		return i.tblColID.TableID < j.tblColID.TableID
 	})
 	// Use batch insert to reduce cost.
 	for i := 0; i < len(pairs); i += batchInsertSize {
@@ -997,7 +998,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
 	rows, _, err := h.execRestrictedSQL(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	if err != nil {

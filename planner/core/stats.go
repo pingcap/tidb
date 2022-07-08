@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -191,9 +191,7 @@ func (ds *DataSource) getGroupNDVs(colGroups [][]*expression.Column) []property.
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColumnIDs[idxID])
-		sort.Slice(idxCols, func(i, j int) bool {
-			return idxCols[i] < idxCols[j]
-		})
+		slices.Sort(idxCols)
 		for _, g := range colGroups {
 			// We only want those exact matches.
 			if len(g) != colsLen {
@@ -879,9 +877,7 @@ func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, child
 		if projCols == nil {
 			continue
 		}
-		sort.Slice(projCols, func(i, j int) bool {
-			return projCols[i] < projCols[j]
-		})
+		slices.Sort(projCols)
 		groupNDV := property.GroupNDV{
 			Cols: projCols,
 			NDV:  childGroupNDV.NDV,

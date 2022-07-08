@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -264,7 +263,7 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
-# alter-primary-key is used to control whether the primary keys are clustered. 
+# alter-primary-key is used to control whether the primary keys are clustered.
 # Note that this config is deprecated. Only valid when @@global.tidb_enable_clustered_index = 'int_only'.
 # Default is false, only the integer primary keys are clustered.
 # If it is true, all types of primary keys are nonclustered.
@@ -282,9 +281,6 @@ repair-mode = false
 # Repair table list is used to list the tables in repair mode with the format like ["db.table",].
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
-
-# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
-max-server-connections = 0
 
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = true
@@ -309,6 +305,11 @@ deprecate-integer-display-length = false
 # where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
 # See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 enable-enum-length-limit = true
+
+[instance]
+
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max_connections = 0
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -649,7 +650,7 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: enable-batch-dml, log.query-log-max-len, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
+		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.force-priority, performance.memory-usage-alarm-ratio, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
 	}
 
 	for _, test := range configTest {
@@ -708,7 +709,7 @@ unrecognized-option-test = true
 	match, err := regexp.Match("(?:.|\n)*invalid configuration option(?:.|\n)*", []byte(err.Error()))
 	require.NoError(t, err)
 	require.True(t, match)
-	require.Equal(t, uint32(0), conf.MaxServerConnections)
+	require.Equal(t, uint32(0), conf.Instance.MaxConnections)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -723,7 +724,6 @@ delay-clean-table-lock = 5
 split-region-max-num=10000
 server-version = "test_version"
 repair-mode = true
-max-server-connections = 200
 max-index-length = 3080
 index-limit = 70
 table-column-count-limit = 4000
@@ -736,6 +736,7 @@ enable-global-kill = true
 [performance]
 txn-total-size-limit=2000
 tcp-no-delay = false
+enable-load-fmsketch = true
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -768,6 +769,8 @@ grpc-keepalive-timeout = 10
 grpc-concurrent-streams = 2048
 grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
+[instance]
+max_connections = 200
 `)
 
 	require.NoError(t, err)
@@ -797,7 +800,7 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
-	require.Equal(t, uint32(200), conf.MaxServerConnections)
+	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
 	require.Equal(t, 3080, conf.MaxIndexLength)
 	require.Equal(t, 70, conf.IndexLimit)
@@ -822,6 +825,7 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+	require.True(t, conf.Performance.EnableLoadFMSketch)
 
 	err = f.Truncate(0)
 	require.NoError(t, err)
@@ -1059,8 +1063,6 @@ func TestDeprecatedConfig(t *testing.T) {
 	var expectedNewName string
 	conf := new(Config)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)

@@ -238,7 +238,6 @@ type FileImporter struct {
 	metaClient   SplitClient
 	importClient ImporterClient
 	backend      *backuppb.StorageBackend
-	rateLimit    uint64
 
 	isRawKvMode        bool
 	rawStartKey        []byte
@@ -252,14 +251,12 @@ func NewFileImporter(
 	importClient ImporterClient,
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
-	rateLimit uint64,
 ) FileImporter {
 	return FileImporter{
 		metaClient:   metaClient,
 		backend:      backend,
 		importClient: importClient,
 		isRawKvMode:  isRawKvMode,
-		rateLimit:    rateLimit,
 	}
 }
 
@@ -401,7 +398,8 @@ func (importer *FileImporter) ImportKVFiles(
 		logutil.Key("startKey", startKey),
 		logutil.Key("endKey", endKey))
 
-	rs := utils.InitialRetryState(32, 100*time.Millisecond, 8*time.Second)
+	// This RetryState will retry 48 time, for 5 min - 6 min.
+	rs := utils.InitialRetryState(48, 100*time.Millisecond, 8*time.Second)
 	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, &rs)
 	err = ctl.Run(ctx, func(ctx context.Context, r *RegionInfo) RPCResult {
 		return importer.ImportKVFileForRegion(ctx, file, rule, startTS, restoreTS, r)
@@ -498,9 +496,9 @@ func (importer *FileImporter) ImportSSTFiles(
 	return errors.Trace(err)
 }
 
-func (importer *FileImporter) setDownloadSpeedLimit(ctx context.Context, storeID uint64) error {
+func (importer *FileImporter) setDownloadSpeedLimit(ctx context.Context, storeID, rateLimit uint64) error {
 	req := &import_sstpb.SetDownloadSpeedLimitRequest{
-		SpeedLimit: importer.rateLimit,
+		SpeedLimit: rateLimit,
 	}
 	_, err := importer.importClient.SetDownloadSpeedLimit(ctx, storeID, req)
 	return errors.Trace(err)

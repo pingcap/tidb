@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -20,10 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -36,6 +31,10 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 )
 
 var openDBFunc = sql.Open
@@ -81,13 +80,17 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		selectTiDBTableRegionFunc: selectTiDBTableRegion,
 	}
 
-	if conf.PromFactory == nil {
-		d.metrics = defaultMetrics
-	} else {
-		d.metrics = newMetrics(conf.PromFactory, []string{})
-	}
+	var err error
 
-	err := adjustConfig(conf,
+	d.metrics = newMetrics(conf.PromFactory, conf.Labels)
+	d.metrics.registerTo(conf.PromRegistry)
+	defer func() {
+		if err != nil {
+			d.metrics.unregisterFrom(conf.PromRegistry)
+		}
+	}()
+
+	err = adjustConfig(conf,
 		registerTLSConfig,
 		validateSpecifiedSQL,
 		adjustFileFormat)
@@ -137,10 +140,10 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return errors.Trace(err)
 		}
 		if err = prepareTableListToDump(tctx, conf, conn); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return err
 		}
-		conn.Close()
+		_ = conn.Close()
 	}
 
 	conCtrl, err = NewConsistencyController(tctx, conf, pool)
@@ -162,7 +165,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	if err != nil {
 		return err
 	}
-	defer metaConn.Close()
+	defer func() {
+		_ = metaConn.Close()
+	}()
 	m.recordStartTime(time.Now())
 	// for consistency lock, we can write snapshot info after all tables are locked.
 	// the binlog pos may changed because there is still possible write between we lock tables and write master status.
@@ -202,7 +207,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return conn, errors.Trace(err1)
 		}
 		// give up the last broken connection
-		conn.Close()
+		_ = conn.Close()
 		newConn, err1 := createConnWithConsistency(tctx, pool, repeatableRead)
 		if err1 != nil {
 			return conn, errors.Trace(err1)
@@ -219,7 +224,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	taskChan := make(chan Task, defaultDumpThreads)
-	AddGauge(d.metrics.taskChannelCapacity, conf.Labels, defaultDumpThreads)
+	AddGauge(d.metrics.taskChannelCapacity, defaultDumpThreads)
 	wg, writingCtx := errgroup.WithContext(tctx)
 	writerCtx := tctx.WithContext(writingCtx)
 	writers, tearDownWriters, err := d.startWriters(writerCtx, wg, taskChan, rebuildConn)
@@ -302,7 +307,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 		writer.rebuildConnFn = rebuildConnFn
 		writer.setFinishTableCallBack(func(task Task) {
 			if _, ok := task.(*TaskTableData); ok {
-				IncCounter(d.metrics.finishedTablesCounter, conf.Labels)
+				IncCounter(d.metrics.finishedTablesCounter)
 				// FIXME: actually finishing the last chunk doesn't means this table is 'finished'.
 				//  We can call this table is 'finished' if all its chunks are finished.
 				//  Comment this log now to avoid ambiguity.
@@ -312,7 +317,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 			}
 		})
 		writer.setFinishTaskCallBack(func(task Task) {
-			IncGauge(d.metrics.taskChannelCapacity, conf.Labels)
+			IncGauge(d.metrics.taskChannelCapacity)
 			if td, ok := task.(*TaskTableData); ok {
 				tctx.L().Debug("finish dumping table data task",
 					zap.String("database", td.Meta.DatabaseName()),
@@ -327,7 +332,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 	}
 	tearDown := func() {
 		for _, w := range writers {
-			w.conn.Close()
+			_ = w.conn.Close()
 		}
 	}
 	return writers, tearDown, nil
@@ -568,7 +573,7 @@ func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *BaseConn, meta Tabl
 	// Update total rows
 	fieldName, _ := pickupPossibleField(tctx, meta, conn)
 	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, fieldName, conf)
-	AddCounter(d.metrics.estimateTotalRowsCounter, conf.Labels, float64(c))
+	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 
 	if conf.Rows == UnspecifiedSize {
 		return d.sequentialDumpTable(tctx, conn, meta, taskChan)
@@ -766,14 +771,13 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 }
 
 func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan<- Task) (ctxDone bool) {
-	conf := d.conf
 	select {
 	case <-tctx.Done():
 		return true
 	case taskChan <- task:
 		tctx.L().Debug("send task to writer",
 			zap.String("task", task.Brief()))
-		DecGauge(d.metrics.taskChannelCapacity, conf.Labels)
+		DecGauge(d.metrics.taskChannelCapacity)
 		return false
 	}
 }
@@ -946,7 +950,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		return nil
 	}, func() {
 		if iter != nil {
-			iter.Close()
+			_ = iter.Close()
 			iter = nil
 		}
 		rowRec = MakeRowReceiver(pkColTypes)
@@ -1209,7 +1213,7 @@ func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *BaseConn, taskChan ch
 	data := newTableData(conf.SQL, 0, true)
 	task := NewTaskTableData(meta, data, 0, 1)
 	c := detectEstimateRows(tctx, metaConn, fmt.Sprintf("EXPLAIN %s", conf.SQL), []string{"rows", "estRows", "count"})
-	AddCounter(d.metrics.estimateTotalRowsCounter, conf.Labels, float64(c))
+	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 	atomic.StoreInt64(&d.totalTables, int64(1))
 	d.sendTaskToChan(tctx, task, taskChan)
 }
@@ -1228,6 +1232,7 @@ func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 // Close closes a Dumper and stop dumping immediately
 func (d *Dumper) Close() error {
 	d.cancelCtx()
+	d.metrics.unregisterFrom(d.conf.PromRegistry)
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}
@@ -1501,12 +1506,16 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dbHandle.Close()
+	defer func() {
+		_ = dbHandle.Close()
+	}()
 	conn, err := dbHandle.Conn(tctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 	dbInfos, err := GetDBInfo(conn, DatabaseTablesToMap(conf.Tables))
 	if err != nil {
 		return errors.Trace(err)
@@ -1554,9 +1563,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 		for _, tbInfoLoop := range tbInfos {
 			// make sure tbInfo is only used in this loop
 			tbInfo := tbInfoLoop
-			sort.Slice(tbInfo, func(i, j int) bool {
-				return tbInfo[i] < tbInfo[j]
-			})
+			slices.Sort(tbInfo)
 		}
 	}
 

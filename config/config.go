@@ -117,6 +117,7 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
+				"max-server-connections":        "max_connections",
 			},
 		},
 		{
@@ -189,9 +190,7 @@ type Config struct {
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog                  `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin                     Plugin                  `toml:"plugin" json:"plugin"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8        AtomicBool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
 	IndexLimit                 int                     `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
@@ -218,8 +217,6 @@ type Config struct {
 	NewCollationsEnabledOnFirstBootstrap bool `toml:"new_collations_enabled_on_first_bootstrap" json:"new_collations_enabled_on_first_bootstrap"`
 	// Experimental contains parameters for experimental features.
 	Experimental Experimental `toml:"experimental" json:"experimental"`
-	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
@@ -259,7 +256,8 @@ type Config struct {
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 	// EnableGlobalKill indicates whether to enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -268,6 +266,11 @@ type Config struct {
 	EnableBatchDML bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	MemQuotaQuery  int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	OOMAction      string `toml:"oom-action" json:"oom-action"`
+
+	// CheckMb4ValueInUTF8, EnableCollectExecutionInfo, Plugin are deprecated.
+	CheckMb4ValueInUTF8        AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	EnableCollectExecutionInfo bool       `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	Plugin                     Plugin     `toml:"plugin" json:"plugin"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -432,17 +435,18 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
-	SlowQueryFile       string     `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
-	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
+	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
-	// QueryLogMaxLen, unused since bootstrap v90
+	// QueryLogMaxLen unused since bootstrap v90
 	QueryLogMaxLen uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	// EnableSlowLog, SlowThreshold, RecordPlanInSlowLog are deprecated.
+	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
+	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
+	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 // Instance is the section of instance scope system variables.
@@ -471,6 +475,7 @@ type Instance struct {
 	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
+	MaxConnections             uint32 `toml:"max_connections" json:"max_connections"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -603,22 +608,20 @@ type Status struct {
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
 	// Deprecated: use ServerMemoryQuota instead
-	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
-	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
-	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability   float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit    uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
-	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	TCPNoDelay            bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
-	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
-	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
+	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota   uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
+	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit   uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	TCPNoDelay          bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
+	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
+	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
 	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
 	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
@@ -637,6 +640,12 @@ type Performance struct {
 	// CommitterConcurrency, RunAutoAnalyze unused since bootstrap v90
 	CommitterConcurrency int  `toml:"committer-concurrency" json:"committer-concurrency"`
 	RunAutoAnalyze       bool `toml:"run-auto-analyze" json:"run-auto-analyze"`
+
+	// ForcePriority, MemoryUsageAlarmRatio are deprecated.
+	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
+	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+
+	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -715,6 +724,22 @@ type PessimisticTxn struct {
 	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
 }
 
+// TrxSummary is the config for transaction summary collecting.
+type TrxSummary struct {
+	// how many transaction summary in `transaction_summary` each TiDB node should keep.
+	TransactionSummaryCapacity uint `toml:"transaction-summary-capacity" json:"transaction-summary-capacity"`
+	// how long a transaction should be executed to make it be recorded in `transaction_id_digest`.
+	TransactionIDDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
+}
+
+// Valid Validatse TrxSummary configs
+func (config *TrxSummary) Valid() error {
+	if config.TransactionSummaryCapacity > 5000 {
+		return errors.New("transaction-summary.transaction-summary-capacity should not be larger than 5000")
+	}
+	return nil
+}
+
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
@@ -722,6 +747,15 @@ func DefaultPessimisticTxn() PessimisticTxn {
 		DeadlockHistoryCapacity:         10,
 		DeadlockHistoryCollectRetryable: false,
 		PessimisticAutoCommit:           *NewAtomicBool(false),
+	}
+}
+
+// DefaultTrxSummary returns the default configuration for TrxSummary collector
+func DefaultTrxSummary() TrxSummary {
+	// TrxSummary is not enabled by default before GA
+	return TrxSummary{
+		TransactionSummaryCapacity:     500,
+		TransactionIDDigestMinDuration: 2147483647,
 	}
 }
 
@@ -818,6 +852,7 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  true,
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		MaxConnections:              0,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -860,6 +895,7 @@ var defaultConf = Config{
 		StatsLoadQueueSize:       1000,
 		EnableStatsCacheMemQuota: false,
 		RunAutoAnalyze:           true,
+		EnableLoadFMSketch:       false,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -909,6 +945,7 @@ var defaultConf = Config{
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
+	TrxSummary:                           DefaultTrxSummary(),
 }
 
 var (
@@ -974,6 +1011,15 @@ var removedConfig = map[string]struct{}{
 	"prepared-plan-cache.capacity":           {},
 	"prepared-plan-cache.memory-guard-ratio": {},
 	"oom-action":                             {},
+	"check-mb4-value-in-utf8":                {}, // use tidb_check_mb4_value_in_utf8
+	"enable-collect-execution-info":          {}, // use tidb_enable_collect_execution_info
+	"log.enable-slow-log":                    {}, // use tidb_enable_slow_log
+	"log.slow-threshold":                     {}, // use tidb_slow_log_threshold
+	"log.record-plan-in-slow-log":            {}, // use tidb_record_plan_in_slow_log
+	"performance.force-priority":             {}, // use tidb_force_priority
+	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
+	"plugin.load":                            {}, // use plugin_load
+	"plugin.dir":                             {}, // use plugin_dir
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1165,6 +1211,9 @@ func (c *Config) Valid() error {
 
 	// For tikvclient.
 	if err := c.TiKVClient.Valid(); err != nil {
+		return err
+	}
+	if err := c.TrxSummary.Valid(); err != nil {
 		return err
 	}
 

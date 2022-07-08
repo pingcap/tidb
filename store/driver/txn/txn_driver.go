@@ -42,6 +42,8 @@ type tikvTxn struct {
 	*tikv.KVTxn
 	idxNameCache        map[int64]*model.TableInfo
 	snapshotInterceptor kv.SnapshotInterceptor
+	// columnMapsCache is a cache used for the mutation checker
+	columnMapsCache interface{}
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -52,7 +54,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil}
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil, nil}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -247,6 +249,12 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
 	case kv.AssertionLevel:
 		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
+	case kv.TableToColumnMaps:
+		txn.columnMapsCache = val
+	case kv.RequestSourceInternal:
+		txn.KVTxn.SetRequestSourceInternal(val.(bool))
+	case kv.RequestSourceType:
+		txn.KVTxn.SetRequestSourceType(val.(string))
 	}
 }
 
@@ -256,6 +264,10 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return !txn.KVTxn.IsCasualConsistency()
 	case kv.TxnScope:
 		return txn.KVTxn.GetScope()
+	case kv.TableToColumnMaps:
+		return txn.columnMapsCache
+	case kv.RequestSourceType:
+		return txn.RequestSourceType
 	default:
 		return nil
 	}
