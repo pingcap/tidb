@@ -3004,6 +3004,7 @@ func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec
 		t.NewConstraints = []*ast.Constraint{}
 		specs = append(specs, &t)
 	}
+	// Split the add constraints from AlterTableSpec.
 	for _, con := range spec.NewConstraints {
 		t := *spec
 		t.NewColumns = []*ast.ColumnDef{}
