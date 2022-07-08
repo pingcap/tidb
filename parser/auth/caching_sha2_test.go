@@ -20,10 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var foobarPwdHash, _ = hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
+
 func TestCheckShaPasswordGood(t *testing.T) {
 	pwd := "foobar"
-	pwhash, _ := hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
-	r, err := CheckShaPassword(pwhash, pwd)
+	r, err := CheckShaPassword(foobarPwdHash, pwd)
 	require.NoError(t, err)
 	require.True(t, r)
 }
@@ -70,5 +71,13 @@ func TestNewSha2Password(t *testing.T) {
 		require.Less(t, pwhash[r], uint8(128))
 		require.NotEqual(t, pwhash[r], 0)  // NUL
 		require.NotEqual(t, pwhash[r], 36) // '$'
+	}
+}
+
+func BenchmarkShaPassword(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		m, err := CheckShaPassword(foobarPwdHash, "foobar")
+		require.Nil(b, err)
+		require.True(b, m)
 	}
 }
