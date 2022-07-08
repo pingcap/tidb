@@ -101,7 +101,10 @@ func newCode2ErrClassMap() *code2ErrClassMap {
 
 func (m *code2ErrClassMap) Get(key string) (ErrClass, bool) {
 	ret, have := m.data.Load(key)
-	return ret.(ErrClass), have
+	if !have {
+		return ErrClass(-1), false
+	}
+	return ret.(ErrClass), true
 }
 
 func (m *code2ErrClassMap) Put(key string, err ErrClass) {
