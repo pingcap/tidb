@@ -77,9 +77,9 @@ func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblIn
 	return ver, errors.Trace(err)
 }
 
-// convertNotStartAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
+// convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
-func convertNotStartAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
+func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
@@ -228,17 +228,29 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 }
 
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
-	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
-	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+	if needNotifyAndStopReorgWorker(job) {
 		// add index workers are started. need to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		d.notifyReorgCancel(job)
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
-		// add index workers are not started, remove the indexInfo in tableInfo.
-		ver, err = convertNotStartAddIdxJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob)
+		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
+		ver, err = convertNotReorgAddIdxJob2RollbackJob(d, t, job, dbterror.ErrCancelledDDLJob)
 	}
 	return
+}
+
+func needNotifyAndStopReorgWorker(job *model.Job) bool {
+	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+		// If the value of SnapshotVer isn't zero, it means the worker is backfilling the indexes.
+		if job.MultiSchemaInfo != nil {
+			// However, if the sub-job is non-revertible, it means the reorg process is finished.
+			// We don't need to start another round to notify reorg workers to exit.
+			return job.MultiSchemaInfo.Revertible
+		}
+		return true
+	}
+	return false
 }
 
 func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
