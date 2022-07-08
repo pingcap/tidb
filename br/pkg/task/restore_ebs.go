@@ -47,8 +47,8 @@ func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 	command.Flags().String(flagOutputMetaFile, "output.json", "the file path of output meta file")
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
-	command.Flags().Uint(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
-	command.Flags().Uint(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
+	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
+	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
 }
 
 type RestoreEBSConfig struct {
@@ -56,8 +56,8 @@ type RestoreEBSConfig struct {
 	OutputFile       string               `json:"output-file"`
 	DryRun           bool                 `json:"dry-run"`
 	VolumeType       config.EBSVolumeType `json:"volume-type"`
-	VolumeIOPS       uint32               `json:"volume-iops"`
-	VolumeThroughput uint32               `json:"volume-throughput"`
+	VolumeIOPS       int64                `json:"volume-iops"`
+	VolumeThroughput int64                `json:"volume-throughput"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -79,10 +79,10 @@ func (cfg *RestoreEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if !cfg.VolumeType.Valid() {
 		return errors.New("invalid volume type: " + volumeType)
 	}
-	if cfg.VolumeIOPS, err = flags.GetUint32(flagVolumeIOPS); err != nil {
+	if cfg.VolumeIOPS, err = flags.GetInt64(flagVolumeIOPS); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.VolumeThroughput, err = flags.GetUint32(flagVolumeThroughput); err != nil {
+	if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
 		return errors.Trace(err)
 	}
 	// iops: gp3 [3,000-16,000]; io1/io2 [100-32,000]
@@ -209,11 +209,11 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	if err := h.mgr.MarkRecovering(ctx); err != nil {
 		return 0, errors.Trace(err)
 	}
-	log.Info("recover base alloc id")
+	log.Info("recover base alloc id", zap.Uint64("alloc id", h.metaInfo.ClusterInfo.MaxAllocID))
 	if err := h.mgr.RecoverBaseAllocID(ctx, h.metaInfo.ClusterInfo.MaxAllocID); err != nil {
 		return 0, errors.Trace(err)
 	}
-	log.Info("set pd ts = max(resolved_ts, current pd ts)")
+	log.Info("set pd ts = max(resolved_ts, current pd ts)", zap.Uint64("resolved ts", h.metaInfo.ClusterInfo.ResolvedTS))
 	if err := h.mgr.ResetTS(ctx, h.metaInfo.ClusterInfo.ResolvedTS); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -246,7 +246,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		}
 	}()
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
-		string(h.cfg.VolumeType), int64(h.cfg.VolumeIOPS), int64(h.cfg.VolumeThroughput))
+		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
