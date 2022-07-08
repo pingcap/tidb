@@ -790,13 +790,11 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 
 func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
-		if e.stats == nil {
-			e.stats = &IndexLookUpRunTimeStats{
-				indexScanBasicStats: &execdetails.BasicRuntimeStats{},
-				Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
-			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		e.stats = &IndexLookUpRunTimeStats{
+			indexScanBasicStats: &execdetails.BasicRuntimeStats{},
+			Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -1147,7 +1145,6 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.TaskWait += tmp.TaskWait
 	e.TableRowScan += tmp.TableRowScan
 	e.TableTaskNum += tmp.TableTaskNum
-	e.Concurrency += tmp.Concurrency
 }
 
 // Tp implements the RuntimeStats interface.
