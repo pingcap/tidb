@@ -151,8 +151,10 @@ type selectResult struct {
 	durationReported bool
 	memTracker       *memory.Tracker
 
-	stats  *selectResultRuntimeStats
-	paging bool
+	stats *selectResultRuntimeStats
+	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
+	distSQLConcurrency int
+	paging             bool
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -366,8 +368,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.stats == nil {
 		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{
-			backoffSleep: make(map[string]time.Duration),
-			rpcStat:      tikv.NewRegionRequestRuntimeStats(),
+			backoffSleep:       make(map[string]time.Duration),
+			rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+			distSQLConcurrency: r.distSQLConcurrency,
 		}
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
 	}
@@ -470,13 +473,14 @@ type CopRuntimeStats interface {
 }
 
 type selectResultRuntimeStats struct {
-	copRespTime      []time.Duration
-	procKeys         []int64
-	backoffSleep     map[string]time.Duration
-	totalProcessTime time.Duration
-	totalWaitTime    time.Duration
-	rpcStat          tikv.RegionRequestRuntimeStats
-	CoprCacheHitNum  int64
+	copRespTime        []time.Duration
+	procKeys           []int64
+	backoffSleep       map[string]time.Duration
+	totalProcessTime   time.Duration
+	totalWaitTime      time.Duration
+	rpcStat            tikv.RegionRequestRuntimeStats
+	distSQLConcurrency int
+	CoprCacheHitNum    int64
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -497,10 +501,12 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 
 func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := selectResultRuntimeStats{
-		copRespTime:  make([]time.Duration, 0, len(s.copRespTime)),
-		procKeys:     make([]int64, 0, len(s.procKeys)),
-		backoffSleep: make(map[string]time.Duration, len(s.backoffSleep)),
-		rpcStat:      tikv.NewRegionRequestRuntimeStats(),
+		copRespTime:        make([]time.Duration, 0, len(s.copRespTime)),
+		procKeys:           make([]int64, 0, len(s.procKeys)),
+		backoffSleep:       make(map[string]time.Duration, len(s.backoffSleep)),
+		rpcStat:            tikv.NewRegionRequestRuntimeStats(),
+		distSQLConcurrency: s.distSQLConcurrency,
+		CoprCacheHitNum:    s.CoprCacheHitNum,
 	}
 	newRs.copRespTime = append(newRs.copRespTime, s.copRespTime...)
 	newRs.procKeys = append(newRs.procKeys, s.procKeys...)
@@ -582,6 +588,10 @@ func (s *selectResultRuntimeStats) String() string {
 				strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
 		} else {
 			buf.WriteString(", copr_cache: disabled")
+		}
+		if s.distSQLConcurrency > 0 {
+			buf.WriteString(", distsql_concurrency: ")
+			buf.WriteString(strconv.FormatInt(int64(s.distSQLConcurrency), 10))
 		}
 		buf.WriteString("}")
 	}
