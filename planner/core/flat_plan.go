@@ -136,7 +136,7 @@ func (d OperatorLabel) String() string {
 
 type operatorCtx struct {
 	depth       uint32
-	driverSide  OperatorLabel
+	label       OperatorLabel
 	isRoot      bool
 	storeType   kv.StoreType
 	reqType     ReadReqType
@@ -154,7 +154,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	}
 	initInfo := &operatorCtx{
 		depth:       0,
-		driverSide:  Empty,
+		label:       Empty,
 		isRoot:      true,
 		storeType:   kv.TiDB,
 		indent:      "",
@@ -187,7 +187,7 @@ func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperato
 	}
 	res := &FlatOperator{
 		Origin:         p,
-		Label:          info.driverSide,
+		Label:          info.label,
 		IsRoot:         info.isRoot,
 		StoreType:      info.storeType,
 		Depth:          info.depth,
@@ -219,47 +219,47 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
 	if physPlan, ok := p.(PhysicalPlan); ok {
-		driverSideInfo := make([]OperatorLabel, len(physPlan.Children()))
+		label := make([]OperatorLabel, len(physPlan.Children()))
 
 		switch plan := physPlan.(type) {
 		case *PhysicalApply:
-			driverSideInfo[plan.InnerChildIdx] = ProbeSide
-			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
+			label[plan.InnerChildIdx] = ProbeSide
+			label[1-plan.InnerChildIdx] = BuildSide
 		case *PhysicalHashJoin:
 			if plan.UseOuterToBuild {
-				driverSideInfo[plan.InnerChildIdx] = ProbeSide
-				driverSideInfo[1-plan.InnerChildIdx] = BuildSide
+				label[plan.InnerChildIdx] = ProbeSide
+				label[1-plan.InnerChildIdx] = BuildSide
 			} else {
-				driverSideInfo[plan.InnerChildIdx] = BuildSide
-				driverSideInfo[1-plan.InnerChildIdx] = ProbeSide
+				label[plan.InnerChildIdx] = BuildSide
+				label[1-plan.InnerChildIdx] = ProbeSide
 			}
 		case *PhysicalMergeJoin:
 			if plan.JoinType == RightOuterJoin {
-				driverSideInfo[0] = BuildSide
-				driverSideInfo[1] = ProbeSide
+				label[0] = BuildSide
+				label[1] = ProbeSide
 			} else {
-				driverSideInfo[0] = ProbeSide
-				driverSideInfo[1] = BuildSide
+				label[0] = ProbeSide
+				label[1] = BuildSide
 			}
 		case *PhysicalIndexJoin:
-			driverSideInfo[plan.InnerChildIdx] = ProbeSide
-			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
+			label[plan.InnerChildIdx] = ProbeSide
+			label[1-plan.InnerChildIdx] = BuildSide
 		case *PhysicalIndexMergeJoin:
-			driverSideInfo[plan.InnerChildIdx] = ProbeSide
-			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
+			label[plan.InnerChildIdx] = ProbeSide
+			label[1-plan.InnerChildIdx] = BuildSide
 		case *PhysicalIndexHashJoin:
-			driverSideInfo[plan.InnerChildIdx] = ProbeSide
-			driverSideInfo[1-plan.InnerChildIdx] = BuildSide
+			label[plan.InnerChildIdx] = ProbeSide
+			label[1-plan.InnerChildIdx] = BuildSide
 		}
 
 		children := make([]PhysicalPlan, len(physPlan.Children()))
 		copy(children, physPlan.Children())
-		if len(driverSideInfo) == 2 &&
-			driverSideInfo[0] == ProbeSide &&
-			driverSideInfo[1] == BuildSide {
+		if len(label) == 2 &&
+			label[0] == ProbeSide &&
+			label[1] == BuildSide {
 			if f.buildSideFirst {
 				// Put the build side before the probe side if buildSideFirst is true.
-				driverSideInfo[0], driverSideInfo[1] = driverSideInfo[1], driverSideInfo[0]
+				label[0], label[1] = label[1], label[0]
 				children[0], children[1] = children[1], children[0]
 			} else if flat != nil {
 				// Set NeedReverseDriverSide to true if buildSideFirst is false.
@@ -271,7 +271,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childCtx.isRoot = info.isRoot
 			childCtx.storeType = info.storeType
 			childCtx.reqType = info.reqType
-			childCtx.driverSide = driverSideInfo[i]
+			childCtx.label = label[i]
 			childCtx.isLastChild = i == len(children)-1
 			target, childIdx = f.flattenRecursively(children[i], childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
@@ -285,7 +285,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		childCtx.isRoot = false
 		childCtx.storeType = plan.StoreType
 		childCtx.reqType = plan.ReadReqType
-		childCtx.driverSide = Empty
+		childCtx.label = Empty
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
@@ -293,7 +293,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		childCtx.isRoot = false
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
-		childCtx.driverSide = Empty
+		childCtx.label = Empty
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.indexPlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
@@ -301,11 +301,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		childCtx.isRoot = false
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
-		childCtx.driverSide = BuildSide
+		childCtx.label = BuildSide
 		childCtx.isLastChild = false
 		target, childIdx = f.flattenRecursively(plan.indexPlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
-		childCtx.driverSide = ProbeSide
+		childCtx.label = ProbeSide
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
@@ -314,18 +314,18 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
 		for _, pchild := range plan.partialPlans {
-			childCtx.driverSide = BuildSide
+			childCtx.label = BuildSide
 			childCtx.isLastChild = false
 			target, childIdx = f.flattenRecursively(pchild, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-		childCtx.driverSide = ProbeSide
+		childCtx.label = ProbeSide
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalShuffleReceiverStub:
 		childCtx.isRoot = true
-		childCtx.driverSide = Empty
+		childCtx.label = Empty
 		childCtx.isLastChild = true
 		target, childIdx = f.flattenRecursively(plan.DataSource, childCtx, target)
 		childIdxs = append(childIdxs, childIdx)
@@ -334,7 +334,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	case *Insert:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
-			childCtx.driverSide = Empty
+			childCtx.label = Empty
 			childCtx.isLastChild = true
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
@@ -342,7 +342,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	case *Update:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
-			childCtx.driverSide = Empty
+			childCtx.label = Empty
 			childCtx.isLastChild = true
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
@@ -350,7 +350,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	case *Delete:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true
-			childCtx.driverSide = Empty
+			childCtx.label = Empty
 			childCtx.isLastChild = true
 			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
@@ -360,7 +360,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		if plan.Plan != nil {
 			childCtx.isRoot = true
 			childCtx.indent = info.indent
-			childCtx.driverSide = Empty
+			childCtx.label = Empty
 			childCtx.isLastChild = true
 			target, childIdx = f.flattenRecursively(plan.Plan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
@@ -371,7 +371,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		if plan.TargetPlan != nil {
 			initInfo := &operatorCtx{
 				depth:       0,
-				driverSide:  Empty,
+				label:       Empty,
 				isRoot:      true,
 				storeType:   kv.TiDB,
 				indent:      "",
@@ -396,7 +396,7 @@ func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *op
 	var childIdx int
 	childInfo := &operatorCtx{
 		depth:       info.depth + 1,
-		driverSide:  SeedPart,
+		label:       SeedPart,
 		isRoot:      true,
 		storeType:   kv.TiDB,
 		indent:      texttree.Indent4Child(info.indent, info.isLastChild),
@@ -405,7 +405,7 @@ func (f *FlatPhysicalPlan) flattenCTERecursively(cteDef *CTEDefinition, info *op
 	target, childIdx = f.flattenRecursively(cteDef.SeedPlan, childInfo, target)
 	childIdxs = append(childIdxs, childIdx)
 	if cteDef.RecurPlan != nil {
-		childInfo.driverSide = RecursivePart
+		childInfo.label = RecursivePart
 		childInfo.isLastChild = true
 		target, childIdx = f.flattenRecursively(cteDef.RecurPlan, childInfo, target)
 		childIdxs = append(childIdxs, childIdx)
