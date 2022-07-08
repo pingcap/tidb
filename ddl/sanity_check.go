@@ -79,6 +79,10 @@ func queryDeleteRangeCnt(sessPool *sessionPool, jobID int64) (int, error) {
 }
 
 func expectedDeleteRangeCnt(job *model.Job) (int, error) {
+	if job.State == model.JobStateCancelled {
+		// Cancelled job should not have any delete range.
+		return 0, nil
+	}
 	switch job.Type {
 	case model.ActionDropSchema:
 		var tableIDs []int64
@@ -101,6 +105,10 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		}
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		hasDelRange := job.State == model.JobStateRollbackDone
+		if !hasDelRange {
+			return 0, nil
+		}
 		var indexID int64
 		var ifExists bool
 		var partitionIDs []int64
