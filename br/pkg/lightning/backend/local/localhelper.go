@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"math"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -332,14 +331,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	}
 
 	startTime := time.Now()
-	scatterCount := 0
-	for _, region := range scatterRegions {
-		local.waitForScatterRegion(ctx, region)
-		if time.Since(startTime) > split.ScatterWaitUpperInterval {
-			break
-		}
-		scatterCount++
-	}
+	scatterCount, err := local.waitForScatterRegions(ctx, scatterRegions)
 	if scatterCount == len(scatterRegions) {
 		log.FromContext(ctx).Info("waiting for scattering regions done",
 			zap.Int("skipped_keys", skippedKeys),
@@ -349,7 +341,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
-			zap.Duration("take", time.Since(startTime)))
+			zap.Duration("take", time.Since(startTime)),
+			zap.Error(err))
 	}
 	return nil
 }
@@ -366,7 +359,7 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 		if err != nil {
 			return errors.Trace(err)
 		}
-
+		//nolint: errcheck
 		defer rows.Close()
 		var (
 			regionID uint64
@@ -447,28 +440,38 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 	}
 }
 
-func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) {
-	for i := 0; i < split.ScatterWaitMaxRetryTimes; i++ {
-		ok, err := local.checkScatterRegionFinishedOrReScatter(ctx, regionInfo)
-		if ok {
-			return
-		}
-		if err != nil {
-			if !common.IsRetryableError(err) {
-				log.FromContext(ctx).Warn("wait for scatter region encountered non-retryable error", logutil.Region(regionInfo.Region), zap.Error(err))
-				return
+func (local *local) waitForScatterRegions(ctx context.Context, regions []*split.RegionInfo) (scatterCount int, _ error) {
+	subCtx, cancel := context.WithTimeout(ctx, split.ScatterWaitUpperInterval)
+	defer cancel()
+
+	for len(regions) > 0 {
+		var retryRegions []*split.RegionInfo
+		for _, region := range regions {
+			scattered, err := local.checkRegionScatteredOrReScatter(subCtx, region)
+			if scattered {
+				scatterCount++
+				continue
 			}
-			log.FromContext(ctx).Warn("wait for scatter region encountered error, will retry again", logutil.Region(regionInfo.Region), zap.Error(err))
+			if err != nil {
+				if !common.IsRetryableError(err) {
+					log.FromContext(ctx).Warn("wait for scatter region encountered non-retryable error", logutil.Region(region.Region), zap.Error(err))
+					return scatterCount, err
+				}
+				log.FromContext(ctx).Warn("wait for scatter region encountered error, will retry again", logutil.Region(region.Region), zap.Error(err))
+			}
+			retryRegions = append(retryRegions, region)
 		}
+		regions = retryRegions
 		select {
 		case <-time.After(time.Second):
-		case <-ctx.Done():
+		case <-subCtx.Done():
 			return
 		}
 	}
+	return scatterCount, nil
 }
 
-func (local *local) checkScatterRegionFinishedOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
+func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
 	resp, err := local.splitCli.GetOperator(ctx, regionInfo.Region.GetId())
 	if err != nil {
 		return false, err
@@ -478,13 +481,9 @@ func (local *local) checkScatterRegionFinishedOrReScatter(ctx context.Context, r
 		if respErr.GetType() == pdpb.ErrorType_REGION_NOT_FOUND {
 			return true, nil
 		}
-		// don't return error if region replicate not complete
-		// TODO: should add a new error type to avoid this check by string matching
-		matches, _ := regexp.MatchString("region \\d+ is not fully replicated", respErr.Message)
-		if matches {
-			return false, nil
-		}
-		return false, errors.Errorf("get operator error: %s", respErr.GetType())
+		return false, errors.Errorf(
+			"failed to get region operator, error type: %s, error message: %s",
+			respErr.GetType().String(), respErr.GetMessage())
 	}
 	// If the current operator of the region is not 'scatter-region', we could assume
 	// that 'scatter-operator' has finished.

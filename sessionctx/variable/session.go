@@ -1158,6 +1158,9 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1684,6 +1687,11 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
+// SetNextPreparedStmtID sets the next prepared statement id. It's only used in restoring session states.
+func (s *SessionVars) SetNextPreparedStmtID(preparedStmtID uint32) {
+	s.preparedStmtID = preparedStmtID
+}
+
 // Location returns the value of time_zone session variable. If it is nil, then return time.Local.
 func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
@@ -1867,6 +1875,11 @@ func (s *SessionVars) EncodeSessionStates(ctx context.Context, sessionStates *se
 	sessionStates.MPPStoreLastFailTime = s.MPPStoreLastFailTime
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
+
+	// Encode StatementContext. We encode it here to avoid circle dependency.
+	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
+	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
+	sessionStates.Warnings = s.StmtCtx.GetWarnings()
 	return
 }
 
@@ -1902,6 +1915,11 @@ func (s *SessionVars) DecodeSessionStates(ctx context.Context, sessionStates *se
 	}
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
+
+	// Decode StatementContext.
+	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
+	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
 }
 

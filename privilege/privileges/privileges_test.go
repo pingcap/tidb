@@ -1415,7 +1415,8 @@ func TestMetricsSchema(t *testing.T) {
 			Hostname: "localhost",
 		}, nil, nil)
 
-		rs, err := tk.Session().ExecuteInternal(context.Background(), test.stmt)
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+		rs, err := tk.Session().ExecuteInternal(ctx, test.stmt)
 		if err == nil {
 			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
 		}
@@ -1891,33 +1892,34 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil)
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
-	_, err := tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	_, err := tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'Local:///tmp/test';")
 	require.EqualError(t, err, "BACKUP requires tikv store, not unistore")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "RESTORE requires tikv store, not unistore")
 
 	sem.Enable()
 	defer sem.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'local:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'local:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'file:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'file:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO '/tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO '/tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
 
 }

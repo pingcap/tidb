@@ -41,7 +41,8 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	}()
 	dbID := int64(1)
 	tblID := int64(2)
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		if err != nil {
@@ -56,7 +57,6 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	if err != nil {
 		return
 	}
-	ctx := context.Background()
 	alloc := autoid.NewAllocator(store, 1, 2, false, autoid.RowIDAllocType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
@@ -81,7 +81,8 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	}()
 	var seq *model.SequenceInfo
 	var sequenceBase int64
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		if err != nil {
