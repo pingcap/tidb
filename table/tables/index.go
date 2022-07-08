@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
@@ -41,6 +42,8 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+	// Mark this is in backfill process.
+	Isbackfill bool
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -55,7 +58,7 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, newBF ...bool) table.Index {
 	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
 	var prefix kv.Key
 	if indexInfo.Global {
@@ -65,11 +68,16 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		// Otherwise, start with physicalID.
 		prefix = tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID)
 	}
+	var newBackfillFlow bool = false
+	if len(newBF) > 0 {
+		newBackfillFlow = newBF[0]
+	}
 	index := &index{
-		idxInfo:  indexInfo,
-		tblInfo:  tblInfo,
-		prefix:   prefix,
-		phyTblID: physicalID,
+		idxInfo:    indexInfo,
+		tblInfo:    tblInfo,
+		prefix:     prefix,
+		phyTblID:   physicalID,
+		Isbackfill: newBackfillFlow,
 	}
 	return index
 }
@@ -106,6 +114,26 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return nil, err
+	}
+
+	var (
+		tempKey []byte
+		keyVer  []byte = []byte("0")
+	)
+	if c.idxInfo.State == model.StateWriteReorganization && !c.Isbackfill {
+		switch c.idxInfo.SubState {
+		case model.StateNone:
+			// do nothing.
+		case model.StateBackfillSync, model.StateBackfill:
+			// Write to the temporary index.
+			keyVer = []byte("1")
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, key)
+		case model.StateMergeSync, model.StateMerge:
+			// Double write
+			keyVer = []byte("2")
+			tempKey = append(tempKey, key...)
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
+		}
 	}
 
 	ctx := opt.Ctx
@@ -150,9 +178,18 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
 	if !distinct || skipCheck || opt.Untouched {
+		if !bytes.Equal(keyVer, []byte("0")) {
+			idxVal = append(idxVal, keyVer...)
+		}
 		err = txn.GetMemBuffer().Set(key, idxVal)
 		if err != nil {
 			return nil, err
+		}
+		if len(tempKey) > 0 {
+			err = txn.GetMemBuffer().Set(tempKey, idxVal)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if !opt.IgnoreAssertion && (!opt.Untouched) {
 			if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
@@ -188,6 +225,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 	if err != nil || len(value) == 0 {
 		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+		if !bytes.Equal(keyVer, []byte("0")) {
+			idxVal = append(idxVal, keyVer...)
+		}
 		if lazyCheck {
 			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
@@ -195,6 +235,16 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		}
 		if err != nil {
 			return nil, err
+		}
+		if len(tempKey) > 0 {
+			if lazyCheck {
+				err = txn.GetMemBuffer().SetWithFlags(tempKey, idxVal, kv.SetPresumeKeyNotExists)
+			} else {
+				err = txn.GetMemBuffer().Set(tempKey, idxVal)
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 		if opt.IgnoreAssertion {
 			return nil, nil
@@ -214,19 +264,96 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	return handle, kv.ErrKeyExists
 }
 
+// Create4SST creates a new entry in the kvIndex data for lightning backfiller.
+// If the index is unique and there is an existing entry with the same key,
+// Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
+func (c *index) Create4SST(sctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) ([]byte, []byte, bool, error) {
+	if c.Meta().Unique {
+		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
+	}
+	var opt table.CreateIdxOpt
+	for _, fn := range opts {
+		fn(&opt)
+	}
+	vars := sctx.GetSessionVars()
+	writeBufs := vars.GetWriteStmtBufs()
+	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
+	if err != nil {
+		return key, nil, distinct, err
+	}
+
+	// Save the key buffer to reuse.
+	writeBufs.IndexKeyBuf = key
+	c.initNeedRestoreData.Do(func() {
+		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+	})
+	idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, indexedValues, h, c.phyTblID, handleRestoreData)
+	if err != nil {
+		return key, nil, distinct, err
+	}
+
+	return key, idxVal, distinct, err
+}
+
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
-	if distinct {
-		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-	} else {
-		err = txn.GetMemBuffer().Delete(key)
+	var (
+		tempKey []byte
+		keyVer  []byte = []byte("0")
+		val     []byte
+	)
+	if c.idxInfo.State == model.StateWriteReorganization {
+		switch c.idxInfo.SubState {
+		case model.StateNone:
+			// Do nothing.
+		case model.StateBackfillSync, model.StateBackfill:
+			// Write to the temporary index.
+			keyVer = []byte("1")
+			tempKey = append(tempKey, key...)
+			key = nil
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
+		case model.StateMergeSync, model.StateMerge:
+			// Double write
+			keyVer = []byte("2")
+			tempKey = append(tempKey, key...)
+			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, tempKey)
+		}
 	}
-	if err != nil {
-		return err
+
+	if distinct {
+		if len(key) > 0 {
+			err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+			if err != nil {
+				return err
+			}
+		}
+		if len(tempKey) > 0 {
+			val = append(val, []byte("deleteu")...)
+			val = append(val, keyVer...)
+			err = txn.GetMemBuffer().Set(tempKey, val)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		if len(key) > 0 {
+			err = txn.GetMemBuffer().Delete(key)
+			if err != nil {
+				return err
+			}
+		}
+		if len(tempKey) > 0 {
+			val = append(val, []byte("delete")...)
+			val = append(val, keyVer...)
+			err = txn.GetMemBuffer().Set(tempKey, val)
+			if err != nil {
+				return err
+			}
+		}
 	}
 	if c.idxInfo.State == model.StatePublic {
 		// If the index is in public state, delete this index means it must exists.

@@ -561,7 +561,6 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		if err = changingCol.SetOriginDefaultValue(originDefVal); err != nil {
 			return ver, errors.Trace(err)
 		}
-
 		initAndAddColumnToTable(tblInfo, changingCol)
 		indexesToChange := findRelatedIndexesToChange(tblInfo, oldCol.Name)
 		for _, info := range indexesToChange {

@@ -1903,7 +1903,7 @@ func buildTableInfo(
 			// Use btree as default index type.
 			idxInfo.Tp = model.IndexTypeBtree
 		}
-		idxInfo.ID = allocateIndexID(tbInfo)
+		idxInfo.ID = allocateindexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 

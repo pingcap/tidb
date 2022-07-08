@@ -923,6 +923,19 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 	return nil, errors.Errorf("no handle in index key: %v, value: %v", key, value)
 }
 
+// IndexKVIsUnique uses to judge if an index is unique, it can handle the KV committed by txn already, it doesn't consider the untouch flag.
+func IndexKVIsUnique(value []byte) bool {
+	if len(value) <= MaxOldEncodeValueLen {
+		return len(value) == 8
+	}
+	if getIndexVersion(value) == 1 {
+		segs := SplitIndexValueForClusteredIndexVersion1(value)
+		return segs.CommonHandle != nil
+	}
+	segs := SplitIndexValue(value)
+	return segs.IntHandle != nil || segs.CommonHandle != nil
+}
+
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 	remain, d, err := codec.DecodeOne(keySuffix)
 	if err != nil {
@@ -1122,6 +1135,24 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 		}
 	}
 	return
+}
+
+// TempIndexPrefix used to gen temp idx id from index id.
+const TempIndexPrefix = 0x7fff000000000000
+
+// IndexIDMask used to get index id from index id/temp idx id
+const IndexIDMask = 0xffffffffffff
+
+// IndexKey2TempIndexKey gen a temp index Key
+func IndexKey2TempIndexKey(indexID int64, key []byte) {
+	eid := codec.EncodeIntToCmpUint(TempIndexPrefix | indexID)
+	binary.BigEndian.PutUint64(key[11:], eid)
+}
+
+// TempIndexKey2IndexKey gen a index key from temp index key
+func TempIndexKey2IndexKey(indexID int64, key []byte) {
+	eid := codec.EncodeIntToCmpUint(indexID)
+	binary.BigEndian.PutUint64(key[11:], eid)
 }
 
 // GenIndexValuePortal is the portal for generating index value.

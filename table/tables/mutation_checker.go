@@ -15,6 +15,7 @@
 package tables
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -123,6 +124,10 @@ func CheckDataConsistency(
 	return nil
 }
 
+func convertTempIdxID(tempIndexID int64) int64 {
+	return tempIndexID & tablecodec.IndexIDMask
+}
+
 // checkHandleConsistency checks whether the handles, with regard to a single-row change,
 // in row insertions and index insertions are consistent.
 // A PUT_index implies a PUT_row with the same handle.
@@ -144,7 +149,9 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 			continue
 		}
 
-		indexInfo, ok := indexIDToInfo[m.indexID]
+		// Generate correct index id for check.
+		idxID := convertTempIdxID(m.indexID)
+		indexInfo, ok := indexIDToInfo[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
@@ -183,22 +190,32 @@ func checkIndexKeys(
 ) error {
 	var indexData []types.Datum
 	for _, m := range indexMutations {
-		indexInfo, ok := indexIDToInfo[m.indexID]
+		var value []byte
+		// Generate correct index id for check.
+		idxID := convertTempIdxID(m.indexID)
+		indexInfo, ok := indexIDToInfo[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
-		rowColInfos, ok := indexIDToRowColInfos[m.indexID]
+		rowColInfos, ok := indexIDToRowColInfos[idxID]
 		if !ok {
 			return errors.New("index not found")
 		}
 
+		// If this is temp index data, need remove last byte of index data.
+		if idxID != m.indexID {
+			value = append(value, m.value[:len(m.value)-1]...)
+		} else {
+			value = append(value, m.value...)
+		}
+
 		// when we cannot decode the key to get the original value
-		if len(m.value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
+		if len(value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
 			continue
 		}
 
 		decodedIndexValues, err := tablecodec.DecodeIndexKV(
-			m.key, m.value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
+			m.key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -220,7 +237,8 @@ func checkIndexKeys(
 			indexData = append(indexData, datum)
 		}
 
-		if len(m.value) == 0 {
+		// When it is add index new backfill state.
+		if len(value) == 0 || (idxID != m.indexID && (bytes.Equal(value, []byte("deleteu")) || bytes.Equal(value, []byte("delete")))) {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
 			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())

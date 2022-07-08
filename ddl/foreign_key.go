@@ -35,7 +35,7 @@ func onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ e
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	fkInfo.ID = allocateIndexID(tblInfo)
+	fkInfo.ID = allocateindexID(tblInfo)
 	tblInfo.ForeignKeys = append(tblInfo.ForeignKeys, &fkInfo)
 
 	originalState := fkInfo.State
