@@ -17,12 +17,12 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/exp/slices"
 )
 
 // ExplainInfo implements the Expression interface.
@@ -149,7 +149,7 @@ func sortedExplainExpressionList(exprs []Expression, normalized bool) []byte {
 			exprInfos = append(exprInfos, expr.ExplainInfo())
 		}
 	}
-	sort.Strings(exprInfos)
+	slices.Sort(exprInfos)
 	for i, info := range exprInfos {
 		buffer.WriteString(info)
 		if i+1 < len(exprInfos) {

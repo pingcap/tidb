@@ -378,7 +378,6 @@ func TestString(t *testing.T) {
 		{ActionAddColumn, "add column"},
 		{ActionDropColumn, "drop column"},
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
-		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
 		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},

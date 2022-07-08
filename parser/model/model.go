@@ -434,6 +434,10 @@ type TableInfo struct {
 	// TiFlashReplica means the TiFlash replica info.
 	TiFlashReplica *TiFlashReplicaInfo `json:"tiflash_replica"`
 
+	// TiFlashMode means the table's mode in TiFlash.
+	// Table's default mode is TiFlashModeNormal
+	TiFlashMode TiFlashMode `json:"tiflash_mode"`
+
 	// IsColumnar means the table is column-oriented.
 	// It's true when the engine of the table is TiFlash only.
 	IsColumnar bool `json:"is_columnar"`
@@ -571,6 +575,25 @@ func (t TableLockType) String() string {
 		return "WRITE LOCAL"
 	case TableLockWrite:
 		return "WRITE"
+	}
+	return ""
+}
+
+type TiFlashMode string
+
+const (
+	// In order to be compatible with the old version without tiflash mode
+	// we set the normal mode(default mode) as empty
+	TiFlashModeNormal TiFlashMode = ""
+	TiFlashModeFast   TiFlashMode = "fast"
+)
+
+func (t TiFlashMode) String() string {
+	switch t {
+	case TiFlashModeNormal:
+		return "NORMAL"
+	case TiFlashModeFast:
+		return "FAST"
 	}
 	return ""
 }
@@ -1351,6 +1374,10 @@ func (db *DBInfo) Copy() *DBInfo {
 	newInfo.Tables = make([]*TableInfo, len(db.Tables))
 	copy(newInfo.Tables, db.Tables)
 	return &newInfo
+}
+
+func LessDBInfo(a *DBInfo, b *DBInfo) bool {
+	return a.Name.L < b.Name.L
 }
 
 // CIStr is case insensitive string.
