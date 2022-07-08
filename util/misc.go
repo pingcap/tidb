@@ -619,6 +619,7 @@ func QueryStrForLog(query string) string {
 	return query
 }
 
+// CreateCertificates creates and writes a cert based on the params.
 func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyAlgo x509.PublicKeyAlgorithm,
 	signAlgo x509.SignatureAlgorithm) error {
 	certValidity := 90 * 24 * time.Hour // 90 days

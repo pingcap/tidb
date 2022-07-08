@@ -203,6 +203,7 @@ func (sc *signingCert) checkAndLoadCert() {
 	}
 }
 
+// loadCert loads the cert and adds it into the cert list.
 func (sc *signingCert) loadCert() error {
 	tlsCert, err := tls.LoadX509KeyPair(sc.certPath, sc.keyPath)
 	if err != nil {
@@ -235,7 +236,7 @@ func (sc *signingCert) loadCert() error {
 	return nil
 }
 
-// Sign generates a signature with the content and the private key.
+// sign generates a signature with the content and the private key.
 func (sc *signingCert) sign(content []byte) ([]byte, error) {
 	var (
 		signer crypto.Signer
@@ -295,7 +296,7 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 	return signer.Sign(rand.Reader, content, opts)
 }
 
-// CheckSignature checks the signature and the content.
+// checkSignature checks the signature and the content.
 func (sc *signingCert) checkSignature(content, signature []byte) error {
 	sc.RLock()
 	defer sc.RUnlock()
