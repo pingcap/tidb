@@ -778,7 +778,9 @@ func getTiDBConfig(db *sql.Conn) (dbconfig.Config, error) {
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	conn, err := db.Conn(context.Background())
 	if err == nil {
-		defer conn.Close()
+		defer func() {
+			_ = conn.Close()
+		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
 			return tidbConfig.Store == "tikv", nil

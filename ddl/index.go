@@ -396,10 +396,31 @@ func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta
 	return nil, err
 }
 
-func updateHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, state model.SchemaState) {
+// moveAndUpdateHiddenColumnsToPublic updates the hidden columns to public, and
+// moves the hidden columns to proper offsets, so that Table.Columns' states meet the assumption of
+// [public, public, ..., public, non-public, non-public, ..., non-public].
+func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	hiddenColOffset := make(map[int]struct{}, 0)
 	for _, col := range idxInfo.Columns {
 		if tblInfo.Columns[col.Offset].Hidden {
-			tblInfo.Columns[col.Offset].State = state
+			hiddenColOffset[col.Offset] = struct{}{}
+		}
+	}
+	if len(hiddenColOffset) == 0 {
+		return
+	}
+	// Find the first non-public column.
+	firstNonPublicPos := len(tblInfo.Columns) - 1
+	for i, c := range tblInfo.Columns {
+		if c.State != model.StatePublic {
+			firstNonPublicPos = i
+			break
+		}
+	}
+	for _, col := range idxInfo.Columns {
+		tblInfo.Columns[col.Offset].State = model.StatePublic
+		if _, needMove := hiddenColOffset[col.Offset]; needMove {
+			tblInfo.MoveColumnInfo(col.Offset, firstNonPublicPos)
 		}
 	}
 }
@@ -469,13 +490,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
-			pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
 			for _, hiddenCol := range hiddenCols {
-				_, _, _, err = createColumnInfoWithPosCheck(tblInfo, hiddenCol, pos)
-				if err != nil {
-					job.State = model.JobStateCancelled
-					return ver, errors.Trace(err)
-				}
+				initAndAddColumnToTable(tblInfo, hiddenCol)
 			}
 		}
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
@@ -532,7 +548,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateNone:
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
-		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
@@ -573,12 +589,15 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		var done bool
-		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		if job.MultiSchemaInfo != nil {
+			done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
+		} else {
+			done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		}
 		if !done {
 			return ver, err
 		}
 
-		indexInfo.State = model.StatePublic
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
@@ -586,6 +605,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, errors.Trace(err)
 			}
 		}
+		indexInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -597,6 +617,19 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	if job.MultiSchemaInfo.Revertible {
+		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		if done {
+			job.MarkNonRevertible()
+		}
+		// We need another round to wait for all the others sub-jobs to finish.
+		return false, ver, err
+	}
+	return true, ver, err
 }
 
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
@@ -782,165 +815,6 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	}
 
 	return tblInfo, indexInfo, false, nil
-}
-
-func onDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Indexes"))
-	}
-
-	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	if len(indexInfos) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, nil
-	}
-
-	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexInfo := range indexInfos {
-		for _, indexColumn := range indexInfo.Columns {
-			if tblInfo.Columns[indexColumn.Offset].Hidden {
-				dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
-			}
-		}
-	}
-
-	originalState := indexInfos[0].State
-	switch indexInfos[0].State {
-	case model.StatePublic:
-		// public -> write only
-		setIndicesState(indexInfos, model.StateWriteOnly)
-		setColumnsState(dependentHiddenCols, model.StateWriteOnly)
-		for _, colInfo := range dependentHiddenCols {
-			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
-		}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateWriteOnly
-	case model.StateWriteOnly:
-		// write only -> delete only
-		setIndicesState(indexInfos, model.StateDeleteOnly)
-		setColumnsState(dependentHiddenCols, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteOnly
-	case model.StateDeleteOnly:
-		// delete only -> reorganization
-		setIndicesState(indexInfos, model.StateDeleteReorganization)
-		setColumnsState(dependentHiddenCols, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteReorganization
-	case model.StateDeleteReorganization:
-		// reorganization -> absent
-		indexIDs := make([]int64, 0, len(indexInfos))
-		indexNames := make(map[string]bool, len(indexInfos))
-		for _, indexInfo := range indexInfos {
-			indexNames[indexInfo.Name.L] = true
-			indexIDs = append(indexIDs, indexInfo.ID)
-		}
-
-		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-		for _, idx := range tblInfo.Indices {
-			if _, ok := indexNames[idx.Name.L]; !ok {
-				newIndices = append(newIndices, idx)
-			}
-		}
-		tblInfo.Indices = newIndices
-
-		// Set column index flag.
-		for _, indexInfo := range indexInfos {
-			dropIndexColumnFlag(tblInfo, indexInfo)
-		}
-
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
-
-		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateNone)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
-	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfos[0].State)
-	}
-
-	return ver, errors.Trace(err)
-}
-
-func getSchemaInfos(t *meta.Meta, job *model.Job) (*model.TableInfo, []model.CIStr, []bool, error) {
-	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-
-	var indexNames []model.CIStr
-	var ifExists []bool
-	if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-
-	return tblInfo, indexNames, ifExists, nil
-}
-
-func checkDropIndexes(tblInfo *model.TableInfo, job *model.Job, indexNames []model.CIStr, ifExists []bool) ([]*model.IndexInfo, error) {
-	var warnings []*errors.Error
-	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))
-	UniqueIndexNames := make(map[model.CIStr]bool, len(indexNames))
-	for i, indexName := range indexNames {
-		// Double check the index is exists.
-		indexInfo := tblInfo.FindIndexByName(indexName.L)
-		if indexInfo == nil {
-			if ifExists[i] {
-				warnings = append(warnings, toTError(dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)))
-				continue
-			}
-			job.State = model.JobStateCancelled
-			return nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-		}
-
-		// Double check for drop index on auto_increment column.
-		if err := checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo); err != nil {
-			job.State = model.JobStateCancelled
-			return nil, autoid.ErrWrongAutoKey
-		}
-
-		// Check for dropping duplicate indexes.
-		if UniqueIndexNames[indexName] {
-			if !ifExists[i] {
-				job.State = model.JobStateCancelled
-				return nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-			}
-			warnings = append(warnings, toTError(dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)))
-		}
-		UniqueIndexNames[indexName] = true
-
-		indexInfos = append(indexInfos, indexInfo)
-	}
-
-	// Check that drop primary index will not cause invisible implicit primary index.
-	if err := checkInvisibleIndexesOnPK(tblInfo, indexInfos, job); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	job.MultiSchemaInfo = &model.MultiSchemaInfo{Warnings: warnings}
-
-	return indexInfos, nil
 }
 
 func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, job *model.Job) error {

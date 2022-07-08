@@ -17,6 +17,7 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -6545,6 +6546,107 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 	}
 	tk.MustExec("drop table rp_t;")
 	tk.MustExec("drop table hp_t;")
+}
+
+func TestTiFlashFineGrainedShuffle(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	sql := "explain select row_number() over w1 from t1 window w1 as (partition by c1);"
+
+	getStreamCountFromExplain := func(rows [][]interface{}) (res []uint64) {
+		re := regexp.MustCompile("stream_count: ([0-9]+)")
+		for _, row := range rows {
+			buf := bytes.NewBufferString("")
+			_, _ = fmt.Fprintf(buf, "%s\n", row)
+			if matched := re.FindStringSubmatch(buf.String()); matched != nil {
+				require.Equal(t, len(matched), 2)
+				c, err := strconv.ParseUint(matched[1], 10, 64)
+				require.NoError(t, err)
+				res = append(res, c)
+			}
+		}
+		return res
+	}
+
+	// tiflash_fine_grained_shuffle_stream_count should be same with tidb_max_tiflash_threads.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows := tk.MustQuery(sql).Rows()
+	streamCount := getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(10), streamCount[0])
+
+	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is -1.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = -1")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+
+	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 0")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+
+	// Disabled when tiflash_fine_grained_shuffle_stream_count is 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	require.Equal(t, len(streamCount), 0)
+
+	// Test when tiflash_fine_grained_shuffle_stream_count is greater than 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 16")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(16), streamCount[0])
 }
 
 func TestIssue33175(t *testing.T) {
