@@ -667,7 +667,7 @@ func calcPagingCost(ctx sessionctx.Context, indexPlan PhysicalPlan, expectCnt ui
 
 	// we want the diff between idxCst and pagingCst here,
 	// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
-	return pagingCst - sessVars.GetSeekFactor(nil)
+	return math.Max(pagingCst-sessVars.GetSeekFactor(nil), 0)
 }
 
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {

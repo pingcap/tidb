@@ -1,4 +1,11 @@
 {
+  "asciicheck": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
+    }
+  },
   "asmdecl": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -74,6 +81,12 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "deadcode": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "deepequalerrors": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -83,6 +96,7 @@
   "durationcheck": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
+      "/rules_go_work-*": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -90,6 +104,20 @@
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "errcheck": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*_test\\.go$": "ignore generated code",
+      "util/logutil": "ignore util/logutil code",
+      "tools/": "ignore tools code",
+      "/src/net/conf.go": "ignore code",
+      "/rules_go_work-*": "ignore generated code",
+      "GOROOT/": "ignore code",
+      "/parser/": "ignore code",
+      ".*_/testmain\\.go$": "ignore code"
     }
   },
   "exportloopref": {
@@ -112,6 +140,34 @@
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code"
+    }
+  },
+  "gci": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      ".*\\.pb\\.go$": "generated code",
+      "/rules_go_work-*": "ignore generated code",
+      ".*test_/testmain\\.go$": "ignore generated code",
+      ".*failpoint_binding__.go$": "ignore generated code",
+      "util/printer/printer.go": "ignore util/printer code"
+    }
+  },
+  "gosec": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "parser/goyacc/": "ignore goyacc code",
+      ".*_test\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      "tools/check/ut.go": "ignore tools/check code",
+      "tools/check/xprog.go": "ignore tools/check code",
+      "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
+      "tools/check/xprog.go:": "ignore tools/check code",
+      "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "GOROOT/": "ignore code",
+      ".*_generated\\.go$": "ignore generated code"
     }
   },
   "httpresponse": {
@@ -146,6 +202,13 @@
   },
   "lostcancel": {
     "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "misspell": {
+    "exclude_files": {
+      "/cgo/": "ignore cgo code",
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -620,6 +683,15 @@
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "parser/yy_parser.go": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
+  "predeclared": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "parser/yy_parser.go": "ignore generated code",
+      "parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }

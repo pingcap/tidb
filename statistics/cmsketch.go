@@ -441,6 +441,9 @@ func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN,
 
 // TotalCount returns the total count in the sketch, it is only used for test.
 func (c *CMSketch) TotalCount() uint64 {
+	if c == nil {
+		return 0
+	}
 	return c.count
 }
 
@@ -625,8 +628,8 @@ func (c *TopN) Sort() {
 	if c == nil {
 		return
 	}
-	sort.Slice(c.TopN, func(i, j int) bool {
-		return bytes.Compare(c.TopN[i].Encoded, c.TopN[j].Encoded) < 0
+	slices.SortFunc(c.TopN, func(i, j TopNMeta) bool {
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
 	})
 }
 
@@ -796,8 +799,8 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 	for i := 0; i < partNum; i++ {
 		if len(removeVals[i]) > 0 {
 			tmp := removeVals[i]
-			sort.Slice(tmp, func(i, j int) bool {
-				cmpResult := bytes.Compare(tmp[i].Encoded, tmp[j].Encoded)
+			slices.SortFunc(tmp, func(i, j TopNMeta) bool {
+				cmpResult := bytes.Compare(i.Encoded, j.Encoded)
 				return cmpResult < 0
 			})
 			hists[i].RemoveVals(tmp)
@@ -855,11 +858,11 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 }
 
 func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].Count != sorted[j].Count {
-			return sorted[i].Count > sorted[j].Count
+	slices.SortFunc(sorted, func(i, j TopNMeta) bool {
+		if i.Count != j.Count {
+			return i.Count > j.Count
 		}
-		return bytes.Compare(sorted[i].Encoded, sorted[j].Encoded) < 0
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
 	})
 	n = mathutil.Min(uint32(len(sorted)), n)
 

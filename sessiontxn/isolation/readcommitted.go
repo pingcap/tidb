@@ -219,14 +219,14 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
-	p.prepareStmtTS()
+
+	if !p.isTidbSnapshotEnabled() {
+		p.prepareStmtTS()
+	}
+
 	return nil
 }
 
@@ -256,4 +256,18 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	}
 
 	return nil
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
+func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+
+	if p.sctx.GetSessionVars().StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
+
+	return snapshot, nil
 }

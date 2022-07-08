@@ -114,8 +114,8 @@ func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionc
 	var ea elementIDAlloc
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		proxyJob := sub.ToProxyJob(job)
-		if jobNeedGC(proxyJob) {
-			err := insertJobIntoDeleteRangeTable(ctx, sctx, proxyJob, &ea)
+		if jobNeedGC(&proxyJob) {
+			err := insertJobIntoDeleteRangeTable(ctx, sctx, &proxyJob, &ea)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -170,21 +170,22 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	ctx, err := dr.sessPool.get()
+	sctx, err := dr.sessPool.get()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator get session failed", zap.Error(err))
 		return errors.Trace(err)
 	}
-	defer dr.sessPool.put(ctx)
+	defer dr.sessPool.put(sctx)
 
-	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	ranges, err := util.LoadDeleteRanges(ctx, sctx, math.MaxInt64)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator load tasks failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	for _, r := range ranges {
-		if err := dr.doTask(ctx, r); err != nil {
+		if err := dr.doTask(sctx, r); err != nil {
 			logutil.BgLogger().Error("[ddl] delRange emulator do task failed", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -192,13 +193,14 @@ func (dr *delRange) doDelRangeWork() error {
 	return nil
 }
 
-func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
+func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 	var oldStartKey, newStartKey kv.Key
 	oldStartKey = r.StartKey
 	for {
 		finish := true
 		dr.keys = dr.keys[:0]
-		err := kv.RunInNewTxn(context.Background(), dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		err := kv.RunInNewTxn(ctx, dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			if topsqlstate.TopSQLEnabled() {
 				// Only when TiDB run without PD(use unistore as storage for test) will run into here, so just set a mock internal resource tagger.
 				txn.SetOption(kv.ResourceGroupTagger, util.GetInternalResourceGroupTaggerForTopSQL())
@@ -235,7 +237,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 			return errors.Trace(err)
 		}
 		if finish {
-			if err := util.CompleteDeleteRange(ctx, r); err != nil {
+			if err := util.CompleteDeleteRange(sctx, r); err != nil {
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
@@ -247,7 +249,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 				zap.Stringer("endKey", endKey))
 			break
 		}
-		if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
+		if err := util.UpdateDeleteRange(sctx, r, newStartKey, oldStartKey); err != nil {
 			logutil.BgLogger().Error("[ddl] delRange emulator update task failed", zap.Error(err))
 		}
 		oldStartKey = newStartKey
@@ -264,6 +266,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 
+	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job))
 	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:
@@ -321,8 +324,9 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		tableID := job.TableID
 		var indexID int64
+		var ifExists bool
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
@@ -343,9 +347,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexName interface{}
+		var ifExists bool
 		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
@@ -362,24 +367,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			elemID := ea.allocForIndexID(tableID, indexID)
 			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
-		}
-	case model.ActionDropIndexes:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-		// Remove data in TiKV.
-		if len(indexIDs) == 0 {
-			return nil
-		}
-		if len(partitionIDs) == 0 {
-			return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
-		}
-		for _, pID := range partitionIDs {
-			if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pID, indexIDs, now, ea); err != nil {
-				return errors.Trace(err)
-			}
 		}
 	case model.ActionDropColumn:
 		var colName model.CIStr

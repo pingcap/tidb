@@ -58,10 +58,11 @@ func queryDeleteRangeCnt(sessPool *sessionPool, jobID int64) (int, error) {
 		sessPool.put(sctx)
 	}()
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	query := `select sum(cnt) from
 	(select count(1) cnt from mysql.gc_delete_range where job_id = %? union all
 	select count(1) cnt from mysql.gc_delete_range_done where job_id = %?) as gdr;`
-	rs, err := s.ExecuteInternal(context.TODO(), query, jobID, jobID)
+	rs, err := s.ExecuteInternal(ctx, query, jobID, jobID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -78,6 +79,10 @@ func queryDeleteRangeCnt(sessPool *sessionPool, jobID int64) (int, error) {
 }
 
 func expectedDeleteRangeCnt(job *model.Job) (int, error) {
+	if job.State == model.JobStateCancelled {
+		// Cancelled job should not have any delete range.
+		return 0, nil
+	}
 	switch job.Type {
 	case model.ActionDropSchema:
 		var tableIDs []int64
@@ -100,28 +105,26 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		}
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		hasDelRange := job.State == model.JobStateRollbackDone
+		if !hasDelRange {
+			return 0, nil
+		}
 		var indexID int64
+		var ifExists bool
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
+		var ifNotExists bool
 		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
-	case model.ActionDropIndexes:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
-			return 0, errors.Trace(err)
-		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * len(indexIDs), nil
 	case model.ActionDropColumn:
 		var colName model.CIStr
 		var ifExists bool
@@ -144,7 +147,7 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		totalExpectedCnt := 0
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			p := sub.ToProxyJob(job)
-			cnt, err := expectedDeleteRangeCnt(p)
+			cnt, err := expectedDeleteRangeCnt(&p)
 			if err != nil {
 				return 0, err
 			}
