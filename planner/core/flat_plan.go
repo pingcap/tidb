@@ -179,7 +179,7 @@ func FlattenPhysicalPlan(p Plan, buildSideFirst bool) *FlatPhysicalPlan {
 }
 
 func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperator {
-	// Some operators are not inited and given an ExplainID. So their explain IDs are "_0"
+	// Some operators are not initialized and given an ExplainID. So their explain IDs are "_0"
 	// (when in EXPLAIN FORMAT = 'brief' it will be ""), we skip such operators.
 	// Examples: Explain, Execute
 	if len(p.TP()) == 0 && p.ID() == 0 {
