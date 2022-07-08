@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -446,7 +446,7 @@ func TestCreateDropDatabase(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	ddlChecker := ddl.NewChecker(dom.DDL())
+	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)
 
 	tk := testkit.NewTestKit(t, store)
