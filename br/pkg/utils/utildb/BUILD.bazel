@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "utildb",
+    srcs = [
+        "db.go",
+        "retry.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/utils/utildb",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//kv",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_multierr//:multierr",
+    ],
+)
+
+go_test(
+    name = "utildb_test",
+    srcs = ["retry_test.go"],
+    embed = [":utildb"],
+    deps = [
+        "//errno",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_check//:check",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+        "@org_uber_go_multierr//:multierr",
+    ],
+)

@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mock_test",
+    srcs = ["local_test.go"],
+    deps = [
+        "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/local",
+        "//br/pkg/lightning/mydump",
+        "//br/pkg/mock",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_golang_mock//gomock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

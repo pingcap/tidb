@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "kv",
@@ -25,7 +25,6 @@ go_library(
         "//meta/autoid",
         "//parser/model",
         "//parser/mysql",
-        "//planner/core",
         "//sessionctx",
         "//sessionctx/variable",
         "//table",
@@ -42,6 +41,7 @@ go_library(
         "@org_uber_go_zap//zapcore",
     ],
 )
+<<<<<<< HEAD
 
 go_test(
     name = "kv_test",
@@ -73,3 +73,5 @@ go_test(
         "@org_uber_go_zap//zapcore",
     ],
 )
+=======
+>>>>>>> cd19c433a (Update)
