@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
@@ -72,19 +73,19 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		// There are two main steps here to enter a new txn:
 		// 1. prepareTxnWithOracleTS
 		// 2. ActivateTxn
-		if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+		if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
 		if err := p.prepareTxnWithOracleTS(); err != nil {
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
-		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
+		if !canReuseTxnWhenExplicitBegin(p.sctx) {
 			// As we will enter a new txn, we need to commit the old txn if it's still valid.
 			// There are two main steps here to enter a new txn:
 			// 1. prepareTxnWithOracleTS
 			// 2. ActivateTxn
-			if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+			if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 				return err
 			}
 			if err := p.prepareTxnWithOracleTS(); err != nil {
@@ -244,7 +245,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		txn.SetOption(kv.IsolationLevel, kv.RC)
 	}
 
-	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
 
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
@@ -375,7 +376,7 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS)
+	snapshot := internal.GetSnapshotWithTS(p.sctx, snapshotTS)
 
 	replicaReadType := sessVars.GetReplicaRead()
 	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
@@ -383,4 +384,17 @@ func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot
 	}
 
 	return snapshot, nil
+}
+
+// canReuseTxnWhenExplicitBegin returns whether we should reuse the txn when starting a transaction explicitly
+func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
+	sessVars := sctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
+	// need to call NewTxn, which commits the existing transaction and begins a new one.
+	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
+	// always create a new transaction.
+	// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
+	// initialized with snapshot ts.
+	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
 }
