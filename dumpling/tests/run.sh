@@ -55,6 +55,8 @@ else
     test_case="*"
 fi
 
+test_case="s3"
+
 if [ "$test_case" == "*" ]; then
     for script in dumpling/tests/*/run.sh; do
         run_case_by_fullpath "$script"

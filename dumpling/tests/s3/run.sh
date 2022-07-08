@@ -55,7 +55,7 @@ export AWS_REGION=us-east-1
 export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
 export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
 run_dumpling --s3.endpoint="http://$S3_ENDPOINT/"
-ls "${HOST_DIR}"
+ls "${HOST_DIR}" -R
 
 file_should_exist "$DBPATH/mybucket/dump/s3-schema-create.sql"
 file_should_exist "$DBPATH/mybucket/dump/s3.t-schema.sql"
