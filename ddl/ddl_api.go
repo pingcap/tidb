@@ -3004,6 +3004,7 @@ func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec
 		t.NewConstraints = []*ast.Constraint{}
 		specs = append(specs, &t)
 	}
+	// Split the add constraints from AlterTableSpec.
 	for _, con := range spec.NewConstraints {
 		t := *spec
 		t.NewColumns = []*ast.ColumnDef{}
@@ -7003,7 +7004,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 		return nil
 	}
 
-	// forbit cache table in system database.
+	// forbidden cache table in system database.
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(dbterror.ErrUnsupportedAlterCacheForSysTable)
 	} else if t.Meta().TempTableType != model.TempTableNone {
