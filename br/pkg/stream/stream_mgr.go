@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	filter "github.com/pingcap/tidb/util/table-filter"
-
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
