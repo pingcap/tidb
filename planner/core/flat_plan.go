@@ -82,15 +82,15 @@ type FlatOperator struct {
 	//
 	// Specifically, it means if the below are all true:
 	// 1. this operator has two children
-	// 2. the first child's DriverSide is the probe side and the second's is the build side.
+	// 2. the first child's Label is the probe side and the second's is the build side.
 	//
 	// If you call FlattenPhysicalPlan with buildSideFirst true, NeedReverseDriverSide will be useless.
 	NeedReverseDriverSide bool
 
-	Depth      uint32
-	DriverSide DriverSide
-	IsRoot     bool
-	StoreType  kv.StoreType
+	Depth     uint32
+	Label     OperatorLabel
+	IsRoot    bool
+	StoreType kv.StoreType
 	// ReqType is only meaningful when IsRoot is false.
 	ReqType ReadReqType
 
@@ -101,13 +101,13 @@ type FlatOperator struct {
 	IsPhysicalPlan bool
 }
 
-// DriverSide indicates the operator's location from its parent.
+// OperatorLabel acts as some additional information to the name, usually it means its relationship with its parent.
 // It's useful for index join, apply, index lookup, cte and so on.
-type DriverSide uint8
+type OperatorLabel uint8
 
 const (
-	// Empty means DriverSide is meaningless for this operator.
-	Empty DriverSide = iota
+	// Empty means OperatorLabel is meaningless for this operator.
+	Empty OperatorLabel = iota
 	// BuildSide means this operator is at the build side of its parent
 	BuildSide
 	// ProbeSide means this operator is at the probe side of its parent
@@ -118,7 +118,7 @@ const (
 	RecursivePart
 )
 
-func (d DriverSide) String() string {
+func (d OperatorLabel) String() string {
 	switch d {
 	case Empty:
 		return ""
@@ -136,7 +136,7 @@ func (d DriverSide) String() string {
 
 type operatorCtx struct {
 	depth       uint32
-	driverSide  DriverSide
+	driverSide  OperatorLabel
 	isRoot      bool
 	storeType   kv.StoreType
 	reqType     ReadReqType
@@ -187,7 +187,7 @@ func (f *FlatPhysicalPlan) flattenSingle(p Plan, info *operatorCtx) *FlatOperato
 	}
 	res := &FlatOperator{
 		Origin:         p,
-		DriverSide:     info.driverSide,
+		Label:          info.driverSide,
 		IsRoot:         info.isRoot,
 		StoreType:      info.storeType,
 		Depth:          info.depth,
@@ -219,7 +219,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
 	if physPlan, ok := p.(PhysicalPlan); ok {
-		driverSideInfo := make([]DriverSide, len(physPlan.Children()))
+		driverSideInfo := make([]OperatorLabel, len(physPlan.Children()))
 
 		switch plan := physPlan.(type) {
 		case *PhysicalApply:
