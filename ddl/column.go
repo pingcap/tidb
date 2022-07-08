@@ -724,7 +724,11 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 
 		var done bool
-		done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
+		if job.MultiSchemaInfo != nil {
+			done, ver, err = doReorgWorkForModifyColumnMultiSchema(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
+		} else {
+			done, ver, err = doReorgWorkForModifyColumn(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
+		}
 		if !done {
 			return ver, err
 		}
@@ -757,25 +761,17 @@ func (w *worker) doModifyColumnTypeWithData(
 
 func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo != nil {
-		if job.IsCancelling() {
-			logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback",
-				zap.String("job", job.String()), zap.Error(err))
-			job.State = model.JobStateRollingback
-			return false, ver, err
+	if job.MultiSchemaInfo.Revertible {
+		done, ver, err = doReorgWorkForModifyColumn(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
+		if done {
+			// We need another round to wait for all the others sub-jobs to finish.
+			job.MarkNonRevertible()
 		}
-		if job.MultiSchemaInfo.Revertible {
-			done, ver, err = doReorgWorkForModifyColumn(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
-			if done {
-				job.MarkNonRevertible()
-				done = false // Wait for the other sub jobs.
-			}
-			return done, ver, err
-		}
-		// Non-revertible means all the sub jobs finished.
-		return true, ver, err
+		// We need another round to run the reorg process.
+		return false, ver, err
 	}
-	return doReorgWorkForModifyColumn(w, d, t, job, tbl, oldCol, changingCol, changingIdxs)
+	// Non-revertible means all the sub jobs finished.
+	return true, ver, err
 }
 
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
@@ -901,6 +897,7 @@ func updateNewIndexesCols(tblInfo *model.TableInfo, changingIdxs []*model.IndexI
 			}
 		}
 		// For the indexes that still contains other changing column, skip removing it now.
+		// We leave the removal work to the last modify column job.
 		if !hasOtherChangingCol {
 			indexesToRemove = append(indexesToRemove, idx)
 		}
