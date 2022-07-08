@@ -134,7 +134,7 @@ func (c *storeCollector) appendRegionMap(r RegionWithLeader) {
 type StoreCheckpoints struct {
 	HasCheckpoint    bool
 	Checkpoint       uint64
-	FailureSubranges []kv.KeyRange
+	FailureSubRanges []kv.KeyRange
 }
 
 func (s *StoreCheckpoints) merge(other StoreCheckpoints) {
@@ -142,7 +142,7 @@ func (s *StoreCheckpoints) merge(other StoreCheckpoints) {
 		s.Checkpoint = other.Checkpoint
 		s.HasCheckpoint = true
 	}
-	s.FailureSubranges = append(s.FailureSubranges, other.FailureSubranges...)
+	s.FailureSubRanges = append(s.FailureSubRanges, other.FailureSubRanges...)
 }
 
 func (s *StoreCheckpoints) String() string {
@@ -153,22 +153,26 @@ func (s *StoreCheckpoints) String() string {
 	} else {
 		sb.WriteString("none")
 	}
-	fmt.Fprintf(sb, ":(remaining %d ranges)", len(s.FailureSubranges))
+	fmt.Fprintf(sb, ":(remaining %d ranges)", len(s.FailureSubRanges))
 	return sb.String()
 }
 
-func (c *storeCollector) spawn(ctx context.Context) func() (StoreCheckpoints, error) {
+func (c *storeCollector) spawn(ctx context.Context) func(context.Context) (StoreCheckpoints, error) {
 	go c.begin(ctx)
-	return func() (StoreCheckpoints, error) {
+	return func(cx context.Context) (StoreCheckpoints, error) {
 		close(c.input)
-		<-c.doneMessenger
+		select {
+		case <-cx.Done():
+			return StoreCheckpoints{}, cx.Err()
+		case <-c.doneMessenger:
+		}
 		if err := c.Err(); err != nil {
 			return StoreCheckpoints{}, err
 		}
 		sc := StoreCheckpoints{
 			HasCheckpoint:    c.checkpoint != 0,
 			Checkpoint:       c.checkpoint,
-			FailureSubranges: c.inconsistent,
+			FailureSubRanges: c.inconsistent,
 		}
 		return sc, nil
 	}
@@ -205,7 +209,7 @@ func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 
 type runningStoreCollector struct {
 	collector *storeCollector
-	wait      func() (StoreCheckpoints, error)
+	wait      func(context.Context) (StoreCheckpoints, error)
 }
 
 // clusterCollector is the controller for collecting region checkpoints for the cluster.
@@ -299,9 +303,9 @@ func (c *clusterCollector) collectRegion(r RegionWithLeader) error {
 // Note this takes the ownership of this collector, you may create a new collector for next use.
 func (c *clusterCollector) Finish(ctx context.Context) (StoreCheckpoints, error) {
 	defer c.cancel()
-	result := StoreCheckpoints{FailureSubranges: c.noLeaders}
+	result := StoreCheckpoints{FailureSubRanges: c.noLeaders}
 	for id, coll := range c.collectors {
-		r, err := coll.wait()
+		r, err := coll.wait(ctx)
 		if err != nil {
 			return StoreCheckpoints{}, errors.Annotatef(err, "store %d", id)
 		}

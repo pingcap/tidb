@@ -145,7 +145,7 @@ func (h *Checkpoints) InsertRanges(r RangesSharesTS) {
 	}
 }
 
-// InsertRegion inserts the region and its TS into the region tree.
+// InsertRange inserts the region and its TS into the region tree.
 func (h *Checkpoints) InsertRange(ts uint64, rng kv.KeyRange) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

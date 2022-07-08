@@ -181,11 +181,11 @@ func (c *CheckpointAdvancer) recordTimeCost(message string, fields ...zap.Field)
 }
 
 // tryAdvance tries to advance the checkpoint ts of a set of ranges which shares the same checkpoint.
-func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst *RangesSharesTS) (err error) {
+func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS) (err error) {
 	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
 	defer func() {
 		if err != nil {
-			c.cache.InsertRanges(*rst)
+			c.cache.InsertRanges(rst)
 		}
 	}()
 	defer utils.PanicToErr(&err)
@@ -212,7 +212,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst *RangesSharesTS
 	if err != nil {
 		return err
 	}
-	fr := result.FailureSubranges
+	fr := result.FailureSubRanges
 	if len(fr) != 0 {
 		log.Debug("failure regions collected", zap.Int("size", len(fr)))
 		c.cache.InsertRanges(RangesSharesTS{
@@ -235,7 +235,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 	for _, rst := range rsts {
 		rst := rst
 		workers.ApplyOnErrorGroup(eg, func() (err error) {
-			return c.tryAdvance(cx, rst)
+			return c.tryAdvance(cx, *rst)
 		})
 	}
 	err := eg.Wait()
@@ -273,7 +273,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 		}
 		log.Debug("full: a run finished", zap.Any("checkpoint", result))
 
-		nextRun = append(nextRun, result.FailureSubranges...)
+		nextRun = append(nextRun, result.FailureSubRanges...)
 		if cp > result.Checkpoint {
 			cp = result.Checkpoint
 		}
