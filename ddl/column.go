@@ -563,23 +563,26 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 
 		initAndAddColumnToTable(tblInfo, changingCol)
-		indexesToChange := findIndexesByColName(tblInfo, oldCol.Name)
-		var indexesToRemove []int64
+		indexesToChange := findRelatedIndexesToChange(tblInfo, oldCol.Name)
 		for _, info := range indexesToChange {
 			newIdxID := allocateIndexID(tblInfo)
-			if info.indexInfo.IsGenerated {
-				newIdxName := info.indexInfo.Name
-				newIdxInfo := copyIndexInfoForModifyColumn(info.indexInfo, newIdxID, newIdxName, info.colOffset, changingCol)
-				indexesToRemove = append(indexesToRemove, info.indexInfo.ID)
-				tblInfo.Indices[info.idxOffset] = newIdxInfo
+			if !info.isTemp {
+				// We create a temp index for each normal index.
+				tmpIdx := info.indexInfo.Clone()
+				tmpIdxName := genChangingIndexUniqueName(tblInfo, info.indexInfo)
+				updateIdxInfo(tmpIdx, newIdxID, model.NewCIStr(tmpIdxName))
+				updateIdxInfoCol(tmpIdx.Columns[info.offset], changingCol)
+				tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 			} else {
-				newIdxName := model.NewCIStr(genChangingIndexUniqueName(tblInfo, info.indexInfo))
-				newIdxInfo := copyIndexInfoForModifyColumn(info.indexInfo, newIdxID, newIdxName, info.colOffset, changingCol)
-				newIdxInfo.IsGenerated = true
-				tblInfo.Indices = append(tblInfo.Indices, newIdxInfo)
+				// The index is a temp index created by previous modify column job(s).
+				// We can overwrite it to reduce reorg cost, because it will be dropped eventually.
+				tmpIdx := info.indexInfo
+				oldTempIdxID := tmpIdx.ID
+				updateIdxInfo(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
+				updateIdxInfoCol(tmpIdx.Columns[info.offset], changingCol)
+				modifyInfo.removedIdxs = append(modifyInfo.removedIdxs, oldTempIdxID)
 			}
 		}
-		modifyInfo.removedIdxs = indexesToRemove
 	} else {
 		changingCol = model.FindColumnInfoByID(tblInfo.Columns, modifyInfo.changingCol.ID)
 		if changingCol == nil {
@@ -592,19 +595,18 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, changingCol, oldCol, modifyInfo.newCol.Name, modifyInfo.pos, modifyInfo.removedIdxs)
 }
 
-func copyIndexInfoForModifyColumn(idxInfo *model.IndexInfo, newIndexID int64, newIndexName model.CIStr,
-	colOffset int, changingCol *model.ColumnInfo) *model.IndexInfo {
-	newIdxInfo := idxInfo.Clone()
-	newIdxInfo.Name = newIndexName
-	newIdxInfo.ID = newIndexID
-	newIdxChangingCol := newIdxInfo.Columns[colOffset]
-	newIdxChangingCol.Name = changingCol.Name
-	newIdxChangingCol.Offset = changingCol.Offset
+func updateIdxInfo(idxInfo *model.IndexInfo, newID int64, newName model.CIStr) {
+	idxInfo.ID = newID
+	idxInfo.Name = newName
+}
+
+func updateIdxInfoCol(idxCol *model.IndexColumn, changingCol *model.ColumnInfo) {
+	idxCol.Name = changingCol.Name
+	idxCol.Offset = changingCol.Offset
 	canPrefix := types.IsTypePrefixable(changingCol.GetType())
-	if !canPrefix || (canPrefix && changingCol.GetFlen() < newIdxChangingCol.Length) {
-		newIdxChangingCol.Length = types.UnspecifiedLength
+	if !canPrefix || (canPrefix && changingCol.GetFlen() < idxCol.Length) {
+		idxCol.Length = types.UnspecifiedLength
 	}
-	return newIdxInfo
 }
 
 // rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
@@ -874,7 +876,6 @@ func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo
 		for i, idx := range tblInfo.Indices {
 			if strings.EqualFold(idxName, idx.Name.O) {
 				cIdx.Name = model.NewCIStr(idxName)
-				cIdx.IsGenerated = false
 				tblInfo.Indices[i] = cIdx
 				break
 			}

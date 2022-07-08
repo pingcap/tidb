@@ -1538,39 +1538,54 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 
 type indexesToChange struct {
 	indexInfo *model.IndexInfo
-	idxOffset int // index offset in tblInfo.Indices
-	colOffset int // column offset in idxInfo.Columns
+	offset    int  // column offset in idxInfo.Columns
+	isTemp    bool // this is a temp index created by a previous modify column job.
 }
 
-// findIndexesByColName finds the indexes that covering the given column, and deduplicate
-// the indexes by original name.
-func findIndexesByColName(tblInfo *model.TableInfo, colName model.CIStr) []indexesToChange {
-	var result []indexesToChange
-	for i, idxInfo := range tblInfo.Indices {
-		origName := getChangingIndexOriginName(idxInfo)
-		for j, idxCol := range idxInfo.Columns {
-			if idxCol.Name.L != colName.L {
-				continue
+// findRelatedIndexesToChange finds the indexes that covering the given column.
+// The normal one will be overridden by the temp one.
+func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []indexesToChange {
+	var normalIdxInfos, tempIdxInfos []indexesToChange
+	for _, idxInfo := range tblInfo.Indices {
+		if pos := findIdxCol(idxInfo, colName); pos != -1 {
+			isTemp := isTempIdxInfo(idxInfo, tblInfo)
+			r := indexesToChange{indexInfo: idxInfo, offset: pos, isTemp: isTemp}
+			if isTemp {
+				tempIdxInfos = append(tempIdxInfos, r)
+			} else {
+				normalIdxInfos = append(normalIdxInfos, r)
 			}
-			r := indexesToChange{indexInfo: idxInfo, idxOffset: i, colOffset: j}
-			if !idxInfo.IsGenerated {
-				result = append(result, r)
-				break
+		}
+	}
+	// Overwrite if the index has the corresponding temporary index. For example,
+	// we try to find the indexes that contain the column `b` and there are two indexes, `i(a, b)` and `$i($a, b)`.
+	// In this case, we would create a temporary index like xx($a, $b), so the latter should be chosen.
+	result := normalIdxInfos
+	for _, tmpIdx := range tempIdxInfos {
+		origName := getChangingIndexOriginName(tmpIdx.indexInfo)
+		for i, normIdx := range normalIdxInfos {
+			if normIdx.indexInfo.Name.O == origName {
+				result[i] = tmpIdx
 			}
-			// Deduplicate the index info by original name.
-			var dedup bool
-			for k, rs := range result {
-				if !rs.indexInfo.IsGenerated && origName == rs.indexInfo.Name.O {
-					result[k] = r
-					dedup = true
-					break
-				}
-			}
-			if !dedup {
-				result = append(result, r)
-			}
-			break
 		}
 	}
 	return result
+}
+
+func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	for _, idxCol := range idxInfo.Columns {
+		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func findIdxCol(idxInfo *model.IndexInfo, colName model.CIStr) int {
+	for offset, idxCol := range idxInfo.Columns {
+		if idxCol.Name.L == colName.L {
+			return offset
+		}
+	}
+	return -1
 }
