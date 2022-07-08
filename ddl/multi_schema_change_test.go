@@ -323,6 +323,13 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustQuery("select * from t use index (t, t1, t2, t3);").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("admin check table t;")
 
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t add column (index i1(a, b, c), index i2(c, b, a));")
+	tk.MustQuery("select * from t use index (i1, i2);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
+
 	// Test add multiple indexes with same name.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
