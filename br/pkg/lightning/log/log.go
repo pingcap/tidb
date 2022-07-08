@@ -47,7 +47,7 @@ type Config struct {
 	FileMaxBackups int `toml:"max-backups" json:"max-backups"`
 }
 
-// Adjust adjusts the log level of the logger.
+// Adjust adjusts some fields in the config to a proper value.
 func (cfg *Config) Adjust() {
 	if len(cfg.Level) == 0 {
 		cfg.Level = defaultLogLevel
