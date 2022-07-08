@@ -1263,7 +1263,9 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
-			if e.Analyze {
+			if e.Analyze &&
+				e.SCtx().GetSessionVars().MemoryDebugModeThreshold != 0 &&
+				e.SCtx().GetSessionVars().MemoryDebugModeRatio > 0 {
 				row := e.Rows[0]
 				tracker := e.SCtx().GetSessionVars().StmtCtx.MemTracker
 				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"
