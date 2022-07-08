@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +58,7 @@ import (
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 type Lightning struct {
@@ -870,8 +870,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 				tableTotalSizes = append(tableTotalSizes, tb.TotalSize)
 			}
 		}
-		sort.Slice(tableTotalSizes, func(i, j int) bool {
-			return tableTotalSizes[i] > tableTotalSizes[j]
+		slices.SortFunc(tableTotalSizes, func(i, j int64) bool {
+			return i > j
 		})
 		topNTotalSize := int64(0)
 		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {
@@ -912,6 +912,7 @@ func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	// try to remove the metadata first.

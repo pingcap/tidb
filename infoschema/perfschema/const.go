@@ -29,6 +29,7 @@ var perfSchemaTables = []string{
 	tableTransCurrent,
 	tableTransHistory,
 	tableTransHistoryLong,
+	tableSessionVariables,
 	tableStagesCurrent,
 	tableStagesHistory,
 	tableStagesHistoryLong,
@@ -544,3 +545,8 @@ const tablePDProfileGoroutines = "CREATE TABLE IF NOT EXISTS " + tableNamePDProf
 	"ID INT(8) NOT NULL," +
 	"STATE VARCHAR(16) NOT NULL," +
 	"LOCATION VARCHAR(512) NOT NULL);"
+
+// tableSessionVariables contains the
+const tableSessionVariables = "CREATE TABLE IF NOT EXISTS " + tableNameSessionVariables + " (" +
+	"VARIABLE_NAME VARCHAR(64) NOT NULL," +
+	"VARIABLE_VALUE VARCHAR(1024) NOT NULL);"

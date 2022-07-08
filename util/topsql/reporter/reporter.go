@@ -51,7 +51,8 @@ type TopSQLReporter interface {
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 
 	// RegisterPlan like RegisterSQL, but for normalized plan strings.
-	RegisterPlan(planDigest []byte, normalizedPlan string)
+	// isLarge indicates the size of normalizedPlan is big.
+	RegisterPlan(planDigest []byte, normalizedPlan string, isLarge bool)
 
 	// Close uses to close and release the reporter resource.
 	Close()
@@ -80,12 +81,15 @@ type RemoteTopSQLReporter struct {
 
 	// calling decodePlan this can take a while, so should not block critical paths.
 	decodePlan planBinaryDecodeFunc
+
+	// Instead of dropping large plans, we compress it into encoded format and report
+	compressPlan planBinaryCompressFunc
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
 //
 // decodePlan is a decoding function which will be called asynchronously to decode the plan binary to string.
-func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLReporter {
+func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
 		DefaultDataSinkRegisterer: NewDefaultDataSinkRegisterer(ctx),
@@ -99,6 +103,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc) *RemoteTopSQLRepor
 		normalizedPlanMap:         newNormalizedPlanMap(),
 		stmtStatsBuffer:           map[uint64]stmtstats.StatementStatsMap{},
 		decodePlan:                decodePlan,
+		compressPlan:              compressPlan,
 	}
 	tsr.sqlCPUCollector = collector.NewSQLCPUCollector(tsr)
 	return tsr
@@ -153,8 +158,8 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // RegisterPlan implements TopSQLReporter.
 //
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string) {
-	tsr.normalizedPlanMap.register(planDigest, normalizedPlan)
+func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string, isLarge bool) {
+	tsr.normalizedPlanMap.register(planDigest, normalizedPlan, isLarge)
 }
 
 // Close implements TopSQLReporter.
@@ -270,7 +275,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			tsr.doReport(&ReportData{
 				DataRecords: rs.toProto(),
 				SQLMetas:    data.normalizedSQLMap.toProto(),
-				PlanMetas:   data.normalizedPlanMap.toProto(tsr.decodePlan),
+				PlanMetas:   data.normalizedPlanMap.toProto(tsr.decodePlan, tsr.compressPlan),
 			})
 		case <-tsr.ctx.Done():
 			return
