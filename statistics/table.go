@@ -17,7 +17,6 @@ package statistics
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -272,7 +272,7 @@ func (t *Table) String() string {
 	for _, col := range t.Columns {
 		cols = append(cols, col)
 	}
-	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+	slices.SortFunc(cols, func(i, j *Column) bool { return i.ID < j.ID })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
@@ -280,7 +280,7 @@ func (t *Table) String() string {
 	for _, idx := range t.Indices {
 		idxs = append(idxs, idx)
 	}
-	sort.Slice(idxs, func(i, j int) bool { return idxs[i].ID < idxs[j].ID })
+	slices.SortFunc(idxs, func(i, j *Index) bool { return i.ID < j.ID })
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
