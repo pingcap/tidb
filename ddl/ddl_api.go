@@ -7056,7 +7056,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 		return nil
 	}
 
-	// forbit cache table in system database.
+	// forbidden cache table in system database.
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(dbterror.ErrUnsupportedAlterCacheForSysTable)
 	} else if t.Meta().TempTableType != model.TempTableNone {
