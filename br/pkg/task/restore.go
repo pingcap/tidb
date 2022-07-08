@@ -416,7 +416,9 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
 		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
 		if err != nil {
-			return errors.Trace(err)
+			mergeRegionCount = conn.DefaultMergeRegionKeyCount
+			mergeRegionSize = conn.DefaultMergeRegionSizeBytes
+			log.Warn("meet error when getting checkpoint from TiKV; using default", logutil.ShortError(err))
 		}
 	}
 
