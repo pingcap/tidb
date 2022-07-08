@@ -6071,3 +6071,100 @@ func TestIsFastPlan(t *testing.T) {
 		require.Equal(t, ca.isFastPlan, ok)
 	}
 }
+
+func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Case-1: test unique index only contain foreign key columns.
+	cases := []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "create table t1 (id int key,a int, b int, unique index(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn := func() {
+		for _, ca := range cases {
+			if ca.err == nil {
+				tk.MustExec(ca.sql)
+			} else {
+				err := tk.ExecToErr(ca.sql)
+				require.True(t, ca.err.Equal(err), ca.sql)
+			}
+		}
+	}
+	checkCaseFn()
+
+	// Case-2: test unique index contain foreign key columns and other columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int key,a int, b int, unique index(a, b, id));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
+
+	// Case-3: test non-unique index only contain foreign key columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int key,a int, b int, index(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
+
+	// Case-4: test non-unique index contain foreign key columns and other columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int key,a int, b int, index(a, b, id));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
+
+	// todo: add primary key index and pk is int, aka pk is handle.
+}
