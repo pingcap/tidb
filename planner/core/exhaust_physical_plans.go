@@ -1071,6 +1071,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			Columns:         ds.Columns,
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
+			DBName:          ds.DBName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
