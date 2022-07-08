@@ -24,52 +24,35 @@ import (
 )
 
 const (
-	// TableStatePending states used for the TableCounter labels
-	TableStatePending = "pending"
-	// TableStateImported states used for the TableCounter labels
-	TableStateImported = "imported"
-	// TableStateCompleted states used for the TableCounter labels
+	// states used for the TableCounter labels
+	TableStatePending   = "pending"
+	TableStateImported  = "imported"
 	TableStateCompleted = "completed"
 
-	// BytesStateTotalRestore is that total source data bytes needs to restore
-	BytesStateTotalRestore = "total_restore"
-	// BytesStateRestored is that source data bytes restored during restore engine
-	BytesStateRestored = "restored"
-	// BytesStateRestoreWritten is that bytes written during restore engine
-	BytesStateRestoreWritten = "written"
-	// BytesStateImported is that bytes imported during import engine
-	BytesStateImported = "imported"
+	BytesStateTotalRestore   = "total_restore" // total source data bytes needs to restore
+	BytesStateRestored       = "restored"      // source data bytes restored during restore engine
+	BytesStateRestoreWritten = "written"       // bytes written during restore engine
+	BytesStateImported       = "imported"      // bytes imported during import engine
 
-	// ProgressPhaseTotal is that total restore progress(not include post-process, like checksum and analyze)
-	ProgressPhaseTotal = "total"
-	// ProgressPhaseRestore is that restore engine progress
-	ProgressPhaseRestore = "restore"
-	// ProgressPhaseImport is that import engine progress
-	ProgressPhaseImport = "import"
+	ProgressPhaseTotal   = "total"   // total restore progress(not include post-process, like checksum and analyze)
+	ProgressPhaseRestore = "restore" // restore engine progress
+	ProgressPhaseImport  = "import"  // import engine progress
 
-	// TableResultSuccess states used for the TableCounter labels when results used for the TableCounter labels
+	// results used for the TableCounter labels
 	TableResultSuccess = "success"
-	// TableResultFailure states used for the TableCounter labels when results used for the TableCounter labels
 	TableResultFailure = "failure"
 
-	// ChunkStateEstimated states used for the ChunkCounter labels
+	// states used for the ChunkCounter labels
 	ChunkStateEstimated = "estimated"
-	// ChunkStatePending states used for the ChunkCounter labels
-	ChunkStatePending = "pending"
-	// ChunkStateRunning states used for the ChunkCounter labels
-	ChunkStateRunning = "running"
-	// ChunkStateFinished states used for the ChunkCounter labels
-	ChunkStateFinished = "finished"
-	// ChunkStateFailed states used for the ChunkCounter labels
-	ChunkStateFailed = "failed"
+	ChunkStatePending   = "pending"
+	ChunkStateRunning   = "running"
+	ChunkStateFinished  = "finished"
+	ChunkStateFailed    = "failed"
 
-	// BlockDeliverKindIndex is the kind of block deliver for the BlockDeliverKVPairsHistogram
 	BlockDeliverKindIndex = "index"
-	// BlockDeliverKindData is the kind of block deliver for the BlockDeliverKVPairsHistogram
-	BlockDeliverKindData = "data"
+	BlockDeliverKindData  = "data"
 )
 
-// Metrics is the metrics for importer.
 type Metrics struct {
 	ImporterEngineCounter                *prometheus.CounterVec
 	IdleWorkersGauge                     *prometheus.GaugeVec
@@ -301,7 +284,6 @@ func (m *Metrics) UnregisterFrom(r promutil.Registry) {
 	r.Unregister(m.ProgressGauge)
 }
 
-// RecordTableCount records the number of tables.
 func (m *Metrics) RecordTableCount(status string, err error) {
 	var result string
 	if err != nil {
@@ -312,7 +294,6 @@ func (m *Metrics) RecordTableCount(status string, err error) {
 	m.TableCounter.WithLabelValues(status, result).Inc()
 }
 
-// RecordEngineCount records the number of engines that were processed.
 func (m *Metrics) RecordEngineCount(status string, err error) {
 	var result string
 	if err != nil {
