@@ -2137,6 +2137,12 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 			return err
 		}
 	}
+	if cc.capability&mysql.ClientDeprecateEOF > 0 {
+		err = cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(),
+			cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount(), true)
+		cc.pkt.flush()
+		return err
+	}
 	if err := cc.writeEOF(0); err != nil {
 		return err
 	}
