@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/infoschema"
 	"math"
 	"sync"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
@@ -1065,15 +1065,11 @@ func (e *InsertValues) checkForeignKeyConstrain(ctx context.Context, rows [][]ty
 	return nil
 }
 
-type foreignKeyChecker struct {
-	fkInfo             *model.FKInfo
-	colsOffsets        []int
-	referTbInfo        *model.TableInfo
-	referTbIdx         table.Index
-	valueNeedToChecked [][]types.Datum
-}
-
-func (e *InsertValues) initForeignKeyChecker(ctx context.Context) error {
+func (e *InsertValues) initForeignKeyChecker() error {
+	if !e.ctx.GetSessionVars().ForeignKeyChecks {
+		logutil.BgLogger().Warn("----- foreign key check disabled")
+		return nil
+	}
 	tbInfo := e.Table.Meta()
 	if len(tbInfo.ForeignKeys) == 0 {
 		return nil
@@ -1083,12 +1079,15 @@ func (e *InsertValues) initForeignKeyChecker(ctx context.Context) error {
 		if idx == nil {
 			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
 		}
-		colsOffsets := make([]int, 0, len(fk.Cols))
+		colsOffsets := make([]int, len(fk.Cols))
 		for i := range fk.Cols {
+			if idx.Columns[i].Offset < 0 {
+				return table.ErrIndexOutBound.GenWithStackByArgs(idx.Name, idx.Columns[i].Offset, nil)
+			}
 			colsOffsets[i] = idx.Columns[i].Offset
 		}
 
-		referTable, err := e.is.TableByName(fk.RefSchema, fk.RefSchema)
+		referTable, err := e.is.TableByName(fk.RefSchema, fk.RefTable)
 		if err != nil {
 			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
 		}
@@ -1108,10 +1107,13 @@ func (e *InsertValues) initForeignKeyChecker(ctx context.Context) error {
 		}
 
 		e.fkChecker = append(e.fkChecker, &foreignKeyChecker{
-			fkInfo:      fk,
-			colsOffsets: colsOffsets,
-			referTbInfo: referTbInfo,
-			referTbIdx:  referTbIdx,
+			dbName:         e.DBName.L,
+			tbName:         tbInfo.Name.L,
+			fkInfo:         fk,
+			colsOffsets:    colsOffsets,
+			referTbInfo:    referTbInfo,
+			referTbIdx:     referTbIdx,
+			idxIsExclusive: len(colsOffsets) == len(referTbIdxInfo.Columns),
 		})
 	}
 	return nil
@@ -1285,6 +1287,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
+	}
+	for _, fkc := range e.fkChecker {
+		err = fkc.addRowNeedToCheck(vars.StmtCtx, row)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

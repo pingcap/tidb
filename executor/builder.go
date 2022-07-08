@@ -863,6 +863,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
+	err = insert.initForeignKeyChecker()
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	return insert
 }
 

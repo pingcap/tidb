@@ -89,6 +89,9 @@ const (
 	RequestSourceInternal
 	// RequestSourceType set request source type of the current statement.
 	RequestSourceType
+
+	//
+	ScanBatchSize
 )
 
 // ReplicaReadType is the type of replica to read data from
