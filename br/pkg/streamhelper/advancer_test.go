@@ -33,7 +33,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	r, err := coll.Finish(ctx)
 	require.NoError(t, err)
-	require.Len(t, r.FailureSubranges, 0)
+	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 }
 
