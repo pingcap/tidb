@@ -74,6 +74,13 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustQuery("select * from t use index (i)").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t add column (index i1(a, b, c), index i2(c, b, a), index i3((a + 1)), index i4((c - 1)));")
+	tk.MustQuery("select * from t use index (i1, i2);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int default 1);")
 	tk.MustExec("insert into t values ();")
 	tk.MustExec("alter table t add column if not exists (b int default 2, c int default 3);")
@@ -321,13 +328,6 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	tk.MustExec("alter table t add index t(a, b), add index t1(a);")
 	tk.MustExec("alter table t add index t2(a), add index t3(a, b);")
 	tk.MustQuery("select * from t use index (t, t1, t2, t3);").Check(testkit.Rows("1 2 3"))
-	tk.MustExec("admin check table t;")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int, b int, c int);")
-	tk.MustExec("insert into t values (1, 2, 3);")
-	tk.MustExec("alter table t add column (index i1(a, b, c), index i2(c, b, a));")
-	tk.MustQuery("select * from t use index (i1, i2);").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("admin check table t;")
 
 	// Test add multiple indexes with same name.
