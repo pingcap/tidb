@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
-	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -241,9 +240,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
-
-	// Start the loader to load signing certs periodically.
-	sessionstates.StartCertLoader()
 
 	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
