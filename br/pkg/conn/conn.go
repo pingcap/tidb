@@ -276,7 +276,9 @@ func (mgr *Mgr) GetDomain() *domain.Domain {
 }
 
 func (mgr *Mgr) Close() {
-	mgr.StoreManager.Close()
+	if mgr.StoreManager != nil {
+		mgr.StoreManager.Close()
+	}
 	// Gracefully shutdown domain so it does not affect other TiDB DDL.
 	// Must close domain before closing storage, otherwise it gets stuck forever.
 	if mgr.ownsStorage {
