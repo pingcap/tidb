@@ -198,9 +198,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	}
 
 	type TestBool struct {
-		Bool1 bool `parquet:"name=bool1, type=BOOLEAN"`
-		Bool2 bool `parquet:"name=bool2, type=BOOLEAN"`
-		// Date int32 `parquet:"name=date, type=DATE"`
+		BoolVal bool `parquet:"name=bool_val, type=BOOLEAN"`
 	}
 
 	fileName = "test.bool.parquet"
@@ -209,12 +207,8 @@ func TestParquetVariousTypes(t *testing.T) {
 	require.NoError(t, err)
 	writer, err = writer2.NewParquetWriter(pf, new(TestBool), 2)
 	require.NoError(t, err)
-	boolCases := TestBool{
-		Bool1: false,
-		Bool2: true,
-		// Date: 18564, // 2020-10-29
-	}
-	require.NoError(t, writer.Write(boolCases))
+	require.NoError(t, writer.Write(&TestBool{false}))
+	require.NoError(t, writer.Write(&TestBool{true}))
 	require.NoError(t, writer.WriteStop())
 	require.NoError(t, pf.Close())
 
@@ -229,8 +223,9 @@ func TestParquetVariousTypes(t *testing.T) {
 	assert.NoError(t, reader.ReadRow())
 	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
 	assert.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
-	assert.Equal(t, types.KindUint64, reader.lastRow.Row[1].Kind())
-	assert.Equal(t, uint64(1), reader.lastRow.Row[1].GetValue())
+	assert.NoError(t, reader.ReadRow())
+	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
+	assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
 }
 
 func TestParquetAurora(t *testing.T) {
