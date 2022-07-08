@@ -223,6 +223,9 @@ func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) 
 
 // Close closes all client in Mgr.
 func (mgr *StoreManager) Close() {
+	if mgr == nil {
+		return
+	}
 	mgr.grpcClis.mu.Lock()
 	for _, cli := range mgr.grpcClis.clis {
 		err := cli.Close()
@@ -234,5 +237,8 @@ func (mgr *StoreManager) Close() {
 }
 
 func (mgr *StoreManager) TLSConfig() *tls.Config {
+	if mgr == nil {
+		return nil
+	}
 	return mgr.tlsConf
 }
