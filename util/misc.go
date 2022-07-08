@@ -467,7 +467,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	requireTLS := tlsutil.RequireSecureTransport.Load()
 
-	var minTLSVersion uint16 = tls.VersionTLS11
+	var minTLSVersion uint16 = tls.VersionTLS12
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
 	case "TLSv1.0":
 		minTLSVersion = tls.VersionTLS10
