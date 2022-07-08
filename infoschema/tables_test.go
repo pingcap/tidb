@@ -41,7 +41,9 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -1504,6 +1506,34 @@ func TestTiDBTrxSummary(t *testing.T) {
 		// so we just look for the row we are looking for
 		if row[0] == "1bb679108d0012a8" {
 			require.Equal(t, strings.TrimSpace(row[1].(string)), "[\""+beginDigest.String()+"\",\""+digest.String()+"\",\""+digest.String()+"\",\""+commitDigest.String()+"\"]")
+			return
+		}
+	}
+	t.Fatal("cannot find the expected row")
+}
+
+func TestTiDBTrxIDDigest(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("drop table if exists test_tidb_trx")
+	tk.MustExec("create table test_tidb_trx(i int)")
+	txninfo.Recorder.Clean()
+	txninfo.Recorder.SetMinDuration(500 * time.Millisecond)
+	defer txninfo.Recorder.SetMinDuration(2147483647)
+	txninfo.Recorder.ResizeIDDigests(128)
+	defer txninfo.Recorder.ResizeIDDigests(0)
+	tk.MustExec("begin")
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	startTs := tk.MustQuery("select @@tidb_current_ts;").Rows()[0][0].(string)
+	time.Sleep(1 * time.Second)
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	tk.MustExec("commit")
+	for _, row := range tk.MustQuery("select * from information_schema.TRX_ID_DIGEST;").Rows() {
+		logutil.BgLogger().Info("row", zap.Any("row", row), zap.Any("startTs", startTs))
+		if row[0] == startTs {
+			require.Equal(t, strings.TrimSpace(row[1].(string)), "605c74cdb79a04a6")
 			return
 		}
 	}
