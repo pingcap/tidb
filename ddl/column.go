@@ -51,38 +51,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func createColumnInfoWithPosCheck(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, *ast.ColumnPosition, int, error) {
-	// Check column name duplicate.
-	cols := tblInfo.Columns
-	offset := len(cols)
-	// Should initialize pos when it is nil.
-	if pos == nil {
-		pos = &ast.ColumnPosition{}
-	}
-	// Get column offset.
-	if pos.Tp == ast.ColumnPositionFirst {
-		offset = 0
-	} else if pos.Tp == ast.ColumnPositionAfter {
-		c := model.FindColumnInfo(cols, pos.RelativeColumn.Name.L)
-		if c == nil {
-			return nil, pos, 0, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
-		}
-
-		// Insert offset is after the mentioned column.
-		offset = c.Offset + 1
-	}
-	colInfo.ID = allocateColumnID(tblInfo)
-	colInfo.State = model.StateNone
-	// To support add column asynchronous, we should mark its offset as the last column.
-	// So that we can use origin column offset to get value from row.
-	colInfo.Offset = len(cols)
-
-	// Append the column info to the end of the tblInfo.Columns.
-	// It will reorder to the right offset in "Columns" when it state change to public.
-	tblInfo.Columns = append(cols, colInfo)
-	return colInfo, pos, offset, nil
-}
-
 func initAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
 	cols := tblInfo.Columns
 	colInfo.ID = allocateColumnID(tblInfo)
