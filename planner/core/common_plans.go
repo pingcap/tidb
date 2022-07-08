@@ -1502,11 +1502,11 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
-		accessObject = plan.AccessObject(false)
+		accessObject = plan.AccessObject().String()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
 		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
-			accessObject = pa.accessObject(e.ctx)
+			accessObject = pa.accessObject(e.ctx).String()
 		}
 		operatorInfo = p.ExplainInfo()
 	}
