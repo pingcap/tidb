@@ -151,10 +151,10 @@ type selectResult struct {
 	durationReported bool
 	memTracker       *memory.Tracker
 
-	stats              *selectResultRuntimeStats
+	stats *selectResultRuntimeStats
+	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
-
-	paging bool
+	paging             bool
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
