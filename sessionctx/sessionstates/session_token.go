@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -250,6 +251,7 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 	switch certInfo.privKey.(type) {
 	case ed25519.PrivateKey:
 		signer = certInfo.privKey.(ed25519.PrivateKey)
+		opts = crypto.Hash(0)
 	case *rsa.PrivateKey:
 		signer = certInfo.privKey.(*rsa.PrivateKey)
 		var pssHash crypto.Hash
@@ -266,13 +268,27 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 			h.Write(content)
 			content = h.Sum(nil)
 			opts = &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: pssHash}
-		} else {
+			break
+		}
+		switch certInfo.cert.SignatureAlgorithm {
+		case x509.SHA256WithRSA:
 			hashed := sha256.Sum256(content)
 			content = hashed[:]
 			opts = crypto.SHA256
+		case x509.SHA384WithRSA:
+			hashed := sha512.Sum384(content)
+			content = hashed[:]
+			opts = crypto.SHA384
+		case x509.SHA512WithRSA:
+			hashed := sha512.Sum512(content)
+			content = hashed[:]
+			opts = crypto.SHA512
+		default:
+			return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 		}
 	case *ecdsa.PrivateKey:
 		signer = certInfo.privKey.(*ecdsa.PrivateKey)
+		//return ecdsa.SignASN1(rand.Reader, certInfo.privKey.(*ecdsa.PrivateKey), content)
 	default:
 		return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 	}
@@ -285,11 +301,20 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 	defer sc.RUnlock()
 	now := getNow()
 	var err error
-	for _, cert := range sc.certs {
-		if now.After(cert.expireTime) {
+	for _, certInfo := range sc.certs {
+		if now.After(certInfo.expireTime) {
 			break
 		}
-		if err = cert.cert.CheckSignature(cert.cert.SignatureAlgorithm, content, signature); err == nil {
+		switch certInfo.privKey.(type) {
+		// ESDSA is special: `PrivateKey.Sign` doesn't match with `Certificate.CheckSignature`.
+		case *ecdsa.PrivateKey:
+			if !ecdsa.VerifyASN1(certInfo.cert.PublicKey.(*ecdsa.PublicKey), content, signature) {
+				err = errors.New("x509: ECDSA verification failure")
+			}
+		default:
+			err = certInfo.cert.CheckSignature(certInfo.cert.SignatureAlgorithm, content, signature)
+		}
+		if err == nil {
 			return nil
 		}
 	}
@@ -303,7 +328,7 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 func getNow() time.Time {
 	now := time.Now()
 	failpoint.Inject("mockNowOffset", func(val failpoint.Value) {
-		if s := val.(uint64); s > 0 {
+		if s := uint64(val.(int)); s != 0 {
 			now = now.Add(time.Duration(s))
 		}
 	})

@@ -28,8 +28,6 @@ import (
 )
 
 var (
-	//mockValidateTokenTime = "github.com/pingcap/tidb/sessionctx/sessionstates/mockValidateTokenTime"
-	//mockLoadCertTime      = "github.com/pingcap/tidb/sessionctx/sessionstates/mockLoadCertTime"
 	mockNowOffset = "github.com/pingcap/tidb/sessionctx/sessionstates/mockNowOffset"
 )
 
@@ -37,11 +35,10 @@ func TestSetCertAndKey(t *testing.T) {
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
 	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
-	require.NoError(t, err)
+	createRSACert(t, certPath, keyPath)
 
 	// no cert and no key
-	_, err = CreateSessionToken("test_user")
+	_, err := CreateSessionToken("test_user")
 	require.ErrorContains(t, err, "no certificate or key file")
 	// no cert
 	SetKeyPath(keyPath)
@@ -66,7 +63,7 @@ func TestSetCertAndKey(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestVariousAlgo(t *testing.T) {
+func TestSignAlgo(t *testing.T) {
 	tests := []struct {
 		pubKeyAlgo x509.PublicKeyAlgorithm
 		signAlgos  []x509.SignatureAlgorithm
@@ -76,14 +73,13 @@ func TestVariousAlgo(t *testing.T) {
 			pubKeyAlgo: x509.RSA,
 			signAlgos: []x509.SignatureAlgorithm{
 				x509.SHA256WithRSA,
-				//x509.SHA384WithRSA,
+				x509.SHA384WithRSA,
 				x509.SHA512WithRSA,
 				x509.SHA256WithRSAPSS,
 				x509.SHA384WithRSAPSS,
 				x509.SHA512WithRSAPSS,
 			},
 			keySizes: []int{
-				1024,
 				2048,
 				4096,
 			},
@@ -118,13 +114,14 @@ func TestVariousAlgo(t *testing.T) {
 	for _, test := range tests {
 		for _, signAlgo := range test.signAlgos {
 			for _, keySize := range test.keySizes {
+				msg := fmt.Sprintf("pubKeyAlgo: %s, signAlgo: %s, keySize: %d", test.pubKeyAlgo.String(),
+					signAlgo.String(), keySize)
 				err := util.CreateCertificates(certPath, keyPath, keySize, test.pubKeyAlgo, signAlgo)
-				require.NoError(t, err)
+				require.NoError(t, err, msg)
 				globalSigningCert.lockAndLoad()
 				_, tokenBytes := createNewToken(t, "test_user")
 				err = ValidateSessionToken(tokenBytes, "test_user")
-				require.NoError(t, err, fmt.Sprintf("pubKeyAlgo: %s, signAlgo: %s, keySize: %d", test.pubKeyAlgo.String(),
-					signAlgo.String(), keySize))
+				require.NoError(t, err, msg)
 			}
 		}
 	}
@@ -134,14 +131,13 @@ func TestVerifyToken(t *testing.T) {
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
 	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
-	require.NoError(t, err)
+	createRSACert(t, certPath, keyPath)
 	SetKeyPath(keyPath)
 	SetCertPath(certPath)
 
 	// check succeeds
 	token, tokenBytes := createNewToken(t, "test_user")
-	err = ValidateSessionToken(tokenBytes, "test_user")
+	err := ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, err)
 	// the token expires
 	timeOffset := uint64(tokenLifetime + time.Minute)
@@ -171,44 +167,89 @@ func TestCertExpire(t *testing.T) {
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
 	keyPath := filepath.Join(tempDir, "test1_key.pem")
-	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
-	require.NoError(t, err)
+	createRSACert(t, certPath, keyPath)
 	SetKeyPath(keyPath)
 	SetCertPath(certPath)
 
 	_, tokenBytes := createNewToken(t, "test_user")
-	err = ValidateSessionToken(tokenBytes, "test_user")
+	err := ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, err)
 	// replace the cert, but the old cert is still valid for a while
 	certPath2 := filepath.Join(tempDir, "test2_cert.pem")
 	keyPath2 := filepath.Join(tempDir, "test2_key.pem")
-	err = util.CreateCertificates(certPath2, keyPath2, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
-	require.NoError(t, err)
+	createRSACert(t, certPath2, keyPath2)
 	SetKeyPath(keyPath2)
 	SetCertPath(certPath2)
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, err)
 	// the old cert expires and the original token is invalid
-	timeOffset := uint64(oldCertValidTime + time.Minute)
+	timeOffset := uint64(loadCertInterval)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
+	globalSigningCert.lockAndLoad()
+	timeOffset += uint64(oldCertValidTime + time.Minute)
 	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	err = ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockNowOffset))
 	require.ErrorContains(t, err, "verification error")
-	// the new cert expires but is not rotated
+	// the new cert is not rotated but is reloaded
 	_, tokenBytes = createNewToken(t, "test_user")
-	timeOffset += uint64(loadCertInterval + time.Minute)
-	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
+	globalSigningCert.lockAndLoad()
 	err = ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockNowOffset))
-	require.ErrorContains(t, err, "token expired")
-	// the cert expires again and is rotated
-	err = util.CreateCertificates(certPath2, keyPath2, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
 	require.NoError(t, err)
-	timeOffset += uint64(loadCertInterval + time.Minute)
+	// the cert is rotated but is still valid
+	createRSACert(t, certPath2, keyPath2)
+	timeOffset += uint64(loadCertInterval)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
+	globalSigningCert.lockAndLoad()
+	err = ValidateSessionToken(tokenBytes, "test_user")
+	require.ErrorContains(t, err, "token expired")
+	// after some time, it's not valid
+	timeOffset += uint64(oldCertValidTime + time.Minute)
 	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, failpoint.Disable(mockNowOffset))
 	require.ErrorContains(t, err, "verification error")
+}
+
+func TestLoadAndReadConcurrently(t *testing.T) {
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	createRSACert(t, certPath, keyPath)
+	SetKeyPath(keyPath)
+	SetCertPath(certPath)
+
+	deadline := time.Now().Add(5 * time.Second)
+	var wg util.WaitGroupWrapper
+	// the writer
+	wg.Run(func() {
+		for time.Now().Before(deadline) {
+			createRSACert(t, certPath, keyPath)
+			time.Sleep(time.Second)
+		}
+	})
+	// the loader
+	for i := 0; i < 2; i++ {
+		wg.Run(func() {
+			for time.Now().Before(deadline) {
+				globalSigningCert.lockAndLoad()
+				time.Sleep(500 * time.Millisecond)
+			}
+		})
+	}
+	// the reader
+	for i := 0; i < 3; i++ {
+		wg.Run(func() {
+			username := fmt.Sprintf("test_user_%d", i)
+			for time.Now().Before(deadline) {
+				_, tokenBytes := createNewToken(t, username)
+				time.Sleep(10 * time.Millisecond)
+				err := ValidateSessionToken(tokenBytes, username)
+				require.NoError(t, err)
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+	wg.Wait()
 }
 
 func createNewToken(t *testing.T, username string) (*SessionToken, []byte) {
@@ -217,4 +258,9 @@ func createNewToken(t *testing.T, username string) (*SessionToken, []byte) {
 	tokenBytes, err := json.Marshal(token)
 	require.NoError(t, err)
 	return token, tokenBytes
+}
+
+func createRSACert(t *testing.T, certPath, keyPath string) {
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
 }
