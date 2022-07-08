@@ -26,6 +26,8 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//br/pkg/version/build",
+        "//expression",
+        "//planner/core",
         "//util/promutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

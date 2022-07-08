@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "kvtest_test",
+    srcs = [
+        "session_test.go",
+        "sql2kv_test.go",
+    ],
+    deps = [
+        "//br/pkg/lightning/backend/kv",
+        "//br/pkg/lightning/common",
+        "//br/pkg/lightning/log",
+        "//br/pkg/lightning/verification",
+        "//ddl",
+        "//kv",
+        "//meta/autoid",
+        "//parser",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx",
+        "//table",
+        "//table/tables",
+        "//tablecodec",
+        "//types",
+        "//util/mock",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

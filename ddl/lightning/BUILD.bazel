@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lightning",
+    srcs = [
+        "backend.go",
+        "engine.go",
+        "engine_mgr.go",
+        "env.go",
+        "message.go",
+        "res_mgr.go",
+    ],
+    importpath = "github.com/pingcap/tidb/ddl/lightning",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/kv",
+        "//br/pkg/lightning/backend/local",
+        "//br/pkg/lightning/checkpoints",
+        "//br/pkg/lightning/common",
+        "//br/pkg/lightning/config",
+        "//br/pkg/lightning/glue",
+        "//br/pkg/lightning/log",
+        "//config",
+        "//parser",
+        "//parser/model",
+        "//parser/mysql",
+        "//sessionctx/variable",
+        "//table",
+        "//util/logutil",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pkg_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "lightning_test",
+    srcs = [
+        "backend_test.go",
+        "env_test.go",
+    ],
+    embed = [":lightning"],
+    deps = [
+        "//sessionctx/variable",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "split",
+    srcs = [
+        "region.go",
+        "split.go",
+        "split_client.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/split",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/conn/util",
+        "//br/pkg/errors",
+        "//br/pkg/httputil",
+        "//br/pkg/logutil",
+        "//br/pkg/redact",
+        "//br/pkg/utils/utildb",
+        "//store/pdtypes",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@com_github_pingcap_kvproto//pkg/tikvpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_pd_client//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials",
+        "@org_uber_go_multierr//:multierr",
+        "@org_uber_go_zap//:zap",
+    ],
+)
