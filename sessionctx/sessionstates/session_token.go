@@ -108,13 +108,14 @@ func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
 	}
 	now := getNow()
 	if now.After(token.ExpireTime) {
-		return ErrCannotMigrateSession.GenWithStackByArgs("token expired")
+		return ErrCannotMigrateSession.GenWithStackByArgs("token expired", token.ExpireTime.String())
 	}
+	// This prevents the creation of a token by brute-force.
 	if token.SignTime.Add(tokenLifetime).Before(now) {
-		return ErrCannotMigrateSession.GenWithStackByArgs("token lifetime is too long")
+		return ErrCannotMigrateSession.GenWithStackByArgs("token lifetime is too long", token.SignTime.String())
 	}
 	if !strings.EqualFold(username, token.Username) {
-		return ErrCannotMigrateSession.GenWithStackByArgs("username does not match")
+		return ErrCannotMigrateSession.GenWithStackByArgs("username does not match", username, token.Username)
 	}
 	return nil
 }
