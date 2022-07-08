@@ -414,15 +414,23 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 			failpoint.Return(kv.ErrEntryTooLarge)
 		}
 	})
-	updateRawArgs := true
-	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
-	// so we shouldn't replace RawArgs with the marshaling Args.
-	if meetErr && (job.RawArgs != nil && job.Args == nil) {
+	updateRawArgs := needUpdateRawArgs(job, meetErr)
+	if !updateRawArgs {
 		logutil.Logger(w.logCtx).Info("[ddl] meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
-		updateRawArgs = false
 	}
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
+}
+
+func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
+	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
+	// we shouldn't replace RawArgs with the marshaling Args.
+	if meetErr && job.RawArgs != nil && job.Args == nil {
+		// However, for multi-schema change, the args of the parent job is always nil.
+		// Since Job.Encode() can handle the sub-jobs properly, we can safely update the raw args.
+		return job.MultiSchemaInfo != nil
+	}
+	return true
 }
 
 func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
@@ -965,6 +973,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onUnlockTables(d, t, job)
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(d, t, job)
+	case model.ActionSetTiFlashMode:
+		ver, err = w.onSetTiFlashMode(d, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(d, t, job)
 	case model.ActionCreateSequence:
