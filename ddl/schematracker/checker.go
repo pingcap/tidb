@@ -23,9 +23,9 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,13 +34,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
-)
-
-var (
-	// ConstructResultOfShowCreateDatabase is to resolve import cycle.
-	ConstructResultOfShowCreateDatabase func(ctx sessionctx.Context, dbInfo *model.DBInfo, ifNotExists bool, buf *bytes.Buffer) (err error)
-	// ConstructResultOfShowCreateTable is to resolve import cycle.
-	ConstructResultOfShowCreateTable func(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error)
 )
 
 // Checker is used to check the result of SchemaTracker is same as real DDL.
@@ -77,12 +70,12 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	dbInfo2 := d.tracker.SchemaByName(dbName)
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
+	err := executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
+	err = executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
 	if err != nil {
 		panic(err)
 	}
