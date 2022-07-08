@@ -1166,8 +1166,10 @@ type SessionVars struct {
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
 
-	// MemoryDebugMode indicated the memory debug mode.
-	MemoryDebugMode int64
+	// MemoryDebugModeThreshold indicated the memory debug mode.
+	MemoryDebugModeThreshold int64
+
+	MemoryDebugModeRatio int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

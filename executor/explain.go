@@ -21,6 +21,7 @@ import (
 	"runtime"
 	rpprof "runtime/pprof"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -99,15 +100,17 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 		}()
-		if e.ctx.GetSessionVars().MemoryDebugMode > 0 {
-			exit := make(chan bool)
-			e.runMemoryDebugGoroutine(exit)
+		if e.ctx.GetSessionVars().MemoryDebugModeThreshold != 0 &&
+			e.ctx.GetSessionVars().MemoryDebugModeRatio != 0 {
+			debugModeCtx, cancel := context.WithCancel(ctx)
+			waitGroup := sync.WaitGroup{}
+			waitGroup.Add(1)
+			e.runMemoryDebugGoroutine(debugModeCtx, &waitGroup)
 			defer func() {
-				select {
-				case <-exit:
-				}
+				// Notify and wait debug goroutine exit.
+				cancel()
+				waitGroup.Wait()
 			}()
-			defer func() { exit <- false }()
 		}
 		e.executed = true
 		chk := newFirstChunk(e.analyzeExec)
@@ -144,62 +147,76 @@ func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
 	return nil
 }
 
-func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
-	debugMode := e.ctx.GetSessionVars().MemoryDebugMode
+func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.WaitGroup) {
+	threshold := e.ctx.GetSessionVars().MemoryDebugModeThreshold
+	ratio := e.ctx.GetSessionVars().MemoryDebugModeRatio
+	var debugMode int
+	if threshold > 0 {
+		debugMode = 2
+	} else {
+		debugMode = 1
+		threshold = -threshold
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker
 	instanceStats := &runtime.MemStats{}
 	var heapInUse, trackedMem uint64
+
+	updateMemoryUsage := func(gc bool) {
+		if gc {
+			runtime.GC()
+		}
+		runtime.ReadMemStats(instanceStats)
+		heapInUse = instanceStats.HeapInuse
+		trackedMem = uint64(tracker.BytesConsumed())
+	}
+
 	const GB = 1024 * 1024 * 1024
 	go func() {
+		logutil.BgLogger().Info("Memory Debug Mode",
+			zap.String("sql", "started"),
+			zap.Int("mode", debugMode),
+			zap.String("threshold", memory.FormatBytes(threshold)),
+			zap.Int64("ratio", ratio),
+		)
+
+		var infoField []zap.Field
+		genInfo := func(status string, needProfile bool, gc bool) []zap.Field {
+			infoField = infoField[:0]
+			infoField = append(infoField, zap.String("sql", status))
+			infoField = append(infoField, zap.String("heap in use", memory.FormatBytes(int64(heapInUse))))
+			infoField = append(infoField, zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))))
+			if needProfile {
+				infoField = append(infoField, zap.String("heap profile", getHeapProfile(gc)))
+			}
+			return infoField
+		}
+
 		defer func() {
-			runtime.GC()
-			runtime.ReadMemStats(instanceStats)
-			heapInUse = instanceStats.HeapInuse
-			trackedMem = uint64(tracker.BytesConsumed())
-			logutil.BgLogger().Warn("Memory Debug Mode",
-				zap.String("sql", "finished"),
-				zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
-				zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))),
-				zap.String("heap profile", e.getHeapProfile(false)))
-			close(exit)
+			updateMemoryUsage(true)
+			logutil.BgLogger().Info("Memory Debug Mode", genInfo("finished", true, false)...)
+			wg.Done()
 		}()
 		times := 0
 		for {
 			select {
-			case <-exit:
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if debugMode == 2 {
-					runtime.GC()
-				}
-				runtime.ReadMemStats(instanceStats)
-				heapInUse = instanceStats.HeapInuse
-				trackedMem = uint64(tracker.BytesConsumed())
+				updateMemoryUsage(debugMode == 2)
 
 				times++
 				if times%6 == 0 {
-					logutil.BgLogger().Warn("Memory Debug Mode",
-						zap.String("sql", "running"),
-						zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
-						zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))))
+					logutil.BgLogger().Info("Memory Debug Mode", genInfo("running", false, false)...)
 				}
 
 				if debugMode == 1 {
-					if heapInUse > 10*GB && trackedMem/10*15 < heapInUse {
-						logutil.BgLogger().Warn("Memory Debug Mode",
-							zap.String("debug mode 1 alarm", "trackedMem * 150% < heapInUse, maybe some allocation and free frequently"),
-							zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
-							zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))),
-							zap.String("heap profile", e.getHeapProfile(true)))
+					if heapInUse > uint64(threshold) && trackedMem/10*uint64(100+ratio) < heapInUse {
+						logutil.BgLogger().Warn("Memory Debug Mode", genInfo("warning", true, true)...)
 					}
 				} else {
-					if heapInUse > 10*GB && trackedMem/10*11 < heapInUse {
-						logutil.BgLogger().Warn("Memory Debug Mode",
-							zap.String("debug mode 2 alarm", "trackedMem * 110% < heapInUse after GC, maybe some memory not be tracked"),
-							zap.String("heap in use", memory.FormatBytes(int64(heapInUse))),
-							zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))),
-							zap.String("heap profile", e.getHeapProfile(false)))
+					if heapInUse > uint64(threshold) && trackedMem/100*uint64(100+ratio) < heapInUse {
+						logutil.BgLogger().Warn("Memory Debug Mode", genInfo("warning", true, false)...)
 						ts := tracker.SearchTrackerConsumedMoreThanNBytes(GB)
 						logs := make([]zap.Field, 0, len(ts))
 						for _, t := range ts {
@@ -213,7 +230,7 @@ func (e *ExplainExec) runMemoryDebugGoroutine(exit chan bool) {
 	}()
 }
 
-func (e *ExplainExec) getHeapProfile(gc bool) (fileName string) {
+func getHeapProfile(gc bool) (fileName string) {
 	tempDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
 	timeString := time.Now().Format(time.RFC3339)
 	if gc {
