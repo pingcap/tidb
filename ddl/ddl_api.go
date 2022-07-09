@@ -3067,24 +3067,8 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
 			return dbterror.ErrRunMultiSchemaChanges
 		}
-	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) && !allSupported(specs) {
-			return dbterror.ErrRunMultiSchemaChanges
-		}
 	}
 	return nil
-}
-
-func allSupported(specs []*ast.AlterTableSpec) bool {
-	for _, s := range specs {
-		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey,
-			ast.AlterTableAddConstraint, ast.AlterTableModifyColumn, ast.AlterTableChangeColumn, ast.AlterTableRenameColumn:
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
