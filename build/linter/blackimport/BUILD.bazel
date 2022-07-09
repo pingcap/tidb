@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "blackimport",
+    srcs = ["analysis.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/blackimport",
+    visibility = ["//visibility:public"],
+    deps = ["@org_golang_x_tools//go/analysis"],
+)
+
+go_test(
+    name = "blackimport_test",
+    srcs = ["analysis_test.go"],
+    data = glob(["testdata/**"]),
+    embed = [":blackimport"],
+    deps = ["@org_golang_x_tools//go/analysis/analysistest"],
+)

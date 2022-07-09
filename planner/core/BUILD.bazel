@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "core",
     srcs = [
+        "access_object.go",
         "cache.go",
         "cacheable_checker.go",
         "collect_column_stats_usage.go",
