@@ -30,6 +30,11 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "blackimport": {
+    "exclude_files": {
+      "external/": "no need to vet third party code"
+    }
+  },
   "bodyclose": {
     "exclude_files": {
       "external/": "no need to vet third party code"

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 )
 
+// Analyzer
 var Analyzer = &analysis.Analyzer{
 	Name: "blackimport",
 	Doc:  "avoid using banned libraries",
