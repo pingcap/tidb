@@ -268,7 +268,7 @@ func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
 		case *PhysicalTableScan:
 			// Ignore PhysicalTableScan of IndexLookUp because they use the same stats with the index side,
 			// and we do not set the statsInfo for the table side.
-			if p.stats != nil && op.DriverSide == Empty {
+			if p.stats != nil && op.Label == Empty {
 				res[p.Table.Name.O] = p.stats.StatsVersion
 			}
 		}

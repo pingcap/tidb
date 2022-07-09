@@ -1480,7 +1480,7 @@ func binaryOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *t
 
 func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.ExplainOperator) {
 	out.Name = op.Origin.ExplainID().String()
-	switch op.DriverSide {
+	switch op.Label {
 	case BuildSide:
 		out.DriverSide = tipb.DriverSide_build
 	case ProbeSide:

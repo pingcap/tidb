@@ -74,7 +74,7 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 		}
 		plancodec.EncodePlanNode(
 			int(op.Depth),
-			strconv.Itoa(id)+op.DriverSide.String(),
+			strconv.Itoa(id)+op.Label.String(),
 			tp,
 			estRows,
 			taskTypeInfo,
@@ -103,7 +103,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 		}
 		plancodec.EncodePlanNode(
 			int(op.Depth),
-			strconv.Itoa(op.Origin.ID())+op.DriverSide.String(),
+			strconv.Itoa(op.Origin.ID())+op.Label.String(),
 			op.Origin.TP(),
 			estRows,
 			taskTypeInfo,
