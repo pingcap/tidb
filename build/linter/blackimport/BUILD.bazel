@@ -5,7 +5,10 @@ go_library(
     srcs = ["analysis.go"],
     importpath = "github.com/pingcap/tidb/build/linter/blackimport",
     visibility = ["//visibility:public"],
-    deps = ["@org_golang_x_tools//go/analysis"],
+    deps = [
+        "//build/util",
+        "@org_golang_x_tools//go/analysis",
+    ],
 )
 
 go_test(

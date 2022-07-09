@@ -17,8 +17,15 @@ package blackimport
 import (
 	"strconv"
 
+	"github.com/pingcap/tidb/build/util"
 	"golang.org/x/tools/go/analysis"
 )
+
+func init() {
+	if util.BuiltWithBazel() {
+		util.SetGoEnv()
+	}
+}
 
 // Analyzer
 var Analyzer = &analysis.Analyzer{

@@ -2,6 +2,7 @@ startup --host_jvm_args=-Xmx8g
 startup --unlimit_coredumps
 
 run --color=yes
+build --define gotags=bazel
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp
 build:release --config=ci
 build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolution
