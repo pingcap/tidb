@@ -2523,8 +2523,9 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:XaTE4ZhQbQtQZtAVzlZh/Pf6SjFfMSTe1ia2nGcl36Y=",
-        version = "v0.0.0-20220706024432-7be3cc83a7d5",
+        replace = "github.com/time-and-fate/tipb",
+        sum = "h1:vuyR0+ezxS11Y5oWD4iT0+g8garGogHcKiQPLRr6nzs=",
+        version = "v0.0.0-20220708110256-2b4e44f7d73f",
     )
     go_repository(
         name = "com_github_pkg_browser",
