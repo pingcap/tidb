@@ -952,7 +952,7 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
-  DefTiDBInExpansionLimit                        = 100
+	DefTiDBInExpansionLimit                        = 100
 )
 
 // Process global variables.
