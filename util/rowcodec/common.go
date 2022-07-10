@@ -151,68 +151,6 @@ func decodeUint(val []byte) uint64 {
 	}
 }
 
-type largeNotNullSorter Encoder
-
-func (s *largeNotNullSorter) Less(i, j int) bool {
-	return s.colIDs32[i] < s.colIDs32[j]
-}
-
-func (s *largeNotNullSorter) Len() int {
-	return int(s.numNotNullCols)
-}
-
-func (s *largeNotNullSorter) Swap(i, j int) {
-	s.colIDs32[i], s.colIDs32[j] = s.colIDs32[j], s.colIDs32[i]
-	s.values[i], s.values[j] = s.values[j], s.values[i]
-}
-
-type smallNotNullSorter Encoder
-
-func (s *smallNotNullSorter) Less(i, j int) bool {
-	return s.colIDs[i] < s.colIDs[j]
-}
-
-func (s *smallNotNullSorter) Len() int {
-	return int(s.numNotNullCols)
-}
-
-func (s *smallNotNullSorter) Swap(i, j int) {
-	s.colIDs[i], s.colIDs[j] = s.colIDs[j], s.colIDs[i]
-	s.values[i], s.values[j] = s.values[j], s.values[i]
-}
-
-type smallNullSorter Encoder
-
-func (s *smallNullSorter) Less(i, j int) bool {
-	nullCols := s.colIDs[s.numNotNullCols:]
-	return nullCols[i] < nullCols[j]
-}
-
-func (s *smallNullSorter) Len() int {
-	return int(s.numNullCols)
-}
-
-func (s *smallNullSorter) Swap(i, j int) {
-	nullCols := s.colIDs[s.numNotNullCols:]
-	nullCols[i], nullCols[j] = nullCols[j], nullCols[i]
-}
-
-type largeNullSorter Encoder
-
-func (s *largeNullSorter) Less(i, j int) bool {
-	nullCols := s.colIDs32[s.numNotNullCols:]
-	return nullCols[i] < nullCols[j]
-}
-
-func (s *largeNullSorter) Len() int {
-	return int(s.numNullCols)
-}
-
-func (s *largeNullSorter) Swap(i, j int) {
-	nullCols := s.colIDs32[s.numNotNullCols:]
-	nullCols[i], nullCols[j] = nullCols[j], nullCols[i]
-}
-
 const (
 	// Length of rowkey.
 	rowKeyLen = 19

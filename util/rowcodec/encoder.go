@@ -16,7 +16,6 @@ package rowcodec
 
 import (
 	"math"
-	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/exp/slices"
 )
 
 // Encoder is used to encode a row.
@@ -108,22 +108,54 @@ func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
 			notNullIdx++
 		}
 	}
+
 	if r.large {
-		largeNotNullSorter := (*largeNotNullSorter)(encoder)
-		sort.Sort(largeNotNullSorter)
+		cols := make([]largeCol, encoder.numNotNullCols)
+		for i := uint16(0); i < encoder.numNotNullCols; i++ {
+			cols[i].colID32 = encoder.colIDs32[i]
+			cols[i].value = encoder.values[i]
+		}
+		slices.SortFunc(cols, func(a, b largeCol) bool {
+			return a.colID32 < b.colID32
+		})
+		for i, col := range cols {
+			encoder.colIDs32[i] = col.colID32
+			encoder.values[i] = col.value
+		}
+
 		if r.numNullCols > 0 {
-			largeNullSorter := (*largeNullSorter)(encoder)
-			sort.Sort(largeNullSorter)
+			nullCols := encoder.colIDs32[encoder.numNotNullCols:]
+			slices.Sort(nullCols)
 		}
 	} else {
-		smallNotNullSorter := (*smallNotNullSorter)(encoder)
-		sort.Sort(smallNotNullSorter)
+		cols := make([]smallCol, encoder.numNotNullCols)
+		for i := uint16(0); i < encoder.numNotNullCols; i++ {
+			cols[i].colID = encoder.colIDs[i]
+			cols[i].value = encoder.values[i]
+		}
+		slices.SortFunc(cols, func(a, b smallCol) bool {
+			return a.colID < b.colID
+		})
+		for i, col := range cols {
+			encoder.colIDs[i] = col.colID
+			encoder.values[i] = col.value
+		}
+
 		if r.numNullCols > 0 {
-			smallNullSorter := (*smallNullSorter)(encoder)
-			sort.Sort(smallNullSorter)
+			nullCols := encoder.colIDs[encoder.numNotNullCols:]
+			slices.Sort(nullCols)
 		}
 	}
 	return
+}
+
+type largeCol struct {
+	colID32 uint32
+	value   *types.Datum
+}
+type smallCol struct {
+	colID byte
+	value *types.Datum
 }
 
 func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, notNullIdx int) error {
