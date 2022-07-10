@@ -327,14 +327,6 @@ build_for_br_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
-build_for_lightning_test:
-	@make failpoint-enable
-	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
-		-o $(LIGHTNING_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning
-	@make failpoint-disable
-
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
@@ -448,7 +440,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
-	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //tidb-server/... //br/cmd/... //cmd/...
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build -k --config=ci //tidb-server/... //br/cmd/... //cmd/... //util/... //dumpling/cmd/... //tidb-binlog/... --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin

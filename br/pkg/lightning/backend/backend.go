@@ -17,7 +17,6 @@ package backend
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -296,12 +296,11 @@ func (be Backend) CheckDiskQuota(quota int64) (
 	totalMemSize int64,
 ) {
 	sizes := be.abstract.EngineFileSizes()
-	sort.Slice(sizes, func(i, j int) bool {
-		a, b := &sizes[i], &sizes[j]
-		if a.IsImporting != b.IsImporting {
-			return a.IsImporting
+	slices.SortFunc(sizes, func(i, j EngineFileSize) bool {
+		if i.IsImporting != j.IsImporting {
+			return i.IsImporting
 		}
-		return a.DiskSize+a.MemSize < b.DiskSize+b.MemSize
+		return i.DiskSize+i.MemSize < j.DiskSize+j.MemSize
 	})
 	for _, size := range sizes {
 		totalDiskSize += size.DiskSize

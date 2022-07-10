@@ -616,7 +616,7 @@ func (local *local) Close() {
 	local.engines = sync.Map{}
 
 	for _, engine := range allEngines {
-		engine.Close()
+		_ = engine.Close()
 		engine.unlock()
 	}
 
@@ -658,8 +658,7 @@ func (local *local) Close() {
 			local.logger.Warn("remove local db file failed", zap.Error(err))
 		}
 	}
-
-	local.tikvCli.Close()
+	_ = local.tikvCli.Close()
 	local.pdCtl.Close()
 }
 
@@ -901,6 +900,7 @@ func (local *local) WriteToTiKV(
 	regionRange := intersectRange(region.Region, Range{start: start, end: end})
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
 	iter := engine.newKVIter(ctx, opt)
+	//nolint: errcheck
 	defer iter.Close()
 
 	stats := rangeStats{}
@@ -1158,6 +1158,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 
 func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
 	iter := engine.newKVIter(ctx, &pebble.IterOptions{})
+	//nolint: errcheck
 	defer iter.Close()
 
 	iterError := func(e string) error {
@@ -1220,6 +1221,7 @@ func (local *local) writeAndIngestByRange(
 	}
 
 	iter := engine.newKVIter(ctxt, ito)
+	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
@@ -1642,7 +1644,6 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
 		return nil
 	case config.DupeResAlgRemove:
-		break
 	default:
 		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}

@@ -498,6 +498,7 @@ func (p *PreRestoreInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context,
 	default:
 		panic(fmt.Sprintf("unknown file type '%s'", dataFileMeta.Type))
 	}
+	//nolint: errcheck
 	defer parser.Close()
 
 	rows := [][]types.Datum{}
@@ -654,6 +655,7 @@ func (p *PreRestoreInfoGetterImpl) sampleDataFromTable(
 	default:
 		panic(fmt.Sprintf("file '%s' with unknown source type '%s'", sampleFile.Path, sampleFile.Type.String()))
 	}
+	//nolint: errcheck
 	defer parser.Close()
 	logTask := log.FromContext(ctx).With(zap.String("table", tableMeta.Name)).Begin(zap.InfoLevel, "sample file")
 	igCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
