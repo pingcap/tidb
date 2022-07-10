@@ -86,6 +86,7 @@ func TestStrToDate(t *testing.T) {
 		format string
 		expect types.CoreTime
 	}{
+		{`2004420`, `%x%v%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`01,05,2013`, `%d,%m,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`5 12 2021`, `%m%d%Y`, types.FromDate(2021, 5, 12, 0, 0, 0, 0)},
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
@@ -121,6 +122,16 @@ func TestStrToDate(t *testing.T) {
 		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
+		// %X %V %W
+		{`200442 Monday`, `%X%V %W`, types.FromDate(2004, 10, 18, 0, 0, 0, 0)},
+		{`2004420`, `%X%V%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`2004423`, `%X%V%w`, types.FromDate(2004, 10, 20, 0, 0, 0, 0)},
+		{`200442 Sunday`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`200442 Sun`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`200442 sun`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
+		{`200442 suNd`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)}, // Weird MySQL behavior, matched as sunday
+		{"2004421", "%Y%U%w", types.FromDate(2004, 10, 18, 0, 0, 0, 0)},     // %U,%u should be used with %Y and not %X or %x
+		{"69421", "%y%U%w", types.FromDate(2069, 10, 21, 0, 0, 0, 0)},       // %U,%u should be used with %Y and not %X or %x
 		{`09/10/1021`, `%d/%m/%y`, types.FromDate(2010, 10, 9, 0, 0, 0, 0)}, // '%y' only accept up to 2 digits for year
 		{`09/10/1021`, `%d/%m/%Y`, types.FromDate(1021, 10, 9, 0, 0, 0, 0)}, // '%Y' accept up to 4 digits for year
 		{`09/10/10`, `%d/%m/%Y`, types.FromDate(2010, 10, 9, 0, 0, 0, 0)},   // '%Y' will fix the year for only 2 digits
@@ -182,6 +193,13 @@ func TestStrToDate(t *testing.T) {
 		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
 		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
 		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
+		// %X %V %W
+		{`2004427`, `%X%V%w`}, // %w range 0-6, here is 7
+		{"2004421", "%x%V%w"}, // %x should be used with %v
+		{"2004421", "%X%v%w"}, // %X should be used with %V
+		{"2004421", "%X%U%w"}, // %U,%u should be used with %Y and not %X or %x
+		{`2004663`, `%X%V%w`}, // %V out of range [0, 53]
+		{`200442 S`, `%x%v%W`},
 		// MySQL accept `SEPTEMB` as `SEPTEMBER`, but we don't want this "feature" in TiDB
 		// unless we have to.
 		{"15 SEPTEMB 2001", "%d %M %Y"},
