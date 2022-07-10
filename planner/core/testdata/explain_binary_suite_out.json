@@ -3,11 +3,11 @@
     "Name": "TestBinaryPlanInExplainAndSlowLog",
     "Cases": [
       {
-        "SQL": "create table t(a int, b int, index ia(a));",
+        "SQL": "create table t(a int, b int, index ia(a))",
         "BinaryPlan": null
       },
       {
-        "SQL": "create table t2(a int, b int);",
+        "SQL": "create table t2(a int, b int)",
         "BinaryPlan": null
       },
       {
@@ -21,7 +21,6 @@
             "name": "Insert_1",
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "N/A"
           },
           "with_runtime_stats": true
@@ -34,7 +33,6 @@
             "name": "Insert_1",
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "N/A"
           },
           "with_runtime_stats": true
@@ -53,7 +51,6 @@
                 "act_rows": 2,
                 "task_type": 2,
                 "store_type": 2,
-                "AccessObject": null,
                 "operator_info": "keep order:false, stats:pseudo"
               }
             ],
@@ -62,7 +59,6 @@
             "act_rows": 2,
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "data:TableFullScan_4"
           },
           "with_runtime_stats": true
@@ -90,17 +86,17 @@
                             "act_rows": 2,
                             "task_type": 2,
                             "store_type": 2,
-                            "AccessObject": null,
                             "operator_info": "keep order:false, stats:pseudo"
                           }
                         ],
-                        "driver_side": 2,
+                        "labels": [
+                          2
+                        ],
                         "cost": 34418,
                         "est_rows": 10000,
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "AccessObject": null,
                         "operator_info": "index:IndexFullScan_14"
                       },
                       {
@@ -113,17 +109,17 @@
                             "act_rows": 4,
                             "task_type": 2,
                             "store_type": 2,
-                            "AccessObject": null,
                             "operator_info": "keep order:false, stats:pseudo"
                           }
                         ],
-                        "driver_side": 1,
+                        "labels": [
+                          1
+                        ],
                         "cost": 43418,
                         "est_rows": 10000,
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "AccessObject": null,
                         "operator_info": "data:TableFullScan_16"
                       }
                     ],
@@ -132,7 +128,6 @@
                     "act_rows": 8,
                     "task_type": 1,
                     "store_type": 1,
-                    "AccessObject": null,
                     "operator_info": "CARTESIAN inner join"
                   }
                 ],
@@ -140,7 +135,6 @@
                 "act_rows": 8,
                 "task_type": 1,
                 "store_type": 1,
-                "AccessObject": null,
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#8"
               }
             ],
@@ -149,7 +143,6 @@
             "act_rows": 1,
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "funcs:sum(Column#8)->Column#7"
           },
           "with_runtime_stats": true
@@ -167,7 +160,6 @@
                 "est_rows": 3333.3333333333335,
                 "task_type": 2,
                 "store_type": 2,
-                "AccessObject": null,
                 "operator_info": "range:(100,+inf], keep order:false, stats:pseudo"
               }
             ],
@@ -175,7 +167,6 @@
             "est_rows": 3333.3333333333335,
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "index:IndexRangeScan_5"
           },
           "with_runtime_stats": true
@@ -197,7 +188,6 @@
                     "act_rows": 2,
                     "task_type": 2,
                     "store_type": 2,
-                    "AccessObject": null,
                     "operator_info": "keep order:false, stats:pseudo"
                   }
                 ],
@@ -205,7 +195,6 @@
                 "est_rows": 3333.3333333333335,
                 "task_type": 2,
                 "store_type": 2,
-                "AccessObject": null,
                 "operator_info": "gt(test.t.a, 100)"
               }
             ],
@@ -213,7 +202,6 @@
             "est_rows": 3333.3333333333335,
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "data:Selection_6"
           },
           "with_runtime_stats": true
@@ -234,17 +222,17 @@
                     "act_rows": 2,
                     "task_type": 1,
                     "store_type": 1,
-                    "AccessObject": null,
                     "operator_info": "data:CTE_0"
                   }
                 ],
-                "driver_side": 2,
+                "labels": [
+                  2
+                ],
                 "cost": 108852.66666666666,
                 "est_rows": 6400,
                 "act_rows": 2,
                 "task_type": 1,
                 "store_type": 1,
-                "AccessObject": null,
                 "operator_info": "not(isnull(test.t.a))"
               },
               {
@@ -256,17 +244,17 @@
                     "act_rows": 4,
                     "task_type": 1,
                     "store_type": 1,
-                    "AccessObject": null,
                     "operator_info": "data:CTE_1"
                   }
                 ],
-                "driver_side": 1,
+                "labels": [
+                  1
+                ],
                 "cost": 108852.66666666666,
                 "est_rows": 6400,
                 "act_rows": 4,
                 "task_type": 1,
                 "store_type": 1,
-                "AccessObject": null,
                 "operator_info": "not(isnull(test.t2.a))"
               }
             ],
@@ -274,7 +262,6 @@
             "est_rows": 8000,
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "inner join, equal:[eq(test.t.a, test.t2.a)]"
           },
           "ctes": [
@@ -294,7 +281,6 @@
                           "act_rows": 2,
                           "task_type": 2,
                           "store_type": 2,
-                          "AccessObject": null,
                           "operator_info": "keep order:false, stats:pseudo"
                         }
                       ],
@@ -303,17 +289,17 @@
                       "act_rows": 2,
                       "task_type": 1,
                       "store_type": 1,
-                      "AccessObject": null,
                       "operator_info": "data:TableFullScan_15"
                     }
                   ],
-                  "driver_side": 3,
+                  "labels": [
+                    3
+                  ],
                   "cost": 84852.66666666666,
                   "est_rows": 8000,
                   "act_rows": 2,
                   "task_type": 1,
                   "store_type": 1,
-                  "AccessObject": null,
                   "operator_info": "not(isnull(test.t.a))"
                 }
               ],
@@ -321,7 +307,6 @@
               "act_rows": 2,
               "task_type": 1,
               "store_type": 1,
-              "AccessObject": null,
               "operator_info": "Non-Recursive CTE"
             },
             {
@@ -340,7 +325,6 @@
                           "act_rows": 4,
                           "task_type": 2,
                           "store_type": 2,
-                          "AccessObject": null,
                           "operator_info": "keep order:false, stats:pseudo"
                         }
                       ],
@@ -349,17 +333,17 @@
                       "act_rows": 4,
                       "task_type": 1,
                       "store_type": 1,
-                      "AccessObject": null,
                       "operator_info": "data:TableFullScan_20"
                     }
                   ],
-                  "driver_side": 3,
+                  "labels": [
+                    3
+                  ],
                   "cost": 84852.66666666666,
                   "est_rows": 8000,
                   "act_rows": 4,
                   "task_type": 1,
                   "store_type": 1,
-                  "AccessObject": null,
                   "operator_info": "not(isnull(test.t2.a))"
                 }
               ],
@@ -367,7 +351,6 @@
               "act_rows": 4,
               "task_type": 1,
               "store_type": 1,
-              "AccessObject": null,
               "operator_info": "Non-Recursive CTE"
             }
           ],
@@ -375,7 +358,7 @@
         }
       },
       {
-        "SQL": "explain analyze format = 'binary' WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;",
+        "SQL": "explain analyze format = 'binary' WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte",
         "BinaryPlan": {
           "main": {
             "name": "CTEFullScan_17",
@@ -383,7 +366,6 @@
             "act_rows": 5,
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "data:CTE_0"
           },
           "ctes": [
@@ -399,17 +381,17 @@
                       "act_rows": 1,
                       "task_type": 1,
                       "store_type": 1,
-                      "AccessObject": null,
                       "operator_info": "rows:1"
                     }
                   ],
-                  "driver_side": 3,
+                  "labels": [
+                    3
+                  ],
                   "cost": 18.6,
                   "est_rows": 1,
                   "act_rows": 1,
                   "task_type": 1,
                   "store_type": 1,
-                  "AccessObject": null,
                   "operator_info": "1->Column#2"
                 },
                 {
@@ -424,7 +406,6 @@
                           "act_rows": 5,
                           "task_type": 1,
                           "store_type": 1,
-                          "AccessObject": null,
                           "operator_info": "Scan on CTE_0"
                         }
                       ],
@@ -433,17 +414,17 @@
                       "act_rows": 4,
                       "task_type": 1,
                       "store_type": 1,
-                      "AccessObject": null,
                       "operator_info": "lt(Column#3, 5)"
                     }
                   ],
-                  "driver_side": 4,
+                  "labels": [
+                    4
+                  ],
                   "cost": 21.48,
                   "est_rows": 0.8,
                   "act_rows": 4,
                   "task_type": 1,
                   "store_type": 1,
-                  "AccessObject": null,
                   "operator_info": "cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5"
                 }
               ],
@@ -451,7 +432,6 @@
               "act_rows": 5,
               "task_type": 1,
               "store_type": 1,
-              "AccessObject": null,
               "operator_info": "Recursive CTE"
             }
           ],
@@ -477,7 +457,6 @@
                         "act_rows": 4,
                         "task_type": 2,
                         "store_type": 2,
-                        "AccessObject": null,
                         "operator_info": "keep order:false, stats:pseudo"
                       }
                     ],
@@ -485,7 +464,6 @@
                     "est_rows": 3333.3333333333335,
                     "task_type": 2,
                     "store_type": 2,
-                    "AccessObject": null,
                     "operator_info": "gt(test.t2.b, 10)"
                   }
                 ],
@@ -493,13 +471,11 @@
                 "est_rows": 3333.3333333333335,
                 "task_type": 1,
                 "store_type": 2,
-                "AccessObject": null,
                 "operator_info": "data:Selection_7"
               }
             ],
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "N/A"
           },
           "with_runtime_stats": true
@@ -512,7 +488,6 @@
             "name": "Insert_1",
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "N/A"
           },
           "with_runtime_stats": true
@@ -534,7 +509,6 @@
                     "act_rows": 2,
                     "task_type": 2,
                     "store_type": 2,
-                    "AccessObject": null,
                     "operator_info": "keep order:false, stats:pseudo"
                   }
                 ],
@@ -543,13 +517,11 @@
                 "act_rows": 2,
                 "task_type": 1,
                 "store_type": 2,
-                "AccessObject": null,
                 "operator_info": "data:TableFullScan_6"
               }
             ],
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "N/A"
           },
           "with_runtime_stats": true
@@ -571,7 +543,6 @@
                     "act_rows": 8,
                     "task_type": 2,
                     "store_type": 2,
-                    "AccessObject": null,
                     "operator_info": "keep order:false, stats:pseudo"
                   }
                 ],
@@ -580,13 +551,11 @@
                 "act_rows": 8,
                 "task_type": 1,
                 "store_type": 2,
-                "AccessObject": null,
                 "operator_info": "data:TableFullScan_5"
               }
             ],
             "task_type": 1,
             "store_type": 1,
-            "AccessObject": null,
             "operator_info": "N/A"
           },
           "with_runtime_stats": true
