@@ -198,11 +198,18 @@ type DDL interface {
 	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
+	// MoveJobFromQueue2Table move existing DDLs from queue to table.
+	MoveJobFromQueue2Table(bool) error
+	// MoveJobFromTable2Queue move existing DDLs from table to queue.
+	MoveJobFromTable2Queue() error
 }
 
 type limitJobTask struct {
 	job *model.Job
 	err chan error
+
+	// If mustToQueue is **NOT** nil, we must put the job to queue, only happen upgrade a multiple node cluster.
+	mustToQueue interface{}
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -308,6 +315,8 @@ type ddlCtx struct {
 		sync.Mutex
 		seqNum uint64
 	}
+
+	waiting *atomicutil.Bool
 }
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
@@ -552,6 +561,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
 	ddlCtx.runningJobs.ids = make(map[int64]struct{})
+	ddlCtx.waiting = atomicutil.NewBool(false)
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -559,6 +569,8 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
 	}
+
+	variable.SwitchConcurrentDDL = d.SwitchConcurrentDDL
 
 	return d
 }
@@ -887,14 +899,15 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	task := &limitJobTask{job, make(chan error)}
+	v := ctx.Value(sessionctx.OldDDLStyle)
+	task := &limitJobTask{job, make(chan error), v}
 	d.limitJobCh <- task
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error)}
+			task1 := &limitJobTask{job, make(chan error), v}
 			d.limitJobCh <- task1
 			<-task.err
 			// The second job result is used for test.
@@ -974,6 +987,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		se, err := d.sessPool.get()
 		if err != nil {
+			logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
 			continue
 		}
 		historyJob, err = GetHistoryJobByID(se, jobID)
@@ -1078,6 +1092,57 @@ func (d *ddl) startCleanDeadTableLock() {
 		case <-d.ctx.Done():
 			return
 		}
+	}
+}
+
+// SwitchConcurrentDDL changes the DDL to concurrent DDL if toConcurrentDDL is true, otherwise, queue based DDL.
+func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
+	if !d.isOwner() {
+		return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			isConcurrentDDL, err := meta.NewMeta(txn).IsConcurrentDDL()
+			if err != nil {
+				return err
+			}
+			if isConcurrentDDL != toConcurrentDDL {
+				return errors.New("please set it on the DDL owner node")
+			}
+			return nil
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
+	defer cancel()
+	d.waiting.Store(true)
+	defer d.waiting.Store(false)
+	if err := d.wait4Switch(ctx); err != nil {
+		return err
+	}
+
+	var err error
+	if toConcurrentDDL {
+		err = d.MoveJobFromQueue2Table(false)
+	} else {
+		err = d.MoveJobFromTable2Queue()
+	}
+	variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
+	return err
+}
+
+func (d *ddl) wait4Switch(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		d.runningJobs.RLock()
+		if len(d.runningJobs.ids) == 0 {
+			d.runningJobs.RUnlock()
+			return nil
+		}
+		d.runningJobs.RUnlock()
+		time.Sleep(time.Second * 1)
 	}
 }
 

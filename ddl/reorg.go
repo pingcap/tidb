@@ -653,7 +653,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()), zap.Bool("enableConcurrentDDL", rh.enableConcurrentDDL))
 			}
 			return &info, errors.Trace(err)
 		}
@@ -784,17 +784,17 @@ func (r *reorgHandler) UpdateDDLReorgStartHandle(job *model.Job, element *meta.E
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func (r *reorgHandler) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if r.enableConcurrentDDL {
-		return updateDDLReorgHandle(r.s, job, startKey, endKey, physicalTableID, element)
+		return updateDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
 	}
-	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
 }
 
 // InitDDLReorgHandle initializes the job reorganization information.
 func (r *reorgHandler) InitDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *meta.Element) error {
 	if r.enableConcurrentDDL {
-		return initDDLReorgHandle(r.s, job, startKey, endKey, physicalTableID, element)
+		return initDDLReorgHandle(r.s, job.ID, startKey, endKey, physicalTableID, element)
 	}
-	return r.m.UpdateDDLReorgHandle(job, startKey, endKey, physicalTableID, element)
+	return r.m.UpdateDDLReorgHandle(job.ID, startKey, endKey, physicalTableID, element)
 }
 
 // RemoveReorgElementFailPoint removes the element of the reorganization information.

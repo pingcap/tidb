@@ -294,7 +294,8 @@ func (d *ddl) limitDDLJobs() {
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	var err error
-	if variable.EnableConcurrentDDL.Load() {
+	// tasks[0].v != nil only happens when upgrading. The internal DDL job will always only one in a batch.
+	if variable.EnableConcurrentDDL.Load() && tasks[0].mustToQueue == nil {
 		err = d.addBatchDDLJobs2Table(tasks)
 	} else {
 		err = d.addBatchDDLJobs2Queue(tasks)
@@ -694,6 +695,10 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 	if err != nil {
 		return err
 	}
+	if !variable.EnableConcurrentDDL.Load() || d.waiting.Load() {
+		w.sess.rollback()
+		return nil
+	}
 	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
 		if val.(bool) {
 			time.Sleep(time.Duration(rand.Intn(5)) * time.Second) // #nosec G404
@@ -832,18 +837,26 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		waitTime := 2 * d.lease
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			d.runningJobs.Lock()
 			// We are not owner, return and retry checking later.
-			if !d.isOwner() {
+			if !d.isOwner() || variable.EnableConcurrentDDL.Load() || d.waiting.Load() {
+				d.runningJobs.Unlock()
 				return nil
 			}
 
 			var err error
 			t := newMetaWithQueueTp(txn, w.tp)
+
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
+				d.runningJobs.Unlock()
 				return errors.Trace(err)
 			}
+			d.runningJobs.ids[job.ID] = struct{}{}
+			d.runningJobs.Unlock()
+
+			defer d.deleteRunningDDLJobMap(job.ID)
 
 			// only general ddls allowed to be executed when TiKV is disk full.
 			if w.tp == addIdxWorker && job.IsRunning() {
