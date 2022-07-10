@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -68,7 +68,6 @@ var LookupTableTaskChannelSize int32 = 50
 // contains the handles in those index keys.
 type lookupTableTask struct {
 	handles []kv.Handle
-	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
 	rows    []chunk.Row
 	idxRows *chunk.Chunk
 	cursor  int
@@ -100,19 +99,6 @@ type lookupTableTask struct {
 	// Step 4   is  completed in "IndexLookUpExecutor.Next".
 	memUsage   int64
 	memTracker *memory.Tracker
-}
-
-func (task *lookupTableTask) Len() int {
-	return len(task.rows)
-}
-
-func (task *lookupTableTask) Less(i, j int) bool {
-	return task.rowIdx[i] < task.rowIdx[j]
-}
-
-func (task *lookupTableTask) Swap(i, j int) {
-	task.rowIdx[i], task.rowIdx[j] = task.rowIdx[j], task.rowIdx[i]
-	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
 // Closeable is a interface for closeable structures.
@@ -1325,19 +1311,31 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
 	if w.keepOrder {
-		task.rowIdx = make([]int, 0, len(task.rows))
+		// sort chunk.Row
+		type rowWithId struct {
+			rowId int // rowIdx represents the handle index for every row. Only used when keep order.
+			row   *chunk.Row
+		}
+		rowWithIdSlice := make([]rowWithId, 0, len(task.rows))
 		for i := range task.rows {
 			handle, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
-			task.rowIdx = append(task.rowIdx, rowIdx.(int))
+			rowWithIdSlice = append(rowWithIdSlice,
+				rowWithId{rowId: rowIdx.(int),
+					row: &task.rows[i]})
 		}
-		memUsage = int64(cap(task.rowIdx) * 4)
+		memUsage = int64(cap(rowWithIdSlice) * 4)
 		task.memUsage += memUsage
 		task.memTracker.Consume(memUsage)
-		sort.Sort(task)
+		slices.SortFunc(rowWithIdSlice, func(i, j rowWithId) bool {
+			return i.rowId < j.rowId
+		})
+		for i := range rowWithIdSlice {
+			task.rows[i] = *rowWithIdSlice[i].row
+		}
 	}
 
 	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) &&
