@@ -27,7 +27,7 @@ func init() {
 	}
 }
 
-// Analyzer
+// Analyzer is the analyzer that checks the black import.
 var Analyzer = &analysis.Analyzer{
 	Name: "blackimport",
 	Doc:  "avoid using banned libraries",

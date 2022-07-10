@@ -25,11 +25,6 @@ func BuiltWithBazel() bool {
 	return false
 }
 
-// Return true iff this library was built with Bazel.
-func BuiltWithBazel() bool {
-	return true
-}
-
 // SetGoEnv is get go env from bazel
 func SetGoEnv() {
 	panic("not built with Bazel")

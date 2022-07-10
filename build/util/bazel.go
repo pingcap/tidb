@@ -26,7 +26,7 @@ import (
 	inner "github.com/bazelbuild/rules_go/go/tools/bazel"
 )
 
-// Return true iff this library was built with Bazel.
+// BuiltWithBazel return true iff this library was built with Bazel.
 func BuiltWithBazel() bool {
 	return true
 }
