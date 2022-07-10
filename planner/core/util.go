@@ -256,7 +256,28 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 	return newSchema
 }
 
+// GetStatsInfoFromFlatPlan gets the statistics info from a FlatPhysicalPlan.
+func GetStatsInfoFromFlatPlan(flat *FlatPhysicalPlan) map[string]uint64 {
+	res := make(map[string]uint64)
+	for _, op := range flat.Main {
+		switch p := op.Origin.(type) {
+		case *PhysicalIndexScan:
+			if p.stats != nil {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		case *PhysicalTableScan:
+			// Ignore PhysicalTableScan of IndexLookUp because they use the same stats with the index side,
+			// and we do not set the statsInfo for the table side.
+			if p.stats != nil && op.Label == Empty {
+				res[p.Table.Name.O] = p.stats.StatsVersion
+			}
+		}
+	}
+	return res
+}
+
 // GetStatsInfo gets the statistics info from a physical plan tree.
+// Deprecated: Use FlattenPhysicalPlan() and GetStatsInfoFromFlatPlan() is preferred.
 func GetStatsInfo(i interface{}) map[string]uint64 {
 	if i == nil {
 		// it's a workaround for https://github.com/pingcap/tidb/issues/17419

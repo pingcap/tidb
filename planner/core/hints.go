@@ -22,7 +22,44 @@ import (
 	utilhint "github.com/pingcap/tidb/util/hint"
 )
 
+// GenHintsFromFlatPlan generates hints from a FlatPhysicalPlan.
+func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
+	if len(flat.Main) == 0 {
+		return nil
+	}
+	nodeTp := utilhint.TypeSelect
+	switch flat.Main[0].Origin.(type) {
+	case *Update:
+		nodeTp = utilhint.TypeUpdate
+	case *Delete:
+		nodeTp = utilhint.TypeDelete
+	}
+	var hints []*ast.TableOptimizerHint
+	selectPlan := flat.Main.GetSelectPlan()
+	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
+		return nil
+	}
+	for _, op := range selectPlan {
+		if !op.IsRoot {
+			continue
+		}
+		p := op.Origin.(PhysicalPlan)
+		hints = genHintsFromSingle(p, nodeTp, hints)
+	}
+	for _, cte := range flat.CTEs {
+		for i, op := range cte {
+			if i == 0 || !op.IsRoot {
+				continue
+			}
+			p := op.Origin.(PhysicalPlan)
+			hints = genHintsFromSingle(p, nodeTp, hints)
+		}
+	}
+	return hints
+}
+
 // GenHintsFromPhysicalPlan generates hints from physical plan.
+// Deprecated: Use FlattenPhysicalPlan() and GenHintsFromFlatPlan() is preferred.
 func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
@@ -127,6 +164,10 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
 	}
 
+	return genHintsFromSingle(p, nodeType, res)
+}
+
+func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res
