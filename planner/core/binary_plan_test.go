@@ -59,10 +59,10 @@ func simplifyAndCheckBinaryOperator(t *testing.T, pb *tipb.ExplainOperator, with
 	pb.CopExecInfo = ""
 	match, err := regexp.MatchString("((Table|Index).*Scan)|CTEFullScan|Point_Get", pb.Name)
 	if err == nil && match {
-		require.NotNil(t, pb.AccessObject)
+		require.NotNil(t, pb.AccessObjects)
 	}
 	// AccessObject field is an interface and json.Unmarshall can't handle it, so we don't check it against the json output.
-	pb.AccessObject = nil
+	pb.AccessObjects = nil
 	// MemoryBytes and DiskBytes are not stable sometimes.
 	pb.MemoryBytes = 0
 	pb.DiskBytes = 0

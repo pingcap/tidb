@@ -1482,13 +1482,13 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	out.Name = op.Origin.ExplainID().String()
 	switch op.Label {
 	case BuildSide:
-		out.DriverSide = tipb.DriverSide_build
+		out.Labels = []tipb.OperatorLabel{tipb.OperatorLabel_buildSide}
 	case ProbeSide:
-		out.DriverSide = tipb.DriverSide_probe
+		out.Labels = []tipb.OperatorLabel{tipb.OperatorLabel_probeSide}
 	case SeedPart:
-		out.DriverSide = tipb.DriverSide_seed
+		out.Labels = []tipb.OperatorLabel{tipb.OperatorLabel_seedPart}
 	case RecursivePart:
-		out.DriverSide = tipb.DriverSide_recursive
+		out.Labels = []tipb.OperatorLabel{tipb.OperatorLabel_recursivePart}
 	}
 	switch op.StoreType {
 	case kv.TiDB:

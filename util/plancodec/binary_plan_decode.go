@@ -142,7 +142,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	row := make([]string, 0, 10)
 
 	// 1. extract the information and turn them into strings for display
-	explainID := texttree.PrettyIdentifier(op.Name+printDriverSide(op.DriverSide), indent, isLastChild)
+	explainID := texttree.PrettyIdentifier(op.Name+printDriverSide(op.Labels), indent, isLastChild)
 	estRows := strconv.FormatFloat(op.EstRows, 'f', 2, 64)
 	cost := strconv.FormatFloat(op.Cost, 'f', 2, 64)
 	var actRows, execInfo, memInfo, diskInfo string
@@ -177,7 +177,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	if op.TaskType != tipb.TaskType_unknown && op.TaskType != tipb.TaskType_root {
 		task = task + "[" + op.StoreType.String() + "]"
 	}
-	accessObject := printAccessObject(op)
+	accessObject := printAccessObject(op.AccessObjects)
 
 	// 2. append the strings to the slice
 	row = append(row, explainID, estRows, cost)
@@ -198,8 +198,10 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	children := make([]*tipb.ExplainOperator, len(op.Children))
 	copy(children, op.Children)
 	if len(children) == 2 &&
-		children[0].DriverSide == tipb.DriverSide_probe &&
-		children[1].DriverSide == tipb.DriverSide_build {
+		len(children[0].Labels) >= 1 &&
+		children[0].Labels[0] == tipb.OperatorLabel_probeSide &&
+		len(children[1].Labels) >= 1 &&
+		children[1].Labels[0] == tipb.OperatorLabel_buildSide {
 		children[0], children[1] = children[1], children[0]
 	}
 	childIndent := texttree.Indent4Child(indent, isLastChild)
@@ -209,20 +211,23 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	return out
 }
 
-func printDriverSide(s tipb.DriverSide) string {
-	switch s {
-	case tipb.DriverSide_empty:
-		return ""
-	case tipb.DriverSide_build:
-		return "(Build)"
-	case tipb.DriverSide_probe:
-		return "(Probe)"
-	case tipb.DriverSide_seed:
-		return "(Seed Part)"
-	case tipb.DriverSide_recursive:
-		return "(Recursive Part)"
+func printDriverSide(labels []tipb.OperatorLabel) string {
+	strs := make([]string, 0, len(labels))
+	for _, label := range labels {
+		switch label {
+		case tipb.OperatorLabel_empty:
+			strs = append(strs, "")
+		case tipb.OperatorLabel_buildSide:
+			strs = append(strs, "(Build)")
+		case tipb.OperatorLabel_probeSide:
+			strs = append(strs, "(Probe)")
+		case tipb.OperatorLabel_seedPart:
+			strs = append(strs, "(Seed Part)")
+		case tipb.OperatorLabel_recursivePart:
+			strs = append(strs, "(Recursive Part)")
+		}
 	}
-	return ""
+	return strings.Join(strs, "")
 }
 
 func printDynamicPartitionObject(ao *tipb.DynamicPartitionAccessObject) string {
@@ -237,56 +242,59 @@ func printDynamicPartitionObject(ao *tipb.DynamicPartitionAccessObject) string {
 	return "partition:" + strings.Join(ao.Partitions, ",")
 }
 
-func printAccessObject(op *tipb.ExplainOperator) string {
-	switch ao := op.AccessObject.(type) {
-	case *tipb.ExplainOperator_DynamicPartitionObjects:
-		if ao == nil || ao.DynamicPartitionObjects == nil {
-			return ""
-		}
-		AOs := ao.DynamicPartitionObjects.Objects
-		if len(AOs) == 0 {
-			return ""
-		}
-		// If it only involves one table, just print the partitions.
-		if len(AOs) == 1 {
-			return printDynamicPartitionObject(AOs[0])
-		}
-		var b strings.Builder
-		// If it involves multiple tables, we also need to print the table name.
-		for i, access := range AOs {
-			if access == nil {
-				continue
+func printAccessObject(pbAccessObjs []*tipb.AccessObject) string {
+	strs := make([]string, 0, len(pbAccessObjs))
+	for _, pbAccessObj := range pbAccessObjs {
+		switch ao := pbAccessObj.AccessObject.(type) {
+		case *tipb.AccessObject_DynamicPartitionObjects:
+			if ao == nil || ao.DynamicPartitionObjects == nil {
+				return ""
 			}
-			if i != 0 {
-				b.WriteString(", ")
+			AOs := ao.DynamicPartitionObjects.Objects
+			if len(AOs) == 0 {
+				return ""
 			}
-			b.WriteString(printDynamicPartitionObject(access))
-			b.WriteString(" of " + access.Table)
-		}
-		return b.String()
-	case *tipb.ExplainOperator_ScanObject:
-		if ao == nil || ao.ScanObject == nil {
-			return ""
-		}
-		scanAO := ao.ScanObject
-		var b strings.Builder
-		if len(scanAO.Table) > 0 {
-			b.WriteString("table:" + scanAO.Table)
-		}
-		if len(scanAO.Partitions) > 0 {
-			b.WriteString(", partition:" + strings.Join(scanAO.Partitions, ","))
-		}
-		for _, index := range scanAO.Indexes {
-			if index.IsClusteredIndex {
-				b.WriteString(", clustered index:")
-			} else {
-				b.WriteString(", index:")
+			// If it only involves one table, just print the partitions.
+			if len(AOs) == 1 {
+				return printDynamicPartitionObject(AOs[0])
 			}
-			b.WriteString(index.Name + "(" + strings.Join(index.Cols, ", ") + ")")
+			var b strings.Builder
+			// If it involves multiple tables, we also need to print the table name.
+			for i, access := range AOs {
+				if access == nil {
+					continue
+				}
+				if i != 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(printDynamicPartitionObject(access))
+				b.WriteString(" of " + access.Table)
+			}
+			strs = append(strs, b.String())
+		case *tipb.AccessObject_ScanObject:
+			if ao == nil || ao.ScanObject == nil {
+				return ""
+			}
+			scanAO := ao.ScanObject
+			var b strings.Builder
+			if len(scanAO.Table) > 0 {
+				b.WriteString("table:" + scanAO.Table)
+			}
+			if len(scanAO.Partitions) > 0 {
+				b.WriteString(", partition:" + strings.Join(scanAO.Partitions, ","))
+			}
+			for _, index := range scanAO.Indexes {
+				if index.IsClusteredIndex {
+					b.WriteString(", clustered index:")
+				} else {
+					b.WriteString(", index:")
+				}
+				b.WriteString(index.Name + "(" + strings.Join(index.Cols, ", ") + ")")
+			}
+			strs = append(strs, b.String())
+		case *tipb.AccessObject_OtherObject:
+			strs = append(strs, ao.OtherObject)
 		}
-		return b.String()
-	case *tipb.ExplainOperator_OtherObject:
-		return ao.OtherObject
 	}
-	return ""
+	return strings.Join(strs, "")
 }
