@@ -2554,7 +2554,7 @@ func (cr *chunkRestore) restore(
 		zap.Int32("engineNumber", engineID),
 		zap.Int("chunk id", cr.index),
 		zap.Stringer("path", &cr.chunk.Key),
-	).Begin(zap.InfoLevel, "transform an engine source data chunk into temp KVs start")
+	).Begin(zap.InfoLevel, "transform an engine source data chunk into temp KVs")
 
 	readTotalDur, encodeTotalDur, encodeErr := cr.encodeLoop(ctx, kvsCh, t, logTask.Logger, kvEncoder, deliverCompleteCh, rc)
 	var deliverErr error
