@@ -807,7 +807,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -1059,7 +1059,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
-		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond:
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
+		ast.TimeToSec:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_InDuration,
 			tipb.ScalarFuncSig_CoalesceDuration,

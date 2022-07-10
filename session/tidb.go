@@ -378,5 +378,6 @@ func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet
 
 // Session errors.
 var (
-	ErrForUpdateCantRetry = dbterror.ClassSession.NewStd(errno.ErrForUpdateCantRetry)
+	ErrForUpdateCantRetry   = dbterror.ClassSession.NewStd(errno.ErrForUpdateCantRetry)
+	ErrCannotMigrateSession = dbterror.ClassSession.NewStd(errno.ErrCannotMigrateSession)
 )
