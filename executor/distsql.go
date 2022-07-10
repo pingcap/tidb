@@ -1312,29 +1312,29 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.memTracker.Consume(memUsage)
 	if w.keepOrder {
 		// sort chunk.Row
-		type rowWithId struct {
-			rowId int // rowIdx represents the handle index for every row. Only used when keep order.
+		type rowWithID struct {
+			rowID int // rowIdx represents the handle index for every row. Only used when keep order.
 			row   *chunk.Row
 		}
-		rowWithIdSlice := make([]rowWithId, 0, len(task.rows))
+		rowWithIDSlice := make([]rowWithID, 0, len(task.rows))
 		for i := range task.rows {
 			handle, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
-			rowWithIdSlice = append(rowWithIdSlice,
-				rowWithId{rowId: rowIdx.(int),
+			rowWithIDSlice = append(rowWithIDSlice,
+				rowWithID{rowID: rowIdx.(int),
 					row: &task.rows[i]})
 		}
-		memUsage = int64(cap(rowWithIdSlice) * 4)
+		memUsage = int64(cap(rowWithIDSlice) * 4)
 		task.memUsage += memUsage
 		task.memTracker.Consume(memUsage)
-		slices.SortFunc(rowWithIdSlice, func(i, j rowWithId) bool {
-			return i.rowId < j.rowId
+		slices.SortFunc(rowWithIDSlice, func(i, j rowWithID) bool {
+			return i.rowID < j.rowID
 		})
-		for i := range rowWithIdSlice {
-			task.rows[i] = *rowWithIdSlice[i].row
+		for i := range rowWithIDSlice {
+			task.rows[i] = *rowWithIDSlice[i].row
 		}
 	}
 
