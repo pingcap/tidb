@@ -134,7 +134,7 @@ func (m *MockImportSource) GetStorage() storage.ExternalStorage {
 	return m.srcStorage
 }
 
-// GetStorage gets the Mydumper database metadata map on the mock source.
+// GetDBMetaMap gets the Mydumper database metadata map on the mock source.
 func (m *MockImportSource) GetDBMetaMap() map[string]*mydump.MDDatabaseMeta {
 	return m.dbFileMetaMap
 }

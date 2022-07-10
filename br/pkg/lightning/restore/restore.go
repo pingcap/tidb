@@ -371,15 +371,17 @@ func NewRestoreControllerWithPauser(
 		tls:          tls,
 		backend:      backend,
 	}
-	preInfoGetter := &PreRestoreInfoGetterImpl{
-		cfg:              cfg,
-		dbMetas:          p.DBMetas,
-		srcStorage:       p.DumpFileStorage,
-		encBuilder:       backend,
-		targetInfoGetter: targetInfoGetter,
-		ioWorkers:        ioWorkers,
+	preInfoGetter, err := NewPreRestoreInfoGetter(
+		cfg,
+		p.DBMetas,
+		p.DumpFileStorage,
+		targetInfoGetter,
+		ioWorkers,
+		backend,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	preInfoGetter.Init()
 
 	rc := &Controller{
 		taskCtx:       ctx,
@@ -1950,7 +1952,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if err != nil {
 		return common.ErrCheckDataSource.Wrap(err).GenWithStackByArgs()
 	}
-	estimatedDataSizeToGenerate := estimatedSizeResult.SizeWithIndex
+	estimatedDataSizeWithIndex := estimatedSizeResult.SizeWithIndex
 
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if estimatedSizeResult.HasUnsortedBigTables {
@@ -1975,7 +1977,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 		}
 		if !taskExist {
-			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeToGenerate); err != nil {
+			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex); err != nil {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
 		}
@@ -1991,11 +1993,11 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				err = rc.localResource(ctx, estimatedDataSizeToGenerate)
+				err = rc.localResource(ctx, estimatedDataSizeWithIndex)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
 				}
-				if err := rc.clusterResource(ctx, estimatedDataSizeToGenerate); err != nil {
+				if err := rc.clusterResource(ctx, estimatedDataSizeWithIndex); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
 						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()

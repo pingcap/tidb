@@ -279,18 +279,20 @@ func NewPreRestoreInfoGetter(
 	srcStorage storage.ExternalStorage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
+	encBuilder backend.EncodingBuilder,
 ) (*PreRestoreInfoGetterImpl, error) {
 	if ioWorkers == nil {
 		ioWorkers = worker.NewPool(context.Background(), cfg.App.IOConcurrency, "pre_info_getter_io")
 	}
-	var encBuilder backend.EncodingBuilder
-	switch cfg.TikvImporter.Backend {
-	case config.BackendTiDB:
-		encBuilder = tidb.NewEncodingBuilder()
-	case config.BackendLocal:
-		encBuilder = local.NewEncodingBuilder(context.Background())
-	default:
-		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
+	if encBuilder == nil {
+		switch cfg.TikvImporter.Backend {
+		case config.BackendTiDB:
+			encBuilder = tidb.NewEncodingBuilder()
+		case config.BackendLocal:
+			encBuilder = local.NewEncodingBuilder(context.Background())
+		default:
+			return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
+		}
 	}
 
 	result := &PreRestoreInfoGetterImpl{
@@ -407,36 +409,38 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 }
 
 func setAutoRandomBits(tblInfo *model.TableInfo, colDefs []*ast.ColumnDef) {
-	if tblInfo.PKIsHandle {
-		pkColName := tblInfo.GetPkName()
-		for _, colDef := range colDefs {
-			if colDef.Name.Name.L == pkColName.L && colDef.Tp.GetType() == mysql.TypeLonglong {
-				// potential AUTO_RANDOM candidate column, examine the options
-				hasAutoRandom := false
-				canSetAutoRandom := true
-				var autoRandomBits int
-				for _, option := range colDef.Options {
-					if option.Tp == ast.ColumnOptionAutoRandom {
-						hasAutoRandom = true
-						autoRandomBits = option.AutoRandomBitLength
-						switch {
-						case autoRandomBits == types.UnspecifiedLength:
-							autoRandomBits = autoid.DefaultAutoRandomBits
-						case autoRandomBits <= 0 || autoRandomBits > autoid.MaxAutoRandomBits:
-							canSetAutoRandom = false
-						}
-					}
-					if option.Tp == ast.ColumnOptionAutoIncrement {
-						canSetAutoRandom = false
-					}
-					if option.Tp == ast.ColumnOptionDefaultValue {
-						canSetAutoRandom = false
-					}
-				}
-				if hasAutoRandom && canSetAutoRandom {
-					tblInfo.AutoRandomBits = uint64(autoRandomBits)
+	if !tblInfo.PKIsHandle {
+		return
+	}
+	pkColName := tblInfo.GetPkName()
+	for _, colDef := range colDefs {
+		if colDef.Name.Name.L != pkColName.L || colDef.Tp.GetType() != mysql.TypeLonglong {
+			continue
+		}
+		// potential AUTO_RANDOM candidate column, examine the options
+		hasAutoRandom := false
+		canSetAutoRandom := true
+		var autoRandomBits int
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionAutoRandom {
+				hasAutoRandom = true
+				autoRandomBits = option.AutoRandomBitLength
+				switch {
+				case autoRandomBits == types.UnspecifiedLength:
+					autoRandomBits = autoid.DefaultAutoRandomBits
+				case autoRandomBits <= 0 || autoRandomBits > autoid.MaxAutoRandomBits:
+					canSetAutoRandom = false
 				}
 			}
+			if option.Tp == ast.ColumnOptionAutoIncrement {
+				canSetAutoRandom = false
+			}
+			if option.Tp == ast.ColumnOptionDefaultValue {
+				canSetAutoRandom = false
+			}
+		}
+		if hasAutoRandom && canSetAutoRandom {
+			tblInfo.AutoRandomBits = uint64(autoRandomBits)
 		}
 	}
 }
