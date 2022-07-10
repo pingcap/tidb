@@ -1314,7 +1314,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		// sort chunk.Row
 		type rowWithID struct {
 			rowID int // rowIdx represents the handle index for every row. Only used when keep order.
-			row   *chunk.Row
+			row   chunk.Row
 		}
 		rowWithIDSlice := make([]rowWithID, 0, len(task.rows))
 		for i := range task.rows {
@@ -1325,7 +1325,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			rowIdx, _ := task.indexOrder.Get(handle)
 			rowWithIDSlice = append(rowWithIDSlice,
 				rowWithID{rowID: rowIdx.(int),
-					row: &task.rows[i]})
+					row: task.rows[i]})
 		}
 		memUsage = int64(cap(rowWithIDSlice) * 4)
 		task.memUsage += memUsage
@@ -1334,7 +1334,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			return i.rowID < j.rowID
 		})
 		for i := range rowWithIDSlice {
-			task.rows[i] = *rowWithIDSlice[i].row
+			task.rows[i] = rowWithIDSlice[i].row
 		}
 	}
 
