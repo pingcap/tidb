@@ -16,7 +16,6 @@ package infoschema
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -806,7 +805,9 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
-		sort.Sort(v)
+		slices.SortFunc(v, func(a, b table.Table) bool {
+			return a.Meta().ID < b.Meta().ID
+		})
 	}
 	return b, nil
 }
