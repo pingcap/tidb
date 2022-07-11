@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"golang.org/x/exp/slices"
 )
 
 // Column contains the info and generated expr of column.
@@ -92,7 +93,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 		orderedGCOffset = append(orderedGCOffset, col.Col.Offset)
 		offset2Id[col.Col.Offset] = int(id)
 	}
-	sort.Ints(orderedGCOffset)
+	slices.Sort(orderedGCOffset)
 
 	reqCols := make([]rowcodec.ColInfo, len(cols))
 	var idx int
