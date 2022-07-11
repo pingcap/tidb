@@ -1,6 +1,6 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
-package backup
+package config
 
 import (
 	"os"
@@ -11,7 +11,7 @@ import (
 )
 
 func TestParseConfig(t *testing.T) {
-	cfg := &EBSBackupInfo{}
+	cfg := &EBSBasedBRMeta{}
 	curDir, err := os.Getwd()
 	require.NoError(t, err)
 	require.NoError(t, cfg.ConfigFromFile(filepath.Join(curDir, "ebs_backup.json")))

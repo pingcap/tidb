@@ -71,6 +71,8 @@ const (
 	TableRestoreCmd = "Table Restore"
 	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
+
+	EBSMetaRestoreCmd = "EBS meta restore"
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -575,7 +577,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
 	if !client.IsIncremental() {
-		if err = client.ResetTS(ctx, cfg.PD); err != nil {
+		if err = client.ResetTS(ctx, mgr.PdController); err != nil {
 			log.Error("reset pd TS failed", zap.Error(err))
 			return errors.Trace(err)
 		}

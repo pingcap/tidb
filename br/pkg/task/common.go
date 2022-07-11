@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -74,6 +75,7 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
+	flagDryRun            = "dry-run"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
@@ -89,6 +91,8 @@ const (
 	crypterAES256KeyLen = 32
 
 	tidbNewCollationEnabled = "new_collation_enabled"
+
+	ebsProgressFilename = "progress.txt"
 )
 
 // TLSConfig is the common configuration for TLS connection.
@@ -737,4 +741,28 @@ func normalizePDURL(pd string, useTLS bool) (string, error) {
 // see details https://github.com/pingcap/br/issues/675#issuecomment-753780742
 func gcsObjectNotFound(err error) bool {
 	return errors.Cause(err) == gcs.ErrObjectNotExist // nolint:errorlint
+}
+
+// write progress in tmp file for tidb-operator, so tidb-operator can retrieve the
+// progress of ebs backup. and user can get the progress through `kubectl get job`
+// todo: maybe change to http api later
+func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, total int64) {
+	// remove tmp file
+	defer os.Remove(ebsProgressFilename)
+
+	for progress.GetCurrent() < total {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+			break
+		}
+		cur := progress.GetCurrent()
+		p := float64(cur) / float64(total)
+		p *= 100
+		err := os.WriteFile(ebsProgressFilename, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		if err != nil {
+			log.Warn("failed to update tmp progress file", zap.Error(err))
+		}
+	}
 }

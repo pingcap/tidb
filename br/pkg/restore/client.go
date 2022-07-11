@@ -444,14 +444,11 @@ func (rc *Client) GetTS(ctx context.Context) (uint64, error) {
 }
 
 // ResetTS resets the timestamp of PD to a bigger value.
-func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
+func (rc *Client) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) error {
 	restoreTS := rc.backupMeta.GetEndVersion()
 	log.Info("reset pd timestamp", zap.Uint64("ts", restoreTS))
-	i := 0
 	return utils.WithRetry(ctx, func() error {
-		idx := i % len(pdAddrs)
-		i++
-		return pdutil.ResetTS(ctx, pdAddrs[idx], restoreTS, rc.tlsConf)
+		return pdCtrl.ResetTS(ctx, restoreTS)
 	}, utils.NewPDReqBackoffer())
 }
 
