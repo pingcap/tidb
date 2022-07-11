@@ -45,7 +45,7 @@ var (
 )
 
 func init() {
-	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan, plancodec.Compress)
 	globalTopSQLReport = remoteReporter
 	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
 }
@@ -182,10 +182,5 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
-	if len(normalizedBinaryPlan) > MaxBinaryPlanSize {
-		// ignore the huge size plan
-		return
-	}
-
-	globalTopSQLReport.RegisterPlan(planDigest, normalizedBinaryPlan)
+	globalTopSQLReport.RegisterPlan(planDigest, normalizedBinaryPlan, len(normalizedBinaryPlan) > MaxBinaryPlanSize)
 }

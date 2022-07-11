@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
+	"golang.org/x/exp/slices"
 )
 
 const promReadTimeout = time.Second * 10
@@ -203,7 +203,7 @@ func (e *MetricsSummaryRetriever) retrieve(ctx context.Context, sctx sessionctx.
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
-	sort.Strings(tables)
+	slices.Sort(tables)
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	filter := inspectionFilter{set: e.extractor.MetricsNames}
@@ -280,7 +280,7 @@ func (e *MetricsSummaryByLabelRetriever) retrieve(ctx context.Context, sctx sess
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
-	sort.Strings(tables)
+	slices.Sort(tables)
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	filter := inspectionFilter{set: e.extractor.MetricsNames}

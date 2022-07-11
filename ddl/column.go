@@ -51,38 +51,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// adjustColumnInfoInDropColumn is used to set the correct position of column info when dropping column.
-// 1. The offset of column should to be set to the last of the columns.
-// 2. The dropped column is moved to the end of tblInfo.Columns, due to it was not public any more.
-func adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
-	oldCols := tblInfo.Columns
-	// Adjust column offset.
-	offsetChanged := make(map[int]int, len(oldCols)-offset-1)
-	for i := offset + 1; i < len(oldCols); i++ {
-		offsetChanged[oldCols[i].Offset] = i - 1
-		oldCols[i].Offset = i - 1
-	}
-	oldCols[offset].Offset = len(oldCols) - 1
-	// For expression index, we drop hidden columns and index simultaneously.
-	// So we need to change the offset of expression index.
-	offsetChanged[offset] = len(oldCols) - 1
-	// Update index column offset info.
-	// TODO: There may be some corner cases for index column offsets, we may check this later.
-	for _, idx := range tblInfo.Indices {
-		for _, col := range idx.Columns {
-			newOffset, ok := offsetChanged[col.Offset]
-			if ok {
-				col.Offset = newOffset
-			}
-		}
-	}
-	newCols := make([]*model.ColumnInfo, 0, len(oldCols))
-	newCols = append(newCols, oldCols[:offset]...)
-	newCols = append(newCols, oldCols[offset+1:]...)
-	newCols = append(newCols, oldCols[offset])
-	tblInfo.Columns = newCols
-}
-
 func createColumnInfoWithPosCheck(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, *ast.ColumnPosition, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
@@ -250,12 +218,6 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
-	for i := range columnInfos {
-		columnInfos[i].State = state
-	}
-}
-
 // checkAfterPositionExists makes sure the column specified in AFTER clause is exists.
 // For example, ALTER TABLE t ADD COLUMN c3 INT AFTER c1.
 func checkAfterPositionExists(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
@@ -275,8 +237,6 @@ func setIndicesState(indexInfos []*model.IndexInfo, state model.SchemaState) {
 }
 
 func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {
-	// Set this column's offset to the last and reset all following columns' offsets.
-	adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 	// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
 	// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
 	// And we need consider the column without not-null flag.
@@ -320,6 +280,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// public -> write only
 		colInfo.State = model.StateWriteOnly
 		setIndicesState(idxInfos, model.StateWriteOnly)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1686,6 +1647,11 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		}
 	}
 	return odValue, nil
+}
+
+// FindColumnIndexCols finds column in index
+func FindColumnIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
+	return findColumnInIndexCols(c, cols)
 }
 
 func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
