@@ -322,12 +322,13 @@ func (h *Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, re
 			return nil, errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = %? and table_id = %? and hist_id = %?", isIndexFlag, item.TableID, item.ID)
+	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID), zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
 		return nil, errors.Trace(errors.New(fmt.Sprintf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex)))
 	}
 	if item.IsIndex {
@@ -482,14 +483,14 @@ func (h *Handle) setWorking(item model.TableItemID, resultCh chan model.TableIte
 	return true
 }
 
-func (h *Handle) finishWorking(col model.TableItemID) {
+func (h *Handle) finishWorking(item model.TableItemID) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	if chList, ok := h.StatsLoad.WorkingColMap[col]; ok {
+	if chList, ok := h.StatsLoad.WorkingColMap[item]; ok {
 		list := chList[1:]
 		for _, ch := range list {
-			h.writeToResultChan(ch, col)
+			h.writeToResultChan(ch, item)
 		}
 	}
-	delete(h.StatsLoad.WorkingColMap, col)
+	delete(h.StatsLoad.WorkingColMap, item)
 }

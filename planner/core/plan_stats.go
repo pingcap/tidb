@@ -139,14 +139,15 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 				continue
 			}
 			idxCol := ddl.FindColumnIndexCols(colName, idx.Meta().Columns)
+			idxID := idx.Meta().ID
 			if idxCol != nil {
 				tblStats := stats.GetTableStats(tbl.Meta())
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
 				idxStats, ok := tblStats.Indices[idx.Meta().ID]
-				if !ok || !idxStats.IsFullLoad() {
-					histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxStats.ID, IsIndex: true}] = struct{}{}
+				if !ok || idxStats == nil || !idxStats.IsFullLoad() {
+					histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
 				}
 			}
 		}
