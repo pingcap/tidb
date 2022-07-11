@@ -414,12 +414,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount, err = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
-		if err != nil {
-			mergeRegionCount = conn.DefaultMergeRegionKeyCount
-			mergeRegionSize = conn.DefaultMergeRegionSizeBytes
-			log.Warn("meet error when getting checkpoint from TiKV; using default", logutil.ShortError(err))
-		}
+		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
 	}
 
 	keepaliveCfg.PermitWithoutStream = true
