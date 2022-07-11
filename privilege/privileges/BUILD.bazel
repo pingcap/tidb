@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//errno",
         "//infoschema",
+        "//kv",
         "//parser/ast",
         "//parser/auth",
         "//parser/mysql",
@@ -29,6 +30,7 @@ go_library(
         "//util/sqlexec",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )

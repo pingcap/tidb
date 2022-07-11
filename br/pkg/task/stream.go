@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +47,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -135,7 +135,8 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamStartTS, "",
 		"usually equals last full backupTS, used for backup log. Default value is current ts.\n"+
 			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.")
-	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
+	// 999999999999999999 means 2090-11-18 22:07:45
+	flags.String(flagStreamEndTS, "999999999999999999", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	_ = flags.MarkHidden(flagStreamEndTS)
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamStartSafePointTTL,
@@ -386,8 +387,8 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 
 	mRange := stream.BuildObserveMetaRange()
 	rs := append([]kv.KeyRange{*mRange}, dRanges...)
-	sort.Slice(rs, func(i, j int) bool {
-		return bytes.Compare(rs[i].StartKey, rs[j].StartKey) < 0
+	slices.SortFunc(rs, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
 
 	return rs, nil

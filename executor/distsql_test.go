@@ -369,7 +369,7 @@ func TestIndexLookUpStats(t *testing.T) {
 	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 2}", stats.String())
+	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 1}", stats.String())
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {

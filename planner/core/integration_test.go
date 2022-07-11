@@ -17,6 +17,7 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -176,9 +177,6 @@ func TestPushLimitDownIndexLookUpReader(t *testing.T) {
 	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
 	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
 	tk.MustExec("analyze table tbl")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -2728,6 +2726,76 @@ func TestIssue18984(t *testing.T) {
 		"3 3 3 2 4 3 5"))
 }
 
+func TestTimeToSecPushDownToTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4))")
+	tk.MustExec("insert into t values('700:10:10.123456')")
+	tk.MustExec("insert into t values('20:20:20')")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "10000.00", "root", " data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
+		{"  └─Projection_4", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#3"},
+		{"    └─TableFullScan_7", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select time_to_sec(a) from t;").Check(rows)
+}
+
+func TestRightShiftPushDownToTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(2147483647, 32)")
+	tk.MustExec("insert into t values(12, 2)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select a >> b from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
 func TestBitColumnPushDown(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3685,9 +3753,6 @@ func TestExtendedStatsSwitch(t *testing.T) {
 		"1.000000 1",
 	))
 
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
-
 	// Estimated index scan count is 4 using extended stats.
 	tk.MustQuery("explain format = 'brief' select * from t use index(b) where a > 3 order by b limit 1").Check(testkit.Rows(
 		"Limit 1.00 root  offset:0, count:1",
@@ -4557,9 +4622,6 @@ func TestLimitIndexLookUpKeepOrder(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a,b,c));")
 
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
-
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4785,9 +4847,6 @@ func TestMultiColMaxOneRow(t *testing.T) {
 	tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a,b))")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5561,8 +5620,6 @@ func TestPreferRangeScanForUnsignedIntHandle(t *testing.T) {
 
 	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
 	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -5601,9 +5658,6 @@ func TestIssue27083(t *testing.T) {
 	do, _ := session.GetDomain(store)
 	require.Nil(t, do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec("analyze table t")
-
-	// When paging is enabled, there would be a 'paging: true' in the explain result.
-	tk.MustExec("set @@tidb_enable_paging = off")
 
 	var input []string
 	var output []struct {
@@ -6562,6 +6616,107 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 	}
 	tk.MustExec("drop table rp_t;")
 	tk.MustExec("drop table hp_t;")
+}
+
+func TestTiFlashFineGrainedShuffle(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func TestTiFlashFineGrainedShuffleWithMaxTiFlashThreads(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	sql := "explain select row_number() over w1 from t1 window w1 as (partition by c1);"
+
+	getStreamCountFromExplain := func(rows [][]interface{}) (res []uint64) {
+		re := regexp.MustCompile("stream_count: ([0-9]+)")
+		for _, row := range rows {
+			buf := bytes.NewBufferString("")
+			_, _ = fmt.Fprintf(buf, "%s\n", row)
+			if matched := re.FindStringSubmatch(buf.String()); matched != nil {
+				require.Equal(t, len(matched), 2)
+				c, err := strconv.ParseUint(matched[1], 10, 64)
+				require.NoError(t, err)
+				res = append(res, c)
+			}
+		}
+		return res
+	}
+
+	// tiflash_fine_grained_shuffle_stream_count should be same with tidb_max_tiflash_threads.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows := tk.MustQuery(sql).Rows()
+	streamCount := getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(10), streamCount[0])
+
+	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is -1.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = -1")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+
+	// tiflash_fine_grained_shuffle_stream_count should be default value when tidb_max_tiflash_threads is 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 0")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(variable.DefStreamCountWhenMaxThreadsNotSet), streamCount[0])
+
+	// Disabled when tiflash_fine_grained_shuffle_stream_count is 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	require.Equal(t, len(streamCount), 0)
+
+	// Test when tiflash_fine_grained_shuffle_stream_count is greater than 0.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 16")
+	tk.MustExec("set @@tidb_max_tiflash_threads = 10")
+	rows = tk.MustQuery(sql).Rows()
+	streamCount = getStreamCountFromExplain(rows)
+	// require.Equal(t, len(streamCount), 1)
+	require.Equal(t, uint64(16), streamCount[0])
 }
 
 func TestIssue33175(t *testing.T) {

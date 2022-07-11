@@ -458,6 +458,8 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	builder.Request.ResourceGroupTagger = ctx.getResourceGroupTaggerForTopSQL()
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
+	builder.RequestSource.RequestSourceInternal = true
+	builder.RequestSource.RequestSourceType = ctx.ddlJobSourceType()
 
 	kvReq, err := builder.Build()
 	if err != nil {
@@ -730,7 +732,8 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
 		return nil
 	}
 
-	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		rh := newReorgHandler(meta.NewMeta(txn))
 		return errors.Trace(rh.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	})

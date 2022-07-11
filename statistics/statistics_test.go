@@ -251,10 +251,10 @@ func SubTestColumnRange() func(*testing.T) {
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		col := &Column{
-			Histogram:       *hg,
-			CMSketch:        buildCMSketch(s.rc.(*recordSet).data),
-			Info:            &model.ColumnInfo{},
-			ColLoadedStatus: NewColFullLoadStatus(),
+			Histogram:         *hg,
+			CMSketch:          buildCMSketch(s.rc.(*recordSet).data),
+			Info:              &model.ColumnInfo{},
+			StatsLoadedStatus: NewStatsFullLoadStatus(),
 		}
 		tbl := &Table{
 			HistColl: HistColl{
@@ -327,7 +327,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		require.Equal(t, int64(100000), rowCount)
-		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, ColLoadedStatus: NewColFullLoadStatus()}
+		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
 		tbl := &Table{
 			HistColl: HistColl{
 				Count:   int64(col.TotalRowCount()),
