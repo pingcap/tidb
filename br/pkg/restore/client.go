@@ -298,6 +298,8 @@ func (rc *Client) SetRestoreRangeTS(startTs, restoreTS, shiftStartTS uint64) {
 	rc.startTS = startTs
 	rc.restoreTS = restoreTS
 	rc.shiftStartTS = shiftStartTS
+	log.Info("set restore range ts", zap.Uint64("shift-start-ts", shiftStartTS),
+		zap.Uint64("start-ts", startTs), zap.Uint64("restored-ts", restoreTS))
 }
 
 func (rc *Client) SetCurrentTS(ts uint64) {
@@ -1564,37 +1566,6 @@ func (rc *Client) ReadStreamDataFiles(
 		}
 	}
 	return dFiles, mFiles, nil
-}
-
-func (rc *Client) CalcuateShiftTS(
-	metas []*backuppb.Metadata,
-) (uint64, bool) {
-	var (
-		min_begin_ts uint64
-		isExist      bool
-	)
-
-	for _, m := range metas {
-		if len(m.Files) == 0 || m.MinTs > rc.restoreTS || m.MaxTs < rc.startTS {
-			continue
-		}
-
-		for _, d := range m.Files {
-			if d.Cf == stream.WriteCF {
-				continue
-			}
-			if d.MinTs > rc.restoreTS || d.MaxTs < rc.startTS {
-				continue
-			}
-
-			if d.MinBeginTsInDefaultCf < min_begin_ts || isExist == false {
-				isExist = true
-				min_begin_ts = d.MinBeginTsInDefaultCf
-			}
-		}
-	}
-
-	return min_begin_ts, isExist
 }
 
 // FixIndex tries to fix a single index.

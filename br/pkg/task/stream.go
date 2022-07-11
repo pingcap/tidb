@@ -923,8 +923,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		fileCount    uint64 = 0
 		kvPairCount  int64  = 0
 		totalSize    uint64 = 0
-		shiftUntilTS        = ShiftTS(cfg.Until)
+		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
 	)
+
 	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		fileCount++
 		totalSize += d.Length
@@ -1109,7 +1110,7 @@ func restoreStream(
 		return nil
 	}
 
-	shiftStartTS, exist := calcuateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
+	shiftStartTS, exist := restore.CalcuateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
 	if !exist {
 		shiftStartTS = cfg.StartTS
 	}
@@ -1285,37 +1286,6 @@ func getLogRange(
 	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
-}
-
-func calcuateShiftTS(
-	metas []*backuppb.Metadata,
-	startTS uint64,
-	restoreTS uint64,
-) (uint64, bool) {
-	var (
-		min_begin_ts uint64
-		isExist      bool
-	)
-	for _, m := range metas {
-		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
-			continue
-		}
-
-		for _, d := range m.Files {
-			if d.Cf == stream.DefaultCF {
-				continue
-			}
-			if d.MinTs > restoreTS || d.MaxTs < startTS {
-				continue
-			}
-			if d.MinBeginTsInDefaultCf < min_begin_ts || isExist == false {
-				isExist = true
-				min_begin_ts = d.MinBeginTsInDefaultCf
-			}
-		}
-	}
-
-	return min_begin_ts, isExist
 }
 
 // getFullBackupTS gets the snapshot-ts of full bakcup

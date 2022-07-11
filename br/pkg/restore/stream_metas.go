@@ -9,9 +9,12 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 type StreamMetadataSet struct {
@@ -51,6 +54,21 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 			}
 		}
 	}
+}
+
+// CalculateShiftTS calculates the shift-ts.
+func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
+	metadatas := make([]*backuppb.Metadata, 0, len(ms.metadata))
+	for _, m := range ms.metadata {
+		metadatas = append(metadatas, m)
+	}
+
+	min_begin_ts, exist := CalcuateShiftTS(metadatas, startTS, mathutil.MaxUint)
+	if !exist {
+		min_begin_ts = startTS
+	}
+	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", min_begin_ts))
+	return min_begin_ts
 }
 
 // IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
@@ -213,4 +231,35 @@ func SetTSToFile(
 ) error {
 	content := strconv.FormatUint(safepoint, 10)
 	return truncateAndWrite(ctx, s, filename, []byte(content))
+}
+
+func CalcuateShiftTS(
+	metas []*backuppb.Metadata,
+	startTS uint64,
+	restoreTS uint64,
+) (uint64, bool) {
+	var (
+		min_begin_ts uint64
+		isExist      bool
+	)
+	for _, m := range metas {
+		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+			continue
+		}
+
+		for _, d := range m.Files {
+			if d.Cf == stream.DefaultCF {
+				continue
+			}
+			if d.MinTs > restoreTS || d.MaxTs < startTS {
+				continue
+			}
+			if d.MinBeginTsInDefaultCf < min_begin_ts || !isExist {
+				isExist = true
+				min_begin_ts = d.MinBeginTsInDefaultCf
+			}
+		}
+	}
+
+	return min_begin_ts, isExist
 }
