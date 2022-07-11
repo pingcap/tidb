@@ -16,10 +16,10 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/ddl"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
