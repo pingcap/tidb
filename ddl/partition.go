@@ -1493,6 +1493,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	placementPolicyEqual := checkExchangePartitionPlacementPolicy(t, pt.PlacementPolicyRef, nt.PlacementPolicyRef)
+	if !placementPolicyEqual {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
 
@@ -1651,6 +1657,37 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 	}
 	return nil
+}
+
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) bool {
+	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
+		return true
+	}
+	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
+		return false
+	}
+
+	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
+	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
+
+	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
+		return true
+	}
+	if ntPlacementPolicyInfo == nil || ptPlacementPolicyInfo == nil {
+		return false
+	}
+
+	ptSetting, ntSetting := ntPlacementPolicyInfo.PlacementSettings, ptPlacementPolicyInfo.PlacementSettings
+
+	if ptSetting.PrimaryRegion != ntSetting.PrimaryRegion || ptSetting.Regions != ntSetting.Regions ||
+		ptSetting.Learners != ntSetting.Learners || ptSetting.Followers != ntSetting.Followers || ptSetting.Voters != ntSetting.Voters ||
+		ptSetting.Schedule != ntSetting.Schedule || ptSetting.Constraints != ntSetting.Constraints ||
+		ptSetting.LeaderConstraints != ntSetting.LeaderConstraints || ptSetting.LearnerConstraints != ntSetting.LearnerConstraints ||
+		ptSetting.FollowerConstraints != ntSetting.FollowerConstraints || ptSetting.VoterConstraints != ntSetting.VoterConstraints {
+		return false
+	}
+
+	return true
 }
 
 func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
