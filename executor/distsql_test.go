@@ -481,11 +481,11 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	str := "this_is_a_string_with_length_of_50________________"
 	tk.MustExec(fmt.Sprintf("insert into t values (1, 'test1000', '%s'), (2, 'test2000', '%s');", str, str))
 	tk.MustExec("analyze table t;")
-	// IndexReader cost is 22, TableReader cost is 67
-	tk.MustExec("set tidb_adaptive_closest_read_threshold = 10;")
-	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 2, 0)
-	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
-	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 1, 1)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 80;")
+	// IndexReader cost is 22, TableReader cost (1 row) is 67
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 0, 2)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 100;")
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test22'", 1, 1)
 
 	// index merge reader
 	tk.MustExec("drop table if exists t;")
@@ -493,5 +493,6 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1,  'tests101', 'tests201'), (2, 2, 'tests102', 'tests202'), (3, 3, 'tests103', 'tests203');")
 	// TODO: why after analyze table, the query hint does not take effect.
 	//tk.MustExec("analyze table t;")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
 	checkMetrics("select/* +USE_INDEX_MERGE(t) */  * from t where (s1 < 'tests102' and v < 2) or s2 = 'tests203';", 2, 2)
 }
