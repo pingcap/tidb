@@ -254,7 +254,7 @@ var (
 	ErrClassToMySQLCodes = make(map[ErrClass]map[ErrCode]struct{})
 	// ErrCritical is the critical error class.
 	ErrCritical = ClassGlobal.NewStdErr(CodeExecResultIsEmpty, mysql.Message("critical error %v", nil))
-	// ErrResultUndetermined is the result undetermined error class.
+	// ErrResultUndetermined is the error when execution result is unknown.
 	ErrResultUndetermined = ClassGlobal.NewStdErr(CodeResultUndetermined, mysql.Message("execution result undetermined", nil))
 )
 
