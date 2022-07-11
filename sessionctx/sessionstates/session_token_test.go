@@ -118,7 +118,7 @@ func TestSignAlgo(t *testing.T) {
 					signAlgo.String(), keySize)
 				err := util.CreateCertificates(certPath, keyPath, keySize, test.pubKeyAlgo, signAlgo)
 				require.NoError(t, err, msg)
-				globalSigningCert.lockAndLoad()
+				ReloadSigningCert()
 				_, tokenBytes := createNewToken(t, "test_user")
 				err = ValidateSessionToken(tokenBytes, "test_user")
 				require.NoError(t, err, msg)
@@ -185,21 +185,21 @@ func TestCertExpire(t *testing.T) {
 	// the old cert expires and the original token is invalid
 	timeOffset := uint64(loadCertInterval)
 	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
-	globalSigningCert.lockAndLoad()
+	ReloadSigningCert()
 	timeOffset += uint64(oldCertValidTime + time.Minute)
 	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.ErrorContains(t, err, "verification error")
 	// the new cert is not rotated but is reloaded
 	_, tokenBytes = createNewToken(t, "test_user")
-	globalSigningCert.lockAndLoad()
+	ReloadSigningCert()
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, err)
 	// the cert is rotated but is still valid
 	createRSACert(t, certPath2, keyPath2)
 	timeOffset += uint64(loadCertInterval)
 	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
-	globalSigningCert.lockAndLoad()
+	ReloadSigningCert()
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.ErrorContains(t, err, "token expired")
 	// after some time, it's not valid
@@ -231,7 +231,7 @@ func TestLoadAndReadConcurrently(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		wg.Run(func() {
 			for time.Now().Before(deadline) {
-				globalSigningCert.lockAndLoad()
+				ReloadSigningCert()
 				time.Sleep(500 * time.Millisecond)
 			}
 		})

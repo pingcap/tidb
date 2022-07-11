@@ -110,7 +110,10 @@ func ValidateSessionToken(tokenBytes []byte, username string) (err error) {
 	if now.After(token.ExpireTime) {
 		return ErrCannotMigrateSession.GenWithStackByArgs("token expired", token.ExpireTime.String())
 	}
-	// This prevents the creation of a token by brute-force.
+	// An attacker may forge a very long lifetime to brute force, so we also need to check `SignTime`.
+	// However, we need to be tolerant of these problems:
+	// - The `tokenLifetime` may change between TiDB versions, so we can't check `token.SignTime.Add(tokenLifetime).Equal(token.ExpireTime)`
+	// - There may exist time bias between TiDB instances, so we can't check `now.After(token.SignTime)`
 	if token.SignTime.Add(tokenLifetime).Before(now) {
 		return ErrCannotMigrateSession.GenWithStackByArgs("token lifetime is too long", token.SignTime.String())
 	}
@@ -130,16 +133,12 @@ func SetCertPath(certPath string) {
 	globalSigningCert.setCertPath(certPath)
 }
 
-// StartCertLoader starts a goroutine to load the certificate periodically.
+// ReloadSigningCert is used to load the certificate periodically in a separate goroutine.
 // It's impossible to know when the old certificate should expire without this goroutine:
 // - If the certificate is rotated a minute ago, the old certificate should be still valid for a while.
 // - If the certificate is rotated a month ago, the old certificate should expire for safety.
-func StartCertLoader() {
-	go func() {
-		for range time.Tick(loadCertInterval) {
-			globalSigningCert.checkAndLoadCert()
-		}
-	}()
+func ReloadSigningCert() {
+	globalSigningCert.lockAndLoad()
 }
 
 var globalSigningCert signingCert
@@ -219,7 +218,7 @@ func (sc *signingCert) loadCert() error {
 		}
 	}
 
-	// rotate certs
+	// Rotate certs. Ensure that the expireTime of certs is in descending order.
 	now := getNow()
 	newCerts := make([]*certInfo, 0, len(sc.certs)+1)
 	newCerts = append(newCerts, &certInfo{
@@ -228,6 +227,7 @@ func (sc *signingCert) loadCert() error {
 		expireTime: now.Add(loadCertInterval + oldCertValidTime),
 	})
 	for i := 0; i < len(sc.certs); i++ {
+		// Discard the certs that are already expired.
 		if now.After(sc.certs[i].expireTime) {
 			break
 		}
@@ -250,12 +250,12 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 	}
 	// Always sign the token with the latest cert.
 	certInfo := sc.certs[0]
-	switch certInfo.privKey.(type) {
+	switch key := certInfo.privKey.(type) {
 	case ed25519.PrivateKey:
-		signer = certInfo.privKey.(ed25519.PrivateKey)
+		signer = key
 		opts = crypto.Hash(0)
 	case *rsa.PrivateKey:
-		signer = certInfo.privKey.(*rsa.PrivateKey)
+		signer = key
 		var pssHash crypto.Hash
 		switch certInfo.cert.SignatureAlgorithm {
 		case x509.SHA256WithRSAPSS:
@@ -289,8 +289,7 @@ func (sc *signingCert) sign(content []byte) ([]byte, error) {
 			return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 		}
 	case *ecdsa.PrivateKey:
-		signer = certInfo.privKey.(*ecdsa.PrivateKey)
-		//return ecdsa.SignASN1(rand.Reader, certInfo.privKey.(*ecdsa.PrivateKey), content)
+		signer = key
 	default:
 		return nil, errors.Errorf("not supported private key type '%s' for signing", certInfo.cert.SignatureAlgorithm.String())
 	}
@@ -304,6 +303,7 @@ func (sc *signingCert) checkSignature(content, signature []byte) error {
 	now := getNow()
 	var err error
 	for _, certInfo := range sc.certs {
+		// The expireTime is in descending order. So if the first one is expired, we skip the following.
 		if now.After(certInfo.expireTime) {
 			break
 		}
