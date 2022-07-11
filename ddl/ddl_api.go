@@ -3055,20 +3055,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
-func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
-	specType := specs[0].Tp
-	for _, spec := range specs {
-		// We think AlterTableDropPrimaryKey and AlterTableDropIndex are the same types.
-		if spec.Tp == ast.AlterTableDropPrimaryKey || spec.Tp == ast.AlterTableDropIndex {
-			continue
-		}
-		if spec.Tp != specType {
-			return false
-		}
-	}
-	return true
-}
-
 func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
 	if !variable.EnableChangeMultiSchema.Load() {
 		if len(specs) > 1 {
