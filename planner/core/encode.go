@@ -79,7 +79,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 			continue
 		}
 		taskTypeInfo := plancodec.EncodeTaskType(true, kv.TiKV)
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(x.SCtx(), x, nil)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(x.SCtx(), x, nil)
 		rowCount := 0.0
 		if statsInfo := x.statsInfo(); statsInfo != nil {
 			rowCount = x.statsInfo().RowCount
@@ -95,7 +95,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 
 func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
-	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p, nil)
+	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
 	if statsInfo := p.statsInfo(); statsInfo != nil {
 		rowCount = p.statsInfo().RowCount
