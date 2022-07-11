@@ -1109,6 +1109,7 @@ var tableTableTiFlashReplicaCols = []columnInfo{
 	{name: "LOCATION_LABELS", tp: mysql.TypeVarchar, size: 64},
 	{name: "AVAILABLE", tp: mysql.TypeTiny, size: 1},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22},
+	{name: "TABLE_MODE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var tableInspectionResultCols = []columnInfo{
@@ -1829,6 +1830,23 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		}
 	}
 	return cnt, nil
+}
+
+// GetDataFromSessionVariables return the [name, value] of all session variables
+func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error) {
+	sessionVars := ctx.GetSessionVars()
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, v := range sysVars {
+		var value string
+		value, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
+		if err != nil {
+			return nil, err
+		}
+		row := types.MakeDatums(v.Name, value)
+		rows = append(rows, row)
+	}
+	return rows, nil
 }
 
 var tableNameToColumns = map[string][]columnInfo{

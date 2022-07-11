@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // ConstantFuture implements oracle.Future
@@ -70,6 +72,28 @@ func CanReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
 	// initialized with snapshot ts.
 	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
+}
+
+// CommitBeforeEnterNewTxn is called before entering a new transaction. It checks whether the old
+// txn is valid in which case we should commit it first.
+func CommitBeforeEnterNewTxn(ctx context.Context, sctx sessionctx.Context) error {
+	txn, err := sctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	if txn.Valid() {
+		txnStartTS := txn.StartTS()
+		txnScope := sctx.GetSessionVars().TxnCtx.TxnScope
+		err = sctx.CommitTxn(ctx)
+		if err != nil {
+			return err
+		}
+		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
+			zap.Int64("schemaVersion", sctx.GetInfoSchema().SchemaMetaVersion()),
+			zap.Uint64("txnStartTS", txnStartTS),
+			zap.String("txnScope", txnScope))
+	}
+	return nil
 }
 
 // GetSnapshotWithTS returns a snapshot with ts.
