@@ -18,9 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+<<<<<<< HEAD
 	"strconv"
 	"strings"
 	"sync"
+=======
+	"io/ioutil"
+	"strings"
+>>>>>>> d10d25457... util: let TypeFloat should be decoded as Float32 in Chunk (#35978)
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2805,4 +2810,24 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			}
 		}()
 	}
+}
+
+func TestAnalyzePartitionTableForFloat(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
+	// To reproduce the error we meet in https://github.com/pingcap/tidb/issues/35910, we should use the data provided in this issue
+	b, err := ioutil.ReadFile("testdata/analyze_test_data.sql")
+	require.NoError(t, err)
+	sqls := strings.Split(string(b), ";")
+	for _, sql := range sqls {
+		if len(sql) < 1 {
+			continue
+		}
+		tk.MustExec(sql)
+	}
+	tk.MustExec("analyze table t1")
 }
