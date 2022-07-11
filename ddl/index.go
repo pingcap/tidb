@@ -1536,15 +1536,21 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
+// indexesToChange is used to store the indexes that need to be changed during modifying column.
 type indexesToChange struct {
 	indexInfo *model.IndexInfo
-	offset    int  // column offset in idxInfo.Columns
-	isTemp    bool // this is a temp index created by a previous modify column job.
+	// column offset in idxInfo.Columns.
+	offset int
+	// When the modifying column is contained in the index, a temp index is created.
+	// isTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
+	isTemp bool
 }
 
 // findRelatedIndexesToChange finds the indexes that covering the given column.
 // The normal one will be overridden by the temp one.
 func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []indexesToChange {
+	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
+	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
 	var normalIdxInfos, tempIdxInfos []indexesToChange
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
@@ -1557,9 +1563,10 @@ func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) [
 			}
 		}
 	}
-	// Overwrite if the index has the corresponding temporary index. For example,
+	// Overwrite if the index has the corresponding temp index. For example,
 	// we try to find the indexes that contain the column `b` and there are two indexes, `i(a, b)` and `$i($a, b)`.
-	// In this case, we would create a temporary index like xx($a, $b), so the latter should be chosen.
+	// Note that the symbol `$` means temporary. The index `$i($a, b)` is temporarily created by the previous "modify a" statement.
+	// In this case, we would create a temporary index like $$i($a, $b), so the latter should be chosen.
 	result := normalIdxInfos
 	for _, tmpIdx := range tempIdxInfos {
 		origName := getChangingIndexOriginName(tmpIdx.indexInfo)
