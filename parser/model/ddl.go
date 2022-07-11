@@ -96,6 +96,8 @@ const (
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
+
+	ActionUpdateTiFlashReplicaReadyStatus ActionType = 62
 )
 
 var actionMap = map[ActionType]string{

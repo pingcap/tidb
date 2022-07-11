@@ -579,6 +579,8 @@ func (t TableLockType) String() string {
 type TiFlashReplicaInfo struct {
 	Count                 uint64
 	LocationLabels        []string
+	Ready                 bool
+	ReadyPartitionIDs     []int64
 	Available             bool
 	AvailablePartitionIDs []int64
 }
@@ -586,6 +588,16 @@ type TiFlashReplicaInfo struct {
 // IsPartitionAvailable checks whether the partition table replica was available.
 func (tr *TiFlashReplicaInfo) IsPartitionAvailable(pid int64) bool {
 	for _, id := range tr.AvailablePartitionIDs {
+		if id == pid {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPartitionReady checks whether the partition table replica was ready.
+func (tr *TiFlashReplicaInfo) IsPartitionReady(pid int64) bool {
+	for _, id := range tr.ReadyPartitionIDs {
 		if id == pid {
 			return true
 		}

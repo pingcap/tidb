@@ -1196,6 +1196,62 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
+func onUpdateFlashReplicaReadyStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var ready bool
+	var physicalID int64
+	if err := job.DecodeArgs(&ready, &physicalID); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if tblInfo.TiFlashReplica == nil || (tblInfo.ID == physicalID && tblInfo.TiFlashReplica.Ready == ready) ||
+		(tblInfo.ID != physicalID && ready == tblInfo.TiFlashReplica.IsPartitionReady(physicalID)) {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("the replica ready status of table %s is already updated", tblInfo.Name.String())
+	}
+
+	if tblInfo.ID == physicalID {
+		tblInfo.TiFlashReplica.Ready = ready
+	} else if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		// Partition replica become ready.
+		if ready {
+			allReady := true
+			for _, p := range pi.Definitions {
+				if p.ID == physicalID {
+					tblInfo.TiFlashReplica.ReadyPartitionIDs = append(tblInfo.TiFlashReplica.ReadyPartitionIDs, physicalID)
+				}
+				allReady = allReady && tblInfo.TiFlashReplica.IsPartitionReady(p.ID)
+			}
+			tblInfo.TiFlashReplica.Ready = allReady
+		} else {
+			// Partition replica become unready.
+			for i, id := range tblInfo.TiFlashReplica.ReadyPartitionIDs {
+				if id == physicalID {
+					newIDs := tblInfo.TiFlashReplica.ReadyPartitionIDs[:i]
+					newIDs = append(newIDs, tblInfo.TiFlashReplica.ReadyPartitionIDs[i+1:]...)
+					tblInfo.TiFlashReplica.ReadyPartitionIDs = newIDs
+					tblInfo.TiFlashReplica.Ready = false
+					break
+				}
+			}
+		}
+	} else {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("unknown physical ID %v in table %v", physicalID, tblInfo.Name.O)
+	}
+
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()

@@ -395,7 +395,7 @@ func TestTiFlashReplicaAvailableUpdate(t *testing.T) {
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 	time.Sleep(5 * time.Second)
 
-	CheckTableNotAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
+	CheckTableNotReadyWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
 
 // Truncate partition shall not block.
@@ -465,12 +465,13 @@ func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count ui
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }
 
-func CheckTableNotAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, table string) {
+func CheckTableNotReadyWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, table string) {
 	tb, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
 	replica := tb.Meta().TiFlashReplica
 	require.NotNil(t, replica)
-	require.False(t, replica.Available)
+	require.False(t, replica.Ready)
+	require.True(t, replica.Available)
 	require.Equal(t, count, replica.Count)
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }
