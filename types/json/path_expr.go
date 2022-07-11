@@ -90,20 +90,6 @@ func (pef pathExpressionFlag) containsAnyAsterisk() bool {
 	return byte(pef) != 0
 }
 
-var peCache PathExpressionCache
-
-type pathExpressionKey string
-
-func (key pathExpressionKey) Hash() []byte {
-	return hack.Slice(string(key))
-}
-
-// PathExpressionCache is a cache for PathExpression.
-type PathExpressionCache struct {
-	mu    sync.Mutex
-	cache *kvcache.SimpleLRUCache
-}
-
 // PathExpression is for JSON path expression.
 type PathExpression struct {
 	legs  []pathLeg

@@ -1026,9 +1026,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 }
 
 func (w *baseIndexWorker) cleanRowMap() {
-	for id := range w.rowMap {
-		delete(w.rowMap, id)
-	}
+	w.rowMap = make(map[int64]types.Datum, len(w.rowMap))
 }
 
 // getNextKey gets next key of entry that we are going to process.
@@ -1091,7 +1089,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			}
 			// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
 			// the generated value, so we need to clear up the reusing map.
-			//w.cleanRowMap()
+			w.cleanRowMap()
 
 			if recordKey.Cmp(taskRange.endKey) == 0 {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
