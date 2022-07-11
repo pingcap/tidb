@@ -28,7 +28,7 @@ func (*zhPinyinTiDBASCSCollator) Key(_ string) []byte {
 	panic("implement me")
 }
 
-// KeyWithoutTrimRightSpace no implements now.
+// KeyWithoutTrimRightSpace is not implemented.
 func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 	panic("implement me")
 }
