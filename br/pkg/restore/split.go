@@ -19,6 +19,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/codec"
@@ -28,39 +29,17 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Constants for split retry machinery.
-const (
-	SplitRetryTimes       = 32
-	SplitRetryInterval    = 50 * time.Millisecond
-	SplitMaxRetryInterval = time.Second
-
-	SplitCheckMaxRetryTimes = 64
-	SplitCheckInterval      = 8 * time.Millisecond
-	SplitMaxCheckInterval   = time.Second
-
-	ScatterWaitMaxRetryTimes = 64
-	ScatterWaitInterval      = 50 * time.Millisecond
-	ScatterMaxWaitInterval   = time.Second
-	ScatterWaitUpperInterval = 180 * time.Second
-
-	ScanRegionPaginationLimit = 128
-
-	RejectStoreCheckRetryTimes  = 64
-	RejectStoreCheckInterval    = 100 * time.Millisecond
-	RejectStoreMaxCheckInterval = 2 * time.Second
-)
-
 var (
 	ScanRegionAttemptTimes = 60
 )
 
 // RegionSplitter is a executor of region split by rules.
 type RegionSplitter struct {
-	client SplitClient
+	client split.SplitClient
 }
 
 // NewRegionSplitter returns a new RegionSplitter.
-func NewRegionSplitter(client SplitClient) *RegionSplitter {
+func NewRegionSplitter(client split.SplitClient) *RegionSplitter {
 	return &RegionSplitter{
 		client: client,
 	}
@@ -100,11 +79,11 @@ func (rs *RegionSplitter) Split(
 	}
 	minKey := codec.EncodeBytes(nil, sortedRanges[0].StartKey)
 	maxKey := codec.EncodeBytes(nil, sortedRanges[len(sortedRanges)-1].EndKey)
-	interval := SplitRetryInterval
-	scatterRegions := make([]*RegionInfo, 0)
+	interval := split.SplitRetryInterval
+	scatterRegions := make([]*split.RegionInfo, 0)
 SplitRegions:
-	for i := 0; i < SplitRetryTimes; i++ {
-		regions, errScan := PaginateScanRegion(ctx, rs.client, minKey, maxKey, ScanRegionPaginationLimit)
+	for i := 0; i < split.SplitRetryTimes; i++ {
+		regions, errScan := PaginateScanRegion(ctx, rs.client, minKey, maxKey, split.ScanRegionPaginationLimit)
 		if errScan != nil {
 			if berrors.ErrPDBatchScanRegion.Equal(errScan) {
 				log.Warn("inconsistent region info get.", logutil.ShortError(errScan))
@@ -114,13 +93,13 @@ SplitRegions:
 			return errors.Trace(errScan)
 		}
 		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions, isRawKv)
-		regionMap := make(map[uint64]*RegionInfo)
+		regionMap := make(map[uint64]*split.RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
 		}
 		for regionID, keys := range splitKeyMap {
 			log.Info("get split keys for region", zap.Int("len", len(keys)), zap.Uint64("region", regionID))
-			var newRegions []*RegionInfo
+			var newRegions []*split.RegionInfo
 			region := regionMap[regionID]
 			log.Info("split regions",
 				logutil.Region(region.Region), logutil.Keys(keys), rtree.ZapRanges(ranges))
@@ -139,8 +118,8 @@ SplitRegions:
 					return errors.Trace(errSplit)
 				}
 				interval = 2 * interval
-				if interval > SplitMaxRetryInterval {
-					interval = SplitMaxRetryInterval
+				if interval > split.SplitMaxRetryInterval {
+					interval = split.SplitMaxRetryInterval
 				}
 				time.Sleep(interval)
 				log.Warn("split regions failed, retry",
@@ -170,7 +149,7 @@ SplitRegions:
 	scatterCount := 0
 	for _, region := range scatterRegions {
 		rs.waitForScatterRegion(ctx, region)
-		if time.Since(startTime) > ScatterWaitUpperInterval {
+		if time.Since(startTime) > split.ScatterWaitUpperInterval {
 			break
 		}
 		scatterCount++
@@ -233,8 +212,8 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 }
 
 func (rs *RegionSplitter) waitForSplit(ctx context.Context, regionID uint64) {
-	interval := SplitCheckInterval
-	for i := 0; i < SplitCheckMaxRetryTimes; i++ {
+	interval := split.SplitCheckInterval
+	for i := 0; i < split.SplitCheckMaxRetryTimes; i++ {
 		ok, err := rs.hasHealthyRegion(ctx, regionID)
 		if err != nil {
 			log.Warn("wait for split failed", zap.Error(err))
@@ -244,8 +223,8 @@ func (rs *RegionSplitter) waitForSplit(ctx context.Context, regionID uint64) {
 			break
 		}
 		interval = 2 * interval
-		if interval > SplitMaxCheckInterval {
-			interval = SplitMaxCheckInterval
+		if interval > split.SplitMaxCheckInterval {
+			interval = split.SplitMaxCheckInterval
 		}
 		time.Sleep(interval)
 	}
@@ -255,10 +234,10 @@ type retryTimeKey struct{}
 
 var retryTimes = new(retryTimeKey)
 
-func (rs *RegionSplitter) waitForScatterRegion(ctx context.Context, regionInfo *RegionInfo) {
-	interval := ScatterWaitInterval
+func (rs *RegionSplitter) waitForScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) {
+	interval := split.ScatterWaitInterval
 	regionID := regionInfo.Region.GetId()
-	for i := 0; i < ScatterWaitMaxRetryTimes; i++ {
+	for i := 0; i < split.ScatterWaitMaxRetryTimes; i++ {
 		ctx1 := context.WithValue(ctx, retryTimes, i)
 		ok, err := rs.isScatterRegionFinished(ctx1, regionID)
 		if err != nil {
@@ -270,18 +249,18 @@ func (rs *RegionSplitter) waitForScatterRegion(ctx context.Context, regionInfo *
 			break
 		}
 		interval = 2 * interval
-		if interval > ScatterMaxWaitInterval {
-			interval = ScatterMaxWaitInterval
+		if interval > split.ScatterMaxWaitInterval {
+			interval = split.ScatterMaxWaitInterval
 		}
 		time.Sleep(interval)
 	}
 }
 
 func (rs *RegionSplitter) splitAndScatterRegions(
-	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
-) ([]*RegionInfo, error) {
+	ctx context.Context, regionInfo *split.RegionInfo, keys [][]byte,
+) ([]*split.RegionInfo, error) {
 	if len(keys) == 0 {
-		return []*RegionInfo{regionInfo}, nil
+		return []*split.RegionInfo{regionInfo}, nil
 	}
 
 	newRegions, err := rs.client.BatchSplitRegions(ctx, regionInfo, keys)
@@ -308,8 +287,8 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 // ScatterRegionsWithBackoffer scatter the region with some backoffer.
 // This function is for testing the retry mechanism.
 // For a real cluster, directly use ScatterRegions would be fine.
-func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRegions []*RegionInfo, backoffer utils.Backoffer) {
-	newRegionSet := make(map[uint64]*RegionInfo, len(newRegions))
+func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRegions []*split.RegionInfo, backoffer utils.Backoffer) {
+	newRegionSet := make(map[uint64]*split.RegionInfo, len(newRegions))
 	for _, newRegion := range newRegions {
 		newRegionSet[newRegion.Region.Id] = newRegion
 	}
@@ -338,7 +317,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 			// if all region are failed to scatter, the short error might also be verbose...
 			logutil.ShortError(err),
 			logutil.AbbreviatedArray("failed-regions", newRegionSet, func(i interface{}) []string {
-				m := i.(map[uint64]*RegionInfo)
+				m := i.(map[uint64]*split.RegionInfo)
 				result := make([]string, 0, len(m))
 				for id := range m {
 					result = append(result, strconv.Itoa(int(id)))
@@ -372,7 +351,7 @@ func isUnsupportedError(err error) bool {
 }
 
 // ScatterRegions scatter the regions.
-func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*RegionInfo) {
+func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*split.RegionInfo) {
 	for _, region := range newRegions {
 		// Wait for a while until the regions successfully split.
 		rs.waitForSplit(ctx, region.Region.Id)
@@ -400,7 +379,7 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*Regi
 	}
 }
 
-func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+func CheckRegionConsistency(startKey, endKey []byte, regions []*split.RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
@@ -431,14 +410,14 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 // return all regions at once.
 // It reduces max gRPC message size.
 func PaginateScanRegion(
-	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
-) ([]*RegionInfo, error) {
+	ctx context.Context, client split.SplitClient, startKey, endKey []byte, limit int,
+) ([]*split.RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
 		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
-	var regions []*RegionInfo
+	var regions []*split.RegionInfo
 	var err error
 	// we don't need to return multierr. since there only 3 times retry.
 	// in most case 3 times retry have the same error. so we just return the last error.
@@ -446,10 +425,10 @@ func PaginateScanRegion(
 	// because it's not easy to check multierr equals normal error.
 	// see https://github.com/pingcap/tidb/issues/33419.
 	_ = utils.WithRetry(ctx, func() error {
-		regions = []*RegionInfo{}
+		regions = []*split.RegionInfo{}
 		scanStartKey := startKey
 		for {
-			var batch []*RegionInfo
+			var batch []*split.RegionInfo
 			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
 				err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
@@ -513,7 +492,7 @@ func (b *scanRegionBackoffer) Attempt() int {
 
 // getSplitKeys checks if the regions should be split by the end key of
 // the ranges, groups the split keys by region id.
-func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo, isRawKv bool) map[uint64][][]byte {
+func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*split.RegionInfo, isRawKv bool) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
 	for _, rg := range ranges {
@@ -536,7 +515,7 @@ func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*R
 }
 
 // NeedSplit checks whether a key is necessary to split, if true returns the split region.
-func NeedSplit(splitKey []byte, regions []*RegionInfo, isRawKv bool) *RegionInfo {
+func NeedSplit(splitKey []byte, regions []*split.RegionInfo, isRawKv bool) *split.RegionInfo {
 	// If splitKey is the max key.
 	if len(splitKey) == 0 {
 		return nil
