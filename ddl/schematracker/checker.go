@@ -293,20 +293,17 @@ func (d Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) 
 
 // LockTables implements the DDL interface.
 func (d Checker) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error {
-	//TODO implement me
-	panic("implement me")
+	return d.realDDL.LockTables(ctx, stmt)
 }
 
 // UnlockTables implements the DDL interface.
 func (d Checker) UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error {
-	//TODO implement me
-	panic("implement me")
+	return d.realDDL.UnlockTables(ctx, lockedTables)
 }
 
 // CleanupTableLock implements the DDL interface.
 func (d Checker) CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error {
-	//TODO implement me
-	panic("implement me")
+	return d.realDDL.CleanupTableLock(ctx, tables)
 }
 
 // UpdateTableReplicaInfo implements the DDL interface.
