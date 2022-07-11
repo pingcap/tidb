@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -192,6 +193,9 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1;")
@@ -205,7 +209,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ?';")
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
-	tk.Session().SetSessionManager(&mockSessionManager1{
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	})
 	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)

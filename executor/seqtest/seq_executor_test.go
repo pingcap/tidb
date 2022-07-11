@@ -169,7 +169,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
@@ -941,7 +941,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5600)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1001,12 +1001,10 @@ func TestBatchInsertDelete(t *testing.T) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableBatchDML = true
-	})
+	tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 1")
+	defer tk.MustExec("SET GLOBAL tidb_enable_batch_dml = 0")
 
-	// Change to batch inset mode and batch size to 50.
+	// Change to batch insert mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
 	tk.MustExec("set @@session.tidb_dml_batch_size=50;")
 	tk.MustExec("insert into batch_insert (c) select * from batch_insert;")

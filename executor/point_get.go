@@ -20,8 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -44,31 +42,66 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if err := b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
+	var err error
+	if err = b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
 
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
+	if p.Lock && !b.inSelectLockStmt {
+		b.inSelectLockStmt = true
+		defer func() {
+			b.inSelectLockStmt = false
+		}()
 	}
+
 	e := &PointGetExecutor{
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 	}
 
-	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
-	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	e.Init(p, startTS)
+	e.Init(p)
+
+	e.snapshot, err = b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
+		}
+	})
+
+	snapshotTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		if cacheTable := b.getCacheTable(p.TblInfo, snapshotTS); cacheTable != nil {
+			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+		}
+	}
+
 	if e.lock {
 		b.hasLock = true
 	}
+
 	return e
 }
 
@@ -83,7 +116,7 @@ type PointGetExecutor struct {
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
-	startTS          uint64
+	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	txn              kv.Transaction
@@ -101,18 +134,16 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats      *runtimeStatsWithSnapshot
-	cacheTable kv.MemBuffer
+	stats *runtimeStatsWithSnapshot
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
-func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
+func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
 	e.idxVals = p.IndexValues
-	e.startTS = startTs
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
@@ -141,59 +172,14 @@ func (e *PointGetExecutor) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *PointGetExecutor) Open(context.Context) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	snapshotTS := e.startTS
-	if e.lock {
-		snapshotTS = txnCtx.GetForUpdateTS()
-	}
 	var err error
 	e.txn, err = e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
-	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		e.snapshot = e.txn.GetSnapshot()
-	} else {
-		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
-	}
-	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		e.snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
-	}
-	if e.cacheTable != nil {
-		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
-	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
-	if e.runtimeStats != nil {
-		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
-		e.stats = &runtimeStatsWithSnapshot{
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
-	}
-	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
-		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
-	}
-	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	e.snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
-	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	if readReplicaType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
-		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: e.readReplicaScope,
-			},
-		})
-	}
-	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
-		assertScope := val.(string)
-		if readReplicaType.IsClosestRead() && assertScope != e.readReplicaScope {
-			panic("point get replica option fail")
-		}
-	})
 	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
@@ -381,9 +367,12 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
-		lockCtx := newLockCtx(seVars, e.lockWaitTime, 1)
+		lockCtx, err := newLockCtx(e.ctx, e.lockWaitTime, 1)
+		if err != nil {
+			return err
+		}
 		lockCtx.InitReturnValues(1)
-		err := doLockKeys(ctx, e.ctx, lockCtx, key)
+		err = doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
 		}
@@ -446,15 +435,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	// Stale Read uses the calculated TSO for the read,
-	// so there is no need to check the TxnScope here.
-	if e.isStaleness {
+	if e.txnScope == "" || e.txnScope == kv.GlobalTxnScope {
 		return nil
 	}
-	txnScope := e.readReplicaScope
-	if txnScope == "" || txnScope == kv.GlobalTxnScope {
-		return nil
-	}
+
 	var tblID int64
 	var tblName string
 	var partName string
@@ -469,16 +453,16 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		tblInfo, _ := is.TableByID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 	}
-	valid := distsql.VerifyTxnScope(txnScope, tblID, is)
+	valid := distsql.VerifyTxnScope(e.txnScope, tblID, is)
 	if valid {
 		return nil
 	}
 	if len(partName) > 0 {
 		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
+			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, e.txnScope))
 	}
 	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
+		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, e.txnScope))
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
@@ -498,22 +482,22 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
 		// So we don't use CastValue for string value for now.
 		// TODO: merge two if branch.
-		if colInfo.Tp == mysql.TypeString || colInfo.Tp == mysql.TypeVarString || colInfo.Tp == mysql.TypeVarchar {
+		if colInfo.GetType() == mysql.TypeString || colInfo.GetType() == mysql.TypeVarString || colInfo.GetType() == mysql.TypeVarchar {
 			var str string
 			str, err = idxVals[i].ToString()
-			idxVals[i].SetString(str, colInfo.FieldType.Collate)
-		} else if colInfo.Tp == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
+			idxVals[i].SetString(str, colInfo.FieldType.GetCollate())
+		} else if colInfo.GetType() == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
 			var str string
 			var e types.Enum
 			str, err = idxVals[i].ToString()
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			e, err = types.ParseEnumName(colInfo.FieldType.GetElems(), str, colInfo.FieldType.GetCollate())
 			if err != nil {
 				return nil, kv.ErrNotExist
 			}
-			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.Collate)
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.GetCollate())
 		} else {
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
@@ -595,7 +579,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 
 func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk,
 	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
-	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
+	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
@@ -607,7 +591,7 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		return false, nil
 	}
 	// Try to decode common handle.
-	if mysql.HasPriKeyFlag(col.RetType.Flag) {
+	if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 		for i, hid := range pkCols {
 			if col.ID == hid && notPKPrefixCol(hid, prefixColIDs) {
 				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)

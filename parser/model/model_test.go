@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -120,7 +121,7 @@ func TestModelBasic(t *testing.T) {
 		FieldType:    *types.NewFieldType(0),
 		Hidden:       true,
 	}
-	column.Flag |= mysql.PriKeyFlag
+	column.AddFlag(mysql.PriKeyFlag)
 
 	index := &IndexInfo{
 		Name:  NewCIStr("key"),
@@ -194,7 +195,7 @@ func TestModelBasic(t *testing.T) {
 	require.False(t, table2.IsBaseTable())
 
 	// Corner cases
-	column.Flag ^= mysql.PriKeyFlag
+	column.ToggleFlag(mysql.PriKeyFlag)
 	pkName = table.GetPkName()
 	require.Equal(t, NewCIStr(""), pkName)
 	newColumn = table.GetPkColInfo()
@@ -211,9 +212,9 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, false, no)
 
 	extraPK := NewExtraHandleColInfo()
-	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.Flag)
-	require.Equal(t, charset.CharsetBin, extraPK.Charset)
-	require.Equal(t, charset.CollationBin, extraPK.Collate)
+	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.GetFlag())
+	require.Equal(t, charset.CharsetBin, extraPK.GetCharset())
+	require.Equal(t, charset.CollationBin, extraPK.GetCollate())
 }
 
 func TestJobStartTime(t *testing.T) {
@@ -375,11 +376,8 @@ func TestString(t *testing.T) {
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},
-		{ActionAddColumns, "add multi-columns"},
 		{ActionDropColumn, "drop column"},
-		{ActionDropColumns, "drop multi-columns"},
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
-		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
 		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
@@ -478,11 +476,11 @@ func TestDefaultValue(t *testing.T) {
 		err = json.Unmarshal(bytes, &newCol)
 		require.NoError(t, err, comment)
 		if isConsistent {
-			require.Equal(t, newCol.GetDefaultValue(), col.GetDefaultValue())
-			require.Equal(t, newCol.GetOriginDefaultValue(), col.GetOriginDefaultValue())
+			require.Equal(t, col.GetDefaultValue(), newCol.GetDefaultValue(), comment)
+			require.Equal(t, col.GetOriginDefaultValue(), newCol.GetOriginDefaultValue(), comment)
 		} else {
-			require.False(t, col.DefaultValue == newCol.DefaultValue, comment)
-			require.False(t, col.DefaultValue == newCol.DefaultValue, comment)
+			require.NotEqual(t, col.GetDefaultValue(), newCol.GetDefaultValue(), comment)
+			require.NotEqual(t, col.GetOriginDefaultValue(), newCol.GetOriginDefaultValue(), comment)
 		}
 	}
 }
@@ -577,4 +575,13 @@ func TestLocation(t *testing.T) {
 	require.Equal(t, nLoc.String(), "UTC")
 	location := time.FixedZone("UTC", loc1.Offset)
 	require.Equal(t, nLoc, location)
+}
+
+func TestDDLJobSize(t *testing.T) {
+	msg := `Please make sure that the following methods work as expected:
+- SubJob.FromProxyJob()
+- SubJob.ToProxyJob()
+`
+	job := Job{}
+	require.Equal(t, 288, int(unsafe.Sizeof(job)), msg)
 }

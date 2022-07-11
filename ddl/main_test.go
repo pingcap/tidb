@@ -26,14 +26,13 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	tikv.EnableFailpoints()
 
 	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
@@ -41,12 +40,13 @@ func TestMain(m *testing.M) {
 
 	autoid.SetStep(5000)
 	ddl.ReorgWaitTimeout = 30 * time.Millisecond
+	ddl.RunInGoTest = true
 	ddl.SetBatchInsertDeleteRangeSize(2)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		// Test for table lock.
 		conf.EnableTableLock = true
-		conf.Log.SlowThreshold = 10000
+		conf.Instance.SlowThreshold = 10000
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
@@ -65,25 +65,4 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(m, opts...)
-}
-
-func wrapJobIDExtCallback(oldCallback ddl.Callback) *testDDLJobIDCallback {
-	return &testDDLJobIDCallback{
-		Callback: oldCallback,
-		jobID:    0,
-	}
-}
-
-type testDDLJobIDCallback struct {
-	ddl.Callback
-	jobID int64
-}
-
-func (t *testDDLJobIDCallback) OnJobUpdated(job *model.Job) {
-	if t.jobID == 0 {
-		t.jobID = job.ID
-	}
-	if t.Callback != nil {
-		t.Callback.OnJobUpdated(job)
-	}
 }

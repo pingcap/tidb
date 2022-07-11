@@ -4,11 +4,15 @@ package restore_test
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"sort"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -45,7 +49,7 @@ func TestCreateTables(t *testing.T) {
 	client.SetBatchDdlSize(1)
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
 			DB: dbSchema,
@@ -115,7 +119,7 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
 			DB: dbSchema,
@@ -223,7 +227,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables))
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, false))
 
 	for i := 0; i < len(tables); i++ {
 		if i == 0 || i > 2 {
@@ -233,5 +237,117 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 			obtainCount := int(tables[i].Info.TiFlashReplica.Count)
 			require.Equal(t, i, obtainCount)
 		}
+	}
+
+	require.Nil(t, client.PreCheckTableTiFlashReplica(ctx, tables, true))
+	for i := 0; i < len(tables); i++ {
+		require.Nil(t, tables[i].Info.TiFlashReplica)
+	}
+}
+
+// Mock ImporterClient interface
+type FakeImporterClient struct {
+	restore.ImporterClient
+}
+
+// Record the stores that have communicated
+type RecordStores struct {
+	mu     sync.Mutex
+	stores []uint64
+}
+
+func NewRecordStores() RecordStores {
+	return RecordStores{stores: make([]uint64, 0)}
+}
+
+func (r *RecordStores) put(id uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stores = append(r.stores, id)
+}
+
+func (r *RecordStores) sort() {
+	sort.Slice(r.stores, func(i, j int) bool {
+		return r.stores[i] < r.stores[j]
+	})
+}
+
+var recordStores RecordStores
+
+const (
+	SET_SPEED_LIMIT_ERROR = 999999
+	WORKING_TIME          = 100
+)
+
+func (fakeImportCli FakeImporterClient) SetDownloadSpeedLimit(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.SetDownloadSpeedLimitRequest,
+) (*import_sstpb.SetDownloadSpeedLimitResponse, error) {
+	if storeID == SET_SPEED_LIMIT_ERROR {
+		return nil, fmt.Errorf("storeID:%v ERROR.", storeID)
+	}
+
+	time.Sleep(WORKING_TIME * time.Millisecond) // simulate doing 100 ms work
+	recordStores.put(storeID)
+	return nil, nil
+}
+
+func TestSetSpeedLimit(t *testing.T) {
+	mockStores := []*metapb.Store{
+		{Id: 1},
+		{Id: 2},
+		{Id: 3},
+		{Id: 4},
+		{Id: 5},
+		{Id: 6},
+		{Id: 7},
+		{Id: 8},
+		{Id: 9},
+		{Id: 10},
+	}
+
+	// 1. The cost of concurrent communication is expected to be less than the cost of serial communication.
+	client := restore.NewRestoreClient(fakePDClient{
+		stores: mockStores,
+	}, nil, defaultKeepaliveCfg, false)
+	ctx := context.Background()
+
+	recordStores = NewRecordStores()
+	start := time.Now()
+	err := restore.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 10)
+	cost := time.Since(start)
+	require.NoError(t, err)
+
+	recordStores.sort()
+	t.Logf("Total Cost: %v\n", cost)
+	t.Logf("Has Communicated: %v\n", recordStores.stores)
+
+	serialCost := len(mockStores) * WORKING_TIME
+	require.Less(t, cost, time.Duration(serialCost)*time.Millisecond)
+	require.Equal(t, len(mockStores), len(recordStores.stores))
+	for i := 0; i < len(recordStores.stores); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	}
+
+	// 2. Expect the number of communicated stores to be less than the length of the mockStore
+	// Because subsequent unstarted communications are aborted when an error is encountered.
+	recordStores = NewRecordStores()
+	mockStores[5].Id = SET_SPEED_LIMIT_ERROR // setting a fault store
+	client = restore.NewRestoreClient(fakePDClient{
+		stores: mockStores,
+	}, nil, defaultKeepaliveCfg, false)
+
+	// Concurrency needs to be less than the number of stores
+	err = restore.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
+	require.Error(t, err)
+	t.Log(err)
+
+	recordStores.sort()
+	sort.Slice(mockStores, func(i, j int) bool { return mockStores[i].Id < mockStores[j].Id })
+	t.Logf("Has Communicated: %v\n", recordStores.stores)
+	require.Less(t, len(recordStores.stores), len(mockStores))
+	for i := 0; i < len(recordStores.stores); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
 	}
 }

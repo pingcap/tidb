@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -311,7 +312,7 @@ func BuildBackupRangeAndSchema(
 	}
 
 	ranges := make([]rtree.Range, 0)
-	backupSchemas := newBackupSchemas()
+	backupSchemas := NewBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -329,8 +330,8 @@ func BuildBackupRangeAndSchema(
 		}
 
 		if len(tables) == 0 {
-			log.Warn("It's not necessary for backing up empty database",
-				zap.Stringer("db", dbInfo.Name))
+			log.Info("backup empty database", zap.Stringer("db", dbInfo.Name))
+			backupSchemas.AddSchema(dbInfo, nil)
 			continue
 		}
 
@@ -399,7 +400,7 @@ func BuildBackupRangeAndSchema(
 			}
 			tableInfo.Indices = tableInfo.Indices[:n]
 
-			backupSchemas.addSchema(dbInfo, tableInfo)
+			backupSchemas.AddSchema(dbInfo, tableInfo)
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
@@ -419,6 +420,37 @@ func BuildBackupRangeAndSchema(
 		return nil, nil, nil, nil
 	}
 	return ranges, backupSchemas, policies, nil
+}
+
+// BuildFullSchema builds a full backup schemas for databases and tables.
+func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
+	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
+	m := meta.NewSnapshotMeta(snapshot)
+
+	newBackupSchemas := NewBackupSchemas()
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, db := range dbs {
+		tables, err := m.ListTables(db.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		// backup this empty db if this schema is empty.
+		if len(tables) == 0 {
+			newBackupSchemas.AddSchema(db, nil)
+		}
+
+		for _, table := range tables {
+			// add table
+			newBackupSchemas.AddSchema(db, table)
+		}
+	}
+
+	return newBackupSchemas, nil
 }
 
 func skipUnsupportedDDLJob(job *model.Job) bool {
@@ -449,20 +481,12 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs := make([]*model.Job, 0)
-	defaultJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
-	allJobs = append(allJobs, defaultJobs...)
-	addIndexJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
-	allJobs = append(allJobs, addIndexJobs...)
-	historyJobs, err := snapMeta.GetAllHistoryDDLJobs()
+	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -509,8 +533,12 @@ func (bc *Client) BackupRanges(
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) error {
+	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
-	defer log.Info("Backup Ranges", zap.Duration("take", time.Since(init)))
+
+	defer func() {
+		log.Info("Backup Ranges Completed", zap.Duration("take", time.Since(init)))
+	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.BackupRanges", opentracing.ChildOf(span.Context()))
@@ -554,13 +582,15 @@ func (bc *Client) BackupRange(
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
-		logutil.CL(ctx).Info("backup range finished", zap.Duration("take", elapsed))
+		logutil.CL(ctx).Info("backup range completed",
+			logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
+			zap.Duration("take", elapsed))
 		key := "range start:" + hex.EncodeToString(req.StartKey) + " end:" + hex.EncodeToString(req.EndKey)
 		if err != nil {
 			summary.CollectFailureUnit(key, err)
 		}
 	}()
-	logutil.CL(ctx).Info("backup started",
+	logutil.CL(ctx).Info("backup range started",
 		logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
 		zap.Uint64("rateLimit", req.RateLimit),
 		zap.Uint32("concurrency", req.Concurrency))
@@ -571,12 +601,13 @@ func (bc *Client) BackupRange(
 		return errors.Trace(err)
 	}
 
+	logutil.CL(ctx).Info("backup push down started")
 	push := newPushDown(bc.mgr, len(allStores))
 	results, err := push.pushBackup(ctx, req, allStores, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.CL(ctx).Info("finish backup push down", zap.Int("small-range-count", results.Len()))
+	logutil.CL(ctx).Info("backup push down completed", zap.Int("small-range-count", results.Len()))
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
@@ -593,9 +624,9 @@ func (bc *Client) BackupRange(
 			logutil.Key("endKey", req.EndKey),
 			zap.String("cf", req.Cf))
 	} else {
-		logutil.CL(ctx).Info("time range backed up",
-			zap.Reflect("StartVersion", req.StartVersion),
-			zap.Reflect("EndVersion", req.EndVersion))
+		logutil.CL(ctx).Info("transactional range backup completed",
+			zap.Reflect("StartTS", req.StartVersion),
+			zap.Reflect("EndTS", req.EndVersion))
 	}
 
 	var ascendErr error
@@ -934,9 +965,17 @@ func doSendBackup(
 	})
 	bCli, err := client.Backup(ctx, &req)
 	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-			err = status.Error(codes.Unavailable, "Unavailable error")
+		switch val.(string) {
+		case "Unavaiable":
+			{
+				logutil.CL(ctx).Debug("failpoint reset-retryable-error unavailable injected.")
+				err = status.Error(codes.Unavailable, "Unavailable error")
+			}
+		case "Internal":
+			{
+				logutil.CL(ctx).Debug("failpoint reset-retryable-error internal injected.")
+				err = status.Error(codes.Internal, "Internal error")
+			}
 		}
 	})
 	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
@@ -1030,9 +1069,15 @@ const (
 
 // isRetryableError represents whether we should retry reset grpc connection.
 func isRetryableError(err error) bool {
-
-	if status.Code(err) == codes.Unavailable {
-		return true
+	// some errors can be retried
+	// https://github.com/pingcap/tidb/issues/34350
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded,
+		codes.ResourceExhausted, codes.Aborted, codes.Internal:
+		{
+			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
+			return true
+		}
 	}
 
 	// At least, there are two possible cancel() call,
@@ -1040,6 +1085,7 @@ func isRetryableError(err error) bool {
 	if status.Code(err) == codes.Canceled {
 		if s, ok := status.FromError(err); ok {
 			if strings.Contains(s.Message(), gRPC_Cancel) {
+				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
 				return true
 			}
 		}

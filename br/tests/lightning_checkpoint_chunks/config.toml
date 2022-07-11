@@ -2,7 +2,7 @@
 region-concurrency = 1
 
 [tikv-importer]
-backend = "importer"
+backend = "local"
 
 [checkpoint]
 enable = true

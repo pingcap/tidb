@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
@@ -29,7 +29,7 @@ var indexMergeSuiteData testdata.TestData
 var planSuiteUnexportedData testdata.TestData
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 
@@ -45,7 +45,10 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
+	testDataMap.LoadTestSuiteData("testdata", "window_push_down_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
+	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
+	testDataMap.LoadTestSuiteData("testdata", "flat_plan_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -80,6 +83,10 @@ func GetOrderedResultModeSuiteData() testdata.TestData {
 	return testDataMap["ordered_result_mode_suite"]
 }
 
+func GetJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["join_reorder_suite"]
+}
+
 func GetPointGetPlanData() testdata.TestData {
 	return testDataMap["point_get_plan"]
 }
@@ -106,4 +113,12 @@ func GetIntegrationSuiteData() testdata.TestData {
 
 func GetAnalyzeSuiteData() testdata.TestData {
 	return testDataMap["analyze_suite"]
+}
+
+func GetWindowPushDownSuiteData() testdata.TestData {
+	return testDataMap["window_push_down_suite"]
+}
+
+func GetFlatPlanSuiteData() testdata.TestData {
+	return testDataMap["flat_plan_suite"]
 }

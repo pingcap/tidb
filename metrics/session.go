@@ -127,6 +127,30 @@ var (
 			Name:      "validate_read_ts_from_pd_count",
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
+
+	NonTransactionalDeleteCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "non_transactional_delete_count",
+			Help:      "Counter of non-transactional delete",
+		})
+	TxnStatusEnteringCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_entering_count",
+			Help:      "How many times transactions enter this state",
+		}, []string{LblType},
+	)
+	TxnDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_state_seconds",
+			Help:      "Bucketed histogram of different states of a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblType, LblHasLock})
 )
 
 // Label constants.
@@ -157,4 +181,10 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblIdle        = "idle"
+	LblRunning     = "executing_sql"
+	LblLockWaiting = "waiting_for_lock"
+	LblCommitting  = "committing"
+	LblRollingBack = "rolling_back"
+	LblHasLock     = "has_lock"
 )

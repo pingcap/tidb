@@ -13,18 +13,17 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testkit
 
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 // Result is the result returned by MustQuery.
@@ -50,6 +49,16 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
+// CheckWithFunc asserts the result match the expected results in the way `f` specifies.
+func (res *Result) CheckWithFunc(expected [][]interface{}, f func([]string, []interface{}) bool) {
+	res.require.Equal(len(res.rows), len(expected), res.comment+"\nResult length mismatch")
+
+	for i, resRow := range res.rows {
+		expectedRow := expected[i]
+		res.require.Truef(f(resRow, expectedRow), res.comment+"\nCheck with function failed\nactual: %s\nexpected: %s", resRow, expectedRow)
+	}
+}
+
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return RowsWithSep(" ", args...)
@@ -57,9 +66,7 @@ func Rows(args ...string) [][]interface{} {
 
 // Sort sorts and return the result.
 func (res *Result) Sort() *Result {
-	sort.Slice(res.rows, func(i, j int) bool {
-		a := res.rows[i]
-		b := res.rows[j]
+	slices.SortFunc(res.rows, func(a, b []string) bool {
 		for i := range a {
 			if a[i] < b[i] {
 				return true

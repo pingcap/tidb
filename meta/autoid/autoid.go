@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -234,7 +234,8 @@ func (alloc *allocator) End() int64 {
 func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 	var autoID int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
 		autoID, err1 = alloc.getIDAccessor(txn).Get()
 		if err1 != nil {
@@ -271,6 +272,7 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 	}
 	var newBase, newEnd uint64
 	startTime := time.Now()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
@@ -282,8 +284,8 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, requiredBase uint64
 		}
 		uCurrentEnd := uint64(currentEnd)
 		if allocIDs {
-			newBase = mathutil.MaxUint64(uCurrentEnd, requiredBase)
-			newEnd = mathutil.MinUint64(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
+			newBase = mathutil.Max(uCurrentEnd, requiredBase)
+			newEnd = mathutil.Min(math.MaxUint64-uint64(alloc.step), newBase) + uint64(alloc.step)
 		} else {
 			if uCurrentEnd >= requiredBase {
 				newBase = uCurrentEnd
@@ -330,6 +332,7 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 	}
 	var newBase, newEnd int64
 	startTime := time.Now()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if allocatorStats != nil {
 			txn.SetOption(kv.CollectRuntimeStats, allocatorStats.SnapshotRuntimeStats)
@@ -340,8 +343,8 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 			return err1
 		}
 		if allocIDs {
-			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
-			newEnd = mathutil.MinInt64(math.MaxInt64-alloc.step, newBase) + alloc.step
+			newBase = mathutil.Max(currentEnd, requiredBase)
+			newEnd = mathutil.Min(math.MaxInt64-alloc.step, newBase) + alloc.step
 		} else {
 			if currentEnd >= requiredBase {
 				newBase = currentEnd
@@ -370,7 +373,8 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, requiredBase int64, a
 func (alloc *allocator) rebase4Sequence(requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
 	alreadySatisfied := false
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		currentEnd, err := acc.SequenceValue().Get()
 		if err != nil {
@@ -427,7 +431,8 @@ func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	startTime := time.Now()
-	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		idAcc := alloc.getIDAccessor(txn)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
@@ -758,6 +763,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			}()
 		}
 
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
@@ -780,7 +786,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, nextStep)
+			tmpStep := mathutil.Min(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -847,6 +853,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 			}()
 		}
 
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
@@ -869,7 +876,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(nextStep)))
+			tmpStep := int64(mathutil.Min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return ErrAutoincReadFailed
@@ -931,7 +938,8 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err = kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	err = kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		acc := meta.NewMeta(txn).GetAutoIDAccessors(alloc.dbID, alloc.tbID)
 		var (
 			err1    error
@@ -1073,7 +1081,7 @@ type ShardIDLayout struct {
 func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayout {
 	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
 	incrementalBits := typeBitsLength - shardBits
-	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
+	hasSignBit := !mysql.HasUnsignedFlag(fieldType.GetFlag())
 	if hasSignBit {
 		incrementalBits -= 1
 	}

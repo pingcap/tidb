@@ -19,7 +19,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -73,17 +73,27 @@ type Plan interface {
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
 	if p.TaskTp == property.MppTaskType {
-		if mpp, ok := tsk.(*mppTask); ok && !mpp.invalid() {
-			return mpp.enforceExchanger(p)
+		mpp, ok := tsk.(*mppTask)
+		if !ok || mpp.invalid() {
+			return invalidTask
 		}
-		return &mppTask{}
+		if !p.IsSortItemAllForPartition() {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
+			return invalidTask
+		}
+		tsk = mpp.enforceExchanger(p)
 	}
-	if p.IsEmpty() || tsk.plan() == nil {
+	if p.IsSortItemEmpty() || tsk.plan() == nil {
 		return tsk
 	}
-	tsk = tsk.convertToRootTask(ctx)
+	if p.TaskTp != property.MppTaskType {
+		tsk = tsk.convertToRootTask(ctx)
+	}
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	sort := PhysicalSort{
+		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
+		IsPartialSort: p.IsSortItemAllForPartition(),
+	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -318,6 +328,9 @@ type LogicalPlan interface {
 type PhysicalPlan interface {
 	Plan
 
+	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+	GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error)
+
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 	attach2Task(...task) task
@@ -350,9 +363,11 @@ type PhysicalPlan interface {
 	Stats() *property.StatsInfo
 
 	// Cost returns the estimated cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	Cost() float64
 
 	// SetCost set the cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	SetCost(cost float64)
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
@@ -408,6 +423,15 @@ type basePhysicalPlan struct {
 	self             PhysicalPlan
 	children         []PhysicalPlan
 	cost             float64
+
+	// used by the new cost interface
+	planCostInit bool
+	planCost     float64
+
+	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
+	// 1. For ExchangeSender, means its output will be partitioned by hash key.
+	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
+	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
 // Cost implements PhysicalPlan interface.
@@ -422,8 +446,9 @@ func (p *basePhysicalPlan) SetCost(cost float64) {
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
-		basePlan: p.basePlan,
-		self:     newSelf,
+		basePlan:                             p.basePlan,
+		self:                                 newSelf,
+		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()

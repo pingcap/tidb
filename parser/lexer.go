@@ -314,8 +314,8 @@ func (s *Scanner) handleIdent(lval *yySymType) int {
 	if !strings.HasPrefix(str, "_") {
 		return identifier
 	}
-	cs, err := charset.GetCharsetInfo(str[1:])
-	if err != nil {
+	cs, _ := charset.GetCharsetInfo(str[1:])
+	if cs == nil {
 		return identifier
 	}
 	lval.ident = cs.Name
@@ -478,7 +478,6 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 	case 'M': // '/*M' maybe MariaDB-specific comments
 		// no special treatment for now.
-		break
 
 	case '+': // '/*+' optimizer hints
 		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
@@ -502,7 +501,6 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		currentCharIsStar = true
 
 	default:
-		break
 	}
 
 	// standard C-like comment. read until we see '*/' then drop it.
@@ -574,7 +572,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 			tok, lit = doubleAtIdentifier, s.r.data(&pos)
 		}
 	case invalid:
-		break
+		return
 	default:
 		tok = singleAtIdentifier
 	}

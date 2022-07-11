@@ -28,9 +28,9 @@ type CompareFunc = func(l Row, lCol int, r Row, rCol int) int
 
 // GetCompareFunc gets a compare function for the field type.
 func GetCompareFunc(tp *types.FieldType) CompareFunc {
-	switch tp.Tp {
+	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(tp.Flag) {
+		if mysql.HasUnsignedFlag(tp.GetFlag()) {
 			return cmpUint64
 		}
 		return cmpInt64
@@ -40,7 +40,7 @@ func GetCompareFunc(tp *types.FieldType) CompareFunc {
 		return cmpFloat64
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return genCmpStringFunc(tp.Collate)
+		return genCmpStringFunc(tp.GetCollate())
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return cmpTime
 	case mysql.TypeDuration:

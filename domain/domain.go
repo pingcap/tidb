@@ -102,6 +102,16 @@ type Domain struct {
 	sysProcesses SysProcesses
 }
 
+// InfoCache export for test.
+func (do *Domain) InfoCache() *infoschema.InfoCache {
+	return do.infoCache
+}
+
+// EtcdClient export for test.
+func (do *Domain) EtcdClient() *clientv3.Client {
+	return do.etcdClient
+}
+
 // loadInfoSchema loads infoschema at startTS.
 // It returns:
 // 1. the needed infoschema
@@ -308,7 +318,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
 		return true
 	}
 	return false
@@ -316,6 +326,11 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
+	if do.infoCache == nil {
+		// Return nil is for test purpose where domain is not well initialized in session context.
+		// In real implementation, the code will not reach here.
+		return nil
+	}
 	return do.infoCache.GetLatest()
 }
 
@@ -354,6 +369,11 @@ func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
+}
+
+// SetDDL sets DDL to domain, it's only used in tests.
+func (do *Domain) SetDDL(d ddl.DDL) {
+	do.ddl = d
 }
 
 // InfoSyncer gets infoSyncer from domain.
@@ -732,6 +752,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
+	variable.SetStatsCacheCapacity.Store(do.SetStatsCacheCapacity)
 	return do
 }
 
@@ -783,7 +804,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	sysFac := func() (pools.Resource, error) {
 		return sysExecutorFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
+	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	do.cancel = cancelFunc
 	var callback ddl.Callback
@@ -807,7 +828,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		}
 	})
 
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+	if config.GetGlobalConfig().EnableGlobalKill {
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
@@ -898,12 +919,24 @@ func (p *sessionPool) Get() (resource pools.Resource, err error) {
 	default:
 		resource, err = p.factory()
 	}
+
+	// Put the internal session to the map of SessionManager
+	failpoint.Inject("mockSessionPoolReturnError", func() {
+		err = errors.New("mockSessionPoolReturnError")
+	})
+
+	if nil == err {
+		infosync.StoreInternalSession(resource)
+	}
+
 	return
 }
 
 func (p *sessionPool) Put(resource pools.Resource) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	// Delete the internal session to the map of SessionManager
+	infosync.DeleteInternalSession(resource)
 	if p.mu.closed {
 		resource.Close()
 		return
@@ -947,14 +980,15 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "set @@autocommit = 1")
+func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sctx.GetSessionVars().InRestrictedSQL = true
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "set @@autocommit = 1")
 	if err != nil {
 		return err
 	}
 	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(ctx)
+	err = do.privHandle.Update(sctx)
 	if err != nil {
 		return err
 	}
@@ -993,7 +1027,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(ctx)
+			err := do.privHandle.Update(sctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -1247,7 +1281,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1269,9 +1303,6 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
-var RunAutoAnalyze = true
-
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
@@ -1286,7 +1317,7 @@ func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses, do.ServerID)
 	if err != nil {
 		return err
 	}
@@ -1306,9 +1337,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	do.SetStatsUpdating(true)
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
-	if RunAutoAnalyze {
-		do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
-	}
+	do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
 	return nil
 }
@@ -1487,7 +1516,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			if owner.IsOwner() {
+			if variable.RunAutoAnalyze.Load() && owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
@@ -1811,12 +1840,6 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
-}
-
-// MockInfoCacheAndLoadInfoSchema only used in unit test
-func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
-	do.infoCache = infoschema.NewCache(16)
-	do.infoCache.Insert(is, 0)
 }
 
 func init() {

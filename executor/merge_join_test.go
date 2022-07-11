@@ -253,7 +253,7 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -282,7 +282,6 @@ func TestMergeJoinInDisk(t *testing.T) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
-		conf.OOMAction = config.OOMActionLog
 		conf.TempStoragePath = t.TempDir()
 	})
 
@@ -293,9 +292,11 @@ func TestMergeJoinInDisk(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	tk.MustExec("use test")
 
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -737,6 +738,7 @@ func TestMergeJoinDifferentTypes(t *testing.T) {
 }
 
 // TestVectorizedMergeJoin is used to test vectorized merge join with some corner cases.
+//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedMergeJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -783,11 +785,11 @@ func TestVectorizedMergeJoin(t *testing.T) {
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`├─Sort(Build) 3320.01 root  test.%s.a`, t2),
-			fmt.Sprintf(`│ └─TableReader 3320.01 root  data:Selection`),
+			`│ └─TableReader 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│     └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
 			fmt.Sprintf(`└─Sort(Probe) 3330.00 root  test.%s.a`, t1),
-			fmt.Sprintf(`  └─TableReader 3330.00 root  data:Selection`),
+			`  └─TableReader 3330.00 root  data:Selection`,
 			fmt.Sprintf(`    └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`      └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -795,10 +797,10 @@ func TestVectorizedMergeJoin(t *testing.T) {
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`HashJoin 4150.01 root  inner join, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
-			fmt.Sprintf(`├─TableReader(Build) 3320.01 root  data:Selection`),
+			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			fmt.Sprintf(`└─TableReader(Probe) 3330.00 root  data:Selection`),
+			`└─TableReader(Probe) 3330.00 root  data:Selection`,
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -855,6 +857,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 }
 
 // TestVectorizedShuffleMergeJoin is used to test vectorized shuffle merge join with some corner cases.
+//
 //nolint:gosimple // generates false positive fmt.Sprintf warnings which keep aligned
 func TestVectorizedShuffleMergeJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -900,14 +903,14 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain format = 'brief' select /*+ TIDB_SMJ(%s, %s) */ * from %s, %s where %s.a=%s.a and %s.b>5 and %s.b<5",
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
-			fmt.Sprintf(`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`),
+			`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`,
 			fmt.Sprintf(`└─MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`  ├─Sort(Build) 3320.01 root  test.%s.a`, t2),
-			fmt.Sprintf(`  │ └─TableReader 3320.01 root  data:Selection`),
+			`  │ └─TableReader 3320.01 root  data:Selection`,
 			fmt.Sprintf(`  │   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`  │     └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
 			fmt.Sprintf(`  └─Sort(Probe) 3330.00 root  test.%s.a`, t1),
-			fmt.Sprintf(`    └─TableReader 3330.00 root  data:Selection`),
+			`    └─TableReader 3330.00 root  data:Selection`,
 			fmt.Sprintf(`      └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`        └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))
@@ -915,10 +918,10 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
 			fmt.Sprintf(`HashJoin 4150.01 root  inner join, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
-			fmt.Sprintf(`├─TableReader(Build) 3320.01 root  data:Selection`),
+			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
-			fmt.Sprintf(`└─TableReader(Probe) 3330.00 root  data:Selection`),
+			`└─TableReader(Probe) 3330.00 root  data:Selection`,
 			fmt.Sprintf(`  └─Selection 3330.00 cop[tikv]  gt(test.%s.b, 5), not(isnull(test.%s.a))`, t1, t1),
 			fmt.Sprintf(`    └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t1),
 		))

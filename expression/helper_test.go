@@ -20,8 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
@@ -30,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetTimeValue(t *testing.T) {
@@ -140,13 +139,18 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), &types.FieldType{Decimal: 3})
+	ft := &types.FieldType{}
+	ft.SetDecimal(3)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(3), ft)
 	require.True(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(1), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), &types.FieldType{Decimal: 3})
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), ft)
 	require.False(t, v)
-	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), &types.FieldType{Decimal: 0})
+
+	ft1 := &types.FieldType{}
+	ft1.SetDecimal(0)
+	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), ft1)
 	require.False(t, v)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(2), nil)
 	require.False(t, v)

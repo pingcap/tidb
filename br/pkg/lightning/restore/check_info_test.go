@@ -23,9 +23,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 const passed CheckType = "pass"
@@ -478,7 +478,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
-		WillReturnError(mysql.NewErr(errno.ErrPDServerTimeout))
+		WillReturnError(&gmysql.MySQLError{Number: errno.ErrPDServerTimeout})
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
@@ -583,9 +583,11 @@ func TestLocalResource(t *testing.T) {
 		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
 	}
 
+	ctx := context.Background()
+
 	// 1. source-size is smaller than disk-size, won't trigger error information
 	rc.checkTemplate = NewSimpleTemplate()
-	err = rc.localResource(1000)
+	err = rc.localResource(ctx, 1000)
 	require.NoError(t, err)
 	tmpl := rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
@@ -594,7 +596,7 @@ func TestLocalResource(t *testing.T) {
 
 	// 2. source-size is bigger than disk-size, with default disk-quota will trigger a critical error
 	rc.checkTemplate = NewSimpleTemplate()
-	err = rc.localResource(4096)
+	err = rc.localResource(ctx, 4096)
 	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)
@@ -604,7 +606,7 @@ func TestLocalResource(t *testing.T) {
 	// 3. source-size is bigger than disk-size, with a vaild disk-quota will trigger a warning
 	rc.checkTemplate = NewSimpleTemplate()
 	rc.cfg.TikvImporter.DiskQuota = config.ByteSize(1024)
-	err = rc.localResource(4096)
+	err = rc.localResource(ctx, 4096)
 	require.NoError(t, err)
 	tmpl = rc.checkTemplate.(*SimpleTemplate)
 	require.Equal(t, 1, tmpl.warnFailedCount)

@@ -27,11 +27,11 @@ import (
 )
 
 func TestColumnToProto(t *testing.T) {
-	// Make sure the Flag is set in tipb.ColumnInfo
+	// Make sure the flag is set in tipb.ColumnInfo
 	collate.SetNewCollationEnabledForTest(false)
 	tp := types.NewFieldType(mysql.TypeLong)
-	tp.Flag = 10
-	tp.Collate = "utf8_bin"
+	tp.SetFlag(10)
+	tp.SetCollate("utf8_bin")
 	col := &model.ColumnInfo{
 		FieldType: *tp,
 	}
@@ -51,8 +51,8 @@ func TestColumnToProto(t *testing.T) {
 
 	// Make sure the collation ID is successfully set.
 	tp = types.NewFieldType(mysql.TypeVarchar)
-	tp.Flag = 10
-	tp.Collate = "latin1_swedish_ci"
+	tp.SetFlag(10)
+	tp.SetCollate("latin1_swedish_ci")
 	col1 := &model.ColumnInfo{
 		FieldType: *tp,
 	}
@@ -72,8 +72,8 @@ func TestColumnToProto(t *testing.T) {
 	require.Equal(t, int32(-8), pc.Collation)
 
 	tp = types.NewFieldType(mysql.TypeEnum)
-	tp.Flag = 10
-	tp.Elems = []string{"a", "b"}
+	tp.SetFlag(10)
+	tp.SetElems([]string{"a", "b"})
 	col2 := &model.ColumnInfo{
 		FieldType: *tp,
 	}

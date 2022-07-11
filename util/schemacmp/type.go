@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/types"
 )
 
 const (
@@ -60,35 +60,35 @@ func decodeAntiKeys(encoded byte) uint {
 // encodeTypeTpAsLattice
 func encodeFieldTypeToLattice(ft *types.FieldType) Tuple {
 	var flen, dec Lattice
-	if ft.Tp == mysql.TypeNewDecimal {
-		flen = Singleton(ft.Flen)
-		dec = Singleton(ft.Decimal)
+	if ft.GetType() == mysql.TypeNewDecimal {
+		flen = Singleton(ft.GetFlen())
+		dec = Singleton(ft.GetDecimal())
 	} else {
-		flen = Int(ft.Flen)
-		dec = Int(ft.Decimal)
+		flen = Int(ft.GetFlen())
+		dec = Int(ft.GetDecimal())
 	}
 
 	var defVal Lattice
-	if mysql.HasAutoIncrementFlag(ft.Flag) || !mysql.HasNoDefaultValueFlag(ft.Flag) {
-		defVal = Maybe(Singleton(ft.Flag & flagMaskDefVal))
+	if mysql.HasAutoIncrementFlag(ft.GetFlag()) || !mysql.HasNoDefaultValueFlag(ft.GetFlag()) {
+		defVal = Maybe(Singleton(ft.GetFlag() & flagMaskDefVal))
 	} else {
 		defVal = Maybe(nil)
 	}
 
 	return Tuple{
-		FieldTp(ft.Tp),
+		FieldTp(ft.GetType()),
 		flen,
 		dec,
 
 		// TODO: recognize if the remaining flags can be merged or not.
-		Singleton(ft.Flag &^ (flagMaskDefVal | mysql.NotNullFlag | flagMaskKeys)),
-		Bool(!mysql.HasNotNullFlag(ft.Flag)),
-		Byte(encodeAntiKeys(ft.Flag)),
+		Singleton(ft.GetFlag() &^ (flagMaskDefVal | mysql.NotNullFlag | flagMaskKeys)),
+		Bool(!mysql.HasNotNullFlag(ft.GetFlag())),
+		Byte(encodeAntiKeys(ft.GetFlag())),
 		defVal,
 
-		Singleton(ft.Charset),
-		Singleton(ft.Collate),
-		StringList(ft.Elems),
+		Singleton(ft.GetCharset()),
+		Singleton(ft.GetCollate()),
+		StringList(ft.GetElems()),
 	}
 }
 
@@ -106,15 +106,7 @@ func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
 		flags |= mysql.NoDefaultValueFlag
 	}
 
-	return &types.FieldType{
-		Tp:      lst[fieldTypeTupleIndexTp].(byte),
-		Flen:    lst[fieldTypeTupleIndexFlen].(int),
-		Decimal: lst[fieldTypeTupleIndexDec].(int),
-		Flag:    flags,
-		Charset: lst[fieldTypeTupleIndexCharset].(string),
-		Collate: lst[fieldTypeTupleIndexCollate].(string),
-		Elems:   lst[fieldTypeTupleIndexElems].([]string),
-	}
+	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(lst[fieldTypeTupleIndexCharset].(string)).SetCollate(lst[fieldTypeTupleIndexCollate].(string)).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
 }
 
 type typ struct{ Tuple }

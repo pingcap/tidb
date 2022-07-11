@@ -263,6 +263,36 @@ func TestRecoverTempTable(t *testing.T) {
 	tk.MustGetErrMsg("flashback table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
 }
 
+func TestRecoverTableMeetError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@GLOBAL.tidb_ddl_error_count_limit=3")
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create table t_recover (a int);")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+
+	//set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// Should recover, and we can drop it straight away.
+	tk.MustExec("recover table t_recover")
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop table t_recover")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(1)`))
+	tk.MustContainErrMsg("recover table t_recover", "mock update version and tableInfo error")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"))
+	tk.MustContainErrMsg("select * from t_recover", "Table 'test_recover.t_recover' doesn't exist")
+}
+
 // MockGC is used to make GC work in the test environment.
 func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	originGC := ddlutil.IsEmulatorGCEnable()

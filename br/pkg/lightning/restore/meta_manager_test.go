@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -14,9 +15,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/mockstore"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -28,7 +33,7 @@ type metaMgrSuite struct {
 	checksumMgr *testChecksumMgr
 }
 
-func newTableRestore(t *testing.T) *TableRestore {
+func newTableRestore(t *testing.T, kvStore kv.Storage) *TableRestore {
 	p := parser.New()
 	se := tmock.NewContext()
 
@@ -46,12 +51,35 @@ func newTableRestore(t *testing.T) *TableRestore {
 		Name: tb,
 		Core: tableInfo,
 	}
+	dbInfo := &checkpoints.TidbDBInfo{
+		ID:   1,
+		Name: schema,
+		Tables: map[string]*checkpoints.TidbTableInfo{
+			tb: ti,
+		},
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), "test")
+	err = kv.RunInNewTxn(ctx, kvStore, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil {
+			return err
+		}
+		if err := m.CreateTableOrView(dbInfo.ID, ti.Core); err != nil {
+			return err
+		}
+		return nil
+	})
+	require.NoError(t, err)
 
 	tableName := common.UniqueTable(schema, tb)
 	logger := log.With(zap.String("table", tableName))
+
 	return &TableRestore{
+		dbInfo:    dbInfo,
 		tableName: tableName,
 		tableInfo: ti,
+		kvStore:   kvStore,
 		logger:    logger,
 	}
 }
@@ -60,18 +88,24 @@ func newMetaMgrSuite(t *testing.T) (*metaMgrSuite, func()) {
 	db, m, err := sqlmock.New()
 	require.NoError(t, err)
 
+	storePath := t.TempDir()
+	kvStore, err := mockstore.NewMockStore(mockstore.WithPath(storePath))
+	require.NoError(t, err)
+
 	var s metaMgrSuite
 	s.mgr = &dbTableMetaMgr{
 		session:      db,
 		taskID:       1,
-		tr:           newTableRestore(t),
+		tr:           newTableRestore(t, kvStore),
 		tableName:    common.UniqueTable("test", TableMetaTableName),
 		needChecksum: true,
 	}
 	s.mockDB = m
 	s.checksumMgr = &testChecksumMgr{}
+
 	return &s, func() {
 		require.NoError(t, s.mockDB.ExpectationsWereMet())
+		require.NoError(t, kvStore.Close())
 	}
 }
 
@@ -256,10 +290,11 @@ func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, u
 	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
 		WithArgs(int64(1)).
 		WillReturnRows(rows)
+
 	if nextRowID != nil {
-		s.mockDB.ExpectQuery("SHOW TABLE `test`.`t1` NEXT_ROW_ID").
-			WillReturnRows(sqlmock.NewRows([]string{"DB_NAME", "TABLE_NAME", "COLUMN_NAME", "NEXT_GLOBAL_ROW_ID", "ID_TYPE"}).
-				AddRow("test", "t1", "_tidb_rowid", *nextRowID, "AUTO_INCREMENT"))
+		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr.kvStore, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
+		alloc := allocs.Get(autoid.RowIDAllocType)
+		alloc.ForceRebase(*nextRowID - 1)
 	}
 
 	if len(updateArgs) > 0 {
@@ -357,4 +392,29 @@ type testChecksumMgr struct {
 func (t *testChecksumMgr) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
 	t.callCnt++
 	return &t.checksum, nil
+}
+
+func TestSingleTaskMetaMgr(t *testing.T) {
+	metaBuilder := singleMgrBuilder{
+		taskID: time.Now().UnixNano(),
+	}
+	metaMgr := metaBuilder.TaskMetaMgr(nil)
+
+	ok, err := metaMgr.CheckTaskExist(context.Background())
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	err = metaMgr.InitTask(context.Background(), 1<<30)
+	require.NoError(t, err)
+
+	ok, err = metaMgr.CheckTaskExist(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	err = metaMgr.CheckTasksExclusively(context.Background(), func(tasks []taskMeta) ([]taskMeta, error) {
+		require.Len(t, tasks, 1)
+		require.Equal(t, uint64(1<<30), tasks[0].sourceBytes)
+		return nil, nil
+	})
+	require.NoError(t, err)
 }

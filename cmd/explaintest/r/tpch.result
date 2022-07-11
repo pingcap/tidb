@@ -349,7 +349,7 @@ Sort	5.00	root		Column#49:desc
   └─HashAgg	5.00	root		group by:Column#52, funcs:sum(Column#50)->Column#49, funcs:firstrow(Column#51)->tpch.nation.n_name
     └─Projection	11822812.50	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#50, tpch.nation.n_name, tpch.nation.n_name
       └─Projection	11822812.50	root		tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount, tpch.nation.n_name
-        └─HashJoin	11822812.50	root		inner join, equal:[eq(tpch.supplier.s_nationkey, tpch.customer.c_nationkey) eq(tpch.orders.o_custkey, tpch.customer.c_custkey)]
+        └─HashJoin	11822812.50	root		inner join, equal:[eq(tpch.orders.o_custkey, tpch.customer.c_custkey) eq(tpch.supplier.s_nationkey, tpch.customer.c_nationkey)]
           ├─TableReader(Build)	7500000.00	root		data:TableFullScan
           │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
           └─HashJoin(Probe)	11822812.50	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]

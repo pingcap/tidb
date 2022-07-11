@@ -23,7 +23,7 @@ import (
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan
+	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -37,7 +37,8 @@ type joinGroupNonEqEdge struct {
 	expr       expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression, tracer *joinReorderTrace) (LogicalPlan, error) {
+func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
+	eqConds := expression.ScalarFuncs2Exprs(s.eqEdges)
 	for _, node := range joinGroup {
 		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
@@ -211,10 +212,11 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, join
 
 func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
-	var ( // nolint: prealloc
-		usedEqEdges []joinGroupEqEdge
-		otherConds  []expression.Expression
-	)
+	//nolint: prealloc
+	var usedEqEdges []joinGroupEqEdge
+	//nolint: prealloc
+	var otherConds []expression.Expression
+
 	for _, edge := range totalEqEdges {
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
@@ -248,7 +250,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, e
 			eqConds = append(eqConds, newSf)
 		}
 	}
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, InnerJoin)
 	_, err := join.recursiveDeriveStats(nil)
 	return join, err
 }
@@ -270,7 +272,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, InnerJoin))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

@@ -15,19 +15,16 @@
 package ddl_test
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
-	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -105,8 +102,7 @@ func TestColumnTypeChangeBetweenInteger(t *testing.T) {
 	tk.MustGetErrCode("alter table t modify column a mediumint", errno.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a smallint", errno.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a tinyint", errno.ErrDataOutOfRange)
-	_, err = tk.Exec("admin check table t")
-	require.NoError(t, err)
+	tk.MustExec("admin check table t")
 }
 
 func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
@@ -151,7 +147,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 			} else if len(tbl.(*tables.TableCommon).Columns) != 3 {
 				// changingCols has been added into meta.
 				checkErr = errors.New("len(cols) is not right")
-			} else if external.GetModifyColumn(t, internalTK, "test", "t", "c2", true).Flag&mysql.PreventNullInsertFlag == uint(0) {
+			} else if external.GetModifyColumn(t, internalTK, "test", "t", "c2", true).GetFlag()&mysql.PreventNullInsertFlag == uint(0) {
 				checkErr = errors.New("old col's flag is not right")
 			} else if external.GetModifyColumn(t, internalTK, "test", "t", "_Col$_c2_0", true) == nil {
 				checkErr = errors.New("changingCol is nil")
@@ -171,9 +167,9 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	require.Equal(t, 2, len(tbl.Cols()))
 	col := external.GetModifyColumn(t, tk, "test", "t", "c2", false)
 	require.NotNil(t, col)
-	require.Equal(t, true, mysql.HasNotNullFlag(col.Flag))
-	require.NotEqual(t, 0, col.Flag&mysql.NoDefaultValueFlag)
-	require.Equal(t, mysql.TypeTiny, col.Tp)
+	require.Equal(t, true, mysql.HasNotNullFlag(col.GetFlag()))
+	require.NotEqual(t, 0, col.GetFlag()&mysql.NoDefaultValueFlag)
+	require.Equal(t, mysql.TypeTiny, col.GetType())
 	require.Nil(t, col.ChangeStateInfo)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
@@ -242,8 +238,8 @@ func assertRollBackedColUnchanged(t *testing.T, tk *testkit.TestKit) {
 	require.Equal(t, 2, len(tbl.Cols()))
 	col := external.GetModifyColumn(t, tk, "test", "t", "c2", false)
 	require.NotNil(t, col)
-	require.Equal(t, uint(0), col.Flag)
-	require.Equal(t, mysql.TypeLonglong, col.Tp)
+	require.Equal(t, uint(0), col.GetFlag())
+	require.Equal(t, mysql.TypeLonglong, col.GetType())
 	require.Nil(t, col.ChangeStateInfo)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
@@ -280,37 +276,37 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a varchar(10)")
 	modifiedColumn := external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeVarchar, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeVarchar, modifiedColumn.GetType())
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b char(10)")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeString, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeString, modifiedColumn.GetType())
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	tk.MustExec("alter table t modify c binary(10)")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeString, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeString, modifiedColumn.GetType())
 	tk.MustQuery("select c from t").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00"))
 
 	tk.MustExec("alter table t modify d varbinary(10)")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeVarchar, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeVarchar, modifiedColumn.GetType())
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	tk.MustExec("alter table t modify e blob(10)")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "e", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.GetType())
 	tk.MustQuery("select e from t").Check(testkit.Rows("11111"))
 
 	tk.MustExec("alter table t modify f text(10)")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "f", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.GetType())
 	tk.MustQuery("select f from t").Check(testkit.Rows("111111"))
 
 	// integer to decimal
@@ -318,7 +314,7 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a decimal(2,1)")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeNewDecimal, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeNewDecimal, modifiedColumn.GetType())
 	tk.MustQuery("select a from t").Check(testkit.Rows("1.0"))
 
 	// integer to year
@@ -326,21 +322,21 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify b year")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeYear, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeYear, modifiedColumn.GetType())
 	tk.MustQuery("select b from t").Check(testkit.Rows("2011"))
 
 	// integer to time
 	tk.MustExec("alter table t modify c time")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeDuration, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDuration, modifiedColumn.GetType())
 	tk.MustQuery("select c from t").Check(testkit.Rows("00:01:11"))
 
 	// integer to date (mysql will throw `Incorrect date value: '1111' for column 'd' at row 1` error)
 	tk.MustExec("alter table t modify d date")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeDate, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDate, modifiedColumn.GetType())
 	tk.MustQuery("select d from t").Check(testkit.Rows("2000-11-11")) // the given number will be left-forward used.
 
 	// integer to timestamp (according to what timezone you have set)
@@ -348,14 +344,14 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("set @@session.time_zone=UTC")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "e", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeTimestamp, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeTimestamp, modifiedColumn.GetType())
 	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-10 16:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "f", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeDatetime, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDatetime, modifiedColumn.GetType())
 	tk.MustQuery("select f from t").Check(testkit.Rows("2011-11-11 00:00:00")) // the given number will be left-forward used.
 
 	// integer to floating-point values
@@ -363,20 +359,20 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a float")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeFloat, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeFloat, modifiedColumn.GetType())
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b double")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeDouble, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeDouble, modifiedColumn.GetType())
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	// integer to bit
 	tk.MustExec("alter table t modify c bit(10)")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeBit, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeBit, modifiedColumn.GetType())
 	// 111 will be stored ad 0x00,0110,1111 = 0x6F, which will be shown as ASCII('o')=111 as well.
 	tk.MustQuery("select c from t").Check(testkit.Rows("\x00o"))
 
@@ -384,7 +380,7 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify d json")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeJSON, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeJSON, modifiedColumn.GetType())
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	// integer to enum
@@ -393,14 +389,14 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify a enum(\"a\", \"b\")")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeEnum, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeEnum, modifiedColumn.GetType())
 	tk.MustQuery("select a from t").Check(testkit.Rows("a"))
 
 	// TiDB take integer as the set element offset to cast.
 	tk.MustExec("alter table t modify b set(\"a\", \"b\")")
 	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
-	require.Equal(t, mysql.TypeSet, modifiedColumn.Tp)
+	require.Equal(t, mysql.TypeSet, modifiedColumn.GetType())
 	tk.MustQuery("select b from t").Check(testkit.Rows("a"))
 
 	// TiDB can't take integer as the enum element string to cast, while the MySQL can.
@@ -665,7 +661,7 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
 	tk.MustExec("insert into t(vc) values ('abc')")
-	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", errno.ErrBadNumber)
+	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", errno.ErrTruncatedWrongValue)
 }
 
 func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
@@ -1302,7 +1298,7 @@ func TestColumnTypeChangeFromJsonToOthers(t *testing.T) {
 	tk.MustExec("alter table t modify ui decimal(20, 10)")
 	tk.MustExec("alter table t modify f64 decimal(20, 10)")
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1".
-	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", errno.ErrBadNumber)
+	tk.MustGetErrCode("alter table t modify str decimal(20, 10)", errno.ErrTruncatedWrongValue)
 	tk.MustExec("alter table t modify nul decimal(20, 10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"obj\": 100} [-1, 0, 1] null 1.0000000000 0.0000000000 -22.0000000000 22.0000000000 323232323.3232323500 \"json string\" <nil>"))
 
@@ -1725,7 +1721,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 			// For writable column:
 			// Insert / Update should set the column with the casted-related column value.
 			sql := fmt.Sprintf("insert into t values(%d, %d, '2021-06-06 12:13:14')", i+3, i+3)
-			_, err := tk1.Exec(sql)
+			err := tk1.ExecToErr(sql)
 			if err != nil {
 				checkErr = err
 				return
@@ -1733,7 +1729,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 			if job.SchemaState == model.StateWriteOnly {
 				// The casted value will be inserted into changing column too.
 				// for point get
-				_, err := tk1.Exec("update t set b = -1 where a = 1")
+				err := tk1.ExecToErr("update t set b = -1 where a = 1")
 				if err != nil {
 					checkErr = err
 					return
@@ -1741,7 +1737,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 			} else {
 				// The casted value will be inserted into changing column too.
 				// for point get
-				_, err := tk1.Exec("update t set b = -2 where a = 2")
+				err := tk1.ExecToErr("update t set b = -2 where a = 2")
 				if err != nil {
 					checkErr = err
 					return
@@ -1838,13 +1834,13 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
 	tk.MustExec("alter table orders modify user_id int null;")
 	tbl := external.GetTableByName(t, tk, "test", "orders")
-	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
+	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].GetFlag()))
 
 	prepare()
 	tk.MustExec("alter table orders change user_id user_id2 int null")
 	tbl = external.GetTableByName(t, tk, "test", "orders")
 	require.Equal(t, "user_id2", tbl.Meta().Columns[1].Name.L)
-	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
+	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].GetFlag()))
 
 	prepare()
 	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")
@@ -1932,13 +1928,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	require.Less(t, int64(0), jobID)
 
 	// Verification of the history job state.
-	var job *model.Job
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = m.GetHistoryDDLJob(jobID)
-		return errors2.Trace(err1)
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), job.ErrorCount)
 	require.Equal(t, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled", job.Error.Error())
@@ -2341,19 +2331,13 @@ func TestChangeNullValueFromOtherTypeToTimestamp(t *testing.T) {
 
 	prepare2()
 	// only from other type NULL to timestamp type NOT NULL, it should be successful. (timestamp to timestamp excluded)
-	_, err = tk.Exec("alter table t modify column a timestamp NOT NULL")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1265]Data truncated for column 'a' at row 1", err.Error())
+	tk.MustGetErrMsg("alter table t modify column a timestamp NOT NULL", "[ddl:1265]Data truncated for column 'a' at row 1")
 
 	// Some dml cases.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a timestamp NOT NULL)")
-	_, err = tk.Exec("insert into t values()")
-	require.Error(t, err)
-	require.Equal(t, "[table:1364]Field 'a' doesn't have a default value", err.Error())
-
-	_, err = tk.Exec("insert into t values(null)")
-	require.Equal(t, "[table:1048]Column 'a' cannot be null", err.Error())
+	tk.MustGetErrMsg("insert into t values()", "[table:1364]Field 'a' doesn't have a default value")
+	tk.MustGetErrMsg("insert into t values(null)", "[table:1048]Column 'a' cannot be null")
 }
 
 func TestColumnTypeChangeBetweenFloatAndDouble(t *testing.T) {

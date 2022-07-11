@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -59,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -464,12 +464,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	// Construct field type.
 	defaultDecimal := 6
-	ft := &types.FieldType{
-		Tp:      byte(colTp),
-		Flag:    uint(colFlag),
-		Flen:    int(colLen),
-		Decimal: defaultDecimal,
-	}
+	ft := types.NewFieldTypeBuilder().SetType(byte(colTp)).SetFlag(uint(colFlag)).SetFlen(int(colLen)).SetDecimal(defaultDecimal).BuildP()
 	// Decode a column.
 	m := make(map[int64]*types.FieldType, 1)
 	m[colID] = ft
@@ -707,9 +702,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {
 			case "0":
-				config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(false)
+				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(false)
 			case "1":
-				config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(true)
+				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
@@ -760,6 +755,34 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
+		}
+		if transactionSummaryCapacity := req.Form.Get("transaction_summary_capacity"); transactionSummaryCapacity != "" {
+			capacity, err := strconv.Atoi(transactionSummaryCapacity)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if capacity < 0 || capacity > 5000 {
+				writeError(w, errors.New("transaction_summary_capacity out of range, should be in 0 to 5000"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.TrxSummary.TransactionSummaryCapacity = uint(capacity)
+			config.StoreGlobalConfig(cfg)
+			txninfo.Recorder.ResizeSummaries(uint(capacity))
+		}
+		if transactionIDDigestMinDuration := req.Form.Get("transaction_id_digest_min_duration"); transactionIDDigestMinDuration != "" {
+			duration, err := strconv.Atoi(transactionIDDigestMinDuration)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if duration < 0 || duration > 2147483647 {
+				writeError(w, errors.New("transaction_id_digest_min_duration out of range, should be in 0 to 2147483647"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.TrxSummary.TransactionIDDigestMinDuration = uint(duration)
+			config.StoreGlobalConfig(cfg)
+			txninfo.Recorder.SetMinDuration(time.Duration(duration) * time.Millisecond)
 		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
@@ -895,7 +918,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
 
-	err = admin.IterAllDDLJobs(txn, fn)
+	err = ddl.IterAllDDLJobs(txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
@@ -978,7 +1001,7 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 	}
 	defer s.Close()
 
-	ctx := s.(sessionctx.Context)
+	sctx := s.(sessionctx.Context)
 	condition := make([]string, 0)
 	params := make([]interface{}, 0)
 
@@ -993,17 +1016,19 @@ func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, ta
 
 	sql := `select TABLE_SCHEMA,TABLE_NAME,TABLE_ROWS,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,INDEX_LENGTH,DATA_FREE from INFORMATION_SCHEMA.TABLES`
 	if len(condition) > 0 {
+		//nolint: gosec
 		sql += ` WHERE ` + strings.Join(condition, ` AND `)
 	}
 	var results sqlexec.RecordSet
-	if results, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, params...); err != nil {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	if results, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, params...); err != nil {
 		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
 	} else if results != nil {
 		messages = make([]*schemaTableStorage, 0)
 		defer terror.Call(results.Close)
 		for {
 			req := results.NewChunk(nil)
-			if err = results.Next(context.TODO(), req); err != nil {
+			if err = results.Next(ctx, req); err != nil {
 				break
 			}
 
@@ -1271,7 +1296,7 @@ func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 	}
 	txnMeta := meta.NewMeta(txn)
 
-	jobs, err := txnMeta.GetAllHistoryDDLJobs()
+	jobs, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -174,7 +174,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDelayedCantChangeLock:                    mysql.Message("Delayed insert thread couldn't get requested lock for table %-.192s", nil),
 	ErrTooManyDelayedThreads:                    mysql.Message("Too many delayed threads in use", nil),
 	ErrAbortingConnection:                       mysql.Message("Aborted connection %d to db: '%-.192s' user: '%-.48s' (%-.64s)", nil),
-	ErrNetPacketTooLarge:                        mysql.Message("Got a packet bigger than 'maxAllowedPacket' bytes", nil),
+	ErrNetPacketTooLarge:                        mysql.Message("Got a packet bigger than 'max_allowed_packet' bytes", nil),
 	ErrNetReadErrorFromPipe:                     mysql.Message("Got a read error from the connection pipe", nil),
 	ErrNetFcntl:                                 mysql.Message("Got an error from fcntl()", nil),
 	ErrNetPacketsOutOfOrder:                     mysql.Message("Got packets out of order", nil),
@@ -1017,6 +1017,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInconsistentIndexedValue:      mysql.Message("writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}", []int{3, 4}),
 	ErrAssertionFailed:               mysql.Message("assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, existing commit ts: %v", []int{0}),
 	ErrInstanceScope:                 mysql.Message("modifying %s will require SET GLOBAL in a future version of TiDB", nil),
+	ErrNonTransactionalJobFailure:    mysql.Message("non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v", []int{2, 3, 4}),
+	ErrSettingNoopVariable:           mysql.Message("setting %s has no effect in TiDB", nil),
+	ErrGettingNoopVariable:           mysql.Message("variable %s has no effect in TiDB", nil),
+	ErrCannotMigrateSession:          mysql.Message("cannot migrate the current session: %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
@@ -1045,9 +1049,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidWildCard:                     mysql.Message("Wildcard fields without any table name appears in wrong place", nil),
 	ErrMixOfGroupFuncAndFieldsIncompatible: mysql.Message("In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrUnsupportedSecondArgumentType:       mysql.Message("JSON_OBJECTAGG: unsupported second argument type %v", nil),
+	ErrColumnNotMatched:                    mysql.Message("Load data: unmatched columns", nil),
 	ErrLockExpire:                          mysql.Message("TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction", nil),
 	ErrTableOptionUnionUnsupported:         mysql.Message("CREATE/ALTER table with union option is not supported", nil),
 	ErrTableOptionInsertMethodUnsupported:  mysql.Message("CREATE/ALTER table with insert method option is not supported", nil),
+	ErrUserLockDeadlock:                    mysql.Message("Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.", nil),
+	ErrUserLockWrongName:                   mysql.Message("Incorrect user-level lock name '%s'.", nil),
 
 	ErrBRIEBackupFailed:  mysql.Message("Backup failed: %s", nil),
 	ErrBRIERestoreFailed: mysql.Message("Restore failed: %s", nil),
@@ -1056,9 +1063,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
-	ErrJSONObjectKeyTooLong:  mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
-	ErrPartitionStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
-	ErrNotSupportedWithSem:   mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
+	ErrJSONObjectKeyTooLong:        mysql.Message("TiDB does not yet support JSON objects with the key length >= 65536", nil),
+	ErrPartitionStatsMissing:       mysql.Message("Build table: %s global-level stats failed due to missing partition-level stats", nil),
+	ErrPartitionColumnStatsMissing: mysql.Message("Build table: %s global-level stats failed due to missing partition-level column stats, please run analyze table to refresh columns of all partitions", nil),
+	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 	ErrMultiStatementDisabled:          mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
@@ -1070,6 +1078,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyWithDirectOption: mysql.Message("Placement policy '%s' can't co-exist with direct placement options", nil),
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
+
+	ErrColumnInChange: mysql.Message("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", nil),
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),

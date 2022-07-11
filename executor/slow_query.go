@@ -23,9 +23,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
@@ -72,6 +73,7 @@ type slowQueryRetriever struct {
 	memTracker    *memory.Tracker
 	lastFetchSize int64
 	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -156,6 +158,7 @@ func (e *slowQueryRetriever) close() error {
 	if e.cancel != nil {
 		e.cancel()
 	}
+	e.wg.Wait()
 	return nil
 }
 
@@ -198,6 +201,7 @@ func (e *slowQueryRetriever) getPreviousFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	defer e.wg.Done()
 	file := e.getNextFile()
 	if file == nil {
 		close(e.taskList)
@@ -435,7 +439,6 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
-	var wg util.WaitGroupWrapper
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
 	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
@@ -487,11 +490,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 				return
 			case e.taskList <- t:
 			}
-			wg.Run(func() {
+			e.wg.Add(1)
+			go func() {
+				defer e.wg.Done()
 				result, err := e.parseLog(ctx, sctx, log, start)
 				e.sendParsedSlowLogCh(t, parsedSlowLog{result, err})
 				<-ch
-			})
+			}()
 			offset.offset = e.fileLine
 			offset.length = 0
 			select {
@@ -501,7 +506,6 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			}
 		}
 	}
-	wg.Wait()
 }
 
 func (e *slowQueryRetriever) sendParsedSlowLogCh(t slowLogTask, re parsedSlowLog) {
@@ -659,6 +663,17 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types.Datum, tz *time.Location, field, value string, checker *slowLogChecker, lineNum int) bool {
 	factory := e.columnValueFactoryMap[field]
 	if factory == nil {
+		// Fix issue 34320, when slow log time is not in the output columns, the time filter condition is mistakenly discard.
+		if field == variable.SlowLogTimeStr && checker != nil {
+			t, err := ParseTime(value)
+			if err != nil {
+				err = fmt.Errorf("Parse slow log at line %v, failed field is %v, failed value is %v, error is %v", lineNum, field, value, err)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				return false
+			}
+			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+			return checker.isTimeValid(timeValue)
+		}
 		return true
 	}
 	valid, err := factory(row, value, tz, checker)
@@ -840,6 +855,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	}
 	if e.extractor == nil || !e.extractor.Enable {
 		totalFileNum = 1
+		//nolint: gosec
 		file, err := os.Open(logFilePath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -938,8 +954,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 	}
 	// Sort by start time
-	sort.Slice(logFiles, func(i, j int) bool {
-		return logFiles[i].start.Before(logFiles[j].start)
+	slices.SortFunc(logFiles, func(i, j logFile) bool {
+		return i.start.Before(j.start)
 	})
 	return logFiles, err
 }
@@ -1113,6 +1129,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
+	e.wg.Add(1)
 	go e.parseDataForSlowLog(ctx, sctx)
 }
 

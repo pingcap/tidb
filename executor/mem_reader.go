@@ -103,7 +103,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	switch {
 	case m.table.PKIsHandle:
 		for _, col := range m.table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				tps = append(tps, &col.FieldType)
 				break
 			}
@@ -146,7 +146,7 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
 	hdStatus := tablecodec.HandleDefault
-	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
+	if mysql.HasUnsignedFlag(tps[len(tps)-1].GetFlag()) {
 		hdStatus = tablecodec.HandleIsUnsigned
 	}
 	colInfos := tables.BuildRowcodecColInfoForIndexColumns(m.index, m.table)
@@ -205,7 +205,7 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, tblReader *Tabl
 		col := us.columns[i]
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
@@ -330,9 +330,9 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 					}
 				}
 			}
-		} else if (pkIsHandle && mysql.HasPriKeyFlag(col.Flag)) || id == model.ExtraHandleID {
+		} else if (pkIsHandle && mysql.HasPriKeyFlag(col.GetFlag())) || id == model.ExtraHandleID {
 			var handleDatum types.Datum
-			if mysql.HasUnsignedFlag(col.Flag) {
+			if mysql.HasUnsignedFlag(col.GetFlag()) {
 				// PK column is Unsigned.
 				handleDatum = types.NewUintDatum(uint64(handle.IntValue()))
 			} else {
@@ -761,7 +761,7 @@ func getColIDAndPkColIDs(table table.Table, columns []*model.ColumnInfo) (map[in
 		col := columns[i]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}

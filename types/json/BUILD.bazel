@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "json",
+    srcs = [
+        "binary.go",
+        "binary_functions.go",
+        "constants.go",
+        "path_expr.go",
+    ],
+    importpath = "github.com/pingcap/tidb/types/json",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//errno",
+        "//parser/terror",
+        "//util/dbterror",
+        "//util/hack",
+        "//util/kvcache",
+        "//util/stringutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
+    ],
+)
+
+go_test(
+    name = "json_test",
+    srcs = [
+        "binary_functions_test.go",
+        "binary_test.go",
+        "main_test.go",
+        "path_expr_test.go",
+    ],
+    embed = [":json"],
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

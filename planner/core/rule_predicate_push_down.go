@@ -315,10 +315,11 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		RetType:  expr.GetType().Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
+	col.SetRepertoire(expr.Repertoire())
 	p.schema.Append(col)
 	// reset ParseToJSONFlag in order to keep the flag away from json column
-	if col.GetType().Tp == mysql.TypeJSON {
-		col.GetType().Flag &= ^mysql.ParseToJSONFlag
+	if col.GetType().GetType() == mysql.TypeJSON {
+		col.GetType().DelFlag(mysql.ParseToJSONFlag)
 	}
 	return col
 }
@@ -414,6 +415,11 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 		if expression.HasAssignSetVarFunc(expr) {
 			_, child := p.baseLogicalPlan.PredicatePushDown(nil, opt)
 			return predicates, child
+		}
+	}
+	if len(p.children) == 1 {
+		if _, isDual := p.children[0].(*LogicalTableDual); isDual {
+			return predicates, p
 		}
 	}
 	for _, cond := range predicates {
@@ -624,7 +630,7 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if isNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.Flag) {
+	if isNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx, childCol)
 	}
 	return nil

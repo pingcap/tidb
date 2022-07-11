@@ -304,14 +304,8 @@ func TestIssue28650(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t1 select rand()*400 from t1;")
 	}
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = config.OOMActionLog
-		})
-	}()
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action='LOG'")
 	wg.Wait()
 	for _, sql := range sqls {
 		tk.MustExec("set @@tidb_mem_quota_query = 1073741824") // 1GB
@@ -332,19 +326,19 @@ func TestIssue28650(t *testing.T) {
 }
 
 func TestIssue30289(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/executor/issue30289"
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	fpName := "github.com/pingcap/tidb/executor/issue30289"
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
 	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
-	require.Regexp(t, "issue30289 build return error", err.Error())
+	require.EqualError(t, err, "issue30289 build return error")
 }
 
 func TestIssue29498(t *testing.T) {
@@ -434,15 +428,13 @@ func TestIndexJoin31494(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionCancel
-	})
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
 	// This bug will be reproduced in 10 times.
@@ -460,7 +452,7 @@ func TestIndexJoin31494(t *testing.T) {
 func TestFix31038(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableCollectExecutionInfo = false
+		conf.Instance.EnableCollectExecutionInfo = false
 	})
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

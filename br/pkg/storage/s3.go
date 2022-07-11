@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
+	aliproviders "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials/providers"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/client"
@@ -22,14 +24,14 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/spf13/pflag"
-	"go.uber.org/zap"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 const (
@@ -52,6 +54,9 @@ const (
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
 	hardcodedS3ChunkSize = 5 * 1024 * 1024
+	defaultRegion        = "us-east-1"
+	// to check the cloud type by endpoint tag.
+	domainAliyun = "aliyuncs.com"
 )
 
 var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
@@ -128,9 +133,6 @@ type S3BackendOptions struct {
 
 // Apply apply s3 options on backuppb.S3.
 func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
-	if options.Region == "" {
-		options.Region = "us-east-1"
-	}
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
@@ -241,11 +243,42 @@ func NewS3Storage( // revive:disable-line:flag-parameter
 	})
 }
 
-func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storage, error) {
+// auto access without ak / sk.
+func autoNewCred(qs *backuppb.S3) (cred *credentials.Credentials, err error) {
+	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
+		return credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, ""), nil
+	}
+	endpoint := qs.Endpoint
+	// if endpoint is empty,return no error and run default(aws) follow.
+	if endpoint == "" {
+		return nil, nil
+	}
+	// if it Contains 'aliyuncs', fetch the sts token.
+	if strings.Contains(endpoint, domainAliyun) {
+		return createOssRamCred()
+	}
+	// other case ,return no error and run default(aws) follow.
+	return nil, nil
+}
+
+func createOssRamCred() (*credentials.Credentials, error) {
+	cred, err := aliproviders.NewInstanceMetadataProvider().Retrieve()
+	if err != nil {
+		return nil, errors.Annotate(err, "Alibaba RAM Provider Retrieve")
+	}
+	ncred := cred.(*alicred.StsTokenCredential)
+	return credentials.NewStaticCredentials(ncred.AccessKeyId, ncred.AccessKeySecret, ncred.AccessKeyStsToken), nil
+}
+
+func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
-		WithS3ForcePathStyle(qs.ForcePathStyle).
-		WithRegion(qs.Region)
+		WithS3ForcePathStyle(qs.ForcePathStyle)
+	if qs.Region == "" {
+		awsConfig.WithRegion(defaultRegion)
+	} else {
+		awsConfig.WithRegion(qs.Region)
+	}
 	request.WithRetryer(awsConfig, defaultS3Retryer())
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
@@ -253,9 +286,9 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	if opts.HTTPClient != nil {
 		awsConfig.WithHTTPClient(opts.HTTPClient)
 	}
-	var cred *credentials.Credentials
-	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		cred = credentials.NewStaticCredentials(qs.AccessKey, qs.SecretAccessKey, "")
+	cred, err := autoNewCred(&qs)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	if cred != nil {
 		awsConfig.WithCredentials(cred)
@@ -285,6 +318,34 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	}
 
 	c := s3.New(ses)
+	// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+	// we need reassign credential to be compatible with minio authentication.
+	confCred := ses.Config.Credentials
+	setCredOpt := func(req *request.Request) {
+		if confCred != nil {
+			req.Config.Credentials = confCred
+		}
+	}
+	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+	}
+
+	if qs.Region != region {
+		if qs.Region != "" {
+			return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
+				qs.Bucket, qs.Region, region))
+		}
+
+		qs.Region = region
+		backend.Region = region
+		if region != defaultRegion {
+			awsConfig.WithRegion(region)
+			c = s3.New(ses, awsConfig)
+		}
+	}
+	log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
+
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
@@ -442,6 +503,11 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
+
+	if len(opt.ObjPrefix) != 0 {
+		prefix += opt.ObjPrefix
+	}
+
 	maxKeys := int64(1000)
 	if opt.ListCount > 0 {
 		maxKeys = opt.ListCount
@@ -476,6 +542,8 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
 			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
+			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
+			path = strings.TrimPrefix(path, "/")
 			itemSize := *r.Size
 
 			// filter out s3's empty directory items

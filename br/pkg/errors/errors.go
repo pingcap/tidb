@@ -3,6 +3,9 @@
 package errors
 
 import (
+	"context"
+	stderrors "errors"
+
 	"github.com/pingcap/errors"
 )
 
@@ -13,6 +16,17 @@ func Is(err error, is *errors.Error) bool {
 		return ok && normalizedErr.ID() == is.ID()
 	})
 	return errorFound != nil
+}
+
+// IsContextCanceled checks whether the is caused by context.Canceled.
+// errors.Cause does not work for the error wrapped by %w in fmt.Errorf.
+// So we need to call stderrors.Is to unwrap the error.
+func IsContextCanceled(err error) bool {
+	err = errors.Cause(err)
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		return true
+	}
+	return stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded)
 }
 
 // BR errors.
@@ -49,11 +63,18 @@ var (
 	ErrRestoreWriteAndIngest   = errors.Normalize("failed to write and ingest", errors.RFCCodeText("BR:Restore:ErrRestoreWriteAndIngest"))
 	ErrRestoreSchemaNotExists  = errors.Normalize("schema not exists", errors.RFCCodeText("BR:Restore:ErrRestoreSchemaNotExists"))
 	ErrUnsupportedSystemTable  = errors.Normalize("the system table isn't supported for restoring yet", errors.RFCCodeText("BR:Restore:ErrUnsupportedSysTable"))
+	ErrDatabasesAlreadyExisted = errors.Normalize("databases already existed in restored cluster", errors.RFCCodeText("BR:Restore:ErrDatabasesAlreadyExisted"))
+
+	// ErrStreamLogTaskExist is the error when stream log task already exists, because of supporting single task currently.
+	ErrStreamLogTaskExist = errors.Normalize("stream task already exists", errors.RFCCodeText("BR:Stream:ErrStreamLogTaskExist"))
 
 	// TODO maybe it belongs to PiTR.
 	ErrRestoreRTsConstrain = errors.Normalize("resolved ts constrain violation", errors.RFCCodeText("BR:Restore:ErrRestoreResolvedTsConstrain"))
 
 	ErrPiTRInvalidCDCLogFormat = errors.Normalize("invalid cdc log format", errors.RFCCodeText("BR:PiTR:ErrPiTRInvalidCDCLogFormat"))
+	ErrPiTRTaskNotFound        = errors.Normalize("task not found", errors.RFCCodeText("BR:PiTR:ErrTaskNotFound"))
+	ErrPiTRInvalidTaskInfo     = errors.Normalize("task info is invalid", errors.RFCCodeText("BR:PiTR:ErrInvalidTaskInfo"))
+	ErrPiTRMalformedMetadata   = errors.Normalize("malformed metadata", errors.RFCCodeText("BR:PiTR:ErrMalformedMetadata"))
 
 	ErrStorageUnknown           = errors.Normalize("unknown external storage error", errors.RFCCodeText("BR:ExternalStorage:ErrStorageUnknown"))
 	ErrStorageInvalidConfig     = errors.Normalize("invalid external storage config", errors.RFCCodeText("BR:ExternalStorage:ErrStorageInvalidConfig"))

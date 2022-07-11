@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -97,7 +98,7 @@ func (mb *kvMemBuf) Recycle(buf *bytesBuf) {
 
 func (mb *kvMemBuf) AllocateBuf(size int) {
 	mb.Lock()
-	size = utils.MaxInt(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
+	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
 	if len(mb.availableBufs) > 0 && mb.availableBufs[0].cap >= size {
 		mb.buf = mb.availableBufs[0]
 		mb.availableBufs = mb.availableBufs[1:]
@@ -245,11 +246,11 @@ type SessionOptions struct {
 }
 
 // NewSession creates a new trimmed down Session matching the options.
-func NewSession(options *SessionOptions) sessionctx.Context {
-	return newSession(options)
+func NewSession(options *SessionOptions, logger log.Logger) sessionctx.Context {
+	return newSession(options, logger)
 }
 
-func newSession(options *SessionOptions) *session {
+func newSession(options *SessionOptions, logger log.Logger) *session {
 	sqlMode := options.SQLMode
 	vars := variable.NewSessionVars()
 	vars.SkipUTF8Check = true
@@ -264,7 +265,7 @@ func newSession(options *SessionOptions) *session {
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
 			if err := vars.SetSystemVar(k, v); err != nil {
-				log.L().DPanic("new session: failed to set system var",
+				logger.DPanic("new session: failed to set system var",
 					log.ShortError(err),
 					zap.String("key", k))
 			}
@@ -272,7 +273,7 @@ func newSession(options *SessionOptions) *session {
 	}
 	vars.StmtCtx.TimeZone = vars.Location()
 	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
-		log.L().Warn("new session: failed to set timestamp",
+		logger.Warn("new session: failed to set timestamp",
 			log.ShortError(err))
 	}
 	vars.TxnCtx = nil

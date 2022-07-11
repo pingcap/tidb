@@ -23,10 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -54,10 +56,40 @@ type Context struct {
 	cancel      context.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
+	level       kvrpcpb.DiskFullOpt
+	is          sessionctx.InfoschemaMetaVersion
 }
 
 type wrapTxn struct {
 	kv.Transaction
+	tsFuture oracle.Future
+}
+
+func (txn *wrapTxn) validOrPending() bool {
+	return txn.tsFuture != nil || txn.Transaction.Valid()
+}
+
+func (txn *wrapTxn) pending() bool {
+	return txn.Transaction == nil && txn.tsFuture != nil
+}
+
+// Wait creates a new kvTransaction
+func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+	if !txn.validOrPending() {
+		return txn, errors.AddStack(kv.ErrInvalidTxn)
+	}
+	if txn.pending() {
+		ts, err := txn.tsFuture.Wait()
+		if err != nil {
+			return nil, err
+		}
+		kvTxn, err := sctx.GetStore().Begin(tikv.WithStartTS(ts))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		txn.Transaction = kvTxn
+	}
+	return txn, nil
 }
 
 func (txn *wrapTxn) Valid() bool {
@@ -90,12 +122,12 @@ func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 // SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
 func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	c.level = level
 }
 
 // ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
 func (c *Context) ClearDiskFullOpt() {
-	c.txn.Transaction.ClearDiskFullOpt()
+	c.level = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
@@ -108,13 +140,9 @@ func (c *Context) ShowProcess() *util.ProcessInfo {
 	return &util.ProcessInfo{}
 }
 
-type mockDDLOwnerChecker struct{}
-
-func (c *mockDDLOwnerChecker) IsOwner() bool { return true }
-
-// DDLOwnerChecker returns owner.DDLOwnerChecker.
-func (c *Context) DDLOwnerChecker() owner.DDLOwnerChecker {
-	return &mockDDLOwnerChecker{}
+// IsDDLOwner checks whether this session is DDL owner.
+func (c *Context) IsDDLOwner() bool {
+	return true
 }
 
 // SetValue implements sessionctx.Context SetValue interface.
@@ -175,7 +203,21 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 			return is
 		}
 	}
-	return nil
+	if c.is == nil {
+		c.is = MockInfoschema(nil)
+	}
+	return c.is
+}
+
+// MockInfoschema only serves for test.
+var MockInfoschema func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion
+
+// GetDomainInfoSchema returns the latest information schema in domain
+func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
+	if c.is == nil {
+		c.is = MockInfoschema(nil)
+	}
+	return c.is
 }
 
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
@@ -237,11 +279,6 @@ func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	return c.NewTxn(ctx)
 }
 
-// GetSnapshotWithTS return a snapshot with ts
-func (c *Context) GetSnapshotWithTS(ts uint64) kv.Snapshot {
-	return c.Store.GetSnapshot(kv.Version{Ver: ts})
-}
-
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
@@ -252,17 +289,20 @@ func (c *Context) RefreshVars(ctx context.Context) error {
 	return nil
 }
 
-// InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
-func (c *Context) InitTxnWithStartTS(startTS uint64) error {
+// RollbackTxn indicates an expected call of RollbackTxn.
+func (c *Context) RollbackTxn(ctx context.Context) {
+	defer c.sessionVars.SetInTxn(false)
 	if c.txn.Valid() {
-		return nil
+		terror.Log(c.txn.Rollback())
 	}
-	if c.Store != nil {
-		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		c.txn.Transaction = txn
+}
+
+// CommitTxn indicates an expected call of CommitTxn.
+func (c *Context) CommitTxn(ctx context.Context) error {
+	defer c.sessionVars.SetInTxn(false)
+	c.txn.SetDiskFullOpt(c.level)
+	if c.txn.Valid() {
+		return c.txn.Commit(ctx)
 	}
 	return nil
 }
@@ -296,7 +336,7 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // UpdateColStatsUsage updates the column stats usage.
-func (c *Context) UpdateColStatsUsage(_ []model.TableColumnID) {}
+func (c *Context) UpdateColStatsUsage(_ []model.TableItemID) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
@@ -350,12 +390,49 @@ func (c *Context) HasLockedTables() bool {
 }
 
 // PrepareTSFuture implements the sessionctx.Context interface.
-func (c *Context) PrepareTSFuture(ctx context.Context) {
+func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
+	c.txn.Transaction = nil
+	c.txn.tsFuture = future
+	return nil
+}
+
+// GetPreparedTxnFuture returns the TxnFuture if it is prepared.
+// It returns nil otherwise.
+func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	if !c.txn.validOrPending() {
+		return nil
+	}
+	return &c.txn
 }
 
 // GetStmtStats implements the sessionctx.Context interface.
 func (c *Context) GetStmtStats() *stmtstats.StatementStats {
 	return nil
+}
+
+// GetAdvisoryLock acquires an advisory lock
+func (c *Context) GetAdvisoryLock(lockName string, timeout int64) error {
+	return nil
+}
+
+// ReleaseAdvisoryLock releases an advisory lock
+func (c *Context) ReleaseAdvisoryLock(lockName string) bool {
+	return true
+}
+
+// ReleaseAllAdvisoryLocks releases all advisory locks
+func (c *Context) ReleaseAllAdvisoryLocks() int {
+	return 0
+}
+
+// EncodeSessionStates implements sessionctx.Context EncodeSessionStates interface.
+func (c *Context) EncodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+	return errors.Errorf("Not Supported")
+}
+
+// DecodeSessionStates implements sessionctx.Context DecodeSessionStates interface.
+func (c *Context) DecodeSessionStates(context.Context, sessionctx.Context, *sessionstates.SessionStates) error {
+	return errors.Errorf("Not Supported")
 }
 
 // Close implements the sessionctx.Context interface.

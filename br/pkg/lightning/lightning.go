@@ -17,31 +17,32 @@ package lightning
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/restore"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
@@ -50,10 +51,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 type Lightning struct {
@@ -67,6 +72,9 @@ type Lightning struct {
 	serverAddr net.Addr
 	serverLock sync.Mutex
 	status     restore.LightningStatus
+
+	promFactory  promutil.Factory
+	promRegistry promutil.Registry
 
 	cancelLock sync.Mutex
 	curTask    *config.Config
@@ -93,12 +101,16 @@ func New(globalCfg *config.GlobalConfig) *Lightning {
 
 	redact.InitRedact(globalCfg.Security.RedactInfoLog)
 
+	promFactory := promutil.NewDefaultFactory()
+	promRegistry := promutil.NewDefaultRegistry()
 	ctx, shutdown := context.WithCancel(context.Background())
 	return &Lightning{
-		globalCfg: globalCfg,
-		globalTLS: tls,
-		ctx:       ctx,
-		shutdown:  shutdown,
+		globalCfg:    globalCfg,
+		globalTLS:    tls,
+		ctx:          ctx,
+		shutdown:     shutdown,
+		promFactory:  promFactory,
+		promRegistry: promRegistry,
 	}
 }
 
@@ -133,10 +145,63 @@ func (l *Lightning) GoServe() error {
 	return l.goServe(statusAddr, io.Discard)
 }
 
+// TODO: maybe handle http request using gin
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	body       string
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
+	return &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
+	// keep first part of the response for logging, max 1K
+	if lrw.body == "" && len(d) > 0 {
+		length := len(d)
+		if length > 1024 {
+			length = 1024
+		}
+		lrw.body = string(d[:length])
+	}
+	return lrw.ResponseWriter.Write(d)
+}
+
+func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logger := log.L().With(zap.String("method", r.Method), zap.Stringer("url", r.URL)).
+			Begin(zapcore.InfoLevel, "process http request")
+
+		newWriter := newLoggingResponseWriter(w)
+		h.ServeHTTP(newWriter, r)
+
+		bodyField := zap.Skip()
+		if newWriter.Header().Get("Content-Encoding") != "gzip" {
+			bodyField = zap.String("body", newWriter.body)
+		}
+		logger.End(zapcore.InfoLevel, nil, zap.Int("status", newWriter.statusCode), bodyField)
+	}
+}
+
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
-	mux.Handle("/metrics", promhttp.Handler())
+
+	registry := l.promRegistry
+	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	registry.MustRegister(collectors.NewGoCollector())
+	if gatherer, ok := registry.(prometheus.Gatherer); ok {
+		handler := promhttp.InstrumentMetricHandler(
+			registry, promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{}),
+		)
+		mux.Handle("/metrics", handler)
+	}
 
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -144,14 +209,22 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
+	// Enable failpoint http API for testing.
+	failpoint.Inject("EnableTestAPI", func() {
+		mux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
+			new(failpoint.HttpHandler).ServeHTTP(w, r)
+		})
+	})
+
 	handleTasks := http.StripPrefix("/tasks", http.HandlerFunc(l.handleTask))
-	mux.Handle("/tasks", handleTasks)
-	mux.Handle("/tasks/", handleTasks)
-	mux.HandleFunc("/progress/task", handleProgressTask)
-	mux.HandleFunc("/progress/table", handleProgressTable)
-	mux.HandleFunc("/pause", handlePause)
-	mux.HandleFunc("/resume", handleResume)
-	mux.HandleFunc("/loglevel", handleLogLevel)
+	mux.Handle("/tasks", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.HandleFunc("/progress/task", httpHandleWrapper(handleProgressTask))
+	mux.HandleFunc("/progress/table", httpHandleWrapper(handleProgressTable))
+	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
+	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
+	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
@@ -197,8 +270,13 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
-
-	return l.run(taskCtx, taskCfg, &options{glue: glue})
+	o := &options{
+		glue:         glue,
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+		logger:       log.L(),
+	}
+	return l.run(taskCtx, taskCfg, o)
 }
 
 func (l *Lightning) RunServer() error {
@@ -215,7 +293,12 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		err = l.run(context.Background(), task, nil)
+		o := &options{
+			promFactory:  l.promFactory,
+			promRegistry: l.promRegistry,
+			logger:       log.L(),
+		}
+		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
@@ -234,7 +317,11 @@ func (l *Lightning) RunServer() error {
 //   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
-	o := &options{}
+	o := &options{
+		promFactory:  l.promFactory,
+		promRegistry: l.promRegistry,
+		logger:       log.L(),
+	}
 	for _, opt := range opts {
 		opt(o)
 	}
@@ -281,11 +368,19 @@ var (
 
 func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
-	log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
+	o.logger.Info("cfg", zap.Stringer("cfg", taskCfg))
 
 	utils.LogEnvVariables()
 
-	ctx, cancel := context.WithCancel(taskCtx)
+	metrics := metric.NewMetrics(o.promFactory)
+	metrics.RegisterTo(o.promRegistry)
+	defer func() {
+		metrics.UnregisterFrom(o.promRegistry)
+	}()
+
+	ctx := metric.NewContext(taskCtx, metrics)
+	ctx = log.NewContext(ctx, o.logger)
+	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
 	l.cancel = cancel
 	l.curTask = taskCfg
@@ -315,6 +410,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 			}
 		}
 		failpoint.Return(nil)
+	})
+
+	failpoint.Inject("SetCertExpiredSoon", func(val failpoint.Value) {
+		rootKeyPath := val.(string)
+		rootCaPath := taskCfg.Security.CAPath
+		keyPath := taskCfg.Security.KeyPath
+		certPath := taskCfg.Security.CertPath
+		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
+			panic(err)
+		}
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
@@ -364,7 +469,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}
 
-	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
+	loadTask := o.logger.Begin(zap.InfoLevel, "load data source")
 	var mdl *mydump.MDLoader
 	mdl, err = mydump.NewMyDumpLoaderWithStore(ctx, taskCfg, s)
 	loadTask.End(zap.ErrorLevel, err)
@@ -373,13 +478,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		log.L().Error("check system requirements failed", zap.Error(err))
+		o.logger.Error("check system requirements failed", zap.Error(err))
 		return common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
 	}
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
 	if err != nil {
-		log.L().Error("checkpoint schema conflicts with data files", zap.Error(err))
+		o.logger.Error("checkpoint schema conflicts with data files", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -400,7 +505,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
-		log.L().Error("restore failed", log.ShortError(err))
+		o.logger.Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
 	}
 	defer procedure.Close()
@@ -559,7 +664,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	log.L().Debug("received task config", zap.ByteString("content", data))
+	log.L().Info("received task config", zap.ByteString("content", data))
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
@@ -742,7 +847,9 @@ func handleLogLevel(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		oldLevel := log.SetLevel(zapcore.InfoLevel)
-		log.L().Info("changed log level", zap.Stringer("old", oldLevel), zap.Stringer("new", logLevel.Level))
+		log.L().Info("changed log level. No effects if task has specified its logger",
+			zap.Stringer("old", oldLevel),
+			zap.Stringer("new", logLevel.Level))
 		log.SetLevel(logLevel.Level)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("{}"))
@@ -763,8 +870,8 @@ func checkSystemRequirement(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta
 				tableTotalSizes = append(tableTotalSizes, tb.TotalSize)
 			}
 		}
-		sort.Slice(tableTotalSizes, func(i, j int) bool {
-			return tableTotalSizes[i] > tableTotalSizes[j]
+		slices.SortFunc(tableTotalSizes, func(i, j int64) bool {
+			return i > j
 		})
 		topNTotalSize := int64(0)
 		for i := 0; i < len(tableTotalSizes) && i < cfg.App.TableConcurrency; i++ {
@@ -805,6 +912,7 @@ func CheckpointRemove(ctx context.Context, cfg *config.Config, tableName string)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer cpdb.Close()
 
 	// try to remove the metadata first.
@@ -848,41 +956,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 	if err != nil || !exist {
 		return errors.Trace(err)
 	}
-	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, db, cfg.App.MetaSchemaName, tableMetaExist))
-}
-
-func UnsafeCloseEngine(ctx context.Context, importer backend.Backend, engine string) (*backend.ClosedEngine, error) {
-	if index := strings.LastIndexByte(engine, ':'); index >= 0 {
-		tableName := engine[:index]
-		engineID, err := strconv.Atoi(engine[index+1:])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ce, err := importer.UnsafeCloseEngine(ctx, nil, tableName, int32(engineID)) // #nosec G109
-		return ce, errors.Trace(err)
-	}
-
-	engineUUID, err := uuid.Parse(engine)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ce, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "<tidb-lightning-ctl>", engineUUID)
-	return ce, errors.Trace(err)
-}
-
-func CleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {
-	importer, err := importer.NewImporter(ctx, tls, cfg.TikvImporter.Addr, cfg.TiDB.PdAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	ce, err := UnsafeCloseEngine(ctx, importer, engine)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(ce.Cleanup(ctx))
+	return errors.Trace(restore.MaybeCleanupAllMetas(ctx, log.L(), db, cfg.App.MetaSchemaName, tableMetaExist))
 }
 
 func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode string) error {
@@ -904,4 +978,58 @@ func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 			return tikv.SwitchMode(c, tls, store.Address, m)
 		},
 	)
+}
+
+func updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath string, expiry time.Duration) error {
+	rootKey, err := parsePrivateKey(rootKeyPath)
+	if err != nil {
+		return err
+	}
+	rootCaPem, err := os.ReadFile(rootCaPath)
+	if err != nil {
+		return err
+	}
+	rootCaDer, _ := pem.Decode(rootCaPem)
+	rootCa, err := x509.ParseCertificate(rootCaDer.Bytes)
+	if err != nil {
+		return err
+	}
+	key, err := parsePrivateKey(keyPath)
+	if err != nil {
+		return err
+	}
+	certPem, err := os.ReadFile(certPath)
+	if err != nil {
+		panic(err)
+	}
+	certDer, _ := pem.Decode(certPem)
+	cert, err := x509.ParseCertificate(certDer.Bytes)
+	if err != nil {
+		return err
+	}
+	cert.NotBefore = time.Now()
+	cert.NotAfter = time.Now().Add(expiry)
+	derBytes, err := x509.CreateCertificate(rand.Reader, cert, rootCa, &key.PublicKey, rootKey)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600)
+}
+
+func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
+	keyPemBlock, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	var keyDERBlock *pem.Block
+	for {
+		keyDERBlock, keyPemBlock = pem.Decode(keyPemBlock)
+		if keyDERBlock == nil {
+			return nil, errors.New("failed to find PEM block with type ending in \"PRIVATE KEY\"")
+		}
+		if keyDERBlock.Type == "PRIVATE KEY" || strings.HasSuffix(keyDERBlock.Type, " PRIVATE KEY") {
+			break
+		}
+	}
+	return x509.ParseECPrivateKey(keyDERBlock.Bytes)
 }

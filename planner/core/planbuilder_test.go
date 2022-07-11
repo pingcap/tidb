@@ -21,7 +21,6 @@ import (
 	"strings"
 	"testing"
 	"unsafe"
-	_ "unsafe" // required by go:linkname
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -71,7 +70,7 @@ func TestShow(t *testing.T) {
 		node.Tp = tp
 		schema, _ := buildShowSchema(node, false, false)
 		for _, col := range schema.Columns {
-			require.Greater(t, col.RetType.Flen, 0)
+			require.Greater(t, col.RetType.GetFlen(), 0)
 		}
 	}
 }

@@ -1277,6 +1277,9 @@ func TestSystemSchema(t *testing.T) {
 	err = tk.ExecToErr("create table metric_schema.t(a int)")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	tk.MustGetErrCode("create table metrics_schema.t (id int);", errno.ErrTableaccessDenied)
+	tk.MustGetErrCode("create table performance_schema.t (id int);", errno.ErrTableaccessDenied)
 }
 
 func TestPerformanceSchema(t *testing.T) {
@@ -1412,7 +1415,8 @@ func TestMetricsSchema(t *testing.T) {
 			Hostname: "localhost",
 		}, nil, nil)
 
-		rs, err := tk.Session().ExecuteInternal(context.Background(), test.stmt)
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+		rs, err := tk.Session().ExecuteInternal(ctx, test.stmt)
 		if err == nil {
 			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
 		}
@@ -1888,33 +1892,34 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil)
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
-	_, err := tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	_, err := tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'Local:///tmp/test';")
 	require.EqualError(t, err, "BACKUP requires tikv store, not unistore")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "RESTORE requires tikv store, not unistore")
 
 	sem.Enable()
 	defer sem.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'local:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'local:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'file:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'file:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO '/tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO '/tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
 
 }
@@ -2004,14 +2009,14 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_time_series_count'`).Check(testkit.Rows())
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_top_sql_max_meta_count'`).Check(testkit.Rows())
 
-	_, err := tk.Exec("SET tidb_force_priority = 'NO_PRIORITY'")
+	_, err := tk.Exec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SET GLOBAL tidb_enable_telemetry = OFF")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SET GLOBAL tidb_top_sql_max_time_series_count = 100")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 
-	_, err = tk.Exec("SELECT @@session.tidb_force_priority")
+	_, err = tk.Exec("SELECT @@global.tidb_force_priority")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
 	_, err = tk.Exec("SELECT @@global.tidb_enable_telemetry")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_VARIABLES_ADMIN privilege(s) for this operation")
@@ -2029,10 +2034,10 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 	tk.MustQuery(`SHOW GLOBAL VARIABLES LIKE 'tidb_enable_telemetry'`).Check(testkit.Rows("tidb_enable_telemetry ON"))
 
 	// should not actually make any change.
-	tk.MustExec("SET tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustExec("SET @@global.tidb_force_priority = 'NO_PRIORITY'")
 	tk.MustExec("SET GLOBAL tidb_enable_telemetry = ON")
 
-	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustQuery(`SELECT @@global.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
 
 	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))

@@ -256,3 +256,61 @@ select * from t1 where c1 > all(with recursive cte1 as (select c1, c2 from t2 un
 
 explain select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
 select * from t1 where exists(with recursive cte1 as (select c1, c2 from t2 union all select c1+1 as c1, c2+1 as c2 from cte1 where cte1.c2=t1.c2) select c1 from cte1);
+# Some cases to Test Create View With CTE and checkout Database
+# With name is the same as the table name
+use test;
+drop table if exists t1, t2;
+drop view if exists v1;
+create table t1 (a int);
+insert into t1 values (0), (1), (2), (3), (4);
+create table t2 (a int);
+insert into t2 values (1), (2), (3), (4), (5);
+drop view if exists v1,v2;
+create view v1 as with t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
+create view v2 as with recursive t1 as ( select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1 order by a desc;
+create database if not exists test1;
+use test1;
+select * from test.v1;
+select * from test.v2;
+# case
+use test;
+drop table if exists t ,t1, t2;
+create table t(a int);
+insert into t values (0);
+create table t1 (b int);
+insert into t1 values (0);
+create table t2 (c int);
+insert into t2 values (0);
+drop view if exists v1;
+create view v1 as with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;
+use test1;
+select * from test.v1;
+# case
+use test;
+drop table if exists t11111;
+create table t11111 (d int);
+insert into t11111 values (123), (223), (323);
+drop view if exists v1;
+create view v1 as WITH t123 AS (WITH t11111 AS ( SELECT * FROM t1 ) SELECT ( WITH t2 AS ( SELECT ( WITH t23 AS ( SELECT * FROM t11111 ) SELECT * FROM t23 LIMIT 1 ) FROM t11111 ) SELECT *  FROM t2  LIMIT 1  )  FROM t11111, t2 ) SELECT * FROM t11111;
+use test1;
+select * from test.v1;
+# case
+use test;
+drop table if exists t1;
+create table t1 (a int);
+insert into t1 values (1);
+drop view if exists v1;
+create view v1 as SELECT (WITH qn AS (SELECT 10*a as a FROM t1),qn2 AS (SELECT 3*a AS b FROM qn) SELECT * from qn2 LIMIT 1) FROM t1;
+use test1;
+select * from test.v1;
+# case
+use test;
+drop table if exists t1,t2;
+create table t1 (a int);
+insert into t1 values (0), (1);
+create table t2 (b int);
+insert into t2 values  (4), (5);
+drop view if exists v1;
+create view v1 as with t1 as (with t11 as (select * from t1) select * from t1, t2) select * from t1;
+use test1;
+select * from test.v1;

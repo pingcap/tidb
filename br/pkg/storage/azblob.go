@@ -12,15 +12,14 @@ import (
 	"path"
 	"strings"
 
-	"github.com/google/uuid"
-	"github.com/spf13/pflag"
-
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
 
@@ -51,6 +50,13 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobAccessTierOption, "", "Specify the storage class for azblob")
 	flags.String(azblobAccountName, "", "Specify the account name for azblob")
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
+}
+
+func hiddenAzblobFlags(flags *pflag.FlagSet) {
+	_ = flags.MarkHidden(azblobEndpointOption)
+	_ = flags.MarkHidden(azblobAccessTierOption)
+	_ = flags.MarkHidden(azblobAccountName)
+	_ = flags.MarkHidden(azblobAccountKey)
 }
 
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
@@ -323,7 +329,9 @@ func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-
+	if len(opt.ObjPrefix) != 0 {
+		return errors.New("azure storage not support ObjPrefix for now")
+	}
 	prefix := path.Join(s.options.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"

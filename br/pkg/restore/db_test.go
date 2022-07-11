@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -138,7 +139,7 @@ func TestCreateTablesInDb(t *testing.T) {
 
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
-	intField.Charset = "binary"
+	intField.SetCharset("binary")
 	ddlJobMap := make(map[restore.UniqueTableName]bool)
 	for i := len(tables) - 1; i >= 0; i-- {
 		tables[i] = &metautil.Table{
@@ -190,7 +191,7 @@ func TestFilterDDLJobs(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -254,7 +255,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 		CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 	}
 
-	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, &cipher)
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
@@ -367,4 +368,53 @@ func TestFilterDDLJobByRules(t *testing.T) {
 	for i, ddlJob := range ddlJobs {
 		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
 	}
+}
+
+func TestGetExistedUserDBs(t *testing.T) {
+	m, err := mock.NewCluster()
+	require.Nil(t, err)
+	defer m.Stop()
+	dom := m.Domain
+
+	dbs := restore.GetExistedUserDBs(dom)
+	require.Equal(t, 0, len(dbs))
+
+	builder, err := infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+		[]*model.DBInfo{
+			{Name: model.NewCIStr("mysql")},
+			{Name: model.NewCIStr("test")},
+		},
+		nil, 1)
+	require.Nil(t, err)
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dbs = restore.GetExistedUserDBs(dom)
+	require.Equal(t, 0, len(dbs))
+
+	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+		[]*model.DBInfo{
+			{Name: model.NewCIStr("mysql")},
+			{Name: model.NewCIStr("test")},
+			{Name: model.NewCIStr("d1")},
+		},
+		nil, 1)
+	require.Nil(t, err)
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dbs = restore.GetExistedUserDBs(dom)
+	require.Equal(t, 1, len(dbs))
+
+	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+		[]*model.DBInfo{
+			{Name: model.NewCIStr("mysql")},
+			{Name: model.NewCIStr("d1")},
+			{
+				Name:   model.NewCIStr("test"),
+				Tables: []*model.TableInfo{{Name: model.NewCIStr("t1"), State: model.StatePublic}},
+				State:  model.StatePublic,
+			},
+		},
+		nil, 1)
+	require.Nil(t, err)
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dbs = restore.GetExistedUserDBs(dom)
+	require.Equal(t, 2, len(dbs))
 }

@@ -23,8 +23,11 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/mock"
+	"golang.org/x/exp/slices"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -60,18 +63,6 @@ type InfoSchema interface {
 }
 
 type sortedTables []table.Table
-
-func (s sortedTables) Len() int {
-	return len(s)
-}
-
-func (s sortedTables) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s sortedTables) Less(i, j int) bool {
-	return s[i].Meta().ID < s[j].Meta().ID
-}
 
 func (s sortedTables) searchTable(id int64) int {
 	idx := sort.Search(len(s), func(i int) bool {
@@ -127,7 +118,9 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		sort.Sort(result.sortedTablesBuckets[i])
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
+			return i.Meta().ID < j.Meta().ID
+		})
 	}
 	return result
 }
@@ -152,7 +145,9 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		sort.Sort(result.sortedTablesBuckets[i])
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
+			return i.Meta().ID < j.Meta().ID
+		})
 	}
 	result.schemaMetaVersion = schemaVer
 	return result
@@ -353,12 +348,15 @@ func init() {
 	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
+	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {
+		return MockInfoSchema(tbList)
+	}
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
 func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	for _, col := range tbInfo.Columns {
-		if mysql.HasAutoIncrementFlag(col.Flag) {
+		if mysql.HasAutoIncrementFlag(col.GetFlag()) {
 			return true, col.Name.L
 		}
 	}
@@ -485,6 +483,11 @@ func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bo
 		delete(is.schemaMap, schema.L)
 	}
 	return true
+}
+
+// Count gets the count of the temporary tables.
+func (is *LocalTemporaryTables) Count() int {
+	return len(is.idx2table)
 }
 
 // SchemaByTable get a table's schema name

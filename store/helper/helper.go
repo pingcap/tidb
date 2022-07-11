@@ -25,7 +25,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +47,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // Storage represents a storage that connects TiKV.
@@ -620,15 +620,6 @@ func isBehindKeyRange(x withKeyRange, startKey, endKey string) bool {
 func (r *RegionInfo) getStartKey() string { return r.StartKey }
 func (r *RegionInfo) getEndKey() string   { return r.EndKey }
 
-// for sorting
-type byRegionStartKey []*RegionInfo
-
-func (xs byRegionStartKey) Len() int      { return len(xs) }
-func (xs byRegionStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
-func (xs byRegionStartKey) Less(i, j int) bool {
-	return xs[i].getStartKey() < xs[j].getStartKey()
-}
-
 // TableInfoWithKeyRange stores table or index informations with its key range.
 type TableInfoWithKeyRange struct {
 	*TableInfo
@@ -638,15 +629,6 @@ type TableInfoWithKeyRange struct {
 
 func (t TableInfoWithKeyRange) getStartKey() string { return t.StartKey }
 func (t TableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
-
-// for sorting
-type byTableStartKey []TableInfoWithKeyRange
-
-func (xs byTableStartKey) Len() int      { return len(xs) }
-func (xs byTableStartKey) Swap(i, j int) { xs[i], xs[j] = xs[j], xs[i] }
-func (xs byTableStartKey) Less(i, j int) bool {
-	return xs[i].getStartKey() < xs[j].getStartKey()
-}
 
 // NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
 func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
@@ -749,7 +731,9 @@ func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoW
 			}
 		}
 	}
-	sort.Sort(byTableStartKey(tables))
+	slices.SortFunc(tables, func(i, j TableInfoWithKeyRange) bool {
+		return i.getStartKey() < j.getStartKey()
+	})
 	return tables
 }
 
@@ -761,7 +745,9 @@ func (h *Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []Tabl
 		return tableInfos
 	}
 	// tables is sorted in GetTablesInfoWithKeyRange func
-	sort.Sort(byRegionStartKey(regionsInfo))
+	slices.SortFunc(regionsInfo, func(i, j *RegionInfo) bool {
+		return i.getStartKey() < j.getStartKey()
+	})
 
 	idx := 0
 OutLoop:
@@ -840,42 +826,46 @@ func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res inte
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
-	req := new(http.Request)
 	for _, host := range pdHosts {
-		req, err = http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
-		if err != nil {
-			// Try to request from another PD node when some nodes may down.
-			if strings.Contains(err.Error(), "connection refused") {
-				continue
-			}
-			return errors.Trace(err)
+		err = requestPDForOneHost(host, apiName, method, uri, body, res)
+		if err == nil {
+			break
 		}
+		// Try to request from another PD node when some nodes may down.
 	}
+	return err
+}
+
+func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res interface{}) error {
+	urlVar := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), host, uri)
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
+	req, err := http.NewRequest(method, urlVar, body)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("requestPDForOneHost new request failed",
+			zap.String("url", urlVar), zap.Error(err))
+		return errors.Trace(err)
 	}
 	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("requestPDForOneHost do request failed",
+			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
 	metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
 	metrics.PDAPIRequestCounter.WithLabelValues(apiName, resp.Status).Inc()
-
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
+			logutil.BgLogger().Warn("requestPDForOneHost close body failed",
+				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
-
 	err = json.NewDecoder(resp.Body).Decode(res)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }
 

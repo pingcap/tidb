@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"encoding/json"
 	"reflect"
 	"strconv"
 	"testing"
@@ -80,7 +79,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.ExecutorConcurrency)
 	require.Equal(t, DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, DefDMLBatchSize, vars.DMLBatchSize)
-	require.Equal(t, config.GetGlobalConfig().MemQuotaQuery, vars.MemQuotaQuery)
 	require.Equal(t, int64(DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -230,14 +228,19 @@ func TestVarsutil(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, ErrIncorrectScope))
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBConfig)
 	require.NoError(t, err)
-	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
+	jsonConfig, err := config.GetJSONConfig()
 	require.NoError(t, err)
-	require.Equal(t, config.HideConfig(string(bVal)), val)
+	require.Equal(t, jsonConfig, val)
 
 	require.Equal(t, DefTiDBOptimizerSelectivityLevel, v.OptimizerSelectivityLevel)
 	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableOuterJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.EnableOuterJoinReorder)
 
 	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
 	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
@@ -278,19 +281,6 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
 
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
-	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
-
 	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBLowResolutionTSO)
@@ -312,21 +302,21 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "0", val)
 	require.Equal(t, float64(0), v.CorrelationThreshold)
 
-	require.Equal(t, 3.0, v.CPUFactor)
+	require.Equal(t, 3.0, v.GetCPUFactor())
 	err = SetSessionSystemVar(v, TiDBOptCPUFactor, "5.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CPUFactor)
+	require.Equal(t, 5.0, v.GetCPUFactor())
 
-	require.Equal(t, 3.0, v.CopCPUFactor)
+	require.Equal(t, 3.0, v.GetCopCPUFactor())
 	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, "5.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptCopCPUFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CopCPUFactor)
+	require.Equal(t, 5.0, v.GetCopCPUFactor())
 
 	require.Equal(t, 24.0, v.CopTiFlashConcurrencyFactor)
 	err = SetSessionSystemVar(v, TiDBOptTiFlashConcurrencyFactor, "5.0")
@@ -334,7 +324,7 @@ func TestVarsutil(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptTiFlashConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.CopCPUFactor)
+	require.Equal(t, 5.0, v.GetCopCPUFactor())
 
 	require.Equal(t, 1.0, v.GetNetworkFactor(nil))
 	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, "3.0")
@@ -368,29 +358,29 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "50.0", val)
 	require.Equal(t, 50.0, v.GetSeekFactor(nil))
 
-	require.Equal(t, 0.001, v.MemoryFactor)
+	require.Equal(t, 0.001, v.GetMemoryFactor())
 	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, "1.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptMemoryFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.0", val)
-	require.Equal(t, 1.0, v.MemoryFactor)
+	require.Equal(t, 1.0, v.GetMemoryFactor())
 
-	require.Equal(t, 1.5, v.DiskFactor)
+	require.Equal(t, 1.5, v.GetDiskFactor())
 	err = SetSessionSystemVar(v, TiDBOptDiskFactor, "1.1")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptDiskFactor)
 	require.NoError(t, err)
 	require.Equal(t, "1.1", val)
-	require.Equal(t, 1.1, v.DiskFactor)
+	require.Equal(t, 1.1, v.GetDiskFactor())
 
-	require.Equal(t, 3.0, v.ConcurrencyFactor)
+	require.Equal(t, 3.0, v.GetConcurrencyFactor())
 	err = SetSessionSystemVar(v, TiDBOptConcurrencyFactor, "5.0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptConcurrencyFactor)
 	require.NoError(t, err)
 	require.Equal(t, "5.0", val)
-	require.Equal(t, 5.0, v.ConcurrencyFactor)
+	require.Equal(t, 5.0, v.GetConcurrencyFactor())
 
 	err = SetSessionSystemVar(v, TiDBReplicaRead, "follower")
 	require.NoError(t, err)
@@ -682,4 +672,23 @@ func TestStmtVars(t *testing.T) {
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'max_execution_time'", err.Error())
 	err = SetStmtVar(vars, MaxExecutionTime, "100")
 	require.NoError(t, err)
+}
+
+func TestSessionStatesSystemVar(t *testing.T) {
+	vars := NewSessionVars()
+	err := SetSessionSystemVar(vars, "autocommit", "1")
+	require.NoError(t, err)
+	val, keep, err := GetSessionStatesSystemVar(vars, "autocommit")
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.Equal(t, true, keep)
+	_, keep, err = GetSessionStatesSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, false, keep)
+	err = SetSessionSystemVar(vars, MaxAllowedPacket, "1024")
+	require.NoError(t, err)
+	val, keep, err = GetSessionStatesSystemVar(vars, MaxAllowedPacket)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val)
+	require.Equal(t, true, keep)
 }

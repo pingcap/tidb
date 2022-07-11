@@ -73,11 +73,12 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
-type readReqType uint8
+// ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
+type ReadReqType uint8
 
 const (
 	// Cop means read from storage by cop request.
-	Cop readReqType = iota
+	Cop ReadReqType = iota
 	// BatchCop means read from storage by BatchCop request, only used for TiFlash
 	BatchCop
 	// MPP means read from storage by MPP request, only used for TiFlash
@@ -85,7 +86,7 @@ const (
 )
 
 // Name returns the name of read request type.
-func (r readReqType) Name() string {
+func (r ReadReqType) Name() string {
 	switch r {
 	case BatchCop:
 		return "batchCop"
@@ -110,7 +111,7 @@ type PhysicalTableReader struct {
 
 	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
 	// BatchCop and MPP, currently, the latter two are only used in TiFlash
-	ReadReqType readReqType
+	ReadReqType ReadReqType
 
 	IsCommonHandle bool
 
@@ -261,7 +262,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg:
+		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.schema = p.indexPlan.Schema()
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -427,7 +428,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableColumnID]expression.Expression
+	GenExprs map[model.TableItemID]expression.Expression
 
 	isPartition bool
 	Desc        bool
@@ -439,8 +440,6 @@ type PhysicalIndexScan struct {
 	NeedCommonHandle bool
 
 	// required by cost model
-	// IndexScan operators under inner side of IndexJoin no need to consider net seek cost
-	underInnerIndexJoin bool
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
@@ -542,8 +541,6 @@ type PhysicalTableScan struct {
 	SampleInfo *TableSampleInfo
 
 	// required by cost model
-	// TableScan operators under inner side of IndexJoin no need to consider net seek cost
-	underInnerIndexJoin bool
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
@@ -1081,7 +1078,7 @@ type basePhysicalAgg struct {
 	MppPartitionCols []*property.MPPPartitionColumn
 }
 
-func (p *basePhysicalAgg) isFinalAgg() bool {
+func (p *basePhysicalAgg) IsFinalAgg() bool {
 	if len(p.AggFuncs) > 0 {
 		if p.AggFuncs[0].Mode == aggregation.FinalMode || p.AggFuncs[0].Mode == aggregation.CompleteMode {
 			return true
@@ -1196,11 +1193,15 @@ type PhysicalSort struct {
 	basePhysicalPlan
 
 	ByItems []*util.ByItems
+	// whether this operator only need to sort the data of one partition.
+	// it is true only if it is used to sort the sharded data of the window function.
+	IsPartialSort bool
 }
 
 // Clone implements PhysicalPlan interface.
 func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSort)
+	cloned.IsPartialSort = ls.IsPartialSort
 	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -1337,6 +1338,9 @@ type PhysicalWindow struct {
 	PartitionBy     []property.SortItem
 	OrderBy         []property.SortItem
 	Frame           *WindowFrame
+
+	// on which store the window function executes.
+	storeTp kv.StoreType
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1360,6 +1364,34 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 		}
 	}
 	return corCols
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalWindow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalWindow)
+	*cloned = *p
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.PartitionBy = make([]property.SortItem, 0, len(p.PartitionBy))
+	for _, it := range p.PartitionBy {
+		cloned.PartitionBy = append(cloned.PartitionBy, it.Clone())
+	}
+	cloned.OrderBy = make([]property.SortItem, 0, len(p.OrderBy))
+	for _, it := range p.OrderBy {
+		cloned.OrderBy = append(cloned.OrderBy, it.Clone())
+	}
+	cloned.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0, len(p.WindowFuncDescs))
+	for _, it := range p.WindowFuncDescs {
+		cloned.WindowFuncDescs = append(cloned.WindowFuncDescs, it.Clone())
+	}
+	if p.Frame != nil {
+		cloned.Frame = p.Frame.Clone()
+	}
+
+	return cloned, nil
 }
 
 // PhysicalShuffle represents a shuffle plan.
@@ -1516,11 +1548,6 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// AccessObject implements physicalScan interface.
-func (p *PhysicalCTE) AccessObject(normalized bool) string {
-	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
-}
-
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
@@ -1528,7 +1555,7 @@ func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalCTE) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainID overrides the ExplainID.

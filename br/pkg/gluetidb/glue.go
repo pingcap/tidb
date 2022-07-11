@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -25,6 +26,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// Asserting Glue implements glue.ConsoleGlue and glue.Glue at compile time.
+var (
+	_ glue.ConsoleGlue = Glue{}
+	_ glue.Glue        = Glue{}
+)
+
 const (
 	defaultCapOfCreateTable    = 512
 	defaultCapOfCreateDatabase = 64
@@ -36,12 +43,15 @@ func New() Glue {
 	log.Debug("enabling no register config")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.SkipRegisterToDashboard = true
+		conf.Log.EnableSlowLog.Store(false)
 	})
 	return Glue{}
 }
 
 // Glue is an implementation of glue.Glue using a new TiDB session.
 type Glue struct {
+	glue.StdIOGlue
+
 	tikvGlue gluetikv.Glue
 }
 
@@ -106,13 +116,29 @@ func (g Glue) GetVersion() string {
 
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
-	_, err := gs.se.ExecuteInternal(ctx, sql)
-	return errors.Trace(err)
+	return gs.ExecuteInternal(ctx, sql)
 }
 
 func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
-	_, err := gs.se.ExecuteInternal(ctx, sql, args...)
-	return errors.Trace(err)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	rs, err := gs.se.ExecuteInternal(ctx, sql, args...)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Some of SQLs (like ADMIN RECOVER INDEX) may lazily take effect
+	// when we polling the result set.
+	// At least call `next` once for triggering theirs side effect.
+	// (Maybe we'd better drain all returned rows?)
+	if rs != nil {
+		//nolint: errcheck
+		defer rs.Close()
+		c := rs.NewChunk(nil)
+		if err := rs.Next(ctx, c); err != nil {
+			log.Warn("Error during draining result of internal sql.", logutil.Redact(zap.String("sql", sql)), logutil.ShortError(err))
+			return nil
+		}
+	}
+	return nil
 }
 
 // CreateDatabase implements glue.Session.

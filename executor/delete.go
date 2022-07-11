@@ -18,11 +18,12 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -88,7 +89,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
-		config.GetGlobalConfig().EnableBatchDML && batchDMLSize > 0
+		variable.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
 	columns := e.children[0].Schema().Columns
@@ -149,7 +150,7 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := sessiontxn.NewTxnInStmt(ctx, e.ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
@@ -157,20 +158,26 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 }
 
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
-	// iterate all the joined tables, and got the copresonding rows in joinedRow.
+	// iterate all the joined tables, and got the corresponding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if unmatchedOuterRow(info, joinedRow) {
 			continue
 		}
 		if tblRowMap[info.TblID] == nil {
-			tblRowMap[info.TblID] = kv.NewHandleMap()
+			tblRowMap[info.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
 		}
 		handle, err := info.HandleCols.BuildHandleByDatums(joinedRow)
 		if err != nil {
 			return err
 		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
-		tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
+		_, exist := tblRowMap[info.TblID].Get(handle)
+		memDelta := tblRowMap[info.TblID].Set(handle, joinedRow[info.Start:info.End])
+		if !exist {
+			memDelta += types.EstimatedMemUsage(joinedRow, 1)
+			memDelta += int64(handle.ExtraMemSize())
+		}
+		e.memTracker.Consume(memDelta)
 	}
 	return nil
 }
@@ -239,6 +246,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 
 // Close implements the Executor Close interface.
 func (e *DeleteExec) Close() error {
+	defer e.memTracker.ReplaceBytesUsed(0)
 	return e.children[0].Close()
 }
 
@@ -253,4 +261,4 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]*kv.HandleMap
+type tableRowMapType map[int64]*kv.MemAwareHandleMap[[]types.Datum]
