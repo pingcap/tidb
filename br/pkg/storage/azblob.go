@@ -397,7 +397,7 @@ func (s *AzureBlobStorage) Create(_ context.Context, name string) (ExternalFileW
 	return uploaderWriter, nil
 }
 
-//Rename is that Remove implements the StorageWriter interface.
+// Rename implements the StorageWriter interface.
 func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	data, err := s.ReadFile(ctx, oldFileName)
 	if err != nil {
