@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // Histogram represents statistics for a column or index.
@@ -392,8 +393,8 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 // AddIdxVals adds the given values to the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
-	sort.Slice(idxValCntPairs, func(i, j int) bool {
-		return bytes.Compare(idxValCntPairs[i].Encoded, idxValCntPairs[j].Encoded) < 0
+	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) bool {
+		return bytes.Compare(i.Encoded, j.Encoded) < 0
 	})
 	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
 		for pairIdx < len(idxValCntPairs) {
@@ -1602,9 +1603,7 @@ func (idx *Index) expBackoffEstimation(sctx sessionctx.Context, coll *HistColl, 
 		singleColumnEstResults = append(singleColumnEstResults, count)
 	}
 	// Sort them.
-	sort.Slice(singleColumnEstResults, func(i, j int) bool {
-		return singleColumnEstResults[i] < singleColumnEstResults[j]
-	})
+	slices.Sort(singleColumnEstResults)
 	l := len(singleColumnEstResults)
 	// Convert the first 4 to selectivity results.
 	for i := 0; i < l && i < 4; i++ {
@@ -2192,15 +2191,15 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	buckets = buckets[:tail]
 
 	var sortError error
-	sort.Slice(buckets, func(i, j int) bool {
-		res, err := buckets[i].upper.Compare(sc, buckets[j].upper, collate.GetBinaryCollator())
+	slices.SortFunc(buckets, func(i, j *bucket4Merging) bool {
+		res, err := i.upper.Compare(sc, j.upper, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}
 		if res != 0 {
 			return res < 0
 		}
-		res, err = buckets[i].lower.Compare(sc, buckets[j].lower, collate.GetBinaryCollator())
+		res, err = i.lower.Compare(sc, j.lower, collate.GetBinaryCollator())
 		if err != nil {
 			sortError = err
 		}

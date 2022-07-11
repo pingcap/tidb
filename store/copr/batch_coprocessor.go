@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -40,6 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // batchCopTask comprises of multiple copTask that will send to same store.
@@ -208,13 +208,13 @@ func balanceBatchCopTaskWithContinuity(storeTaskMap map[uint64]*batchCopTask, ca
 	storeTasks := deepCopyStoreTaskMap(storeTaskMap)
 
 	// Sort regions by their key ranges.
-	sort.Slice(candidateRegionInfos, func(i, j int) bool {
+	slices.SortFunc(candidateRegionInfos, func(i, j RegionInfo) bool {
 		// Special case: Sort empty ranges to the end.
-		if candidateRegionInfos[i].Ranges.Len() < 1 || candidateRegionInfos[j].Ranges.Len() < 1 {
-			return candidateRegionInfos[i].Ranges.Len() > candidateRegionInfos[j].Ranges.Len()
+		if i.Ranges.Len() < 1 || j.Ranges.Len() < 1 {
+			return i.Ranges.Len() > j.Ranges.Len()
 		}
 		// StartKey0 < StartKey1
-		return bytes.Compare(candidateRegionInfos[i].Ranges.At(0).StartKey, candidateRegionInfos[j].Ranges.At(0).StartKey) == -1
+		return bytes.Compare(i.Ranges.At(0).StartKey, j.Ranges.At(0).StartKey) == -1
 	})
 
 	balanceStart := time.Now()

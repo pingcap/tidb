@@ -14,7 +14,6 @@
 package charset
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -89,8 +89,8 @@ func GetSupportedCharsets() []*Charset {
 	}
 
 	// sort charset by name.
-	sort.Slice(charsets, func(i, j int) bool {
-		return charsets[i].Name < charsets[j].Name
+	slices.SortFunc(charsets, func(i, j *Charset) bool {
+		return i.Name < j.Name
 	})
 	return charsets
 }
