@@ -1239,7 +1239,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
 	switch v := inNode.(type) {
-	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
+	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause, *ast.ByItem, *ast.OrderByClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
 	case *ast.AggregateFuncExpr:
 		if eNNR && er.b.analyzingPhase {
@@ -2142,12 +2142,25 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.b.curScope.AddReservedCols(nil, nil, []*expression.Column{column}, []*types.FieldName{name})
 		}
 	}
-	tryFindColumnInScopeProjectedCol := func(scope *ScopeSchema, v *ast.ColumnName) (*expression.Column, *types.FieldName) {
+	tryFindColumnInScopeProjectedCol := func(scope *ScopeSchema, v *ast.ColumnName, checkRefOuterForward bool) (*expression.Column, *types.FieldName) {
 		if !eNNR {
 			return nil, nil
 		}
 		if scope == nil {
 			fmt.Println(1)
+		}
+		if checkRefOuterForward {
+			// step1: try resolve them from **OUTER** select fields first.
+			idxFromOuterFields, err := resolveFromSelectFields(&ast.ColumnNameExpr{Name: v}, scope.selectFields, false)
+			if err != nil {
+				er.err = err
+				return nil, nil
+			}
+			if idxFromOuterFields < 0 {
+				// not in this scope.
+				return nil, nil
+			}
+			// the column must be in this outer scope's select list.
 		}
 		idx, err := expression.FindFieldName(scope.projNames, v)
 		if err != nil {
@@ -2164,6 +2177,22 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			fixInAggFuncMaxLevel(len(er.b.outerScopes))
 			// since the column is found directly from select list, we don't need to register it again.
 			return column, scope.projNames[idx]
+		}
+		if checkRefOuterForward {
+			// we sure it's in this OUTER scope, while we couldn't see it in projection items seen by now.
+			//
+			// The pointer in base_ref_items is nullptr if the column reference
+			// is a reference to itself, such as 'a' in:
+			//
+			// SELECT (SELECT ... WHERE a = 1) AS a ...
+			//
+			// Or if it's a reference to an expression that comes later in the
+			// select list, such as 'b' in:
+			//
+			// SELECT (SELECT ... WHERE b = 1) AS a, (SELECT ...) AS b ...
+			//
+			// Raise an error if such invalid references are encountered.
+			er.err = ErrIllegalReference.GenWithStackByArgs(v.Name.O, "forward reference in item list")
 		}
 		return nil, nil
 	}
@@ -2186,10 +2215,15 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
-	column, name := tryFindColumnInScopeProjectedCol(er.b.curScope, v)
-	if column != nil {
-		er.ctxStackAppend(column, name)
-		return
+	if eNNR {
+		column, name := tryFindColumnInScopeProjectedCol(er.b.curScope, v, false)
+		if er.err != nil {
+			return
+		}
+		if column != nil {
+			er.ctxStackAppend(column, name)
+			return
+		}
 	}
 
 	// **************************** step2: try to find column in outer scope *********************************
@@ -2209,10 +2243,15 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 			return
 		}
-		column, name := tryFindColumnInScopeProjectedCol(er.b.outerScopes[i], v)
-		if column != nil {
-			er.ctxStackAppend(column, name)
-			return
+		if eNNR {
+			column, name := tryFindColumnInScopeProjectedCol(er.b.outerScopes[i], v, true)
+			if er.err != nil {
+				return
+			}
+			if column != nil {
+				er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, name)
+				return
+			}
 		}
 	}
 	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {

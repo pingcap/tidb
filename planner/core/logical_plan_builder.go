@@ -1056,6 +1056,9 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+	if name == nil {
+		fmt.Println(1)
+	}
 	origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
 	if origField.AsName.L == "" {
 		colName = colNameField.Name.Name
@@ -3897,13 +3900,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if eNNR {
 		// analyzing phase.
 		b.analyzingPhase = true
+		b.curScope.selectFields = sel.Fields.Fields
+		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select 1 as a from dual group by a") {
+			fmt.Println(1)
+		}
 		if err = b.analyzeProjectionList(ctx, p, sel.Fields.Fields); err != nil {
 			return nil, err
 		}
 		if err = b.analyzeSelectionList(ctx, p, sel.Where); err != nil {
 			return nil, err
 		}
-		if err = b.analyzeGroupByList(ctx, p, sel.GroupBy); err != nil {
+		if err = b.analyzeGroupByList(ctx, p, sel.GroupBy, sel.Fields.Fields); err != nil {
 			return nil, err
 		}
 		if err = b.analyzeHavingList(ctx, p, sel.Having); err != nil {
