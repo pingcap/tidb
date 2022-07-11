@@ -170,6 +170,9 @@ func (fkc *foreignKeyChecker) addRowNeedToCheck(sc *stmtctx.StatementContext, ro
 }
 
 func (fkc *foreignKeyChecker) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals []types.Datum) (kv.Handle, error) {
+	if len(vals) == 1 && fkc.referTbIdx == nil {
+		return kv.IntHandle(vals[0].GetInt64()), nil
+	}
 	pkDts := make([]types.Datum, 0, len(vals))
 	for i, val := range vals {
 		if fkc.referTbIdx != nil && len(fkc.handleCols) > 0 {

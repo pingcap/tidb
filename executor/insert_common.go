@@ -1092,6 +1092,24 @@ func (e *InsertValues) initForeignKeyChecker() error {
 			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
 		}
 		referTbInfo := referTable.Meta()
+		if referTbInfo.PKIsHandle && len(fk.RefCols) == 1 {
+			refColInfo := model.FindColumnInfo(referTbInfo.Columns, fk.RefCols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				refCol := table.FindCol(referTable.Cols(), refColInfo.Name.O)
+				e.fkChecker = append(e.fkChecker, &foreignKeyChecker{
+					dbName:          e.DBName.L,
+					tbName:          tbInfo.Name.L,
+					fkInfo:          fk,
+					colsOffsets:     colsOffsets,
+					referTable:      referTable,
+					idxIsPrimaryKey: true,
+					idxIsExclusive:  true,
+					handleCols:      []*table.Column{refCol},
+				})
+				continue
+			}
+		}
+
 		referTbIdxInfo := model.FindIndexByColumns(referTbInfo.Indices, fk.RefCols...)
 		if referTbIdxInfo == nil {
 			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -253,9 +254,6 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 type ForeignKeyChecker struct{}
 
-func (c ForeignKeyChecker) updateForeignKey(tbInfo, referTableInfo *model.TableInfo, fkInfo *model.FKInfo) {
-}
-
 func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo, fkInfo *model.FKInfo) error {
 	// check refer columns in paren table.
 	for i := range fkInfo.RefCols {
@@ -265,6 +263,9 @@ func (c ForeignKeyChecker) checkTableForeignKey(referTableInfo *model.TableInfo,
 		}
 		if refCol.IsGenerated() && !refCol.GeneratedStored {
 			return infoschema.ErrForeignKeyCannotUseVirtualColumn.GenWithStackByArgs(fkInfo.Name.O, fkInfo.RefCols[i].O)
+		}
+		if len(fkInfo.RefCols) == 1 && mysql.HasPriKeyFlag(refCol.GetFlag()) && referTableInfo.PKIsHandle {
+			return nil
 		}
 	}
 	// check refer columns should have index.
