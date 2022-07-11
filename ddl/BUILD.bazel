@@ -12,6 +12,7 @@ go_library(
         "ddl_tiflash_api.go",
         "ddl_worker.go",
         "delete_range.go",
+        "delete_range_util.go",
         "foreign_key.go",
         "generated_column.go",
         "index.go",
@@ -105,6 +106,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@io_etcd_go_etcd_client_v3//:client",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
@@ -112,6 +114,7 @@ go_library(
 
 go_test(
     name = "ddl_test",
+    timeout = "short",
     srcs = [
         "attributes_sql_test.go",
         "callback_test.go",

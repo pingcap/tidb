@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -43,15 +45,16 @@ type baseTxnContextProvider struct {
 	sctx                   sessionctx.Context
 	causalConsistencyOnly  bool
 	onInitializeTxnCtx     func(*variable.TransactionContext)
-	onTxnActive            func(kv.Transaction)
+	onTxnActive            func(kv.Transaction, sessiontxn.EnterNewTxnType)
 	getStmtReadTSFunc      func() (uint64, error)
 	getStmtForUpdateTSFunc func() (uint64, error)
 
 	// Runtime states
-	ctx           context.Context
-	infoSchema    infoschema.InfoSchema
-	txn           kv.Transaction
-	isTxnPrepared bool
+	ctx             context.Context
+	infoSchema      infoschema.InfoSchema
+	txn             kv.Transaction
+	isTxnPrepared   bool
+	enterNewTxnType sessiontxn.EnterNewTxnType
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -60,16 +63,31 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.New("ts functions should not be nil")
 	}
 
+	p.ctx = ctx
 	sessVars := p.sctx.GetSessionVars()
 	activeNow := true
 	switch tp {
 	case sessiontxn.EnterNewTxnDefault:
-		if err = p.sctx.NewTxn(ctx); err != nil {
+		// As we will enter a new txn, we need to commit the old txn if it's still valid.
+		// There are two main steps here to enter a new txn:
+		// 1. prepareTxnWithOracleTS
+		// 2. ActivateTxn
+		if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+			return err
+		}
+		if err := p.prepareTxnWithOracleTS(); err != nil {
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
 		if !sessiontxn.CanReuseTxnWhenExplicitBegin(p.sctx) {
-			if err = p.sctx.NewTxn(ctx); err != nil {
+			// As we will enter a new txn, we need to commit the old txn if it's still valid.
+			// There are two main steps here to enter a new txn:
+			// 1. prepareTxnWithOracleTS
+			// 2. ActivateTxn
+			if err := sessiontxn.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
+				return err
+			}
+			if err := p.prepareTxnWithOracleTS(); err != nil {
 				return err
 			}
 		}
@@ -80,11 +98,8 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
-	p.ctx = ctx
-	// For normal `sessionctx.Context` the `GetDomainInfoSchema` should always return a non-nil value with type `infoschema.InfoSchema`
-	// However for some test cases we are using `mock.Context` which will return nil for this method,
-	// so we use `p.infoSchema, _ = ...` to avoid panic in test cases
-	p.infoSchema, _ = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	p.enterNewTxnType = tp
+	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -102,14 +117,15 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	if err != nil {
 		return err
 	}
-	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTSFuture() != nil
+	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		_, err = p.activateTxn()
+		_, err = p.ActivateTxn()
 	}
 
 	return err
 }
 
+// GetTxnInfoSchema returns the information schema used by txn
 func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
 		return is.(infoschema.InfoSchema)
@@ -117,8 +133,30 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.infoSchema
 }
 
+// GetTxnScope returns the current txn scope
+func (p *baseTxnContextProvider) GetTxnScope() string {
+	return p.sctx.GetSessionVars().TxnCtx.TxnScope
+}
+
+// GetReadReplicaScope returns the read replica scope
+func (p *baseTxnContextProvider) GetReadReplicaScope() string {
+	if txnScope := p.GetTxnScope(); txnScope != kv.GlobalTxnScope && txnScope != "" {
+		// In local txn, we should use txnScope as the readReplicaScope
+		return txnScope
+	}
+
+	if p.sctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
+		// If closest read is set, we should use the scope where instance located.
+		return config.GetTxnScopeFromConfig()
+	}
+
+	// When it is not local txn or closet read, we should use global scope
+	return kv.GlobalReplicaScope
+}
+
+//GetStmtReadTS returns the read timestamp used by select statement (not for select ... for update)
 func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
-	if _, err := p.activateTxn(); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -128,8 +166,9 @@ func (p *baseTxnContextProvider) GetStmtReadTS() (uint64, error) {
 	return p.getStmtReadTSFunc()
 }
 
+// GetStmtForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
-	if _, err := p.activateTxn(); err != nil {
+	if _, err := p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -139,16 +178,19 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 	return p.getStmtForUpdateTSFunc()
 }
 
+// OnStmtStart is the hook that should be called when a new statement started
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
 	return nil
 }
 
+// OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
 	return nil
 }
 
+// OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
 	switch point {
 	case sessiontxn.StmtErrAfterPessimisticLock:
@@ -160,14 +202,15 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 }
 
 func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
-	txn, err := p.activateTxn()
+	txn, err := p.ActivateTxn()
 	if err != nil {
 		return 0, err
 	}
 	return txn.StartTS(), nil
 }
 
-func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
+// ActivateTxn activates the transaction and set the relevant context variables.
+func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
 		return p.txn, nil
 	}
@@ -176,7 +219,8 @@ func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	txn, err := p.sctx.Txn(true)
+	txnFuture := p.sctx.GetPreparedTxnFuture()
+	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -184,18 +228,46 @@ func (p *baseTxnContextProvider) activateTxn() (kv.Transaction, error) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 
+	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
+		sessVars.SetInTxn(true)
+	}
+
+	txn.SetVars(sessVars.KVVars)
+
+	readReplicaType := sessVars.GetReplicaRead()
+	if readReplicaType.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, readReplicaType)
+	}
+	txn.SetOption(kv.SnapInterceptor, temptable.SessionSnapshotInterceptor(p.sctx))
+
+	if sessVars.StmtCtx.WeakConsistency {
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+	}
+
+	sessiontxn.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
+
 	if p.causalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
 	if p.onTxnActive != nil {
-		p.onTxnActive(txn)
+		p.onTxnActive(txn, p.enterNewTxnType)
+	}
+
+	if p.sctx.GetSessionVars().InRestrictedSQL {
+		txn.SetOption(kv.RequestSourceInternal, true)
+	}
+
+	if tp := p.sctx.GetSessionVars().RequestSourceType; tp != "" {
+		txn.SetOption(kv.RequestSourceType, tp)
 	}
 
 	p.txn = txn
 	return txn, nil
 }
 
+// prepareTxn prepares txn with an oracle ts future. If the snapshotTS is set,
+// the txn is prepared with it.
 func (p *baseTxnContextProvider) prepareTxn() error {
 	if p.isTxnPrepared {
 		return nil
@@ -203,6 +275,18 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return p.prepareTxnWithTS(snapshotTS)
+	}
+
+	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	return p.replaceTxnTsFuture(future)
+}
+
+// prepareTxnWithOracleTS
+// The difference between prepareTxnWithOracleTS and prepareTxn is that prepareTxnWithOracleTS
+// does not consider snapshotTS
+func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
+	if p.isTxnPrepared {
+		return nil
 	}
 
 	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
@@ -255,4 +339,48 @@ func (p *baseTxnContextProvider) AdviseWarmup() error {
 // AdviseOptimizeWithPlan providers optimization according to the plan
 func (p *baseTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
 	return nil
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
+func (p *baseTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	ts, err := p.GetStmtReadTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
+func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	ts, err := p.GetStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+
+	return p.getSnapshotByTS(ts)
+}
+
+// getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related
+// options before return
+func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot, error) {
+	txn, err := p.sctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+		return txn.GetSnapshot(), nil
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	snapshot := sessiontxn.GetSnapshotWithTS(p.sctx, snapshotTS)
+
+	replicaReadType := sessVars.GetReplicaRead()
+	if replicaReadType.IsFollowerRead() && !sessVars.StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	}
+
+	return snapshot, nil
 }

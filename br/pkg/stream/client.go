@@ -10,15 +10,48 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
-
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
+
+// Checkpoint is the polymorphic checkpoint type.
+// The `ID` and `Version` implies the type of this checkpoint:
+// When ID == 0 and Version == 0, it is the task start ts.
+// When ID != 0 and Version == 0, it is the store level checkpoint.
+// When ID != 0 and Version != 0, it is the region level checkpoint.
+type Checkpoint struct {
+	ID      uint64 `json:"id,omitempty"`
+	Version uint64 `json:"epoch_version,omitempty"`
+	TS      uint64 `json:"ts"`
+}
+
+type CheckpointType int
+
+const (
+	CheckpointTypeStore CheckpointType = iota
+	CheckpointTypeRegion
+	CheckpointTypeTask
+	CheckpointTypeInvalid
+)
+
+// Type returns the type(provider) of the checkpoint.
+func (cp Checkpoint) Type() CheckpointType {
+	switch {
+	case cp.ID == 0 && cp.Version == 0:
+		return CheckpointTypeTask
+	case cp.ID != 0 && cp.Version == 0:
+		return CheckpointTypeStore
+	case cp.ID != 0 && cp.Version != 0:
+		return CheckpointTypeRegion
+	default:
+		return CheckpointTypeInvalid
+	}
+}
 
 // MetaDataClient is the client for operations over metadata.
 type MetaDataClient struct {
@@ -27,6 +60,61 @@ type MetaDataClient struct {
 
 func NewMetaDataClient(c *clientv3.Client) *MetaDataClient {
 	return &MetaDataClient{c}
+}
+
+// ParseCheckpoint parses the checkpoint from a key & value pair.
+func ParseCheckpoint(task string, key, value []byte) (Checkpoint, error) {
+	pfx := []byte(CheckPointsOf(task))
+	if !bytes.HasPrefix(key, pfx) {
+		return Checkpoint{}, errors.Annotatef(berrors.ErrInvalidArgument, "the prefix is wrong for key: %s", key)
+	}
+	key = bytes.TrimPrefix(key, pfx)
+	segs := bytes.Split(key, []byte("/"))
+	var checkpoint Checkpoint
+	switch string(segs[0]) {
+	case "store":
+		if len(segs) != 2 {
+			return checkpoint, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"the store checkpoint seg mismatch; segs = %v", segs)
+		}
+		id, err := strconv.ParseUint(string(segs[1]), 10, 64)
+		if err != nil {
+			return checkpoint, err
+		}
+		checkpoint.ID = id
+	case "region":
+		if len(segs) != 3 {
+			return checkpoint, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"the region checkpoint seg mismatch; segs = %v", segs)
+		}
+		id, err := strconv.ParseUint(string(segs[1]), 10, 64)
+		if err != nil {
+			return checkpoint, err
+		}
+		version, err := strconv.ParseUint(string(segs[2]), 10, 64)
+		if err != nil {
+			return checkpoint, err
+		}
+		checkpoint.ID = id
+		checkpoint.Version = version
+	default:
+		if len(key) != 8 {
+			return checkpoint, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"the store id isn't 64bits (it is %d bytes, value = %s)",
+				len(key),
+				redact.Key(key))
+		}
+		id := binary.BigEndian.Uint64(key)
+		checkpoint.ID = id
+	}
+	if len(value) != 8 {
+		return checkpoint, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+			"the checkpoint value isn't 64bits (it is %d bytes, value = %s)",
+			len(segs[0]),
+			redact.Key(segs[0]))
+	}
+	checkpoint.TS = binary.BigEndian.Uint64(value)
+	return checkpoint, nil
 }
 
 // PutTask put a task to the metadata storage.
@@ -218,8 +306,8 @@ func (t *Task) Ranges(ctx context.Context) (Ranges, error) {
 }
 
 // NextBackupTSList lists the backup ts of each store.
-func (t *Task) NextBackupTSList(ctx context.Context) (map[uint64]uint64, error) {
-	result := map[uint64]uint64{}
+func (t *Task) NextBackupTSList(ctx context.Context) ([]Checkpoint, error) {
+	cps := make([]Checkpoint, 0)
 	prefix := CheckPointsOf(t.Info.Name)
 	scanner := scanEtcdPrefix(t.cli.Client, prefix)
 	kvs, err := scanner.AllPages(ctx, 1024)
@@ -227,25 +315,13 @@ func (t *Task) NextBackupTSList(ctx context.Context) (map[uint64]uint64, error) 
 		return nil, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
 	}
 	for _, kv := range kvs {
-		if len(kv.Value) != 8 {
-			return nil, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
-				"the next backup ts isn't 64bits (it is %d bytes, value = %s)",
-				len(kv.Value),
-				redact.Key(kv.Value))
+		cp, err := ParseCheckpoint(t.Info.Name, kv.Key, kv.Value)
+		if err != nil {
+			return cps, err
 		}
-		nextBackupTS := binary.BigEndian.Uint64(kv.Value)
-
-		storeIDBinary := bytes.TrimPrefix(kv.Key, []byte(prefix))
-		if len(storeIDBinary) != 8 {
-			return nil, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
-				"the store id isn't 64bits (it is %d bytes, value = %s)",
-				len(storeIDBinary),
-				redact.Key(storeIDBinary))
-		}
-		storeID := binary.BigEndian.Uint64(storeIDBinary)
-		result[storeID] = nextBackupTS
+		cps = append(cps, cp)
 	}
-	return result, nil
+	return cps, nil
 }
 
 // MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
@@ -279,10 +355,10 @@ func (t *Task) GetGlobalCheckPointTS(ctx context.Context) (uint64, error) {
 
 	initialized := false
 	checkpoint := t.Info.StartTs
-	for _, ts := range checkPointMap {
-		if !initialized || ts < checkpoint {
+	for _, cp := range checkPointMap {
+		if !initialized || cp.TS < checkpoint {
 			initialized = true
-			checkpoint = ts
+			checkpoint = cp.TS
 		}
 	}
 

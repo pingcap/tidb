@@ -125,7 +125,7 @@ func cmdList(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -203,7 +203,7 @@ func cmdRun(args ...string) bool {
 		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
-				fmt.Println("check test binary existance error", err)
+				fmt.Println("check test binary existence error", err)
 				return false
 			}
 			if !exist {
@@ -229,7 +229,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 
@@ -254,7 +254,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -353,6 +353,7 @@ func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
 	if err != nil {
 		return nil, withTrace(err)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	ret := make(map[string]struct{})
@@ -482,6 +483,7 @@ func collectCoverProfileFile() {
 		fmt.Println("create cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
@@ -519,6 +521,7 @@ func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEnt
 		fmt.Println("open temp cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	profs, err := cover.ParseProfilesFromReader(f)
@@ -812,9 +815,9 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 		// it takes a longer when race is enabled. so it is set more timeout value.
 		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
-	// session.test -test.run TestClusteredPrefixColum
-	args = append(args, "-test.run", fn)
 
+	// session.test -test.run TestClusteredPrefixColum
+	args = append(args, "-test.run", "^"+fn+"$")
 	return exec.Command(exe, args...)
 }
 

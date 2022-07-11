@@ -11,10 +11,14 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//infoschema",
+        "//kv",
         "//parser/ast",
         "//sessionctx",
+        "//sessionctx/variable",
+        "//table/temptable",
         "//util/stringutil",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_tikv_client_go_v2//oracle",
     ],
 )

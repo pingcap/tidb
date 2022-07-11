@@ -16,6 +16,3 @@ package config
 
 // DefRowsForSampleRate is default sample rows used to calculate samplerate.
 const DefRowsForSampleRate = 110000
-
-// TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
-const TrackMemWhenExceeds = 104857600 // 100MB
