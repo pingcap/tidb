@@ -105,7 +105,7 @@ func (alloc *inMemoryAllocator) ForceRebase(requiredBase int64) error {
 	return nil
 }
 
-func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (min int64, base int64, err error) {
+func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		alloc.base = offset - 1
