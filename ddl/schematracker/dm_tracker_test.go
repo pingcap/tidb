@@ -66,3 +66,17 @@ func TestCreateTableNoNumLimit(t *testing.T) {
 	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 }
+
+func TestCreateTableLongIndex(t *testing.T) {
+	sql := "create table test.t (c1 int, c2 blob, c3 varchar(64), index idx_c2(c2(555555)));"
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	tracker := NewSchemaTracker(2)
+	tracker.createTestDB()
+	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+}

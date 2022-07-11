@@ -75,6 +75,20 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	dbInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).SchemaByName(dbName)
 	dbInfo2 := d.tracker.SchemaByName(dbName)
 
+	if dbInfo == nil || dbInfo2 == nil {
+		if dbInfo == nil && dbInfo2 == nil {
+			return
+		}
+		if dbInfo == nil {
+			errStr := fmt.Sprintf("%s should not exist", dbName)
+			panic(errStr)
+		}
+		if dbInfo2 == nil {
+			errStr := fmt.Sprintf("%s should exist", dbName)
+			panic(errStr)
+		}
+	}
+
 	result := bytes.NewBuffer(make([]byte, 0, 512))
 	err := executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo, false, result)
 	if err != nil {
@@ -99,13 +113,24 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 	}
 
 	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
-	tableInfo2, err := d.tracker.TableByName(dbName, tableName)
-	if err != nil {
-		panic(err)
+	tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
+
+	if tableInfo == nil || tableInfo2 == nil {
+		if tableInfo == nil && tableInfo2 == nil {
+			return
+		}
+		if tableInfo == nil {
+			errStr := fmt.Sprintf("%s.%s should not exist", dbName, tableName)
+			panic(errStr)
+		}
+		if tableInfo2 == nil {
+			errStr := fmt.Sprintf("%s.%s should exist", dbName, tableName)
+			panic(errStr)
+		}
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
+	err := executor.ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
 	if err != nil {
 		panic(err)
 	}
@@ -162,6 +187,8 @@ func (d Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) 
 	if err != nil {
 		panic(err)
 	}
+
+	d.checkDBInfo(ctx, stmt.Name)
 	return nil
 }
 
@@ -201,14 +228,12 @@ func (d Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) er
 // DropTable implements the DDL interface.
 func (d Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	err = d.realDDL.DropTable(ctx, stmt)
-	if err != nil {
-		return err
+	_ = d.tracker.DropTable(ctx, stmt)
+
+	for _, tableName := range stmt.Tables {
+		d.checkTableInfo(ctx, tableName.Schema, tableName.Name)
 	}
-	err = d.tracker.DropTable(ctx, stmt)
-	if err != nil {
-		panic(err)
-	}
-	return nil
+	return err
 }
 
 // RecoverTable implements the DDL interface.
@@ -226,6 +251,10 @@ func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err 
 	err = d.tracker.DropView(ctx, stmt)
 	if err != nil {
 		panic(err)
+	}
+
+	for _, tableName := range stmt.Tables {
+		d.checkTableInfo(ctx, tableName.Schema, tableName.Name)
 	}
 	return nil
 }
@@ -271,22 +300,9 @@ func (d Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) 
 		panic(err)
 	}
 
-	check := func(dbName, tableName model.CIStr) {
-		tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
-		if tableInfo == nil {
-			tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
-			if tableInfo2 != nil {
-				errStr := fmt.Sprintf("%s.%s should not exist", dbName, tableName)
-				panic(errStr)
-			}
-		} else {
-			d.checkTableInfo(ctx, dbName, tableName)
-		}
-	}
-
 	for _, tableName := range stmt.TableToTables {
-		check(tableName.OldTable.Schema, tableName.OldTable.Name)
-		check(tableName.NewTable.Schema, tableName.NewTable.Name)
+		d.checkTableInfo(ctx, tableName.OldTable.Schema, tableName.OldTable.Name)
+		d.checkTableInfo(ctx, tableName.NewTable.Schema, tableName.NewTable.Name)
 	}
 	return nil
 }

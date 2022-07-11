@@ -169,6 +169,9 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
+	// suppress ErrTooLongKey
+	ctx.GetSessionVars().StrictSQLMode = false
+
 	var (
 		referTbl *model.TableInfo
 		err      error
@@ -281,6 +284,9 @@ func (d SchemaTracker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt
 			continue
 		}
 
+		// Without IF EXISTS, the statement drops all named tables that do exist, and returns an error indicating which
+		// nonexisting tables it was unable to drop.
+		// https://dev.mysql.com/doc/refman/5.7/en/drop-table.html
 		_ = d.DeleteTable(name.Schema, name.Name)
 	}
 

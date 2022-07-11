@@ -333,7 +333,7 @@ func TestCreateTableWithIntegerColWithDefault(t *testing.T) {
 	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)
 	ddlChecker.CreateTestDB()
-	
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// It's for failure cases.
@@ -928,4 +928,42 @@ func TestAddColumn2(t *testing.T) {
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+}
+
+func TestDropTables(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+
+	failedSQL := "drop table t1;"
+	tk.MustGetErrCode(failedSQL, errno.ErrBadTable)
+	failedSQL = "drop table test2.t1;"
+	tk.MustGetErrCode(failedSQL, errno.ErrBadTable)
+
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("drop table if exists t1, t2;")
+
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("drop table if exists t2, t1;")
+
+	// Without IF EXISTS, the statement drops all named tables that do exist, and returns an error indicating which
+	// nonexisting tables it was unable to drop.
+	// https://dev.mysql.com/doc/refman/5.7/en/drop-table.html
+	tk.MustExec("create table t1 (a int);")
+	failedSQL = "drop table t1, t2;"
+	tk.MustGetErrCode(failedSQL, errno.ErrBadTable)
+
+	tk.MustExec("create table t1 (a int);")
+	failedSQL = "drop table t2, t1;"
+	tk.MustGetErrCode(failedSQL, errno.ErrBadTable)
+
+	failedSQL = "show create table t1;"
+	tk.MustGetErrCode(failedSQL, errno.ErrNoSuchTable)
 }
