@@ -203,18 +203,10 @@ On Child Table Insert Or Update, need to Find FK column value whether exist in P
 1. Get parent table info by table name.
 2. Get related fk index of parent table.
 3. tiny optimize, check fk column value exist in parent table cache(map[string(index_key)]struct).
-3. Get related row in parent, there are a few different implementations, I prefer option-c.
-- option-a. use SQL string and use `ExecRestrictedSQL` API to check row exist.
-    - drawback:
-        - Need convert `Datum` to string when construct query SQL string. is there any risk？
-        - In bulk-insert/update situation, the construct SQL string maybe very huge, may have some risk.
-        - performance is bad.
-- option-b. manual construct a index reader to check.
-    - drawback:
-        - there is some complexity, but acceptable?
-- option-c. Construct index key and then use snapshot `Iter` and `Seek` API to scan.
-    - `Iter` default scan batch size is 256, need to set 1.
-    - Need manual decode index key by index schema.
+3. Get related row in parent.
+  - Construct index key and then use snapshot `Iter` and `Seek` API to scan. If the index is unique and only contain
+    foreign key columns, use snapshot `Get` API.
+    - `Iter` default scan batch size is 256, need to set 2 to avoid read unnecessary data.
 4. compact column value to make sure exist.
 5. put column value into parent fk column value cache.
 
