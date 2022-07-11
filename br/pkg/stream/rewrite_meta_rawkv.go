@@ -440,9 +440,8 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string, insertDeleteRan
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
 				log.Debug("failed to decode the job", zap.String("error", err.Error()), zap.String("job", string(e.Value)))
-				// some mddlJob kv's value is not json data, suck as
-				// [value="P\ufffd\ufffd\ufffd\ufffd\ufffd\ufffdǃ\u0006"]
-				// skip it
+				// The value in write-cf is like "p\XXXX\XXX" need not restore. skip it
+				// The valud in default-cf that can Decode() need restore.
 				return nil, nil
 			}
 			if jobNeedGC(job) {
