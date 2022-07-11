@@ -7,17 +7,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -179,7 +178,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 	if err != nil {
 		return nil, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
-	needAutoID := common.TableHasAutoRowID(m.tr.tableInfo.Core) || m.tr.tableInfo.Core.GetAutoIncrementColInfo() != nil || m.tr.tableInfo.Core.ContainsAutoRandomBits()
+
+	needAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
 	err = exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
 			ctx,
@@ -244,44 +244,21 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 
 		// no enough info are available, fetch row_id max for table
 		if curStatus == metaStatusInitial {
-			if needAutoID && maxRowIDMax == 0 {
-				// NOTE: currently, if a table contains auto_incremental unique key and _tidb_rowid,
-				// the `show table next_row_id` will returns the unique key field only.
-				var autoIDField string
-				for _, col := range m.tr.tableInfo.Core.Columns {
-					if mysql.HasAutoIncrementFlag(col.GetFlag()) {
-						autoIDField = col.Name.L
-						break
-					} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
-						autoIDField = col.Name.L
-						break
-					}
+			if needAutoID {
+				// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
+				if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
+					return errors.Trace(err)
 				}
-				if len(autoIDField) == 0 && common.TableHasAutoRowID(m.tr.tableInfo.Core) {
-					autoIDField = model.ExtraHandleName.L
-				}
-				if len(autoIDField) == 0 {
-					return common.ErrAllocTableRowIDs.GenWithStack("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
-				}
-
-				autoIDInfos, err := tidb.FetchTableAutoIDInfos(ctx, tx, m.tr.tableName)
+				newRowIDBase, newRowIDMax, err = allocGlobalAutoID(ctx, rawRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				found := false
-				for _, info := range autoIDInfos {
-					if strings.ToLower(info.Column) == autoIDField {
-						maxRowIDMax = info.NextID - 1
-						found = true
-						break
-					}
-				}
-				if !found {
-					return common.ErrAllocTableRowIDs.GenWithStack("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
-				}
+			} else {
+				// Though we don't need auto ID, we still guarantee that the row ID is unique across all lightning instances.
+				newRowIDBase = maxRowIDMax
+				newRowIDMax = newRowIDBase + rawRowIDMax
 			}
-			newRowIDBase = maxRowIDMax
-			newRowIDMax = newRowIDBase + rawRowIDMax
+
 			// table contains no data, can skip checksum
 			if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
 				newStatus = metaStatusRestoreStarted
@@ -1152,4 +1129,52 @@ func (m *singleTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
 }
 
 func (m *singleTaskMetaMgr) Close() {
+}
+
+func allocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
+	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+	if err != nil {
+		return 0, 0, err
+	}
+	return alloc.Alloc(ctx, uint64(n), 1, 1)
+}
+
+func rebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) error {
+	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+	if err != nil {
+		return err
+	}
+	return alloc.Rebase(ctx, newBase, false)
+}
+
+func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoid.Allocator, error) {
+	if store == nil {
+		return nil, errors.New("internal error: kv store should not be nil")
+	}
+	if dbID == 0 {
+		return nil, errors.New("internal error: dbID should not be 0")
+	}
+
+	// We don't need the cache here because we allocate all IDs at once.
+	// The argument for CustomAutoIncCacheOption is the cache step. step 1 means no cache.
+	noCache := autoid.CustomAutoIncCacheOption(1)
+	tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
+
+	hasRowID := common.TableHasAutoRowID(tblInfo)
+	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
+
+	// Current TiDB has some limitations for auto ID.
+	// 1. Auto increment ID and auto row ID are using the same RowID allocator. See https://github.com/pingcap/tidb/issues/982.
+	// 2. Auto random column must be a clustered primary key. That is to say, there is no implicit row ID for tables with auto random column.
+	// 3. There is at most one auto column in a table.
+	// Therefore, we assume there is only one auto column in a table and use RowID allocator if possible.
+	switch {
+	case hasRowID || hasAutoIncID:
+		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, noCache, tblVer), nil
+	case hasAutoRandID:
+		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, noCache, tblVer), nil
+	default:
+		return nil, errors.Errorf("internal error: table %s has no auto ID", tblInfo.Name)
+	}
 }
