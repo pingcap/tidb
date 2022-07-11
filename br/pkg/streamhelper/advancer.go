@@ -191,7 +191,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 	defer utils.PanicToErr(&err)
 
 	ranges := CollapseRanges(len(rst.Ranges), func(i int) kv.KeyRange { return rst.Ranges[i] })
-	workers := utils.NewWorkerPool(4, "subranges")
+	workers := utils.NewWorkerPool(4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
 	collector.setOnSuccessHook(c.cache.InsertRange)
