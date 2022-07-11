@@ -1649,6 +1649,11 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 	return odValue, nil
 }
 
+// FindColumnIndexCols finds column in index
+func FindColumnIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
+	return findColumnInIndexCols(c, cols)
+}
+
 func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
 	for _, c1 := range cols {
 		if c == c1.Name.L {
