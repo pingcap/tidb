@@ -756,9 +756,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.RUnlock()
 		}
 
-		//d.mu.RLock()
-		//d.mu.hook.OnJobUpdated(job)
-		//d.mu.RUnlock()
+		d.mu.RLock()
+		d.mu.hook.OnJobUpdated(job)
+		d.mu.RUnlock()
 
 		if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 			asyncNotify(d.ddlJobDoneCh)
