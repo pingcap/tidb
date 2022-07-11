@@ -85,7 +85,7 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 	}
 }
 
-// Decrypt decrypts the content of MetaFile.
+// Decrypt decrypts the content according to CipherInfo and IV.
 func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
 	if len(content) == 0 || cipher == nil {
 		return content, nil
