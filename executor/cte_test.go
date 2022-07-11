@@ -17,7 +17,6 @@ package executor_test
 import (
 	"fmt"
 	"math/rand"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestBasicCTE(t *testing.T) {
@@ -403,7 +403,7 @@ func TestSpillToDisk(t *testing.T) {
 	require.Greater(t, memTracker.MaxConsumed(), int64(0))
 	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
 
-	sort.Ints(vals)
+	slices.Sort(vals)
 	resRows := make([]string, 0, rowNum)
 	for i := vals[0]; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
