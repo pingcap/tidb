@@ -1928,9 +1928,6 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	policy1, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	require.True(t, ok)
 
-	policy2, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
-	require.True(t, ok)
-
 	tk.MustExec(`CREATE TABLE t1 (id INT) placement policy p1`)
 	defer tk.MustExec("drop table t1")
 
@@ -1941,12 +1938,8 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	require.NoError(t, err)
 	t1ID := t1.Meta().ID
 
-	t2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-	t2ID := t2.Meta().ID
-
 	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p3 PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100),
+        PARTITION p0 VALUES LESS THAN (100) placement policy p1,
         PARTITION p1 VALUES LESS THAN (1000) placement policy p2,
         PARTITION p2 VALUES LESS THAN (10000)
 	);`)
@@ -1956,7 +1949,6 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	require.NoError(t, err)
 	tpID := tp.Meta().ID
 	par0ID := tp.Meta().Partition.Definitions[0].ID
-	par1ID := tp.Meta().Partition.Definitions[1].ID
 
 	// exchange par0, t1
 	tk.MustExec("alter table tp exchange partition p0 with table t1")
@@ -1969,14 +1961,14 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	tp, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	require.NoError(t, err)
 	require.Equal(t, tpID, tp.Meta().ID)
 	require.Equal(t, t1ID, tp.Meta().Partition.Definitions[0].ID)
-	require.Nil(t, tp.Meta().Partition.Definitions[0].PlacementPolicyRef)
+	require.NotNil(t, tp.Meta().Partition.Definitions[0].PlacementPolicyRef)
 	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, par0ID, t1.Meta().ID)
@@ -1984,54 +1976,10 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	checkExistTableBundlesInPD(t, dom, "test", "tp")
 
 	// exchange par0, t2
-	tk.MustExec("alter table tp exchange partition p0 with table t2")
-	tk.MustQuery("show create table t2").Check(testkit.Rows("" +
-		"t2 CREATE TABLE `t2` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000))"))
-	tp, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
-	require.NoError(t, err)
-	require.Equal(t, tpID, tp.Meta().ID)
-	require.Equal(t, t2ID, tp.Meta().Partition.Definitions[0].ID)
-	require.Nil(t, tp.Meta().Partition.Definitions[0].PlacementPolicyRef)
-	t2, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-	require.Equal(t, t1ID, t2.Meta().ID)
-	require.Nil(t, t2.Meta().PlacementPolicyRef)
-	checkExistTableBundlesInPD(t, dom, "test", "tp")
+	tk.MustGetErrCode("alter table tp exchange partition p0 with table t2", mysql.ErrPlacementPolicyNotEqual)
 
-	// exchange par1, t1
-	tk.MustExec("alter table tp exchange partition p1 with table t1")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
-		"t1 CREATE TABLE `t1` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000))"))
-	tp, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
-	require.NoError(t, err)
-	require.Equal(t, tpID, tp.Meta().ID)
-	require.Equal(t, par0ID, tp.Meta().Partition.Definitions[1].ID)
-	require.Equal(t, policy2.ID, tp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID)
-	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
-	require.Equal(t, par1ID, t1.Meta().ID)
-	require.Equal(t, policy1.ID, t1.Meta().PlacementPolicyRef.ID)
-	checkExistTableBundlesInPD(t, dom, "test", "tp")
+	// exchange par1, t2
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t2", mysql.ErrPlacementPolicyNotEqual)
 }
 
 func TestPDFail(t *testing.T) {

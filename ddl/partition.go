@@ -1489,7 +1489,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	placementPolicyEqual := checkExchangePartitionPlacementPolicy(t, pt.PlacementPolicyRef, nt.PlacementPolicyRef)
+	placementPolicyEqual, err := checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
 	if !placementPolicyEqual {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1655,22 +1655,22 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	return nil
 }
 
-func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) bool {
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) (bool, error) {
 	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
-		return true
+		return true, nil
 	}
 	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
-		return false
+		return false, dbterror.ErrPlacementPolicyNotEqual
 	}
 
 	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
 	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
 
 	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
-		return true
+		return true, nil
 	}
 	if ntPlacementPolicyInfo == nil || ptPlacementPolicyInfo == nil {
-		return false
+		return false, dbterror.ErrPlacementPolicyNotEqual
 	}
 
 	ptSetting, ntSetting := ntPlacementPolicyInfo.PlacementSettings, ptPlacementPolicyInfo.PlacementSettings
@@ -1680,10 +1680,10 @@ func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *m
 		ptSetting.Schedule != ntSetting.Schedule || ptSetting.Constraints != ntSetting.Constraints ||
 		ptSetting.LeaderConstraints != ntSetting.LeaderConstraints || ptSetting.LearnerConstraints != ntSetting.LearnerConstraints ||
 		ptSetting.FollowerConstraints != ntSetting.FollowerConstraints || ptSetting.VoterConstraints != ntSetting.VoterConstraints {
-		return false
+		return false, dbterror.ErrPlacementPolicyNotEqual
 	}
 
-	return true
+	return true, nil
 }
 
 func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
