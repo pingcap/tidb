@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -34,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -417,4 +420,78 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 		result := tk.MustQuery("select t1.* from tnormal t1, tnormal t2 use index(a) where t1.a=t2.b and " + cond).Sort().Rows()
 		tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ t1.* from t t1, t t2 use index(a) where t1.a=t2.b and " + cond).Sort().Check(result)
 	}
+}
+
+func TestAdaptiveClosestRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.Nil(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+
+	checkMetrics := func(q string, hit, miss int) {
+		beforeHit := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("hit"))
+		beforeMiss := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("miss"))
+		tk.MustQuery(q)
+		afterHit := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("hit"))
+		afterMiss := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("miss"))
+		require.Equal(t, hit, int(afterHit-beforeHit), "exec query '%s' check hit failed", q)
+		require.Equal(t, miss, int(afterMiss-beforeMiss), "exec query '%s' check miss failed", q)
+	}
+
+	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16));")
+	// TODO: unistore does not implement region split, this is just a noop.
+	tk.MustExec("split table t by (3);")
+	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003');")
+	tk.MustExec("analyze table t;")
+
+	tk.MustExec("set tidb_replica_read = 'closest-adaptive';")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 25;")
+
+	// table reader
+	// estimate cost is 19
+	checkMetrics("select s from t where id >= 1 and id < 2;", 0, 1)
+	// estimate cost is 37
+	checkMetrics("select * from t where id >= 1 and id < 2;", 1, 0)
+	// estimate cost is 74
+	checkMetrics("select * from t where id >= 1 and id <= 2;", 1, 0)
+	// FIXME: there is only 1 region in unistore, can't test multi region read here.
+	// checkMetrics("select * from t where id >= 2 and id < 4;", counter.WithLabelValues("miss"), 2)
+
+	// index reader
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, s varchar(8), p varchar(8), key `idx_s_p`(`s`, `p`));")
+	tk.MustExec("insert into t values (1, 'test1000', '11111111'), (2, 'test2000', '11111111');")
+	tk.MustExec("analyze table t;")
+	// avg row size = 27.91
+	checkMetrics("select p from t where s >= 'test' and s < 'test11'", 0, 1)
+	checkMetrics("select p from t where s >= 'test' and s < 'test22'", 1, 0)
+
+	// index lookup reader
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, s varchar(8), p varchar(50), key `idx_s`(`s`));")
+	str := "this_is_a_string_with_length_of_50________________"
+	tk.MustExec(fmt.Sprintf("insert into t values (1, 'test1000', '%s'), (2, 'test2000', '%s');", str, str))
+	tk.MustExec("analyze table t;")
+	// IndexReader cost is 22, TableReader cost is 67
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 10;")
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 2, 0)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 1, 1)
+
+	// index merge reader
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, v bigint, s1 varchar(8), s2 varchar(8), key `idx_v_s1`(`s1`, `v`), key `idx_s2`(`s2`));")
+	tk.MustExec("insert into t values (1, 1,  'tests101', 'tests201'), (2, 2, 'tests102', 'tests202'), (3, 3, 'tests103', 'tests203');")
+	// TODO: why after analyze table, the query hint does not take effect.
+	//tk.MustExec("analyze table t;")
+	checkMetrics("select/* +USE_INDEX_MERGE(t) */  * from t where (s1 < 'tests102' and v < 2) or s2 = 'tests203';", 2, 2)
 }
