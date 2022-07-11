@@ -105,7 +105,7 @@ func (t zapStreamBackupTaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) err
 	return nil
 }
 
-// StreamBackupTaskInfo make the zap fields for a stream backup task info.
+// StreamBackupTaskInfo makes the zap fields for a stream backup task info.
 func StreamBackupTaskInfo(t *backuppb.StreamBackupTaskInfo) zap.Field {
 	return zap.Object("streamTaskInfo", zapStreamBackupTaskInfo{t})
 }
