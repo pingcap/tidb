@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/tikvutil"
 	"github.com/pingcap/tidb/util/tls"
@@ -1673,6 +1674,10 @@ var defaultSysVars = []*SysVar{
 			metrics.ToggleSimplifiedMode(TiDBOptOn(s))
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMinPagingSize, Value: strconv.Itoa(DefMinPagingSize), Type: TypeUnsigned, MinValue: 1, MaxValue: paging.MaxPagingSize, SetSession: func(s *SessionVars, val string) error {
+		s.MinPagingSize = tidbOptPositiveInt32(val, DefMinPagingSize)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

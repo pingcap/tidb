@@ -221,7 +221,7 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagin
 			if pagingSize > 0 {
 				totalRows += uint64(chk.NumRows())
 				if totalRows > pagingSize {
-					break
+					return
 				}
 			}
 		default:

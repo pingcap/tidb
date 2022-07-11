@@ -19,7 +19,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"regexp"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/paging"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -417,4 +420,58 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 		result := tk.MustQuery("select t1.* from tnormal t1, tnormal t2 use index(a) where t1.a=t2.b and " + cond).Sort().Rows()
 		tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ t1.* from t t1, t t2 use index(a) where t1.a=t2.b and " + cond).Sort().Check(result)
 	}
+}
+
+func TestCoprocessorPagingSize(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_paging (a int, b int, key(a), key(b))")
+	nRows := 512
+	values := make([]string, 0, nRows)
+	for i := 0; i < nRows; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
+
+	tk.MustQuery("select @@tidb_min_paging_size").Check(testkit.Rows(strconv.FormatUint(paging.MinPagingSize, 10)))
+
+	// When the min paging size is small, we need more RPC roundtrip!
+	// Check 'rpc_num' in the execution information
+	//
+	// mysql> explain analyze select * from t_paging;
+	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// | id                 |task      | execution info                                                                                                                                                                                       |
+	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// | TableReader_5      |root      | time:7.27ms, loops:2, cop_task: {num: 10, max: 1.57ms, min: 313.3µs, avg: 675.9µs, p95: 1.57ms, tot_proc: 2ms, rpc_num: 10, rpc_time: 6.69ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}   |
+	// | └─TableFullScan_4  |cop[tikv] | tikv_task:{proc max:1.48ms, min:294µs, avg: 629µs, p80:1.21ms, p95:1.48ms, iters:0, tasks:10}                                                                                                        |
+	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// 2 rows in set (0.01 sec)
+
+	getRPCNumFromExplain := func(rows [][]interface{}) (res uint64) {
+		re := regexp.MustCompile("rpc_num: ([0-9]+)")
+		for _, row := range rows {
+			buf := bytes.NewBufferString("")
+			_, _ = fmt.Fprintf(buf, "%s\n", row)
+			if matched := re.FindStringSubmatch(buf.String()); matched != nil {
+				require.Equal(t, len(matched), 2)
+				c, err := strconv.ParseUint(matched[1], 10, 64)
+				require.NoError(t, err)
+				return c
+			}
+		}
+		return res
+	}
+
+	tk.MustExec("set @@tidb_min_paging_size = 1")
+	rows := tk.MustQuery("explain analyze select * from t_paging").Rows()
+	rpcNum := getRPCNumFromExplain(rows)
+	require.Greater(t, rpcNum, uint64(2))
+
+	tk.MustExec("set @@tidb_min_paging_size = 1000")
+	rows = tk.MustQuery("explain analyze select * from t_paging").Rows()
+	rpcNum = getRPCNumFromExplain(rows)
+	require.Equal(t, rpcNum, uint64(1))
 }

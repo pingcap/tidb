@@ -1427,6 +1427,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:    DefIndexLookupSize,
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
+		MinPagingSize:      DefMinPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -2167,6 +2168,9 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// MinPagingSize defines the min size used by the coprocessor paging protocol.
+	MinPagingSize int
 }
 
 const (
