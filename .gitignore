@@ -16,8 +16,6 @@ cmd/explaintest/portgenerator
 cmd/explaintest/s/
 *.fail.go
 tools/bin/
-tools/check/go.mod
-tools/check/go.sum
 vendor
 /_tools/
 .DS_Store

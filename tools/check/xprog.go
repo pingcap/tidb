@@ -68,6 +68,7 @@ func getPackageInfo(dir string) string {
 	if err != nil {
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	r := bufio.NewReader(f)

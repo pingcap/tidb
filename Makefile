@@ -217,10 +217,6 @@ tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
 	$(GO) build -o ../bin/xprog xprog.go
 
-tools/check/go.mod: tools/check/check.mod tools/check/check.sum
-	cd tools/check; \
-	cp check.mod go.mod && cp check.sum go.sum;
-
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
