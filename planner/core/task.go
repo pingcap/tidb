@@ -1082,14 +1082,34 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 		return true
 	}
+	var (
+		idxScan *PhysicalIndexScan
+		tblScan *PhysicalTableScan
+	)
+	if copTsk.indexPlan != nil {
+		copTsk.indexPlan, err = copTsk.indexPlan.Clone()
+		if err != nil {
+			return nil, false
+		}
+		finalIdxScanPlan := copTsk.indexPlan
+		for len(finalIdxScanPlan.Children()) > 0 && finalIdxScanPlan.Children()[0] != nil {
+			finalIdxScanPlan = finalIdxScanPlan.Children()[0]
+		}
+		idxScan = finalIdxScanPlan.(*PhysicalIndexScan)
+	}
+	if copTsk.tablePlan != nil {
+		copTsk.tablePlan, err = copTsk.tablePlan.Clone()
+		if err != nil {
+			return nil, false
+		}
+		finalTblScanPlan := copTsk.tablePlan
+		if len(finalTblScanPlan.Children()) > 0 {
+			finalTblScanPlan = finalTblScanPlan.Children()[0]
+		}
+		tblScan = finalTblScanPlan.(*PhysicalTableScan)
+	}
 	if !copTsk.indexPlanFinished {
 		// If indexPlan side isn't finished, there's no selection on the table side.
-		copTsk.indexPlan, err = copTsk.indexPlan.Clone()
-		finalScanPlan := copTsk.indexPlan
-		for len(finalScanPlan.Children()) > 0 && finalScanPlan.Children()[0] != nil {
-			finalScanPlan = finalScanPlan.Children()[0]
-		}
-		idxScan := finalScanPlan.(*PhysicalIndexScan)
 
 		if idxScan.Table.GetPartitionInfo() == nil {
 			return nil, false
@@ -1114,13 +1134,19 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 		pushedLimit.cost = copTsk.cost()
-	} else if copTsk.indexPlan == nil {
-		copTsk.tablePlan, err = copTsk.tablePlan.Clone()
-		finalScanPlan := copTsk.tablePlan
-		if len(finalScanPlan.Children()) > 0 {
-			finalScanPlan = finalScanPlan.Children()[0]
+		if copTsk.tablePlan != nil && !idxScan.Table.IsCommonHandle && copTsk.extraHandleCol == nil {
+			// The clustered index would always add handle, so we don't need to consider that case.
+			copTsk.extraHandleCol = &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       model.ExtraHandleID,
+				UniqueID: idxScan.ctx.GetSessionVars().AllocPlanColumnID(),
+			}
+			tblScan.Schema().Append(copTsk.extraHandleCol)
+			tblScan.Columns = append(tblScan.Columns, model.NewExtraHandleColInfo())
+			copTsk.needExtraProj = true
+			copTsk.originSchema = idxScan.dataSourceSchema
 		}
-		tblScan := finalScanPlan.(*PhysicalTableScan)
+	} else if copTsk.indexPlan == nil {
 
 		if tblScan.Table.GetPartitionInfo() == nil {
 			return nil, false
