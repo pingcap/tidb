@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/ddl"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -129,13 +130,7 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 		if !ok {
 			continue
 		}
-		colName := ""
-		for _, col := range tbl.Cols() {
-			if col.ID == column.ID {
-				colName = col.Name.String()
-				break
-			}
-		}
+		colName := tbl.Meta().FindColumnNameByID(column.ID)
 		if colName == "" {
 			continue
 		}
@@ -143,14 +138,8 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 			if idx.Meta().State != model.StatePublic {
 				continue
 			}
-			hasCol := false
-			for _, idxCol := range idx.Meta().Columns {
-				if idxCol.Name.String() == colName {
-					hasCol = true
-					break
-				}
-			}
-			if hasCol {
+			idxCol := ddl.FindColumnIndexCols(colName, idx.Meta().Columns)
+			if idxCol != nil {
 				tblStats := stats.GetTableStats(tbl.Meta())
 				if tblStats == nil || tblStats.Pseudo {
 					continue
