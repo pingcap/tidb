@@ -63,6 +63,27 @@ func runBackupRawCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func runEBSBackupCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.BackupEBSConfig{Config: task.Config{LogProgress: HasLogFile()}}
+	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+
+	if err := task.RunBackupEBS(ctx, tidbGlue, cmdName, &cfg); err != nil {
+		log.Error("failed to backup", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // NewBackupCommand return a full backup subcommand.
 func NewBackupCommand() *cobra.Command {
 	command := &cobra.Command{
@@ -89,6 +110,7 @@ func NewBackupCommand() *cobra.Command {
 		newDBBackupCommand(),
 		newTableBackupCommand(),
 		newRawBackupCommand(),
+		newEBSBackupCommand(),
 	)
 
 	task.DefineBackupFlags(command.PersistentFlags())
@@ -153,5 +175,19 @@ func newRawBackupCommand() *cobra.Command {
 	}
 
 	task.DefineRawBackupFlags(command)
+	return command
+}
+
+// newEBSBackupCommand return an ebs backup subcommand.
+func newEBSBackupCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "ebs",
+		Short: "backup a TiKV cluster via EBS snapshot",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runEBSBackupCommand(command, task.EBSBackupCmd)
+		},
+	}
+	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }

@@ -56,6 +56,7 @@ const (
 	DBBackupCmd    = "Database Backup"
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
+	EBSBackupCmd   = "EBS Backup"
 )
 
 // CompressionConfig is the configuration for sst file compression.

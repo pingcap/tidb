@@ -51,6 +51,8 @@ type Progress interface {
 	// Inc increases the progress. This method must be goroutine-safe, and can
 	// be called from any goroutine.
 	Inc()
+	// GetCurrent reports the progress.
+	GetCurrent() int64
 	// Close marks the progress as 100% complete and that Inc() can no longer be
 	// called.
 	Close()

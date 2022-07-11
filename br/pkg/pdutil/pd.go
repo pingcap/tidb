@@ -38,6 +38,8 @@ const (
 	regionCountPrefix    = "pd/api/v1/stats/region"
 	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
+	baseAllocIDPrefix    = "pd/api/v1/admin/base-alloc-id"
+	minResolvedTSPrefix  = "pd/api/v1/min-resolved-ts"
 	regionLabelPrefix    = "pd/api/v1/config/region-label/rule"
 	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	scheduleConfigPrefix = "pd/api/v1/config/schedule"
@@ -713,6 +715,56 @@ func (p *PdController) doRemoveSchedulersWith(
 		removedSchedulers, err = p.pauseSchedulersAndConfigWith(ctx, needRemoveSchedulers, nil, pdRequest)
 	}
 	return removedSchedulers, err
+}
+
+func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
+	var err error
+	for _, addr := range p.addrs {
+		v, e := pdRequest(ctx, addr, minResolvedTSPrefix, p.cli, http.MethodGet, nil)
+		if e != nil {
+			log.Warn("failed to get min resolved ts", zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		log.Info("min resolved ts", zap.String("resp", string(v)))
+		d := struct {
+			IsRealTime    bool   `json:"is_real_time,omitempty"`
+			MinResolvedTS uint64 `json:"min_resolved_ts"`
+		}{}
+		err = json.Unmarshal(v, &d)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !d.IsRealTime {
+			message := "min resolved ts not enabled"
+			log.Error(message, zap.String("addr", addr))
+			return 0, errors.Trace(errors.New(message))
+		}
+		return d.MinResolvedTS, nil
+	}
+	return 0, errors.Trace(err)
+}
+
+func (p *PdController) GetBaseAllocID(ctx context.Context) (uint64, error) {
+	var err error
+	for _, addr := range p.addrs {
+		v, e := pdRequest(ctx, addr, baseAllocIDPrefix, p.cli, http.MethodGet, nil)
+		if e != nil {
+			log.Warn("failed to get base alloc id", zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		log.Info("base alloc id", zap.String("resp", string(v)))
+		d := struct {
+			Id uint64 `json:"id"`
+		}{}
+		err = json.Unmarshal(v, &d)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return d.Id, nil
+	}
+	return 0, errors.Trace(err)
 }
 
 // RegionLabel is the label of a region. This struct is partially copied from
