@@ -19,7 +19,6 @@ func TestInfo(t *testing.T) {
 	require.Regexp(t, "^UTC Build Time", lines[4])
 }
 
-// TestLogInfo tests the log info.
 func TestLogInfo(*testing.T) {
 	LogInfo(BR)
 	LogInfo(Lightning)
