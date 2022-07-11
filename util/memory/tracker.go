@@ -422,8 +422,8 @@ func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 func (t *Tracker) SearchTrackerConsumedMoreThanNBytes(limit int64) (res []*Tracker) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	for _, sli := range t.mu.children {
-		for _, tracker := range sli {
+	for _, childSlice := range t.mu.children {
+		for _, tracker := range childSlice {
 			if tracker.BytesConsumed() > limit {
 				res = append(res, tracker)
 			}

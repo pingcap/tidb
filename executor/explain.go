@@ -181,20 +181,27 @@ func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.Wait
 		)
 
 		var infoField []zap.Field
+		var err error
+		var fileName string
 		genInfo := func(status string, needProfile bool, gc bool) []zap.Field {
 			infoField = infoField[:0]
 			infoField = append(infoField, zap.String("sql", status))
 			infoField = append(infoField, zap.String("heap in use", memory.FormatBytes(int64(heapInUse))))
 			infoField = append(infoField, zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))))
 			if needProfile {
-				infoField = append(infoField, zap.String("heap profile", getHeapProfile(gc)))
+				fileName, err = getHeapProfile(gc)
+				infoField = append(infoField, zap.String("heap profile", fileName))
 			}
 			return infoField
 		}
 
 		defer func() {
 			updateMemoryUsage(true)
-			logutil.BgLogger().Info("Memory Debug Mode", genInfo("finished", true, false)...)
+			if err == nil {
+				logutil.BgLogger().Info("Memory Debug Mode", genInfo("finished", true, false)...)
+			} else {
+				logutil.BgLogger().Info("Memory Debug Mode", genInfo("debug_mode_error", false, false)...)
+			}
 			wg.Done()
 		}()
 		times := 0
@@ -225,21 +232,34 @@ func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.Wait
 						logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than 1GB", logs...)
 					}
 				}
+				if err != nil {
+					// Exit debug mode.
+					return
+				}
 			}
 		}
 	}()
 }
 
-func getHeapProfile(gc bool) (fileName string) {
+func getHeapProfile(gc bool) (fileName string, err error) {
 	tempDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
 	timeString := time.Now().Format(time.RFC3339)
 	if gc {
 		runtime.GC()
 	}
 	fileName = filepath.Join(tempDir, "heapGC"+timeString)
-	f, _ := os.Create(fileName)
+	f, err := os.Create(fileName)
+	if err != nil {
+		return "", err
+	}
 	p := rpprof.Lookup("heap")
-	_ = p.WriteTo(f, 0)
-	_ = f.Close()
-	return fileName
+	err = p.WriteTo(f, 0)
+	if err != nil {
+		return "", err
+	}
+	err = f.Close()
+	if err != nil {
+		return "", err
+	}
+	return fileName, nil
 }
