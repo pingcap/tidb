@@ -12,8 +12,8 @@ Table's foreign key information will be stored in `model.TableInfo`:
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
 	...
-	ForeignKeys      []*FKInfo         `json:"fk_info"`
-	CitedForeignKeys []*CitedFKInfo    `json:"cited_fk_info"`
+	ForeignKeys         []*FKInfo            `json:"fk_info"`
+	ReferredForeignKeys []*ReferredFKInfo    `json:"cited_fk_info"`
 	...
 }
 
@@ -21,6 +21,7 @@ type TableInfo struct {
 type FKInfo struct {
     ID        int64       `json:"id"`
     Name      CIStr       `json:"fk_name"`
+    Enable    bool        `json:"enable"`
     RefSchema CIStr       `json:"ref_schema"`
     RefTable  CIStr       `json:"ref_table"`
     RefCols   []CIStr     `json:"ref_cols"`
@@ -30,8 +31,8 @@ type FKInfo struct {
     State     SchemaState `json:"state"`
 }
 
-// CitedFKInfo provides the cited foreign key in the child table.
-type CitedFKInfo struct {
+// ReferredFKInfo provides the referred foreign key in the child table.
+type ReferredFKInfo struct {
     Cols         []CIStr `json:"cols"`
     ChildSchema  CIStr   `json:"child_schema"`
     ChildTable   CIStr   `json:"child_table"`
@@ -39,12 +40,36 @@ type CitedFKInfo struct {
 }
 ```
 
-Struct `FKInfo` uses for child table to record the referenced parent table.
-Struct `CitedFKInfo` uses for parent table to record the child table which referenced me.
+Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
+Struct `ReferredFKInfo` uses for referenced table to record the child table which referenced me.
 
 ### Create Table with Foreign Key
 
+#### Build TableInfo
+When build `TableInfo`, auto create an index for foreign key columns if there is no index cover foreign key columns. Here is an example:
+
+```sql
+mysql>create table t (id int key,a int, foreign key fk(a) references t(id));
+Query OK, 0 rows affected
+mysql>show create table t\G
+***************************[ 1. row ]***************************
+Table        | t
+Create Table | CREATE TABLE `t` (
+  `id` int NOT NULL,
+  `a` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `fk` (`a`),
+  CONSTRAINT `t_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+1 row in set
+```
+
+As you can see, the index `fk` is auto create for foreign key usage.
+
+#### Validate
+
 Create a table with foreign key, check following condition when build DDL job and DDL owner received DDL job(aka Double-Check):
+
 - whether the user have `REFERENCES` privilege to the foreign key references table.
 - Corresponding columns in the foreign key and the referenced key must have similar data types. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
 - Supports foreign key references between one column and another within a table. (A column cannot have a foreign key reference to itself.)
@@ -53,26 +78,66 @@ Create a table with foreign key, check following condition when build DDL job an
 - Does not currently support foreign keys for tables with user-defined partitioning. This includes both parent and child tables.
 - A foreign key constraint cannot reference a virtual generated column, but stored generated column is ok.
 
-DDL owner handle create table job step is:
+#### Handle In DDL Owner
 
-- Option-1：
-```
-1. None -> Public.
-- create a new table.
-- update parent table info.
-- **notify multi-table's schema change in 1 schema version**.
-```
-This will also need to to related change when TiDB to do `loadInfoSchema`.
+When DDL Owner handle create table job, DDL owner need to create a new table, and update the reference tables information.
 
-- Option-2:
+At the same point in time, there may be two versions of the schema in the TiDB cluster, so we can't create new table and 
+update all reference tables in one schema version, since this may break foreign key constrain, such as delete reference table
+without foreign key constrain check in child table.
+
+```sql
+-- In TiDB-1 and Schema Version is 1
+insert into t_has_foreign_key values (1, 1);
+
+-- In TiDB-0 and  Schema Version is 0
+delete from t_reference where id = 1; --Since doesn't know foreign key information in old version, so doesn't do foreign key constrain check.
 ```
-1. None -> Write Only(whatever): Update Parent Table info
-2. Write Only -> Done: Create Table
-```
+
+So, when create a table with foreign key, we need multi-schema version change:
+
+1. None -> Write Only: Create table with state is `write-only`, and update all reference tables info.
+2. Write Only -> Done: Update the new created table state to `public`.
+
+In step-1, we need update some table info in one schema-version. Technically, we can implement is since we already support `ActionCreateTables` DDL job.
 
 ### Alter Table Add Foreign Key.
 
-Not supported at this time.
+Here is an example:
+```sql
+create table t1 (id int key,a int, index(a));
+create table t2 (id int key,a int);
+alter  table t2 add foreign key fk(a) references t1(id) ON DELETE CASCADE;
+```
+
+Just like create table, we should validate first, and return error if the conditions for creating foreign keys are not met, and also need to do double-check.
+
+When build `TableInfo`, we need to auto create an index for foreign key columns if there is no index cover foreign key columns.
+And this is divides the problem into two cases:
+- Case-1: No need to auto create index, and only add foreign key constrain.
+- Case-2: Need auto create index for foreign key
+
+#### Case-1: Only add foreign key constrain
+
+The DDL owner handle add foreign key constrain step is:
+
+1. None -> Write Only: add foreign key constrain which state is `write-only` into table and update the reference table info.
+3. Write Only - Write Reorg: check all row in the table whether has related foreign key exists in reference table, we can use following SQL to check:
+   ```sql
+   select count(*) from t2 where t2.a not in (select id from t1);
+   ```
+   The expected result is `0`, otherwise, an error is returned and cancel the ddl job.
+4. Write Reorg -> Public: update the foreign key constrain state to `public`.
+
+DML should also check the foreign key constrain which state is `write-only`
+
+#### Case-2: Auto create index for foreign key and add foreign key constrain
+
+As TiDB support multi-schema change now, we can split this into 2 sub-ddl job.
+- Add Index DDL job
+- Add Foreign Key Constrain DDL job
+
+We should do add index DDL job first, after index ddl job in `write-reorg`, then start to do add foreign key constrain ddl job.
 
 ### Drop Table
 
