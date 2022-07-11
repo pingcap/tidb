@@ -1536,8 +1536,8 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-// indexesToChange is used to store the indexes that need to be changed during modifying column.
-type indexesToChange struct {
+// changingIndex is used to store the index that need to be changed during modifying column.
+type changingIndex struct {
 	indexInfo *model.IndexInfo
 	// Column offset in idxInfo.Columns.
 	offset int
@@ -1548,14 +1548,14 @@ type indexesToChange struct {
 
 // findRelatedIndexesToChange finds the indexes that covering the given column.
 // The normal one will be overridden by the temp one.
-func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []indexesToChange {
+func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
-	var normalIdxInfos, tempIdxInfos []indexesToChange
+	var normalIdxInfos, tempIdxInfos []changingIndex
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
 			isTemp := isTempIdxInfo(idxInfo, tblInfo)
-			r := indexesToChange{indexInfo: idxInfo, offset: pos, isTemp: isTemp}
+			r := changingIndex{indexInfo: idxInfo, offset: pos, isTemp: isTemp}
 			if isTemp {
 				tempIdxInfos = append(tempIdxInfos, r)
 			} else {

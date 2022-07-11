@@ -604,7 +604,7 @@ func setIdxColNameOffset(idxCol *model.IndexColumn, changingCol *model.ColumnInf
 	idxCol.Name = changingCol.Name
 	idxCol.Offset = changingCol.Offset
 	canPrefix := types.IsTypePrefixable(changingCol.GetType())
-	if !canPrefix || (canPrefix && changingCol.GetFlen() < idxCol.Length) {
+	if !canPrefix || (changingCol.GetFlen() < idxCol.Length) {
 		idxCol.Length = types.UnspecifiedLength
 	}
 }
@@ -827,7 +827,7 @@ func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast
 	internalColName := changingCol.Name
 	changingCol = replaceOldColumn(tblInfo, oldCol, changingCol, newName)
 	if len(changingIdxs) > 0 {
-		updateNewIdxColsNameOffset(changingIdxs, internalColName, newName, changingCol.Offset)
+		updateNewIdxColsNameOffset(changingIdxs, internalColName, changingCol)
 		indexesToRemove := filterIndexesToRemove(changingIdxs, newName, tblInfo)
 		replaceOldIndexes(tblInfo, indexesToRemove)
 	}
@@ -882,12 +882,11 @@ func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo
 
 // updateNewIdxColsNameOffset updates the name&offset of the index column.
 func updateNewIdxColsNameOffset(changingIdxs []*model.IndexInfo,
-	oldName, newName model.CIStr, newOffset int) {
+	oldName model.CIStr, changingCol *model.ColumnInfo) {
 	for _, idx := range changingIdxs {
-		for i, col := range idx.Columns {
+		for _, col := range idx.Columns {
 			if col.Name.L == oldName.L {
-				idx.Columns[i].Name = newName
-				idx.Columns[i].Offset = newOffset
+				setIdxColNameOffset(col, changingCol)
 			}
 		}
 	}
@@ -1383,7 +1382,7 @@ func adjustTableInfoAfterModifyColumn(
 	}
 	tblInfo.Columns[oldCol.Offset] = newCol
 	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
-	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol.Name, newCol.Offset)
+	updateNewIdxColsNameOffset(tblInfo.Indices, oldCol.Name, newCol)
 	return nil
 }
 
