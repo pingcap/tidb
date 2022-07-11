@@ -214,6 +214,7 @@ CREATE TABLE `warehouse` (
   `w_zip` char(9) DEFAULT NULL,
   `w_tax` decimal(4,4) DEFAULT NULL,
   `w_ytd` decimal(12,2) DEFAULT NULL,
+  `w_bool` tinyint,
   PRIMARY KEY (`w_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
