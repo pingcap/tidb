@@ -68,7 +68,7 @@ func (alloc *inMemoryAllocator) NextGlobalAutoID() (int64, error) {
 	return alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, offset int64) (min int64, base int64, err error) {
+func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	if n == 0 {
 		return 0, 0, nil
 	}
