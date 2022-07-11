@@ -6070,30 +6070,3 @@ func TestIsFastPlan(t *testing.T) {
 		require.Equal(t, ca.isFastPlan, ok)
 	}
 }
-
-func TestIssue35638(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 ( a int, b int, index idx(b))")
-	tk.MustExec("create table t2 ( c int, d int, index idx(d))")
-	insertStr := "insert into t1 values(1, 1)"
-	for i := 2; i < 3000; i++ {
-		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
-	}
-	tk.MustExec(insertStr)
-	insertStr = "insert into t2 values(1, 1)"
-	for i := 2; i < 3000; i++ {
-		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
-	}
-	tk.MustExec(insertStr)
-	tk.MustExec("set @@tidb_max_chunk_size=32;")
-	tk.MustExec("set @@tidb_index_join_batch_size=32;")
-	tk.MustExec(`INSERT INTO mysql.opt_rule_blacklist VALUES("topn_push_down");`)
-	tk.MustExec("ADMIN reload opt_rule_blacklist;")
-
-	for i := 0; i < 300; i++ {
-		tk.MustQuery("select /*+ inl_hash_join(t2) */ t1.b from t1 left join t2  on t1.b=t2.d order by t1.b limit 1000,1;").Check(testkit.Rows("1001"))
-	}
-}
