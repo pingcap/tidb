@@ -143,7 +143,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 			SnapshotId: snapID,
 		})
 		if err2 != nil {
-			log.Error("failed to delete volume", zap.Error(err2))
+			log.Error("failed to delete snapshot", zap.Error(err2))
 			// todo: we can only retry for a few times, might fail still, need to handle error from outside.
 		}
 	}
