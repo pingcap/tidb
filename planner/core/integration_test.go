@@ -6885,7 +6885,7 @@ func TestIssue25813(t *testing.T) {
 		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
 
-func TestIssue36035(t *testing.T) {
+func TestGetFormatPushDownToTiFlash(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
