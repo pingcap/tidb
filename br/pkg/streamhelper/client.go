@@ -1,5 +1,5 @@
 // Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
-package stream
+package streamhelper
 
 import (
 	"bytes"
@@ -29,6 +29,8 @@ type Checkpoint struct {
 	ID      uint64 `json:"id,omitempty"`
 	Version uint64 `json:"epoch_version,omitempty"`
 	TS      uint64 `json:"ts"`
+
+	IsGlobal bool `json:"-"`
 }
 
 type CheckpointType int
@@ -37,12 +39,15 @@ const (
 	CheckpointTypeStore CheckpointType = iota
 	CheckpointTypeRegion
 	CheckpointTypeTask
+	CheckpointTypeGlobal
 	CheckpointTypeInvalid
 )
 
 // Type returns the type(provider) of the checkpoint.
 func (cp Checkpoint) Type() CheckpointType {
 	switch {
+	case cp.IsGlobal:
+		return CheckpointTypeGlobal
 	case cp.ID == 0 && cp.Version == 0:
 		return CheckpointTypeTask
 	case cp.ID != 0 && cp.Version == 0:
@@ -73,7 +78,7 @@ func ParseCheckpoint(task string, key, value []byte) (Checkpoint, error) {
 	segs := bytes.Split(key, []byte("/"))
 	var checkpoint Checkpoint
 	switch string(segs[0]) {
-	case "store":
+	case checkpointTypeStore:
 		if len(segs) != 2 {
 			return checkpoint, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
 				"the store checkpoint seg mismatch; segs = %v", segs)
@@ -83,7 +88,9 @@ func ParseCheckpoint(task string, key, value []byte) (Checkpoint, error) {
 			return checkpoint, err
 		}
 		checkpoint.ID = id
-	case "region":
+	case checkpointTypeGlobal:
+		checkpoint.IsGlobal = true
+	case checkpointTypeRegion:
 		if len(segs) != 3 {
 			return checkpoint, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
 				"the region checkpoint seg mismatch; segs = %v", segs)
@@ -188,6 +195,17 @@ func (c *MetaDataClient) CleanLastErrorOfTask(ctx context.Context, taskName stri
 	return nil
 }
 
+func (c *MetaDataClient) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
+	key := GlobalCheckpointOf(taskName)
+	value := string(encodeUint64(checkpoint))
+	_, err := c.KV.Put(ctx, key, value)
+
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // GetTask get the basic task handle from the metadata storage.
 func (c *MetaDataClient) GetTask(ctx context.Context, taskName string) (*Task, error) {
 	resp, err := c.Get(ctx, TaskOf(taskName))
@@ -236,25 +254,35 @@ func (c *MetaDataClient) GetTaskWithPauseStatus(ctx context.Context, taskName st
 	return &Task{cli: c, Info: taskInfo}, paused, nil
 }
 
-// GetAllTasks get all of tasks from metadata storage.
-func (c *MetaDataClient) GetAllTasks(ctx context.Context) ([]Task, error) {
-	scanner := scanEtcdPrefix(c.Client, PrefixOfTask())
-	kvs, err := scanner.AllPages(ctx, 1)
+func (c *MetaDataClient) TaskByInfo(t backuppb.StreamBackupTaskInfo) *Task {
+	return &Task{cli: c, Info: t}
+}
+
+func (c *MetaDataClient) GetAllTasksWithRevision(ctx context.Context) ([]Task, int64, error) {
+	resp, err := c.KV.Get(ctx, PrefixOfTask(), clientv3.WithPrefix())
 	if err != nil {
-		return nil, errors.Trace(err)
-	} else if len(kvs) == 0 {
-		return nil, nil
+		return nil, 0, errors.Trace(err)
+	}
+	kvs := resp.Kvs
+	if len(kvs) == 0 {
+		return nil, resp.Header.GetRevision(), nil
 	}
 
 	tasks := make([]Task, len(kvs))
 	for idx, kv := range kvs {
 		err = proto.Unmarshal(kv.Value, &tasks[idx].Info)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, 0, errors.Trace(err)
 		}
 		tasks[idx].cli = c
 	}
-	return tasks, nil
+	return tasks, resp.Header.GetRevision(), nil
+}
+
+// GetAllTasks get all of tasks from metadata storage.
+func (c *MetaDataClient) GetAllTasks(ctx context.Context) ([]Task, error) {
+	tasks, _, err := c.GetAllTasksWithRevision(ctx)
+	return tasks, err
 }
 
 // GetTaskCount get the count of tasks from metadata storage.
@@ -372,6 +400,14 @@ func (t *Task) Step(ctx context.Context, store uint64, ts uint64) error {
 	_, err := t.cli.KV.Put(ctx, CheckPointOf(t.Info.Name, store), string(encodeUint64(ts)))
 	if err != nil {
 		return errors.Annotatef(err, "failed forward the progress of %s to %d", t.Info.Name, ts)
+	}
+	return nil
+}
+
+func (t *Task) UploadGlobalCheckpoint(ctx context.Context, ts uint64) error {
+	_, err := t.cli.KV.Put(ctx, GlobalCheckpointOf(t.Info.Name), string(encodeUint64(ts)))
+	if err != nil {
+		return err
 	}
 	return nil
 }

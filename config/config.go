@@ -31,6 +31,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tikvutil"
@@ -258,6 +259,8 @@ type Config struct {
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 	// EnableGlobalKill indicates whether to enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	// LogBackup controls the log backup related items.
+	LogBackup LogBackup `toml:"log-backup" json:"log-backup"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -409,6 +412,13 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
+}
+
+// LogBackup is the config for log backup service.
+// For now, it includes the embed advancer.
+type LogBackup struct {
+	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
+	Enabled  bool                 `toml:"enabled" json:"enabled"`
 }
 
 // Log is the log section of config.
@@ -907,6 +917,10 @@ var defaultConf = Config{
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
+	LogBackup: LogBackup{
+		Advancer: logbackupconf.Default(),
+		Enabled:  false,
+	},
 }
 
 var (

@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
@@ -70,6 +72,7 @@ var (
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
 	StreamMetadata = "log metadata"
+	StreamCtl      = "log ctl"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -90,6 +93,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamStatus:   RunStreamStatus,
 	StreamTruncate: RunStreamTruncate,
 	StreamMetadata: RunStreamMetadata,
+	StreamCtl:      RunStreamAdvancer,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -111,6 +115,9 @@ type StreamConfig struct {
 
 	// Spec for the command `status`.
 	JSONOutput bool `json:"json-output" toml:"json-output"`
+
+	// Spec for the command `advancer`.
+	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
 }
 
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
@@ -520,7 +527,7 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// It supports single stream log task currently.
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
@@ -547,7 +554,7 @@ func RunStreamStart(
 		return errors.Annotate(berrors.ErrInvalidArgument, "nothing need to observe")
 	}
 
-	ti := stream.TaskInfo{
+	ti := streamhelper.TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
 			Storage:     streamMgr.bc.GetStorageBackend(),
 			StartTs:     cfg.StartTS,
@@ -622,7 +629,7 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
@@ -672,7 +679,7 @@ func RunStreamPause(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -730,7 +737,7 @@ func RunStreamResume(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -775,6 +782,31 @@ func RunStreamResume(
 	return nil
 }
 
+func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+	ctx, cancel := context.WithCancel(c)
+	defer cancel()
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, false)
+	if err != nil {
+		return err
+	}
+
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return err
+	}
+	env := streamhelper.CliEnv(mgr.StoreManager, etcdCLI)
+	advancer := streamhelper.NewCheckpointAdvancer(env)
+	advancer.UpdateConfig(cfg.AdvancerCfg)
+	daemon := streamhelper.NewAdvancerDaemon(advancer, streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI))
+	loop, err := daemon.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	loop()
+	return nil
+}
+
 func checkConfigForStatus(cfg *StreamConfig) error {
 	if len(cfg.PD) == 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
@@ -792,7 +824,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	if err != nil {
 		return nil, err
 	}
-	cli := stream.NewMetaDataClient(etcdCLI)
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
 	var printer stream.TaskPrinter
 	if !cfg.JSONOutput {
 		printer = stream.PrintTaskByTable(console)

@@ -180,6 +180,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsCacheLRUCounter)
 	prometheus.MustRegister(StatsCacheLRUGauge)
 	prometheus.MustRegister(StatsHealthyGauge)
+	prometheus.MustRegister(LastCheckpoint)
+	prometheus.MustRegister(AdvancerOwner)
+	prometheus.MustRegister(AdvancerTickDuration)
+	prometheus.MustRegister(GetCheckpointBatchSize)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

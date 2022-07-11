@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -1989,7 +1990,7 @@ func (rc *Client) SaveSchemas(
 		m.StartVersion = logStartTS
 	})
 
-	schemas := sr.TidyOldSchemas()
+	schemas := TidyOldSchemas(sr)
 	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
 	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
@@ -2000,4 +2001,32 @@ func (rc *Client) SaveSchemas(
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// TidyOldSchemas produces schemas information.
+func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
+	var schemaIsEmpty bool
+	schemas := backup.NewBackupSchemas()
+
+	for _, dr := range sr.DbMap {
+		if dr.OldDBInfo == nil {
+			continue
+		}
+
+		schemaIsEmpty = true
+		for _, tr := range dr.TableMap {
+			if tr.OldTableInfo == nil {
+				continue
+			}
+			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
+			schemaIsEmpty = false
+		}
+
+		// backup this empty schema if it has nothing table.
+		if schemaIsEmpty {
+			schemas.AddSchema(dr.OldDBInfo, nil)
+		}
+	}
+	return schemas
+
 }

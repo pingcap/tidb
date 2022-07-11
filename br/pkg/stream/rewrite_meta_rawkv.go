@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -96,33 +95,6 @@ func NewSchemasReplace(
 		genGenGlobalID:  genID,
 		genGenGlobalIDs: genIDs,
 	}
-}
-
-// TidyOldSchemas produces schemas information.
-func (sr *SchemasReplace) TidyOldSchemas() *backup.Schemas {
-	var schemaIsEmpty bool
-	schemas := backup.NewBackupSchemas()
-
-	for _, dr := range sr.DbMap {
-		if dr.OldDBInfo == nil {
-			continue
-		}
-
-		schemaIsEmpty = true
-		for _, tr := range dr.TableMap {
-			if tr.OldTableInfo == nil {
-				continue
-			}
-			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
-			schemaIsEmpty = false
-		}
-
-		// backup this empty schema if it has nothing table.
-		if schemaIsEmpty {
-			schemas.AddSchema(dr.OldDBInfo, nil)
-		}
-	}
-	return schemas
 }
 
 func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, error) {
