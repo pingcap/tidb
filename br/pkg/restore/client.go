@@ -1990,7 +1990,7 @@ const (
 	batchInsertDeleteRangeSize = 256
 )
 
-// insertDeleteRange generates query to insert table delete job into table `gc_delete_range`.
+// InsertDeleteRangeForTable generates query to insert table delete job into table `gc_delete_range`.
 func (rc *Client) InsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
 	var elementID int64 = 1
 	var tableID int64
@@ -2018,7 +2018,7 @@ func (rc *Client) InsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
 	}
 }
 
-// insertDeleteRangeForTable generates query to insert index delete job into table `gc_delete_range`.
+// insertDeleteRangeForIndex generates query to insert index delete job into table `gc_delete_range`.
 func (rc *Client) InsertDeleteRangeForIndex(jobID int64, elementID *int64, tableID int64, indexIDs []int64) {
 	var indexID int64
 	for i := 0; i < len(indexIDs); i += batchInsertDeleteRangeSize {

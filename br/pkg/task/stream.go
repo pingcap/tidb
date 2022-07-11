@@ -1104,13 +1104,14 @@ func restoreStream(
 		return errors.Annotate(err, "failed to clean up")
 	}
 
+	if err = client.SaveSchemas(ctx, schemasReplace, logMinTS, cfg.RestoreTS); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err = client.InsertGCRows(ctx); err != nil {
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	if err = client.SaveSchemas(ctx, schemasReplace, logMinTS, cfg.RestoreTS); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
