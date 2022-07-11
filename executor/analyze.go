@@ -254,7 +254,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 				}
 			}
 		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable(), e.ctx.GetInfoSchema().(infoschema.InfoSchema)); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)

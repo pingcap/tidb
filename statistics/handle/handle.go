@@ -1113,7 +1113,7 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, erro
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool) (err error) {
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool, is infoschema.InfoSchema) (err error) {
 	tableID := results.TableID.GetStatisticsID()
 	statsVer := uint64(0)
 	defer func() {
@@ -1154,6 +1154,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		snapshot := rows[0].GetUint64(0)
 		// A newer version analyze result has been written, so skip this writing.
 		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 {
+			logutil.BgLogger().Info("Skip writing since a newer version analyze result has been written", zap.Uint64("existing snapshot", snapshot), zap.Uint64("result snapshot", results.Snapshot))
 			return nil
 		}
 		curCnt = int64(rows[0].GetUint64(1))
@@ -1178,7 +1179,15 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			cnt = 0
 		}
 		if cnt == 0 {
-			logutil.BgLogger().Warn("save tableStats with calculated count=0", zap.Int64("tblID", tableID))
+			tbl, _ := h.getTableByPhysicalID(is, tableID)
+			logutil.BgLogger().Warn("save tableStats with calculated count=0",
+				zap.Int64("tblID", tableID),
+				zap.String("tblName", tbl.Meta().Name.L),
+				zap.Int64("curCnt", curCnt),
+				zap.Int64("resCnt", results.Count),
+				zap.Int64("baseCnt", results.BaseCount),
+				zap.Uint64("version", version),
+				zap.Uint64("snapshot", results.Snapshot))
 		}
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
 			return err
