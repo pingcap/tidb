@@ -26,7 +26,7 @@ type LocalStorage struct {
 	base string
 }
 
-// DeleteFile deletes the file at `path`.
+// DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	path := filepath.Join(l.base, name)
 	return os.Remove(path)
