@@ -1166,9 +1166,9 @@ type SessionVars struct {
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
 
-	// MemoryDebugModeThreshold indicated the memory debug mode.
+	// MemoryDebugModeThreshold indicated the trigger threshold of memory tracking accuracy check.
 	MemoryDebugModeThreshold int64
-
+	// MemoryDebugModeRatio indicated the allowable bias ratio of memory tracking accuracy check.
 	MemoryDebugModeRatio int64
 }
 

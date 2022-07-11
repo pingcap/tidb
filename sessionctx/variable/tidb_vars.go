@@ -685,9 +685,12 @@ const (
 	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
 	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
 
-	// TiDBMemoryDebugModeThreshold is used to set tidb memory debug mode.
+	// TiDBMemoryDebugModeThreshold is used to set tidb memory debug mode trigger threshold.
+	// When set to 0, the function is disabled.
+	// When set to a negative integer, use memory debug mode 1 to detect the issue of frequent allocation and release of memory.
+	// When set to a positive integer, use memory debug mode 2 to detect the issue of memory tracking inaccurate.
 	TiDBMemoryDebugModeThreshold = "tidb_memory_debug_mode_threshold"
-	// TiDBMemoryDebugModeRatio is used
+	// TiDBMemoryDebugModeRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
 	TiDBMemoryDebugModeRatio = "tidb_memory_debug_mode_ratio"
 )
 
