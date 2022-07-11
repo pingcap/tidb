@@ -325,12 +325,12 @@ func KvPairsFromRows(rows Rows) []common.KvPair {
 	return rows.(*KvPairs).pairs
 }
 
-// KvPairsFromRow converts a Rows instance constructed from MakeRowsFromKvPairs
+// KvPairsFromRow converts a Rows instance constructed from MakeRowsFromKvPair
 // back into a slice of KvPair. This method panics if the Rows is not
 // constructed in such way.
 // nolint:golint // kv.KvPairsFromRow sounds good.
-func KvPairsFromRow(rows Row) []common.KvPair {
-	return rows.(*KvPairs).pairs
+func KvPairsFromRow(row Row) []common.KvPair {
+	return row.(*KvPairs).pairs
 }
 
 func evaluateGeneratedColumns(se *session, record []types.Datum, cols []*table.Column, genCols []genCol) (err error, errCol *model.ColumnInfo) {
