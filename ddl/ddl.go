@@ -183,6 +183,8 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
+	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
 }
