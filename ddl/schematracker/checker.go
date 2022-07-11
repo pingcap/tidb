@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -62,6 +63,11 @@ func (d *Checker) Enable() {
 	d.closed = false
 }
 
+// CreateTestDB creates a `test` database like the default behaviour of TiDB.
+func (d Checker) CreateTestDB() {
+	d.tracker.createTestDB()
+}
+
 func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	if d.closed {
 		return
@@ -76,6 +82,35 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
 	err = executor.ConstructResultOfShowCreateDatabase(ctx, dbInfo2, false, result2)
+	if err != nil {
+		panic(err)
+	}
+	s1 := result.String()
+	s2 := result2.String()
+	if s1 != s2 {
+		errStr := fmt.Sprintf("%s != %s", s1, s2)
+		panic(errStr)
+	}
+}
+
+func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.CIStr) {
+	if d.closed {
+		return
+	}
+
+	tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
+	tableInfo2, err := d.tracker.TableByName(dbName, tableName)
+	if err != nil {
+		panic(err)
+	}
+
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	err = executor.ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
+	if err != nil {
+		panic(err)
+	}
+	result2 := bytes.NewBuffer(make([]byte, 0, 512))
+	err = executor.ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
 	if err != nil {
 		panic(err)
 	}
@@ -132,20 +167,48 @@ func (d Checker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) 
 
 // CreateTable implements the DDL interface.
 func (d Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.CreateTable(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
+	count := ctx.GetSessionVars().StmtCtx.WarningCount()
+	err = d.tracker.CreateTable(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+	ctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
+
+	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)
+	return nil
 }
 
 // CreateView implements the DDL interface.
 func (d Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.CreateView(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.CreateView(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	d.checkTableInfo(ctx, stmt.ViewName.Schema, stmt.ViewName.Name)
+	return nil
 }
 
 // DropTable implements the DDL interface.
 func (d Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	//TODO implement me
-	panic("implement me")
+	err = d.realDDL.DropTable(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.DropTable(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+	return nil
 }
 
 // RecoverTable implements the DDL interface.
@@ -156,8 +219,15 @@ func (d Checker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.RecoverIn
 
 // DropView implements the DDL interface.
 func (d Checker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	//TODO implement me
-	panic("implement me")
+	err = d.realDDL.DropView(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.DropView(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+	return nil
 }
 
 // CreateIndex implements the DDL interface.
@@ -174,7 +244,13 @@ func (d Checker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) erro
 
 // AlterTable implements the DDL interface.
 func (d Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
-	//TODO implement me
+	err := d.realDDL.AlterTable(ctx, sctx, stmt)
+	if err != nil {
+		return err
+	}
+	if d.closed {
+		return nil
+	}
 	panic("implement me")
 }
 
@@ -186,8 +262,33 @@ func (d Checker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) err
 
 // RenameTable implements the DDL interface.
 func (d Checker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
-	//TODO implement me
-	panic("implement me")
+	err := d.realDDL.RenameTable(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.RenameTable(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	check := func(dbName, tableName model.CIStr) {
+		tableInfo, _ := d.realDDL.GetInfoSchemaWithInterceptor(ctx).TableByName(dbName, tableName)
+		if tableInfo == nil {
+			tableInfo2, _ := d.tracker.TableByName(dbName, tableName)
+			if tableInfo2 != nil {
+				errStr := fmt.Sprintf("%s.%s should not exist", dbName, tableName)
+				panic(errStr)
+			}
+		} else {
+			d.checkTableInfo(ctx, dbName, tableName)
+		}
+	}
+
+	for _, tableName := range stmt.TableToTables {
+		check(tableName.OldTable.Schema, tableName.OldTable.Name)
+		check(tableName.NewTable.Schema, tableName.NewTable.Name)
+	}
+	return nil
 }
 
 // LockTables implements the DDL interface.

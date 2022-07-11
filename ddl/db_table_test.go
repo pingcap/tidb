@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -227,8 +228,13 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 }
 
 func TestCreateTableWithSetCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_set (a int, b set('e') default '');")
@@ -284,8 +290,13 @@ func TestCreateTableWithSetCol(t *testing.T) {
 }
 
 func TestCreateTableWithEnumCol(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// It's for failure cases.
@@ -316,8 +327,13 @@ func TestCreateTableWithEnumCol(t *testing.T) {
 }
 
 func TestCreateTableWithIntegerColWithDefault(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+	
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// It's for failure cases.
