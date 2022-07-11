@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +47,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -135,7 +135,8 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamStartTS, "",
 		"usually equals last full backupTS, used for backup log. Default value is current ts.\n"+
 			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.")
-	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
+	// 999999999999999999 means 2090-11-18 22:07:45
+	flags.String(flagStreamEndTS, "999999999999999999", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	_ = flags.MarkHidden(flagStreamEndTS)
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamStartSafePointTTL,
@@ -189,7 +190,7 @@ func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.Until, err = ParseTSString(tsString); err != nil {
+	if cfg.Until, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.SkipPrompt, err = flags.GetBool(flagYes); err != nil {
@@ -213,7 +214,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -222,7 +223,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.EndTS, err = ParseTSString(tsString); err != nil {
+	if cfg.EndTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -386,8 +387,8 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 
 	mRange := stream.BuildObserveMetaRange()
 	rs := append([]kv.KeyRange{*mRange}, dRanges...)
-	sort.Slice(rs, func(i, j int) bool {
-		return bytes.Compare(rs[i].StartKey, rs[j].StartKey) < 0
+	slices.SortFunc(rs, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
 
 	return rs, nil
@@ -932,7 +933,17 @@ func RunStreamRestore(
 	g glue.Glue,
 	cmdName string,
 	cfg *RestoreConfig,
-) error {
+) (err error) {
+	startTime := time.Now()
+	defer func() {
+		dur := time.Since(startTime)
+		if err != nil {
+			summary.Log(cmdName+" failed summary", zap.Error(err))
+		} else {
+			summary.Log(cmdName+" success summary", zap.Duration("total-take", dur),
+				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS))
+		}
+	}()
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 

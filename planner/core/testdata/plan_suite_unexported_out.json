@@ -2,6 +2,13 @@
   {
     "Name": "TestEagerAggregation",
     "Cases": [
+      "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t2.c)->Aggr(count(1))->Projection",
+      "Join{DataScan(t1)->DataScan(t2)->Aggr(count(1),firstrow(test.t2.c))}(test.t.a,test.t2.c)->Aggr(count(Column#17))->Projection",
+      "Join{DataScan(t1)->DataScan(t2)->Aggr(count(test.t2.c),firstrow(test.t2.c))}(test.t.a,test.t2.c)->Aggr(count(Column#17))->Projection",
+      "Join{DataScan(t1)->Aggr(count(test.t.d),firstrow(test.t.d))->DataScan(t2)}(test.t.d,test.t2.c)->Aggr(count(Column#17))->Projection",
+      "Join{DataScan(t1)->DataScan(t2)->Aggr(count(1),firstrow(test.t2.c))}(test.t.a,test.t2.c)->Aggr(count(Column#17))->Projection",
+      "Join{DataScan(t1)->DataScan(t2)->Aggr(count(test.t2.c),firstrow(test.t2.c))}(test.t.a,test.t2.c)->Aggr(count(Column#17))->Projection",
+      "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t2.c)->Aggr(sum(isnull(test.t2.c)))->Projection",
       "DataScan(t)->Aggr(sum(test.t.a),sum(plus(test.t.a, 1)),count(test.t.a))->Projection",
       "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Sel([gt(Column#13, 0)])->Projection->Sort->Projection",
       "Join{DataScan(a)->Aggr(sum(test.t.a),firstrow(test.t.c))->DataScan(b)}(test.t.c,test.t.c)->Aggr(sum(Column#26))->Projection",

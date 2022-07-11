@@ -51,39 +51,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// adjustColumnInfoInDropColumn is used to set the correct position of column info when dropping column.
-// 1. The offset of column should to be set to the last of the columns.
-// 2. The dropped column is moved to the end of tblInfo.Columns, due to it was not public any more.
-func adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
-	oldCols := tblInfo.Columns
-	// Adjust column offset.
-	offsetChanged := make(map[int]int, len(oldCols)-offset-1)
-	for i := offset + 1; i < len(oldCols); i++ {
-		offsetChanged[oldCols[i].Offset] = i - 1
-		oldCols[i].Offset = i - 1
-	}
-	oldCols[offset].Offset = len(oldCols) - 1
-	// For expression index, we drop hidden columns and index simultaneously.
-	// So we need to change the offset of expression index.
-	offsetChanged[offset] = len(oldCols) - 1
-	// Update index column offset info.
-	// TODO: There may be some corner cases for index column offsets, we may check this later.
-	for _, idx := range tblInfo.Indices {
-		for _, col := range idx.Columns {
-			newOffset, ok := offsetChanged[col.Offset]
-			if ok {
-				col.Offset = newOffset
-			}
-		}
-	}
-	newCols := make([]*model.ColumnInfo, 0, len(oldCols))
-	newCols = append(newCols, oldCols[:offset]...)
-	newCols = append(newCols, oldCols[offset+1:]...)
-	newCols = append(newCols, oldCols[offset])
-	tblInfo.Columns = newCols
-}
-
-func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, *ast.ColumnPosition, int, error) {
+func createColumnInfoWithPosCheck(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, *ast.ColumnPosition, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
 	offset := len(cols)
@@ -115,19 +83,34 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	return colInfo, pos, offset, nil
 }
 
-func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, int, error) {
+func initAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
+	cols := tblInfo.Columns
+	colInfo.ID = allocateColumnID(tblInfo)
+	colInfo.State = model.StateNone
+	// To support add column asynchronous, we should mark its offset as the last column.
+	// So that we can use origin column offset to get value from row.
+	colInfo.Offset = len(cols)
+	// Append the column info to the end of the tblInfo.Columns.
+	// It will reorder to the right offset in "Columns" when it state change to public.
+	tblInfo.Columns = append(cols, colInfo)
+	return colInfo
+}
+
+func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo,
+	*ast.ColumnPosition, bool /* ifNotExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, nil, 0, errors.Trace(err)
+		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
 	offset := 0
-	err = job.DecodeArgs(col, pos, &offset)
+	ifNotExists := false
+	err = job.DecodeArgs(col, pos, &offset, &ifNotExists)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, 0, errors.Trace(err)
+		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
@@ -135,10 +118,17 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
 			job.State = model.JobStateCancelled
-			return nil, nil, nil, nil, 0, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+			return nil, nil, nil, nil, ifNotExists, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 		}
 	}
-	return tblInfo, columnInfo, col, pos, offset, nil
+
+	err = checkAfterPositionExists(tblInfo, pos)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, nil, false, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+	}
+
+	return tblInfo, columnInfo, col, pos, false, nil
 }
 
 func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -157,21 +147,18 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 	})
 
-	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, colFromArgs, pos, ifNotExists, err := checkAddColumn(t, job)
 	if err != nil {
+		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
+			job.Warning = toTError(err)
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			return ver, nil
+		}
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
-		columnInfo, _, offset, err = createColumnInfo(tblInfo, col, pos)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-		logutil.BgLogger().Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
-		// Set offset arg to job.
-		if offset != 0 {
-			job.Args = []interface{}{columnInfo, pos, offset}
-		}
+		columnInfo = initAndAddColumnToTable(tblInfo, colFromArgs)
+		logutil.BgLogger().Info("[ddl] run add column job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -206,9 +193,14 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 		// Update the job state when all affairs done.
 		job.SchemaState = model.StateWriteReorganization
+		job.MarkNonRevertible()
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
+		offset, err := locateOffsetToMove(columnInfo.Offset, pos, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfo.State)
@@ -226,54 +218,16 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func checkAddColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []*model.ColumnInfo, []*ast.ColumnPosition, []int, []bool, error) {
-	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, nil, nil, nil, nil, errors.Trace(err)
-	}
-	columns := []*model.ColumnInfo{}
-	positions := []*ast.ColumnPosition{}
-	offsets := []int{}
-	ifNotExists := []bool{}
-	err = job.DecodeArgs(&columns, &positions, &offsets, &ifNotExists)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, nil, nil, errors.Trace(err)
-	}
-
-	columnInfos := make([]*model.ColumnInfo, 0, len(columns))
-	newColumns := make([]*model.ColumnInfo, 0, len(columns))
-	newPositions := make([]*ast.ColumnPosition, 0, len(columns))
-	newOffsets := make([]int, 0, len(columns))
-	newIfNotExists := make([]bool, 0, len(columns))
-	for i, col := range columns {
-		columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
-		if columnInfo != nil {
-			if columnInfo.State == model.StatePublic {
-				// We already have a column with the same column name.
-				if ifNotExists[i] {
-					// TODO: Should return a warning.
-					logutil.BgLogger().Warn("[ddl] check add columns, duplicate column", zap.Stringer("col", col.Name))
-					continue
-				}
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
-			}
-			columnInfos = append(columnInfos, columnInfo)
+// checkAfterPositionExists makes sure the column specified in AFTER clause is exists.
+// For example, ALTER TABLE t ADD COLUMN c3 INT AFTER c1.
+func checkAfterPositionExists(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
+	if pos != nil && pos.Tp == ast.ColumnPositionAfter {
+		c := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
+		if c == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
-		newColumns = append(newColumns, columns[i])
-		newPositions = append(newPositions, positions[i])
-		newOffsets = append(newOffsets, offsets[i])
-		newIfNotExists = append(newIfNotExists, ifNotExists[i])
 	}
-	return tblInfo, columnInfos, newColumns, newPositions, newOffsets, newIfNotExists, nil
-}
-
-func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
-	for i := range columnInfos {
-		columnInfos[i].State = state
-	}
+	return nil
 }
 
 func setIndicesState(indexInfos []*model.IndexInfo, state model.SchemaState) {
@@ -282,241 +236,7 @@ func setIndicesState(indexInfos []*model.IndexInfo, state model.SchemaState) {
 	}
 }
 
-func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	// Handle the rolling back job.
-	if job.IsRollingback() {
-		ver, err = onDropColumns(d, t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		return ver, nil
-	}
-
-	failpoint.Inject("errorBeforeDecodeArgs", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(ver, errors.New("occur an error before decode args"))
-		}
-	})
-
-	tblInfo, columnInfos, columns, positions, offsets, ifNotExists, err := checkAddColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if len(columnInfos) == 0 {
-		if len(columns) == 0 {
-			job.State = model.JobStateCancelled
-			return ver, nil
-		}
-		for i := range columns {
-			columnInfo, pos, offset, err := createColumnInfo(tblInfo, columns[i], positions[i])
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			logutil.BgLogger().Info("[ddl] run add columns job", zap.String("job", job.String()), zap.Reflect("columnInfo", *columnInfo), zap.Int("offset", offset))
-			positions[i] = pos
-			offsets[i] = offset
-			if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			columnInfos = append(columnInfos, columnInfo)
-		}
-		// Set arg to job.
-		job.Args = []interface{}{columnInfos, positions, offsets, ifNotExists}
-	}
-
-	originalState := columnInfos[0].State
-	switch columnInfos[0].State {
-	case model.StateNone:
-		// none -> delete only
-		setColumnsState(columnInfos, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != columnInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteOnly
-	case model.StateDeleteOnly:
-		// delete only -> write only
-		setColumnsState(columnInfos, model.StateWriteOnly)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateWriteOnly
-	case model.StateWriteOnly:
-		// write only -> reorganization
-		setColumnsState(columnInfos, model.StateWriteReorganization)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateWriteReorganization
-	case model.StateWriteReorganization:
-		// reorganization -> public
-		// Adjust table column offsets.
-		oldCols := tblInfo.Columns[:len(tblInfo.Columns)-len(offsets)]
-		newCols := tblInfo.Columns[len(tblInfo.Columns)-len(offsets):]
-		tblInfo.Columns = oldCols
-		for i := range offsets {
-			// For multiple columns with after position, should adjust offsets.
-			// e.g. create table t(a int);
-			// alter table t add column b int after a, add column c int after a;
-			// alter table t add column a1 int after a, add column b1 int after b, add column c1 int after c;
-			// alter table t add column a1 int after a, add column b1 int first;
-			if positions[i].Tp == ast.ColumnPositionAfter {
-				for j := 0; j < i; j++ {
-					if (positions[j].Tp == ast.ColumnPositionAfter && offsets[j] < offsets[i]) || positions[j].Tp == ast.ColumnPositionFirst {
-						offsets[i]++
-					}
-				}
-			}
-			tblInfo.Columns = append(tblInfo.Columns, newCols[i])
-			tblInfo.MoveColumnInfo(len(tblInfo.Columns)-1, offsets[i])
-		}
-		setColumnsState(columnInfos, model.StatePublic)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != columnInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumns, TableInfo: tblInfo, ColumnInfos: columnInfos})
-	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfos[0].State)
-	}
-
-	return ver, errors.Trace(err)
-}
-
-func onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, colInfos, delCount, idxInfos, err := checkDropColumns(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	if len(colInfos) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, nil
-	}
-
-	originalState := colInfos[0].State
-	switch colInfos[0].State {
-	case model.StatePublic:
-		// public -> write only
-		setColumnsState(colInfos, model.StateWriteOnly)
-		setIndicesState(idxInfos, model.StateWriteOnly)
-		for _, colInfo := range colInfos {
-			err = checkDropColumnForStatePublic(tblInfo, colInfo)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-		}
-		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != colInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateWriteOnly
-	case model.StateWriteOnly:
-		// write only -> delete only
-		setColumnsState(colInfos, model.StateDeleteOnly)
-		if len(idxInfos) > 0 {
-			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-			for _, idx := range tblInfo.Indices {
-				if !indexInfoContains(idx.ID, idxInfos) {
-					newIndices = append(newIndices, idx)
-				}
-			}
-			tblInfo.Indices = newIndices
-		}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.Args = append(job.Args, indexInfosToIDList(idxInfos))
-		job.SchemaState = model.StateDeleteOnly
-	case model.StateDeleteOnly:
-		// delete only -> reorganization
-		setColumnsState(colInfos, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateDeleteReorganization
-	case model.StateDeleteReorganization:
-		// reorganization -> absent
-		// All reorganization jobs are done, drop this column.
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
-		setColumnsState(colInfos, model.StateNone)
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfos[0].State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		// Finish this job.
-		if job.IsRollingback() {
-			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-		} else {
-			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, getPartitionIDs(tblInfo))
-		}
-	default:
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
-	}
-	return ver, errors.Trace(err)
-}
-
-func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, int, []*model.IndexInfo, error) {
-	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, 0, nil, errors.Trace(err)
-	}
-
-	var colNames []model.CIStr
-	var ifExists []bool
-	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
-	var indexIds []int64
-	err = job.DecodeArgs(&colNames, &ifExists, &indexIds)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, 0, nil, errors.Trace(err)
-	}
-
-	newColNames := make([]model.CIStr, 0, len(colNames))
-	colInfos := make([]*model.ColumnInfo, 0, len(colNames))
-	newIfExists := make([]bool, 0, len(colNames))
-	indexInfos := make([]*model.IndexInfo, 0)
-	for i, colName := range colNames {
-		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-		if colInfo == nil || colInfo.Hidden {
-			if ifExists[i] {
-				// TODO: Should return a warning.
-				logutil.BgLogger().Warn(fmt.Sprintf("column %s doesn't exist", colName))
-				continue
-			}
-			job.State = model.JobStateCancelled
-			return nil, nil, 0, nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
-		}
-		if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
-			job.State = model.JobStateCancelled
-			return nil, nil, 0, nil, errors.Trace(err)
-		}
-		newColNames = append(newColNames, colName)
-		newIfExists = append(newIfExists, ifExists[i])
-		colInfos = append(colInfos, colInfo)
-		idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
-		indexInfos = append(indexInfos, idxInfos...)
-	}
-	job.Args = []interface{}{newColNames, newIfExists}
-	if len(indexIds) > 0 {
-		job.Args = append(job.Args, indexIds)
-	}
-	return tblInfo, colInfos, len(colInfos), indexInfos, nil
-}
-
 func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {
-	// Set this column's offset to the last and reset all following columns' offsets.
-	adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 	// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
 	// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
 	// And we need consider the column without not-null flag.
@@ -537,9 +257,21 @@ func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.Colu
 }
 
 func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, colInfo, idxInfos, err := checkDropColumn(t, job)
+	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(t, job)
 	if err != nil {
+		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
+			// Convert the "not exists" error to a warning.
+			job.Warning = toTError(err)
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			return ver, nil
+		}
 		return ver, errors.Trace(err)
+	}
+	if job.MultiSchemaInfo != nil && !job.IsRollingback() && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		job.SchemaState = colInfo.State
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, false)
 	}
 
 	originalState := colInfo.State
@@ -548,6 +280,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// public -> write only
 		colInfo.State = model.StateWriteOnly
 		setIndicesState(idxInfos, model.StateWriteOnly)
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -583,6 +316,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfo.State)
@@ -605,42 +339,34 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	return ver, errors.Trace(err)
 }
 
-func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, error) {
+func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, bool /* ifExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 
 	var colName model.CIStr
+	var ifExists bool
 	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
 	var indexIds []int64
-	err = job.DecodeArgs(&colName, &indexIds)
+	err = job.DecodeArgs(&colName, &ifExists, &indexIds)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		return nil, nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 	if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, false, errors.Trace(err)
 	}
 	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
-	if len(idxInfos) > 0 {
-		for _, idxInfo := range idxInfos {
-			err = checkDropIndexOnAutoIncrementColumn(tblInfo, idxInfo)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return nil, nil, nil, err
-			}
-		}
-	}
-	return tblInfo, colInfo, idxInfos, nil
+	return tblInfo, colInfo, idxInfos, false, nil
 }
 
 func onSetDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -865,7 +591,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		_, _, _, err = createColumnInfo(tblInfo, modifyInfo.changingCol, changingColPos)
+		_, _, _, err = createColumnInfoWithPosCheck(tblInfo, modifyInfo.changingCol, changingColPos)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -949,14 +675,15 @@ func (w *worker) doModifyColumnTypeWithData(
 		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
-				var ctx sessionctx.Context
-				ctx, err := w.sessPool.get()
+				var sctx sessionctx.Context
+				sctx, err := w.sessPool.get()
 				if err != nil {
 					failpoint.Return(ver, err)
 				}
-				defer w.sessPool.put(ctx)
+				defer w.sessPool.put(sctx)
 
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil, valStr)
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+				_, _, err = sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
 					failpoint.Return(ver, err)
@@ -1041,7 +768,8 @@ func (w *worker) doModifyColumnTypeWithData(
 
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
-	reorgInfo, err := getReorgInfo(w.JobContext, d, t, job, tbl, BuildElements(changingCol, changingIdxs))
+	rh := newReorgHandler(t)
+	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, BuildElements(changingCol, changingIdxs))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -1053,7 +781,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 	// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData".
 	// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData"
 	failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
-	err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tbl.Meta().Name, oldCol.Name)
@@ -1069,22 +797,16 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 			return false, ver, nil
 		}
 		if kv.IsTxnRetryableError(err) {
-			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			w.reorgCtx.cleanNotifyReorgCancel()
 			return false, ver, errors.Trace(err)
 		}
-		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
 		}
 		logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 		job.State = model.JobStateRollingback
-		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		w.reorgCtx.cleanNotifyReorgCancel()
 		return false, ver, errors.Trace(err)
 	}
-	// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-	w.reorgCtx.cleanNotifyReorgCancel()
 	return true, ver, nil
 }
 
@@ -1244,7 +966,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 			TestReorgGoroutineRunning <- a
 			for {
 				time.Sleep(30 * time.Millisecond)
-				if w.reorgCtx.isReorgCanceled() {
+				if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
 					// Job is cancelled. So it can't be done.
 					failpoint.Return(dbterror.ErrCancelledDDLJob)
 				}
@@ -1264,7 +986,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 	if err != nil {
 		return errors.Trace(err)
 	}
-	originalStartHandle, originalEndHandle, err := getTableRange(w.JobContext, reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job), reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1290,7 +1012,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		}
 
 		// Update the element in the reorgCtx to keep the atomic access for daemon-worker.
-		w.reorgCtx.setCurrentElement(reorgInfo.elements[i+1])
+		w.getReorgCtx(reorgInfo.Job).setCurrentElement(reorgInfo.elements[i+1])
 
 		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
@@ -1326,19 +1048,21 @@ type updateColumnWorker struct {
 	rowMap map[int64]types.Datum
 
 	// For SQL Mode and warnings.
-	sqlMode mysql.SQLMode
+	sqlMode    mysql.SQLMode
+	jobContext *JobContext
 }
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *updateColumnWorker {
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, sessCtx)
 	return &updateColumnWorker{
-		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
+		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
 		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_rate"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
-		sqlMode:        sqlMode,
+		sqlMode:        reorgInfo.ReorgMeta.SQLMode,
+		jobContext:     jc,
 	}
 }
 
@@ -1371,7 +1095,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotRows(w.ddlWorker.JobContext, w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey,
+	err := iterateSnapshotRows(w.reorgInfo.d.jobContext(w.reorgInfo.Job), w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
@@ -1504,11 +1228,12 @@ func (w *updateColumnWorker) cleanRowMap() {
 // BackfillDataInTxn will backfill the table record in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed.
 func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
-		if tagger := w.ddlWorker.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		if tagger := w.reorgInfo.d.getResourceGroupTaggerForTopSQL(w.reorgInfo.Job); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
@@ -1562,7 +1287,7 @@ func (w *worker) doModifyColumn(
 	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
 	if oldCol.ID != newCol.ID {
 		job.State = model.JobStateRollingback
-		return ver, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", oldCol.Name, newCol.ID)
+		return ver, dbterror.ErrColumnInChange.GenWithStackByArgs(oldCol.Name, newCol.ID)
 	}
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag()) {
@@ -1752,7 +1477,18 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 	// The newCol's offset may be the value of the old schema version, so we can't use newCol directly.
 	oldCol.DefaultValue = newCol.DefaultValue
 	oldCol.DefaultValueBit = newCol.DefaultValueBit
-	oldCol.SetFlag(newCol.GetFlag())
+	oldCol.DefaultIsExpr = newCol.DefaultIsExpr
+	if mysql.HasNoDefaultValueFlag(newCol.GetFlag()) {
+		oldCol.AddFlag(mysql.NoDefaultValueFlag)
+	} else {
+		oldCol.DelFlag(mysql.NoDefaultValueFlag)
+		sctx := newContext(d.store)
+		err = checkDefaultValue(sctx, table.ToColumn(oldCol), true)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+	}
 
 	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
@@ -1862,7 +1598,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		err = checkForNullValue(w.ddlJobCtx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)
+		err = checkForNullValue(w.ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)
 		if err != nil {
 			return errors.Trace(err)
 		}

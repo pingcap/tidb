@@ -125,7 +125,7 @@ func cmdList(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -203,7 +203,7 @@ func cmdRun(args ...string) bool {
 		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
-				fmt.Println("check test binary existance error", err)
+				fmt.Println("check test binary existence error", err)
 				return false
 			}
 			if !exist {
@@ -229,7 +229,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 
@@ -254,7 +254,7 @@ func cmdRun(args ...string) bool {
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			fmt.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -353,6 +353,7 @@ func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
 	if err != nil {
 		return nil, withTrace(err)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	ret := make(map[string]struct{})
@@ -482,6 +483,7 @@ func collectCoverProfileFile() {
 		fmt.Println("create cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
@@ -519,6 +521,7 @@ func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEnt
 		fmt.Println("open temp cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	profs, err := cover.ParseProfilesFromReader(f)
@@ -720,6 +723,7 @@ func (n *numa) runTestCase(pkg string, fn string) testResult {
 		start = time.Now()
 		err = cmd.Run()
 		if err != nil {
+			//lint:ignore S1020
 			if _, ok := err.(*exec.ExitError); ok {
 				// Retry 3 times to get rid of the weird error:
 				switch err.Error() {
@@ -806,17 +810,19 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 	}
 	args = append(args, "-test.cpu", "1")
 	if !race {
-		// Don't set timeout for race because it takes a longer when race is enabled.
 		args = append(args, []string{"-test.timeout", "2m"}...)
+	} else {
+		// it takes a longer when race is enabled. so it is set more timeout value.
+		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
-	// session.test -test.run TestClusteredPrefixColum
-	args = append(args, "-test.run", fn)
 
+	// session.test -test.run TestClusteredPrefixColum
+	args = append(args, "-test.run", "^"+fn+"$")
 	return exec.Command(exe, args...)
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling"}
+	skipDir := []string{"br", "cmd", "dumpling", "tests"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -873,6 +879,7 @@ func buildTestBinaryMulti(pkgs []string) error {
 func testBinaryExist(pkg string) (bool, error) {
 	_, err := os.Stat(testFileFullPath(pkg))
 	if err != nil {
+		//lint:ignore S1020
 		if _, ok := err.(*os.PathError); ok {
 			return false, nil
 		}

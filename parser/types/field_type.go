@@ -19,6 +19,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -39,14 +40,22 @@ var (
 
 // FieldType records field type information.
 type FieldType struct {
-	tp      byte
-	flag    uint
-	flen    int
+	// tp is type of the field
+	tp byte
+	// flag represent NotNull, Unsigned, PriKey flags etc.
+	flag uint
+	// flen represent size of bytes of the field
+	flen int
+	// decimal represent decimal length of the field
 	decimal int
+	// charset represent character set
 	charset string
+	// collate represent collate rules of the charset
 	collate string
 	// elems is the element list for enum and set type.
-	elems []string
+	elems            []string
+	elemsIsBinaryLit []bool
+	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
 // NewFieldType returns a FieldType,
@@ -58,7 +67,12 @@ func NewFieldType(tp byte) *FieldType {
 		decimal: UnspecifiedLength,
 	}
 }
-
+func (ft *FieldType) IsDecimalValid() bool {
+	if ft.tp == mysql.TypeNewDecimal && (ft.decimal < 0 || ft.decimal > mysql.MaxDecimalScale || ft.flen <= 0 || ft.flen > mysql.MaxDecimalWidth || ft.flen < ft.decimal) {
+		return false
+	}
+	return true
+}
 func (ft *FieldType) GetType() byte {
 	return ft.tp
 }
@@ -115,8 +129,41 @@ func (ft *FieldType) SetFlen(flen int) {
 	ft.flen = flen
 }
 
+func (ft *FieldType) SetFlenUnderLimit(flen int) {
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+	} else {
+		ft.flen = flen
+	}
+}
+
 func (ft *FieldType) SetDecimal(decimal int) {
 	ft.decimal = decimal
+}
+
+func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
+	if ft.tp == mysql.TypeNewDecimal {
+		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+	} else {
+		ft.decimal = decimal
+	}
+}
+
+func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal int, deltaFlen int) {
+	if ft.tp != mysql.TypeNewDecimal {
+		return
+	}
+	if old.decimal < 0 {
+		deltaFlen += mysql.MaxDecimalScale
+		ft.decimal = mysql.MaxDecimalScale
+	} else {
+		ft.SetDecimal(old.decimal + deltaDecimal)
+	}
+	if old.flen < 0 {
+		ft.flen = mysql.MaxDecimalWidth
+	} else {
+		ft.SetFlenUnderLimit(old.flen + deltaFlen)
+	}
 }
 
 func (ft *FieldType) SetCharset(charset string) {
@@ -135,8 +182,32 @@ func (ft *FieldType) SetElem(idx int, element string) {
 	ft.elems[idx] = element
 }
 
+func (ft *FieldType) SetElemWithIsBinaryLit(idx int, element string, isBinaryLit bool) {
+	ft.elems[idx] = element
+	if isBinaryLit {
+		// Create the binary literal flags lazily.
+		if ft.elemsIsBinaryLit == nil {
+			ft.elemsIsBinaryLit = make([]bool, len(ft.elems))
+		}
+		ft.elemsIsBinaryLit[idx] = true
+	}
+}
+
 func (ft *FieldType) GetElem(idx int) string {
 	return ft.elems[idx]
+}
+
+func (ft *FieldType) GetElemIsBinaryLit(idx int) bool {
+	if len(ft.elemsIsBinaryLit) == 0 {
+		return false
+	}
+	return ft.elemsIsBinaryLit[idx]
+}
+
+func (ft *FieldType) CleanElemIsBinaryLit() {
+	if ft != nil && ft.elemsIsBinaryLit != nil {
+		ft.elemsIsBinaryLit = nil
+	}
 }
 
 // Clone returns a copy of itself.
@@ -461,13 +532,14 @@ func HasCharset(ft *FieldType) bool {
 
 // for json
 type jsonFieldType struct {
-	Tp      byte
-	Flag    uint
-	Flen    int
-	Decimal int
-	Charset string
-	Collate string
-	Elems   []string
+	Tp               byte
+	Flag             uint
+	Flen             int
+	Decimal          int
+	Charset          string
+	Collate          string
+	Elems            []string
+	ElemsIsBinaryLit []bool
 }
 
 func (ft *FieldType) UnmarshalJSON(data []byte) error {
@@ -481,6 +553,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.charset = r.Charset
 		ft.collate = r.Collate
 		ft.elems = r.Elems
+		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
 	}
 	return err
 }
@@ -494,5 +567,6 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Charset = ft.charset
 	r.Collate = ft.collate
 	r.Elems = ft.elems
+	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
 	return json.Marshal(r)
 }

@@ -15,7 +15,6 @@
 package decoder
 
 import (
-	"sort"
 	"time"
 
 	"github.com/pingcap/tidb/expression"

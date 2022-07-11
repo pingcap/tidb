@@ -190,7 +190,7 @@ In this proposal, we are opt to the second solution. Although it is more difficu
 
 1. Add the `remote-metrics-storage` configuration to the PD and temporarily configure it as the address of the Prometheus Server. PD acts as a proxy, and the request is transferred to Prometheus for execution. The main considerations are as follows:
 
-    - PD will have its own implementation of the query interface to realize bootstraping. No other changes needed for TiDB.
+    - PD will have its own implementation of the query interface to realize bootstrapping. No other changes needed for TiDB.
     - With bootstrapping realized, users can still use SQL to query monitoring information and diagnostic frameworks without relying on the Prometheus component deployed by TiDB
 
 2. Extract the modules for persisting and querying Prometheus time series data and embed it in PD.
@@ -216,7 +216,7 @@ However, because TiKV plan to completely removes the HTTP API in the future, onl
 ```proto
 // Diagnostics service for TiDB cluster components.
 service Diagnostics {
-	// Searchs log in the target node
+	// Searches log in the target node
 	rpc search_log(SearchLogRequest) returns (SearchLogResponse) {};
 	// Retrieves server info in the target node
 	rpc server_info(ServerInfoRequest) returns (ServerInfoResponse) {};

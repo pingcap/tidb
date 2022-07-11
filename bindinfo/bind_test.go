@@ -496,12 +496,13 @@ func TestErrorBind(t *testing.T) {
 	require.NotNil(t, bind.UpdateTime)
 
 	tk.MustExec("drop index index_t on t")
-	_, err = tk.Exec("select * from t where i > 10")
+	rs, err := tk.Exec("select * from t where i > 10")
 	require.NoError(t, err)
+	rs.Close()
 
 	dom.BindHandle().DropInvalidBindRecord()
 
-	rs, err := tk.Exec("show global bindings")
+	rs, err = tk.Exec("show global bindings")
 	require.NoError(t, err)
 	chk := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), chk)

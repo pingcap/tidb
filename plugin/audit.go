@@ -16,7 +16,9 @@ package plugin
 
 import (
 	"context"
+	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -30,7 +32,35 @@ const (
 	Completed
 	// Error represents a GeneralEvent that has error (and typically couldn't start)
 	Error
+	// GeneralEventCount is the count for the general events
+	// The new events MUST be added before it
+	GeneralEventCount
 )
+
+// GeneralEventFromString gets the `GeneralEvent` from the given string
+func GeneralEventFromString(s string) (GeneralEvent, error) {
+	upperStr := strings.ToUpper(s)
+	for i := 0; i < int(GeneralEventCount); i++ {
+		event := GeneralEvent(i)
+		if event.String() == upperStr {
+			return event, nil
+		}
+	}
+	return 0, errors.Errorf("Invalid general event: %s", s)
+}
+
+// String returns the string for the `GeneralEvent`
+func (e GeneralEvent) String() string {
+	switch e {
+	case Starting:
+		return "STARTING"
+	case Completed:
+		return "COMPLETED"
+	case Error:
+		return "ERROR"
+	}
+	return ""
+}
 
 // ConnectionEvent presents TiDB connection event.
 type ConnectionEvent byte

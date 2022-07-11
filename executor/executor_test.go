@@ -225,6 +225,9 @@ func TestSelectWithoutFrom(t *testing.T) {
 	tk.MustQuery("select 1 + 2*3;").Check(testkit.Rows("7"))
 	tk.MustQuery(`select _utf8"string";`).Check(testkit.Rows("string"))
 	tk.MustQuery("select 1 order by 1;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT  'a' as f1 having f1 = 'a';").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) AS f1 HAVING (f1 = 'a' OR TRUE);").Check(testkit.Rows("a"))
+	tk.MustQuery("SELECT (SELECT * FROM (SELECT 'a') t) + 1 AS f1 HAVING (f1 = 'a' OR TRUE)").Check(testkit.Rows("1"))
 }
 
 // TestSelectBackslashN Issue 3685.
@@ -1640,12 +1643,14 @@ func TestTimezonePushDown(t *testing.T) {
 		require.NoError(t, proto.Unmarshal(req.Data, dagReq))
 		require.Equal(t, systemTZ.String(), dagReq.GetTimeZoneName())
 	})
-	_, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err := tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	tk.MustExec(`set time_zone="System"`)
-	_, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+	rs, err = tk.Session().Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
 	require.NoError(t, err)
+	rs[0].Close()
 
 	require.Equal(t, 2, count) // Make sure the hook function is called.
 }
@@ -2062,42 +2067,6 @@ func TestCheckTableClusterIndex(t *testing.T) {
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1, c2), index (c1), unique key(c2));")
 	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	tk.MustExec("admin check table admin_test;")
-}
-
-func TestCoprocessorStreamingFlag(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, value int, index idx(id))")
-	// Add some data to make statistics work.
-	for i := 0; i < 100; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
-
-	tests := []struct {
-		sql    string
-		expect bool
-	}{
-		{"select * from t", true},                         // TableReader
-		{"select * from t where id = 5", true},            // IndexLookup
-		{"select * from t where id > 5", true},            // Filter
-		{"select * from t limit 3", false},                // Limit
-		{"select avg(id) from t", false},                  // Aggregate
-		{"select * from t order by value limit 3", false}, // TopN
-	}
-
-	ctx := context.Background()
-	for _, test := range tests {
-		ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
-			comment := fmt.Sprintf("sql=%s, expect=%v, get=%v", test.sql, test.expect, req.Streaming)
-			require.Equal(t, test.expect, req.Streaming, comment)
-		})
-		rs, err := tk.Session().Execute(ctx1, test.sql)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs[0], fmt.Sprintf("sql: %v", test.sql))
-	}
 }
 
 func TestIncorrectLimitArg(t *testing.T) {
@@ -3501,10 +3470,10 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
 
-		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
@@ -4424,19 +4393,18 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	require.NoError(t, err)
 
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
-		job, err := tt.GetHistoryDDLJob(int64(jobID))
-		require.NoError(t, err)
-		require.NotNil(t, job)
-		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-		// See PR: 11561.
-		job.BinlogInfo = nil
-		job.SchemaName = ""
-		err = tt.AddHistoryDDLJob(job, true)
-		require.NoError(t, err)
-		return nil
-	})
+	job, err := ddl.GetHistoryJobByID(tk.Session(), int64(jobID))
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+	// See PR: 11561.
+	job.BinlogInfo = nil
+	job.SchemaName = ""
+	err = sessiontxn.NewTxnInStmt(context.Background(), tk.Session())
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
@@ -5449,7 +5417,8 @@ func TestHistoryReadInTxn(t *testing.T) {
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
 				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
-				rows, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, int64(1), rows[0].GetInt64(0))
@@ -5654,9 +5623,10 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 6, row.Len())
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	ddlInfo, err := ddl.GetDDLInfo(txn)
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("begin")
+	sess := tk.Session()
+	ddlInfo, err := ddl.GetDDLInfo(sess)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
@@ -5671,8 +5641,7 @@ func TestAdmin(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Zero(t, req.NumRows())
-	err = txn.Rollback()
-	require.NoError(t, err)
+	tk.MustExec("rollback")
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
@@ -5682,9 +5651,9 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 12, row.Len())
-	txn, err = store.Begin()
+	txn, err := store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5709,7 +5678,7 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
@@ -5773,7 +5742,7 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 
 	// Split region for history ddl job queues.
@@ -5782,7 +5751,7 @@ func TestAdmin(t *testing.T) {
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
-	historyJobs2, err := ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -249,6 +250,7 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
+	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	hg, err := h.histogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -257,9 +259,12 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fms, err := h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
-	if err != nil {
-		return nil, errors.Trace(err)
+	var fms *statistics.FMSketch
+	if loadFMSketch {
+		fms, err = h.fmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	rows, _, err := reader.read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ColumnID)
 	if err != nil {
@@ -269,15 +274,15 @@ func (h *Handle) readStatsForOne(col model.TableColumnID, c *statistics.Column, 
 		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ColumnID))
 	}
 	colHist := &statistics.Column{
-		PhysicalID: col.TableID,
-		Histogram:  *hg,
-		Info:       c.Info,
-		CMSketch:   cms,
-		TopN:       topN,
-		FMSketch:   fms,
-		IsHandle:   c.IsHandle,
-		StatsVer:   rows[0].GetInt64(0),
-		Loaded:     true,
+		PhysicalID:        col.TableID,
+		Histogram:         *hg,
+		Info:              c.Info,
+		CMSketch:          cms,
+		TopN:              topN,
+		FMSketch:          fms,
+		IsHandle:          c.IsHandle,
+		StatsVer:          rows[0].GetInt64(0),
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 	}
 	// Column.Count is calculated by Column.TotalRowCount(). Hence, we don't set Column.Count when initializing colHist.
 	colHist.Count = int64(colHist.TotalRowCount())

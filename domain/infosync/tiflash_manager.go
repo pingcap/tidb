@@ -525,6 +525,13 @@ func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
 	tiflash.PdEnabled = enabled
 }
 
+// SetMockTiFlash is set a mock TiFlash server.
+func (m *mockTiFlashPlacementManager) SetMockTiFlash(tiflash *MockTiFlash) {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflash = tiflash
+}
+
 // SetPlacementRule is a helper function to set placement rule.
 func (m *mockTiFlashPlacementManager) SetPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	m.Lock()

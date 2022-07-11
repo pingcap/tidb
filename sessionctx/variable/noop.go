@@ -24,7 +24,6 @@ import (
 // but changing them has no effect on behavior.
 
 var noopSysVars = []*SysVar{
-	{Scope: ScopeGlobal, Name: MaxConnections, Value: "151", Type: TypeUnsigned, MinValue: 1, MaxValue: 100000},
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...

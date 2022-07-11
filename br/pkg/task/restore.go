@@ -16,6 +16,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -61,6 +62,7 @@ const (
 	defaultPDConcurrency            = 1
 	defaultBatchFlushInterval       = 16 * time.Second
 	defaultFlagDdlBatchSize         = 128
+	resetSpeedLimitRetryTimes       = 3
 )
 
 const (
@@ -182,14 +184,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	tsString, err = flags.GetString(FlagStreamRestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -265,7 +267,7 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	if cfg.Config.Concurrency == 0 {
-		cfg.Config.Concurrency = 32
+		cfg.Config.Concurrency = 16
 	}
 }
 
@@ -300,9 +302,9 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	schemasMap := make(map[string]struct{})
 	tablesMap := make(map[string]struct{})
 	for _, db := range schemas {
-		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
-			dbName = name
+		dbName := db.Info.Name.L
+		if dbCIStrName, ok := utils.GetSysDBCIStrName(db.Info.Name); utils.IsSysDB(dbCIStrName.O) && ok {
+			dbName = dbCIStrName.L
 		}
 		schemasMap[utils.EncloseName(dbName)] = struct{}{}
 		for _, table := range db.Tables {
@@ -310,19 +312,21 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 				// we may back up empty database.
 				continue
 			}
-			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.O)] = struct{}{}
+			tablesMap[utils.EncloseDBAndTable(dbName, table.Info.Name.L)] = struct{}{}
 		}
 	}
 	restoreSchemas := cfg.Schemas
 	restoreTables := cfg.Tables
 	for schema := range restoreSchemas {
-		if _, ok := schemasMap[schema]; !ok {
+		schemaLName := strings.ToLower(schema)
+		if _, ok := schemasMap[schemaLName]; !ok {
 			return errors.Annotatef(berrors.ErrUndefinedRestoreDbOrTable,
 				"[database: %v] has not been backup, please ensure you has input a correct database name", schema)
 		}
 	}
 	for table := range restoreTables {
-		if _, ok := tablesMap[table]; !ok {
+		tableLName := strings.ToLower(table)
+		if _, ok := tablesMap[tableLName]; !ok {
 			return errors.Annotatef(berrors.ErrUndefinedRestoreDbOrTable,
 				"[table: %v] has not been backup, please ensure you has input a correct table name", table)
 		}
@@ -611,6 +615,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// when user skip checksum, just collect tables, and drop them.
 		finish = dropToBlackhole(ctx, afterRestoreStream, errCh, updateCh)
 	}
+
+	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
+	defer func() {
+		var resetErr error
+		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+		for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
+			resetErr = client.ResetSpeedLimit(ctx)
+			if resetErr != nil {
+				log.Warn("failed to reset speed limit, retry it",
+					zap.Int("retry time", retry), logutil.ShortError(resetErr))
+				time.Sleep(time.Duration(retry+3) * time.Second)
+				continue
+			}
+			break
+		}
+		if resetErr != nil {
+			log.Error("failed to reset speed limit", zap.Error(resetErr))
+		}
+	}()
 
 	select {
 	case err = <-errCh:

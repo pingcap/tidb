@@ -110,6 +110,20 @@ type PathExpression struct {
 	flags pathExpressionFlag
 }
 
+var peCache PathExpressionCache
+
+type pathExpressionKey string
+
+func (key pathExpressionKey) Hash() []byte {
+	return hack.Slice(string(key))
+}
+
+// PathExpressionCache is a cache for PathExpression.
+type PathExpressionCache struct {
+	mu    sync.Mutex
+	cache *kvcache.SimpleLRUCache
+}
+
 // popOneLeg returns a pathLeg, and a child PathExpression without that leg.
 func (pe PathExpression) popOneLeg() (pathLeg, PathExpression) {
 	newPe := PathExpression{

@@ -17,6 +17,8 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -27,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -50,8 +54,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 // TiDBContext implements QueryCtx.
 type TiDBContext struct {
 	session.Session
-	currentDB string
-	stmts     map[int]*TiDBStatement
+	stmts map[int]*TiDBStatement
 }
 
 // TiDBStatement implements PreparedStatement.
@@ -165,7 +168,8 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
-			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB, preparedObj.PreparedAst.SchemaVersion)
+			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB,
+				preparedObj.PreparedAst.SchemaVersion, 0)
 			if err != nil {
 				return err
 			}
@@ -198,21 +202,16 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	se.SetClientCapability(capability)
 	se.SetConnectionID(connID)
 	tc := &TiDBContext{
-		Session:   se,
-		currentDB: dbname,
-		stmts:     make(map[int]*TiDBStatement),
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
 	}
+	se.SetSessionStatesHandler(sessionstates.StatePrepareStmt, tc)
 	return tc, nil
 }
 
 // GetWarnings implements QueryCtx GetWarnings method.
 func (tc *TiDBContext) GetWarnings() []stmtctx.SQLWarn {
 	return tc.GetSessionVars().StmtCtx.GetWarnings()
-}
-
-// CurrentDB implements QueryCtx CurrentDB method.
-func (tc *TiDBContext) CurrentDB() string {
-	return tc.currentDB
 }
 
 // WarningCount implements QueryCtx WarningCount method.
@@ -307,6 +306,89 @@ func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
 	return tc.Session.GetStmtStats()
 }
 
+// EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
+func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+	sessionVars := tc.Session.GetSessionVars()
+	sessionStates.PreparedStmts = make(map[uint32]*sessionstates.PreparedStmtInfo, len(sessionVars.PreparedStmts))
+	for preparedID, preparedObj := range sessionVars.PreparedStmts {
+		preparedStmt, ok := preparedObj.(*core.CachedPrepareStmt)
+		if !ok {
+			return errors.Errorf("invalid CachedPreparedStmt type")
+		}
+		sessionStates.PreparedStmts[preparedID] = &sessionstates.PreparedStmtInfo{
+			StmtText: preparedStmt.StmtText,
+			StmtDB:   preparedStmt.StmtDB,
+		}
+	}
+	for name, id := range sessionVars.PreparedStmtNameToID {
+		// Only text protocol statements have names.
+		if preparedStmtInfo, ok := sessionStates.PreparedStmts[id]; ok {
+			preparedStmtInfo.Name = name
+		}
+	}
+	for id, stmt := range tc.stmts {
+		// Only binary protocol statements have paramTypes.
+		preparedStmtInfo, ok := sessionStates.PreparedStmts[uint32(id)]
+		if !ok {
+			return errors.Errorf("prepared statement %d not found", id)
+		}
+		// Bound params are sent by CMD_STMT_SEND_LONG_DATA, the proxy can wait for COM_STMT_EXECUTE.
+		for _, boundParam := range stmt.BoundParams() {
+			if boundParam != nil {
+				return session.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have bound params")
+			}
+		}
+		if rs := stmt.GetResultSet(); rs != nil && !rs.IsClosed() {
+			return session.ErrCannotMigrateSession.GenWithStackByArgs("prepared statements have open result sets")
+		}
+		preparedStmtInfo.ParamTypes = stmt.GetParamsType()
+	}
+	return nil
+}
+
+// DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
+func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+	if len(sessionStates.PreparedStmts) == 0 {
+		return nil
+	}
+	sessionVars := tc.Session.GetSessionVars()
+	savedPreparedStmtID := sessionVars.GetNextPreparedStmtID()
+	savedCurrentDB := sessionVars.CurrentDB
+	defer func() {
+		sessionVars.SetNextPreparedStmtID(savedPreparedStmtID - 1)
+		sessionVars.CurrentDB = savedCurrentDB
+	}()
+
+	for id, preparedStmtInfo := range sessionStates.PreparedStmts {
+		// Set the next id and currentDB manually.
+		sessionVars.SetNextPreparedStmtID(id - 1)
+		sessionVars.CurrentDB = preparedStmtInfo.StmtDB
+		if preparedStmtInfo.Name == "" {
+			// Binary protocol: add to sessionVars.PreparedStmts and TiDBContext.stmts.
+			stmt, _, _, err := tc.Prepare(preparedStmtInfo.StmtText)
+			if err != nil {
+				return err
+			}
+			// Only binary protocol uses paramsType, which is passed from the first COM_STMT_EXECUTE.
+			stmt.SetParamsType(preparedStmtInfo.ParamTypes)
+		} else {
+			// Text protocol: add to sessionVars.PreparedStmts and sessionVars.PreparedStmtNameToID.
+			stmtText := strings.ReplaceAll(preparedStmtInfo.StmtText, "\\", "\\\\")
+			stmtText = strings.ReplaceAll(stmtText, "'", "\\'")
+			// Add single quotes because the sql_mode might contain ANSI_QUOTES.
+			sql := fmt.Sprintf("PREPARE `%s` FROM '%s'", preparedStmtInfo.Name, stmtText)
+			stmts, err := tc.Parse(ctx, sql)
+			if err != nil {
+				return err
+			}
+			if _, err = tc.ExecuteStmt(ctx, stmts[0]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	columns      []*ColumnInfo
@@ -341,6 +423,11 @@ func (trs *tidbResultSet) Close() error {
 	err := trs.recordSet.Close()
 	trs.recordSet = nil
 	return err
+}
+
+// IsClosed implements ResultSet.IsClosed interface.
+func (trs *tidbResultSet) IsClosed() bool {
+	return atomic.LoadInt32(&trs.closed) == 1
 }
 
 // OnFetchReturned implements fetchNotifier#OnFetchReturned
