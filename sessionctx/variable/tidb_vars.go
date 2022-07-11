@@ -687,8 +687,10 @@ const (
 
 	// TiDBMemoryDebugModeThreshold is used to set tidb memory debug mode trigger threshold.
 	// When set to 0, the function is disabled.
-	// When set to a negative integer, use memory debug mode 1 to detect the issue of frequent allocation and release of memory.
-	// When set to a positive integer, use memory debug mode 2 to detect the issue of memory tracking inaccurate.
+	// When set to a negative integer, use memory debug mode to detect the issue of frequent allocation and release of memory.
+	// We do not actively trigger gc, and check whether the `tracker memory * (1+bias ratio) > heap in use` each 5s.
+	// When set to a positive integer, use memory debug mode to detect the issue of memory tracking inaccurate.
+	// We trigger runtime.GC() each 5s, and check whether the `tracker memory * (1+bias ratio) > heap in use`.
 	TiDBMemoryDebugModeThreshold = "tidb_memory_debug_mode_threshold"
 	// TiDBMemoryDebugModeRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
 	TiDBMemoryDebugModeRatio = "tidb_memory_debug_mode_ratio"

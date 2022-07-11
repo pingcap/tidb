@@ -200,7 +200,8 @@ func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.Wait
 			if err == nil {
 				logutil.BgLogger().Info("Memory Debug Mode", genInfo("finished", true, false)...)
 			} else {
-				logutil.BgLogger().Info("Memory Debug Mode", genInfo("debug_mode_error", false, false)...)
+				logutil.BgLogger().Error("Memory Debug Mode", genInfo("debug_mode_error", false, false)...)
+				logutil.BgLogger().Error("Memory Debug Mode Exit", zap.Error(err))
 			}
 			wg.Done()
 		}()
