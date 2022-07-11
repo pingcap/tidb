@@ -649,7 +649,7 @@ func (job *Job) IsQueueing() bool {
 	return job.State == JobStateQueueing
 }
 
-// NotStarted returns whether job is not started or not.
+// NotStarted returns true if the job is never run by a worker.
 func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }
