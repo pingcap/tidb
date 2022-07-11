@@ -2,6 +2,8 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -11,14 +13,17 @@ import (
 )
 
 type foreignKeyChecker struct {
-	dbName         string
-	tbName         string
-	fkInfo         *model.FKInfo
-	colsOffsets    []int
-	referTbInfo    *model.TableInfo
-	referTbIdx     table.Index
-	idxIsExclusive bool
+	dbName          string
+	tbName          string
+	fkInfo          *model.FKInfo
+	colsOffsets     []int
+	referTable      table.Table
+	referTbIdx      table.Index
+	idxIsExclusive  bool
+	idxIsPrimaryKey bool
+	handleCols      []*table.Column
 
+	toBeCheckedHandleKeys []kv.Handle
 	toBeCheckedUniqueKeys []kv.Key
 	toBeCheckedIndexKeys  []kv.Key
 }
@@ -29,11 +34,43 @@ func (fkc *foreignKeyChecker) resetToBeCheckedKeys() {
 }
 
 func (fkc *foreignKeyChecker) checkValueExistInReferTable(ctx context.Context, txn kv.Transaction) error {
-	err := fkc.checkUniqueKeysExistInReferTable(ctx, txn)
+	err := fkc.checkHandleKeysExistInReferTable(ctx, txn)
+	if err != nil {
+		return err
+	}
+	err = fkc.checkUniqueKeysExistInReferTable(ctx, txn)
 	if err != nil {
 		return err
 	}
 	return fkc.checkIndexKeysExistInReferTable(ctx, txn)
+}
+
+func (fkc *foreignKeyChecker) checkHandleKeysExistInReferTable(ctx context.Context, txn kv.Transaction) error {
+	if len(fkc.toBeCheckedHandleKeys) == 0 {
+		return nil
+	}
+	// Fill cache using BatchGet
+	keys := make([]kv.Key, len(fkc.toBeCheckedHandleKeys))
+	for i, handle := range fkc.toBeCheckedHandleKeys {
+		keys[i] = tablecodec.EncodeRecordKey(fkc.referTable.RecordPrefix(), handle)
+	}
+
+	_, err := txn.BatchGet(ctx, keys)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		_, err := txn.Get(ctx, k)
+		if err == nil {
+			// If keys were found in refer table, pass.
+			continue
+		}
+		if kv.IsErrNotFound(err) {
+			return ErrNoReferencedRow2.GenWithStackByArgs(fkc.fkInfo.String(fkc.dbName, fkc.tbName))
+		}
+		return err
+	}
+	return nil
 }
 
 func (fkc *foreignKeyChecker) checkUniqueKeysExistInReferTable(ctx context.Context, txn kv.Transaction) error {
@@ -107,6 +144,19 @@ func (fkc *foreignKeyChecker) addRowNeedToCheck(sc *stmtctx.StatementContext, ro
 	if err != nil || vals == nil {
 		return err
 	}
+	if fkc.idxIsPrimaryKey {
+		handle, err := fkc.buildHandleFromFKValues(sc, vals)
+		if err != nil {
+			return err
+		}
+		if fkc.idxIsExclusive {
+			fkc.toBeCheckedHandleKeys = append(fkc.toBeCheckedHandleKeys, handle)
+		} else {
+			key := tablecodec.EncodeRecordKey(fkc.referTable.RecordPrefix(), handle)
+			fkc.toBeCheckedIndexKeys = append(fkc.toBeCheckedIndexKeys, key)
+		}
+		return nil
+	}
 	key, distinct, err := fkc.referTbIdx.GenIndexKey(sc, vals, nil, nil)
 	if err != nil {
 		return err
@@ -117,6 +167,25 @@ func (fkc *foreignKeyChecker) addRowNeedToCheck(sc *stmtctx.StatementContext, ro
 		fkc.toBeCheckedIndexKeys = append(fkc.toBeCheckedIndexKeys, key)
 	}
 	return nil
+}
+
+func (fkc *foreignKeyChecker) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals []types.Datum) (kv.Handle, error) {
+	pkDts := make([]types.Datum, 0, len(vals))
+	for i, val := range vals {
+		if fkc.referTbIdx != nil && len(fkc.handleCols) > 0 {
+			tablecodec.TruncateIndexValue(&val, fkc.referTbIdx.Meta().Columns[i], fkc.handleCols[i].ColumnInfo)
+		}
+		pkDts = append(pkDts, val)
+	}
+	handleBytes, err := codec.EncodeKey(sc, nil, pkDts...)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := kv.NewCommonHandle(handleBytes)
+	if err != nil {
+		return nil, err
+	}
+	return handle, nil
 }
 
 func (fkc *foreignKeyChecker) fetchFKValues(row []types.Datum) ([]types.Datum, error) {

@@ -1106,14 +1106,23 @@ func (e *InsertValues) initForeignKeyChecker() error {
 			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
 		}
 
+		var handleCols []*table.Column
+		if referTbIdxInfo.Primary && referTbInfo.IsCommonHandle {
+			cols := referTable.Cols()
+			for _, idxCol := range referTbIdxInfo.Columns {
+				handleCols = append(handleCols, cols[idxCol.Offset])
+			}
+		}
+
 		e.fkChecker = append(e.fkChecker, &foreignKeyChecker{
-			dbName:         e.DBName.L,
-			tbName:         tbInfo.Name.L,
-			fkInfo:         fk,
-			colsOffsets:    colsOffsets,
-			referTbInfo:    referTbInfo,
-			referTbIdx:     referTbIdx,
-			idxIsExclusive: len(colsOffsets) == len(referTbIdxInfo.Columns),
+			dbName:          e.DBName.L,
+			tbName:          tbInfo.Name.L,
+			fkInfo:          fk,
+			colsOffsets:     colsOffsets,
+			referTable:      referTable,
+			referTbIdx:      referTbIdx,
+			idxIsExclusive:  len(colsOffsets) == len(referTbIdxInfo.Columns),
+			idxIsPrimaryKey: referTbIdxInfo.Primary && referTbInfo.IsCommonHandle,
 		})
 	}
 	return nil

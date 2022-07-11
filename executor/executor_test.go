@@ -6167,4 +6167,87 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 	checkCaseFn()
 
 	// todo: add primary key index and pk is int, aka pk is handle.
+	// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
+
+	// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=1;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
+
+	// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
+
+	// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=1;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (-1, 1, 1);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t2 values (2, null, 1);"},
+		{sql: "insert into t2 values (3, 1, null);"},
+		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
 }
