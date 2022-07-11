@@ -60,7 +60,7 @@ func CreateMetaFileName(ts uint64) string {
 	return fmt.Sprintf("%s_%d", MetaFile, ts)
 }
 
-// Encrypt encrypts the content of MetaFile.
+// Encrypt encrypts the content according to CipherInfo.
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
 	if len(content) == 0 || cipher == nil {
 		return content, iv, nil
