@@ -141,7 +141,7 @@ type planEncoder struct {
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
-// Deprecated: Use FlattenPhysicalPlan() and EncodeFlatPlan() is preferred.
+// Deprecated: FlattenPhysicalPlan() + EncodeFlatPlan() is preferred.
 func EncodePlan(p Plan) string {
 	if explain, ok := p.(*Explain); ok {
 		p = explain.TargetPlan
@@ -290,7 +290,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 }
 
 // NormalizePlan is used to normalize the plan and generate plan digest.
-// Deprecated: Use FlattenPhysicalPlan() and NormalizeFlatPlan() is preferred.
+// Deprecated: FlattenPhysicalPlan() + NormalizeFlatPlan() is preferred.
 func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
