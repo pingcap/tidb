@@ -2726,6 +2726,41 @@ func TestIssue18984(t *testing.T) {
 		"3 3 3 2 4 3 5"))
 }
 
+func TestTimeToSecPushDownToTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a time(4))")
+	tk.MustExec("insert into t values('700:10:10.123456')")
+	tk.MustExec("insert into t values('20:20:20')")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "10000.00", "root", " data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
+		{"  └─Projection_4", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#3"},
+		{"    └─TableFullScan_7", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select time_to_sec(a) from t;").Check(rows)
+}
+
 func TestBitColumnPushDown(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

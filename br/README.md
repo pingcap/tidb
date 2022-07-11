@@ -125,7 +125,7 @@ mysql --host 127.0.0.1 -P4000 -E -e "SELECT COUNT(*) FROM test.order_line" -uroo
 
 ## Compatibility test
 
-See [COMPATBILE_TEST](./COMPATIBLE_TEST.md)
+See [COMPATBILE_TEST](./COMPATIBILITY_TEST.md)
 
 ## Contributing
 
