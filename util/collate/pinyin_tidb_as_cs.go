@@ -33,7 +33,7 @@ func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 	panic("implement me")
 }
 
-// Pattern no implements now.
+// Pattern is not implemented.
 func (*zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")
 }
