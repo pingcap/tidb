@@ -890,7 +890,7 @@ var (
 		}
 	}
 	getDuration = func(value string) types.Duration {
-		dur, _ := types.ParseDuration(nil, value, 0)
+		dur, _, _ := types.ParseDuration(nil, value, 0)
 		return dur
 	}
 	getOldDatumByte = func(d types.Datum) []byte {

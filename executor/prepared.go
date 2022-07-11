@@ -285,22 +285,6 @@ func (e *ExecuteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build(b *executorBuilder) error {
-	if snapshotTS := e.ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		if err := e.ctx.InitTxnWithStartTS(snapshotTS); err != nil {
-			return err
-		}
-	} else {
-		ok, err := plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
-		if err != nil {
-			return err
-		}
-		if ok {
-			err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
 		log.Warn("rebuild plan in EXECUTE statement failed", zap.String("labelName of PREPARE statement", e.name))
@@ -349,15 +333,11 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
-	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
-		return nil, false, false, err
-	}
 	isStaleness := snapshotTS != 0
 	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
 	execStmt.BinaryArgs = args
@@ -385,7 +365,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		Ti:               &TelemetryInfo{},
 		ReplicaReadScope: replicaReadScope,
 	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
+	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 		if !ok {
 			return nil, false, false, errors.Errorf("invalid CachedPrepareStmt type")

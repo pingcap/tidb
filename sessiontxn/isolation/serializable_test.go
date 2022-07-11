@@ -54,7 +54,7 @@ func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
 
 	compareTS := getOracleTS(t, se)
 	require.NoError(t, executor.ResetContextOfStmt(se, readOnlyStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	require.Greater(t, compareTS, ts)
@@ -62,7 +62,7 @@ func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
 
 	// In Oracle-like serializable isolation, readTS equals to the for update ts
 	require.NoError(t, executor.ResetContextOfStmt(se, forUpdateStmt))
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Greater(t, compareTS, ts)
@@ -87,7 +87,7 @@ func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
 		&tikverr.ErrDeadlock{Deadlock: &kvrpcpb.Deadlock{}, IsRetryable: true},
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-		require.NoError(t, provider.OnStmtStart(context.TODO()))
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.Same(t, lockErr, err)
 		require.Equal(t, sessiontxn.StmtActionError, nextAction)
@@ -99,7 +99,7 @@ func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
 		errors.New("err"),
 	} {
 		require.NoError(t, executor.ResetContextOfStmt(se, stmt))
-		require.NoError(t, provider.OnStmtStart(context.TODO()))
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		nextAction, err := provider.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterPessimisticLock, lockErr)
 		require.Same(t, lockErr, err)
 		require.Equal(t, sessiontxn.StmtActionError, nextAction)
@@ -143,11 +143,11 @@ func TestSerializableInitialize(t *testing.T) {
 	// non-active txn and then active it
 	tk.MustExec("rollback")
 	tk.MustExec("set @@autocommit=0")
-	assert = inActiveSerializableAssert(se)
+	assert = inactiveSerializableAssert(se)
 	assertAfterActive := activeSerializableAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider := assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err := provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -156,11 +156,11 @@ func TestSerializableInitialize(t *testing.T) {
 
 	// Case Pessimistic Autocommit
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inActiveSerializableAssert(se)
+	assert = inactiveSerializableAssert(se)
 	assertAfterActive = activeSerializableAssert(t, se, true)
 	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	ts, err = provider.GetStmtReadTS()
 	require.NoError(t, err)
 	assertAfterActive.Check(t)
@@ -223,32 +223,38 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	}
 
 	// information schema and ts should equal to snapshot when tidb_snapshot is set
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseSnapshot()
 
 	// information schema and ts will restore when set tidb_snapshot to empty
 	tk.MustExec("set @@tidb_snapshot=''")
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
+	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 	checkUseTxn()
 
 	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
-	tk.MustExec("rollback")
-	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
-	tk.MustExec("set @@autocommit=0")
-	assert = inActiveSerializableAssert(se)
-	assertAfterActive := activeSerializableAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO()))
-	tk.MustExec("set @@tidb_snapshot=@a")
-	checkUseSnapshot()
-	txn, err = se.Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	tk.MustExec("set @@tidb_snapshot=''")
-	checkUseTxn()
-	assertAfterActive.Check(t)
-	tk.MustExec("rollback")
+	// txn will not be active after `GetStmtReadTS` or `GetStmtForUpdateTS` when `tidb_snapshot` is set
+	for _, autocommit := range []int{0, 1} {
+		func() {
+			tk.MustExec("rollback")
+			tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+			tk.MustExec(fmt.Sprintf("set @@autocommit=%d", autocommit))
+			tk.MustExec("set @@tidb_snapshot=@a")
+			if autocommit == 1 {
+				origPessimisticAutoCommit := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+				config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+				defer func() {
+					config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origPessimisticAutoCommit)
+				}()
+			}
+			assert = inactiveSerializableAssert(se)
+			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "SERIALIZABLE")
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+			provider = assert.CheckAndGetProvider(t)
+			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+			checkUseSnapshot()
+			assertAfterUseSnapshot.Check(t)
+		}()
+	}
 }
 
 func activeSerializableAssert(t *testing.T, sctx sessionctx.Context,
@@ -263,7 +269,7 @@ func activeSerializableAssert(t *testing.T, sctx sessionctx.Context,
 	}
 }
 
-func inActiveSerializableAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
+func inactiveSerializableAssert(sctx sessionctx.Context) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticSerializableTxnContextProvider]{
 		sctx:         sctx,
 		isolation:    "SERIALIZABLE",

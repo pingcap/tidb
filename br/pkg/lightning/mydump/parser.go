@@ -60,13 +60,19 @@ type blockParser struct {
 	metrics *metric.Metrics
 }
 
-func makeBlockParser(reader ReadSeekCloser, blockBufSize int64, ioWorkers *worker.Pool, metrics *metric.Metrics) blockParser {
+func makeBlockParser(
+	reader ReadSeekCloser,
+	blockBufSize int64,
+	ioWorkers *worker.Pool,
+	metrics *metric.Metrics,
+	logger log.Logger,
+) blockParser {
 	return blockParser{
 		reader:    MakePooledReader(reader, ioWorkers),
 		blockBuf:  make([]byte, blockBufSize*config.BufferSizeScale),
 		remainBuf: &bytes.Buffer{},
 		appendBuf: &bytes.Buffer{},
-		Logger:    log.L(),
+		Logger:    logger,
 		rowPool: &sync.Pool{
 			New: func() interface{} {
 				return make([]types.Datum, 0, 16)
@@ -147,7 +153,7 @@ func NewChunkParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics),
+		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
 		escFlavor:   escFlavor,
 	}
 }
