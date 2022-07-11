@@ -416,6 +416,7 @@ dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
 dumpling_bins:
 	@which bin/tidb-server
 	@which bin/minio
+	@which bin/mc
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
 

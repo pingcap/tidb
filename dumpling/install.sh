@@ -27,3 +27,6 @@ mv tidb/bin/tidb-server bin/
 # download minio
 wget https://dl.min.io/server/minio/release/linux-amd64/minio -O bin/minio
 chmod a+x bin/minio
+
+wget https://dl.minio.io/client/mc/release/linux-amd64/mc -O bin/mc
+chmod a+x bin/mc
