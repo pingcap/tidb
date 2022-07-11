@@ -23,7 +23,7 @@ func (*zhPinyinTiDBASCSCollator) Compare(_, _ string) int {
 	panic("implement me")
 }
 
-// Key no implements now.
+// Key is not implemented.
 func (*zhPinyinTiDBASCSCollator) Key(_ string) []byte {
 	panic("implement me")
 }
