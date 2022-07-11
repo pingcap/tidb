@@ -80,8 +80,9 @@ type preBuiltSubQueryCacheItem struct {
 
 // ScopeSchema is used to resolve column and register basic agg in analyzing phase.
 type ScopeSchema struct {
-	scopeSchema *expression.Schema
-	scopeNames  []*types.FieldName
+	scopeSchema  *expression.Schema
+	scopeNames   []*types.FieldName
+	selectFields []*ast.SelectField
 
 	// agg group utility elements, aggFuncs are mapped to aggColumn and aggFuncExpr, and aggMapper is used to fast locate the offset in
 	// aggFuncs/aggColumn when an address of *AggregateFuncExpr is given.
@@ -118,10 +119,6 @@ type ScopeSchema struct {
 	reservedColsNames           []*types.FieldName
 	reservedCorrelatedCols      []*expression.CorrelatedColumn
 	projectionCol4CorrelatedAgg map[int64]*expression.Column
-
-	// inAgg is flag that used to judge whether current context is in agg.
-	inAgg             bool
-	selectBlockOffset int
 }
 
 // FullScopeSchema returns current scope's basic column plus register agg columns.
@@ -298,10 +295,10 @@ func (b *PlanBuilder) findAggInScopeBackward(agg *ast.AggregateFuncExpr) (*aggre
 			referredCol := scope.aggColumn[offset]
 			// for clause like having and order by, we can not directly refer the correlated column from outer scope. In old runtime,
 			// it will project the correlated agg in projection, and refer the projected new column in having and order by clause.
-			if b.curClause == havingClause || b.curClause == orderByClause {
-				// refer the projected column instead.
-				return scope.aggFuncs[offset], b.curScope.projectionCol4CorrelatedAgg[referredCol.UniqueID]
-			}
+			// if b.curClause == havingClause || b.curClause == orderByClause {
+			// 	// refer the projected column instead.
+			//	return scope.aggFuncs[offset], b.curScope.projectionCol4CorrelatedAgg[referredCol.UniqueID]
+			//}
 			return scope.aggFuncs[offset], &expression.CorrelatedColumn{Column: *referredCol, Data: new(types.Datum)}
 		}
 	}
@@ -540,12 +537,12 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 	b := er.b
 	corCols := make([]*expression.CorrelatedColumn, 0, 1)
 	cols := make([]*expression.Column, 0, 1)
-	newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
+	newArgList := make([]expression.Expression, len(aggFunc.Args), len(aggFunc.Args))
 	lenOrderItems := 0
 	if aggFunc.Order != nil {
 		lenOrderItems = len(aggFunc.Order.Items)
 	}
-	newOrderByItems := make([]*util.ByItems, 0, lenOrderItems)
+	newOrderByItems := make([]*util.ByItems, lenOrderItems, lenOrderItems)
 
 	if strings.HasPrefix(er.b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select (select sum(count(a))) from t") {
 		fmt.Println(1)
@@ -582,7 +579,8 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 
 	// Since the er.stack has rewritten and keep agg's args and order items before, reuse it.
 	if aggFunc.Order != nil {
-		for _, byItem := range aggFunc.Order.Items {
+		// use the reversed the enter-stack order.
+		for i := len(aggFunc.Order.Items) - 1; i >= 0; i-- {
 			newByItem := er.ctxStack[len(er.ctxStack)-1]
 			er.ctxStackPop(1)
 			if inCurrentScope {
@@ -592,11 +590,12 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 			}
 			corCols = append(corCols, expression.ExtractCorColumns(newByItem)...)
 			cols = append(cols, expression.ExtractColumns(newByItem)...)
-			newOrderByItems = append(newOrderByItems, &util.ByItems{Expr: newByItem, Desc: byItem.Desc})
+			newOrderByItems[i] = &util.ByItems{Expr: newByItem, Desc: aggFunc.Order.Items[i].Desc}
 		}
 	}
 	// rewrite the agg function's args according current scope.
-	for range aggFunc.Args {
+	// use the reversed the enter-stack order.
+	for i := len(aggFunc.Args) - 1; i >= 0; i-- {
 		newArg := er.ctxStack[len(er.ctxStack)-1]
 		er.ctxStackPop(1)
 		if inCurrentScope {
@@ -606,7 +605,7 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 		}
 		corCols = append(corCols, expression.ExtractCorColumns(newArg)...)
 		cols = append(cols, expression.ExtractColumns(newArg)...)
-		newArgList = append(newArgList, newArg)
+		newArgList[i] = newArg
 	}
 	// build agg desc.
 	newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
@@ -761,7 +760,7 @@ func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, w
 	return nil
 }
 
-func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby *ast.GroupByClause) error {
+func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) error {
 	originClause := b.curClause
 	b.curClause = groupByClause
 	defer func() {
@@ -771,10 +770,30 @@ func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby
 	if gby == nil {
 		return nil
 	}
-	// todo: consider the parameter.
+	resolver := &gbyResolver{
+		ctx:        b.ctx,
+		fields:     fields,
+		schema:     P.Schema(),
+		names:      P.OutputNames(),
+		skipAggMap: b.correlatedAggMapper,
+	}
 	for _, item := range gby.Items {
+		resolver.inExpr = false
+		resolver.exprDepth = 0
+		resolver.isParam = false
+		retExpr, _ := item.Expr.Accept(resolver)
+		if resolver.err != nil {
+			return errors.Trace(resolver.err)
+		}
+		if !resolver.isParam {
+			item.Expr = retExpr.(ast.ExprNode)
+		}
+
+		itemExpr := retExpr.(ast.ExprNode)
+		// change the item.Expr for later build group-by usage.
+		item.Expr = itemExpr
 		// ignore the np here, we won't want change the plan tree here.
-		_, _, err := b.rewrite(ctx, item.Expr, P, nil, true)
+		_, _, err := b.rewrite(ctx, itemExpr, P, nil, true)
 		if err != nil {
 			return err
 		}
