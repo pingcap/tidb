@@ -84,7 +84,7 @@ func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error 
 	return nil
 }
 
-// ClientBuilder implements the StorageReader interface.
+// ClientBuilder provides common method to build a service client.
 type ClientBuilder interface {
 	// Example of serviceURL: https://<your_storage_account>.blob.core.windows.net
 	GetServiceClient() (azblob.ServiceClient, error)
