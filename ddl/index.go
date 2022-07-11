@@ -1539,7 +1539,7 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 // indexesToChange is used to store the indexes that need to be changed during modifying column.
 type indexesToChange struct {
 	indexInfo *model.IndexInfo
-	// column offset in idxInfo.Columns.
+	// Column offset in idxInfo.Columns.
 	offset int
 	// When the modifying column is contained in the index, a temp index is created.
 	// isTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
