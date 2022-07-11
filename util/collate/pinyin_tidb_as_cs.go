@@ -18,7 +18,7 @@ package collate
 type zhPinyinTiDBASCSCollator struct {
 }
 
-// Compare no implements now.
+// Compare is not implemented.
 func (*zhPinyinTiDBASCSCollator) Compare(_, _ string) int {
 	panic("implement me")
 }
