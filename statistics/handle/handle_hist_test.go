@@ -169,10 +169,6 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		inTerms  string
 	}{
 		{
-			failPath: "github.com/pingcap/tidb/statistics/handle/mockFinishWorkingPanic",
-			inTerms:  "panic",
-		},
-		{
 			failPath: "github.com/pingcap/tidb/statistics/handle/mockReadStatsForOnePanic",
 			inTerms:  "panic",
 		},

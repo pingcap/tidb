@@ -210,7 +210,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 		return nil, nil
 	}
 	var err error
-	var wrapper *statsWrapper
+	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {
@@ -229,6 +229,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	// to avoid duplicated handling in concurrent scenario
 	working := h.setWorking(task.TableItemID, task.ResultCh)
 	if !working {
+		h.writeToResultChan(task.ResultCh, item)
 		return nil, nil
 	}
 	// refresh statsReader to get latest stats
@@ -464,27 +465,26 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	return h.updateStatsCache(oldCache.update([]*statistics.Table{tbl}, nil, oldCache.version, WithTableStatsByQuery()))
 }
 
-func (h *Handle) setWorking(col model.TableItemID, resultCh chan model.TableItemID) bool {
+func (h *Handle) setWorking(item model.TableItemID, resultCh chan model.TableItemID) bool {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	chList, ok := h.StatsLoad.WorkingColMap[col]
+	chList, ok := h.StatsLoad.WorkingColMap[item]
 	if ok {
 		if chList[0] == resultCh {
 			return true // just return for duplicate setWorking
 		}
-		h.StatsLoad.WorkingColMap[col] = append(chList, resultCh)
+		h.StatsLoad.WorkingColMap[item] = append(chList, resultCh)
 		return false
 	}
 	chList = []chan model.TableItemID{}
 	chList = append(chList, resultCh)
-	h.StatsLoad.WorkingColMap[col] = chList
+	h.StatsLoad.WorkingColMap[item] = chList
 	return true
 }
 
 func (h *Handle) finishWorking(col model.TableItemID) {
 	h.StatsLoad.Lock()
 	defer h.StatsLoad.Unlock()
-	failpoint.Inject("mockFinishWorkingPanic", nil)
 	if chList, ok := h.StatsLoad.WorkingColMap[col]; ok {
 		list := chList[1:]
 		for _, ch := range list {
