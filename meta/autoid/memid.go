@@ -123,7 +123,7 @@ func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) 
 	return min, alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (min int64, base int64, err error) {
+func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset)-1 > uint64(alloc.base) {
 		alloc.base = int64(uint64(offset) - 1)
