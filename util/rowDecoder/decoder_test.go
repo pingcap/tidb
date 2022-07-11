@@ -79,7 +79,7 @@ func TestRowDecoder(t *testing.T) {
 	require.Nil(t, err)
 	t2 := types.NewTimeDatum(time2)
 
-	c5default, _ := types.ParseDuration(sc, "02:00:02", 0)
+	c5default, _, _ := types.ParseDuration(sc, "02:00:02", 0)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
 	require.Nil(t, err)
