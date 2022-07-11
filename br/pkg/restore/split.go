@@ -12,6 +12,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
@@ -482,8 +483,15 @@ type scanRegionBackoffer struct {
 }
 
 func newScanRegionBackoffer() utils.Backoffer {
+	attempt := ScanRegionAttemptTimes
+	// only use for test.
+	failpoint.Inject("scanRegionBackoffer", func(val failpoint.Value) {
+		if val.(bool) {
+			attempt = 3
+		}
+	})
 	return &scanRegionBackoffer{
-		attempt: ScanRegionAttemptTimes,
+		attempt: attempt,
 	}
 }
 
