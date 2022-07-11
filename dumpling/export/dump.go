@@ -140,10 +140,10 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return errors.Trace(err)
 		}
 		if err = prepareTableListToDump(tctx, conf, conn); err != nil {
-			conn.Close()
+			_ = conn.Close()
 			return err
 		}
-		conn.Close()
+		_ = conn.Close()
 	}
 
 	conCtrl, err = NewConsistencyController(tctx, conf, pool)
@@ -165,7 +165,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	if err != nil {
 		return err
 	}
-	defer metaConn.Close()
+	defer func() {
+		_ = metaConn.Close()
+	}()
 	m.recordStartTime(time.Now())
 	// for consistency lock, we can write snapshot info after all tables are locked.
 	// the binlog pos may changed because there is still possible write between we lock tables and write master status.
@@ -205,7 +207,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			return conn, errors.Trace(err1)
 		}
 		// give up the last broken connection
-		conn.Close()
+		_ = conn.Close()
 		newConn, err1 := createConnWithConsistency(tctx, pool, repeatableRead)
 		if err1 != nil {
 			return conn, errors.Trace(err1)
@@ -330,7 +332,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 	}
 	tearDown := func() {
 		for _, w := range writers {
-			w.conn.Close()
+			_ = w.conn.Close()
 		}
 	}
 	return writers, tearDown, nil
@@ -948,7 +950,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		return nil
 	}, func() {
 		if iter != nil {
-			iter.Close()
+			_ = iter.Close()
 			iter = nil
 		}
 		rowRec = MakeRowReceiver(pkColTypes)
@@ -1504,12 +1506,16 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dbHandle.Close()
+	defer func() {
+		_ = dbHandle.Close()
+	}()
 	conn, err := dbHandle.Conn(tctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 	dbInfos, err := GetDBInfo(conn, DatabaseTablesToMap(conf.Tables))
 	if err != nil {
 		return errors.Trace(err)

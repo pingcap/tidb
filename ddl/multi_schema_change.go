@@ -69,8 +69,12 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				}
 				proxyJob := sub.ToProxyJob(job)
 				ver, err = w.runDDLJob(d, t, &proxyJob)
+				err = handleRollbackException(err, proxyJob.Error)
+				if err != nil {
+					return ver, err
+				}
 				sub.FromProxyJob(&proxyJob)
-				return ver, err
+				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
 			job.State = model.JobStateRollbackDone
@@ -154,6 +158,22 @@ func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror
 	}
 }
 
+func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
+	if runJobErr != nil {
+		// The physical errors are not recoverable during rolling back.
+		// We keep retrying it.
+		return runJobErr
+	}
+	if proxyJobErr != nil {
+		if proxyJobErr.Equal(dbterror.ErrCancelledDDLJob) {
+			// A cancelled DDL error is normal during rolling back.
+			return nil
+		}
+		return proxyJobErr
+	}
+	return nil
+}
+
 func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
 	err := fillMultiSchemaInfo(m, job)
 	if err != nil {
@@ -189,6 +209,20 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		indexName := job.Args[0].(model.CIStr)
 		info.DropIndexes = append(info.DropIndexes, indexName)
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		indexName := job.Args[1].(model.CIStr)
+		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
+		info.AddIndexes = append(info.AddIndexes, indexName)
+		for _, indexPartSpecification := range indexPartSpecifications {
+			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
+		}
+		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
+			for _, c := range hiddenCols {
+				for depColName := range c.Dependences {
+					info.RelativeColumns = append(info.RelativeColumns, model.NewCIStr(depColName))
+				}
+			}
+		}
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
