@@ -818,7 +818,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 	return min, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (min int64, base int64, err error) {
+func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
