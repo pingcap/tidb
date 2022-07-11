@@ -38,11 +38,11 @@ func NewEC2Session() (*EC2Session, error) {
 	return &EC2Session{ec2: ec2Session}, nil
 }
 
-// StartsEBSSnapshot is the mainly steps to control the data volume snapshots.
+// CreateSnapshots is the mainly steps to control the data volume snapshots.
 // It will do the following works.
 // 1. determine the order of volume snapshot.
 // 2. send snapshot requests to aws.
-func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[string]string, error) {
+func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[string]string, error) {
 	snapIDMap := make(map[string]string)
 	for _, store := range backupInfo.TiKVComponent.Stores {
 		volumes := store.Volumes
@@ -87,10 +87,10 @@ func (e *EC2Session) StartsEBSSnapshot(backupInfo *config.EBSBasedBRMeta) (map[s
 	return snapIDMap, nil
 }
 
-// WaitSnapshotFinished waits all snapshots finished.
+// WaitSnapshotsCreated waits all snapshots finished.
 // according to EBS snapshot will do real snapshot background.
 // so we'll check whether all snapshots finished.
-func (e *EC2Session) WaitSnapshotFinished(snapIDMap map[string]string, progress glue.Progress) (int64, error) {
+func (e *EC2Session) WaitSnapshotsCreated(snapIDMap map[string]string, progress glue.Progress) (int64, error) {
 	pendingSnapshots := make([]*string, 0, len(snapIDMap))
 	for volID := range snapIDMap {
 		snapID := snapIDMap[volID]

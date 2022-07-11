@@ -178,13 +178,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 	snapIDMap := make(map[string]string)
 	if !cfg.DryRun {
 		log.Info("start async snapshots")
-		snapIDMap, err = ec2Session.StartsEBSSnapshot(backupInfo)
+		snapIDMap, err = ec2Session.CreateSnapshots(backupInfo)
 		if err != nil {
 			// TODO maybe we should consider remove snapshots already exists in a failure
 			return errors.Trace(err)
 		}
 		log.Info("wait async snapshots finish")
-		totalSize, err = ec2Session.WaitSnapshotFinished(snapIDMap, progress)
+		totalSize, err = ec2Session.WaitSnapshotsCreated(snapIDMap, progress)
 		if err != nil {
 			return errors.Trace(err)
 		}
