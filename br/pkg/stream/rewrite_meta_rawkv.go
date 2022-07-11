@@ -495,7 +495,9 @@ func jobNeedGC(job *model.Job) bool {
 func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable InsertDeleteRangeForTable, insertDeleteRangeForIndex InsertDeleteRangeForIndex) error {
 	dbReplace, exist := sr.DbMap[job.SchemaID]
 	if !exist {
-		return errors.Errorf("try to drop a non-existent range, missing oldDBID")
+		// skip this mddljob, the same below
+		log.Debug("try to drop a non-existent range, missing oldDBID", zap.Int64("oldDBID", job.SchemaID))
+		return nil
 	}
 
 	// allocate a new fake job id to avoid row conflicts in table `gc_delete_range`
@@ -530,28 +532,35 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 		newTableIDs := make([]int64, 0, len(tableIDs))
 		for tableID, tableReplace := range dbReplace.TableMap {
 			if _, exist := argsSet[tableID]; !exist {
-				return errors.Errorf("DropSchema: record a table, but it doesn't exist in job args")
+				log.Debug("DropSchema: record a table, but it doesn't exist in job args", zap.Int64("oldTableID", tableID))
+				continue
 			}
 			newTableIDs = append(newTableIDs, tableReplace.NewTableID)
 			for partitionID, newPartitionID := range tableReplace.PartitionMap {
 				if _, exist := argsSet[partitionID]; !exist {
-					return errors.Errorf("DropSchema: record a partition, but it doesn't exist in job args")
+					log.Debug("DropSchema: record a partition, but it doesn't exist in job args", zap.Int64("oldPartitionID", partitionID))
+					continue
 				}
 				newTableIDs = append(newTableIDs, newPartitionID)
 			}
 		}
 
 		if len(newTableIDs) != len(tableIDs) {
-			return errors.Errorf("DropSchema: try to drop a non-existent table/partition, whose oldID doesn't exist in tableReplace")
+			log.Debug("DropSchema: try to drop a non-existent table/partition, whose oldID doesn't exist in tableReplace")
+			// only drop newTableIDs' ranges
 		}
 
-		insertDeleteRangeForTable(newJobID, newTableIDs)
+		if len(newTableIDs) > 0 {
+			insertDeleteRangeForTable(newJobID, newTableIDs)
+		}
+
 		return nil
 	// Truncate will generates new id for table or partition, so ts can be large enough
 	case model.ActionDropTable, model.ActionTruncateTable:
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
-			return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldTableID")
+			log.Debug("DropTable/TruncateTable: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+			return nil
 		}
 
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
@@ -566,11 +575,14 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 			for i := 0; i < len(physicalTableIDs); i++ {
 				newPid, exist := tableReplace.PartitionMap[physicalTableIDs[i]]
 				if !exist {
-					return errors.Errorf("DropTable/TruncateTable: try to drop a non-existent table, missing oldPartitionID")
+					log.Debug("DropTable/TruncateTable: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", physicalTableIDs[i]))
+					continue
 				}
 				physicalTableIDs[i] = newPid
 			}
-			insertDeleteRangeForTable(newJobID, physicalTableIDs)
+			if len(physicalTableIDs) > 0 {
+				insertDeleteRangeForTable(newJobID, physicalTableIDs)
+			}
 			return nil
 		}
 
@@ -579,7 +591,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
-			return errors.Errorf("DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldTableID")
+			log.Debug("DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+			return nil
 		}
 		var physicalTableIDs []int64
 		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
@@ -589,18 +602,22 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 		for i := 0; i < len(physicalTableIDs); i++ {
 			newPid, exist := tableReplace.PartitionMap[physicalTableIDs[i]]
 			if !exist {
-				return errors.Errorf("DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldPartitionID")
+				log.Debug("DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", physicalTableIDs[i]))
+				continue
 			}
 			physicalTableIDs[i] = newPid
 		}
-		insertDeleteRangeForTable(newJobID, physicalTableIDs)
+		if len(physicalTableIDs) > 0 {
+			insertDeleteRangeForTable(newJobID, physicalTableIDs)
+		}
 		return nil
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		// iff job.State = model.JobStateRollbackDone
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
-			return errors.Errorf("AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldTableID")
+			log.Debug("AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+			return nil
 		}
 		var indexID int64
 		var partitionIDs []int64
@@ -615,7 +632,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 			for _, oldPid := range partitionIDs {
 				newPid, exist := tableReplace.PartitionMap[oldPid]
 				if !exist {
-					return errors.Errorf("AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldPartitionID")
+					log.Debug("AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
+					continue
 				}
 
 				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
@@ -627,7 +645,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
-			return errors.Errorf("DropIndex/DropPrimaryKey: try to drop a non-existent table, missing oldTableID")
+			log.Debug("DropIndex/DropPrimaryKey: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+			return nil
 		}
 
 		var indexName interface{}
@@ -644,9 +663,10 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 			for _, oldPid := range partitionIDs {
 				newPid, exist := tableReplace.PartitionMap[oldPid]
 				if !exist {
-					return errors.Errorf("DropIndex/DropPrimaryKey: try to drop a non-existent table, missing oldPartitionID")
+					log.Debug("DropIndex/DropPrimaryKey: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
+					continue
 				}
-
+				// len(indexIDs) = 1
 				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
 		} else {
@@ -666,7 +686,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
-			return errors.Errorf("DropIndexes: try to drop a non-existent table, missing oldTableID")
+			log.Debug("DropIndexes: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+			return nil
 		}
 
 		var elementID int64 = 1
@@ -674,7 +695,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 			for _, oldPid := range partitionIDs {
 				newPid, exist := tableReplace.PartitionMap[oldPid]
 				if !exist {
-					return errors.Errorf("DropIndexes: try to drop a non-existent table, missing oldPartitionID")
+					log.Debug("DropIndexes: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
+					continue
 				}
 				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
@@ -692,7 +714,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 		if len(indexIDs) > 0 {
 			tableReplace, exist := dbReplace.TableMap[job.TableID]
 			if !exist {
-				return errors.Errorf("DropColumn: try to drop a non-existent table, missing oldTableID")
+				log.Debug("DropColumn: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+				return nil
 			}
 
 			var elementID int64 = 1
@@ -700,7 +723,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 				for _, oldPid := range partitionIDs {
 					newPid, exist := tableReplace.PartitionMap[oldPid]
 					if !exist {
-						return errors.Errorf("DropColumn: try to drop a non-existent table, missing oldPartitionID")
+						log.Debug("DropColumn: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
+						continue
 					}
 					insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 				}
@@ -720,7 +744,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 		if len(indexIDs) > 0 {
 			tableReplace, exist := dbReplace.TableMap[job.TableID]
 			if !exist {
-				return errors.Errorf("DropColumns: try to drop a non-existent table, missing oldTableID")
+				log.Debug("DropColumns: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+				return nil
 			}
 
 			var elementID int64 = 1
@@ -728,7 +753,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 				for _, oldPid := range partitionIDs {
 					newPid, exist := tableReplace.PartitionMap[oldPid]
 					if !exist {
-						return errors.Errorf("DropColumns: try to drop a non-existent table, missing oldPartitionID")
+						log.Debug("DropColumns: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
+						continue
 					}
 					insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 				}
@@ -747,7 +773,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 		}
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
-			return errors.Errorf("DropColumn: try to drop a non-existent table, missing oldTableID")
+			log.Debug("DropColumn: try to drop a non-existent table, missing oldTableID", zap.Int64("oldTableID", job.TableID))
+			return nil
 		}
 
 		var elementID int64 = 1
@@ -755,7 +782,8 @@ func (sr *SchemasReplace) deleteRange(job *model.Job, insertDeleteRangeForTable 
 			for _, oldPid := range partitionIDs {
 				newPid, exist := tableReplace.PartitionMap[oldPid]
 				if !exist {
-					return errors.Errorf("DropColumn: try to drop a non-existent table, missing oldPartitionID")
+					log.Debug("DropColumn: try to drop a non-existent table, missing oldPartitionID", zap.Int64("oldPartitionID", oldPid))
+					continue
 				}
 				insertDeleteRangeForIndex(newJobID, &elementID, newPid, indexIDs)
 			}
