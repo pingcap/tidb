@@ -55,7 +55,7 @@ const (
 	MetaV2
 )
 
-// CreateMetaFileName creates a meta file name.
+// CreateMetaFileName is the name of meta file.
 func CreateMetaFileName(ts uint64) string {
 	return fmt.Sprintf("%s_%d", MetaFile, ts)
 }
