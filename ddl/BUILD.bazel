@@ -172,7 +172,6 @@ go_test(
     deps = [
         "//config",
         "//ddl/placement",
-        "//ddl/schematracker",
         "//ddl/testutil",
         "//ddl/util",
         "//domain",
@@ -224,7 +223,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",

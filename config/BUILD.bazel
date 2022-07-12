@@ -10,7 +10,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/config",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/streamhelper/config",
         "//parser/terror",
         "//types/json",
         "//util/logutil",

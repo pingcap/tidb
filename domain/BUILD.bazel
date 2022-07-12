@@ -17,7 +17,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//bindinfo",
-        "//br/pkg/streamhelper",
         "//config",
         "//ddl",
         "//ddl/util",

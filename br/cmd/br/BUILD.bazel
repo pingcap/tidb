@@ -22,7 +22,6 @@ go_library(
         "//br/pkg/redact",
         "//br/pkg/restore",
         "//br/pkg/rtree",
-        "//br/pkg/streamhelper/config",
         "//br/pkg/summary",
         "//br/pkg/task",
         "//br/pkg/trace",

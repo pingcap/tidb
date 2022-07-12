@@ -16,12 +16,10 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//table/temptable",
-        "//util/logutil",
         "//util/stringutil",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_tikv_client_go_v2//oracle",
-        "@org_uber_go_zap//:zap",
     ],
 )
 
