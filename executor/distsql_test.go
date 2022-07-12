@@ -435,7 +435,6 @@ func TestCoprocessorPagingSize(t *testing.T) {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
-
 	tk.MustQuery("select @@tidb_min_paging_size").Check(testkit.Rows(strconv.FormatUint(paging.MinPagingSize, 10)))
 
 	// When the min paging size is small, we need more RPC roundtrip!
@@ -464,6 +463,9 @@ func TestCoprocessorPagingSize(t *testing.T) {
 		}
 		return res
 	}
+
+	// This is required here because only the chunk encoding collect the execution information and contains 'rpc_num'.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
 
 	tk.MustExec("set @@tidb_min_paging_size = 1")
 	rows := tk.MustQuery("explain analyze select * from t_paging").Rows()
