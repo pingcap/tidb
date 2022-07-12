@@ -129,3 +129,60 @@ func TestTruncateSafepoint(t *testing.T) {
 		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
 	}
 }
+
+func fakeMetaDatas() []*backuppb.Metadata {
+	ms := []*backuppb.Metadata{
+		{
+			StoreId: 1,
+			MinTs:   1500,
+			MaxTs:   2000,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 1500,
+					MaxTs:                 2000,
+					Cf:                    stream.WriteCF,
+					MinBeginTsInDefaultCf: 800,
+				},
+			},
+		},
+		{
+			StoreId: 2,
+			MinTs:   3000,
+			MaxTs:   4000,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 3000,
+					MaxTs:                 4000,
+					Cf:                    stream.WriteCF,
+					MinBeginTsInDefaultCf: 2000,
+				},
+			},
+		},
+		{
+			StoreId: 3,
+			MinTs:   5100,
+			MaxTs:   6100,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 5100,
+					MaxTs:                 6100,
+					Cf:                    stream.WriteCF,
+					MinBeginTsInDefaultCf: 5000,
+				},
+			},
+		},
+	}
+	return ms
+}
+
+func TestCalculateShiftTS(t *testing.T) {
+	var (
+		startTs   uint64 = 2900
+		restoreTS uint64 = 4500
+	)
+
+	ms := fakeMetaDatas()
+	shiftTS, exist := restore.CalculateShiftTS(ms, startTs, restoreTS)
+	require.Equal(t, shiftTS, uint64(2000))
+	require.Equal(t, exist, true)
+}

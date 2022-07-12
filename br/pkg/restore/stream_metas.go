@@ -63,7 +63,7 @@ func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
 		metadatas = append(metadatas, m)
 	}
 
-	min_begin_ts, exist := CalcuateShiftTS(metadatas, startTS, mathutil.MaxUint)
+	min_begin_ts, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
 	if !exist {
 		min_begin_ts = startTS
 	}
@@ -233,7 +233,8 @@ func SetTSToFile(
 	return truncateAndWrite(ctx, s, filename, []byte(content))
 }
 
-func CalcuateShiftTS(
+// CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
+func CalculateShiftTS(
 	metas []*backuppb.Metadata,
 	startTS uint64,
 	restoreTS uint64,

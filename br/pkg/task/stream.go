@@ -1110,7 +1110,7 @@ func restoreStream(
 		return nil
 	}
 
-	shiftStartTS, exist := restore.CalcuateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
+	shiftStartTS, exist := restore.CalculateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
 	if !exist {
 		shiftStartTS = cfg.StartTS
 	}

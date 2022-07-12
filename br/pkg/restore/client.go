@@ -1524,10 +1524,6 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
 
 	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
-		if metadata.MinTs > restoreTS {
-			return nil
-		}
-
 		streamBackupMetaFiles.Lock()
 		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
 		streamBackupMetaFiles.Unlock()
@@ -1565,6 +1561,15 @@ func (rc *Client) ReadStreamDataFiles(
 			log.Debug("backup stream collect data file", zap.String("file", d.Path))
 		}
 	}
+
+	// sort files firstly.
+	sort.Slice(mFiles, func(i, j int) bool {
+		if mFiles[i].ResolvedTs > 0 && mFiles[j].ResolvedTs > 0 {
+			return mFiles[i].ResolvedTs < mFiles[j].ResolvedTs
+		} else {
+			return mFiles[i].MaxTs < mFiles[j].MaxTs
+		}
+	})
 	return dFiles, mFiles, nil
 }
 
@@ -1794,10 +1799,6 @@ func (rc *Client) RestoreMetaKVFiles(
 	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 ) error {
-	// sort files firstly.
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].MinTs < files[j].MaxTs
-	})
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
 	// The k-v events in default CF should be restored firstly. The reason is that:
