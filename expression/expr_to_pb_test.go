@@ -1136,7 +1136,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
-	// ReverseUTF8
+	// ReverseUTF8 test
 	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeString), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
