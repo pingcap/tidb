@@ -470,7 +470,7 @@
                 "cost": 45418,
                 "est_rows": 3333.3333333333335,
                 "task_type": 1,
-                "store_type": 2,
+                "store_type": 1,
                 "operator_info": "data:Selection_7"
               }
             ],
@@ -516,7 +516,7 @@
                 "est_rows": 10000,
                 "act_rows": 2,
                 "task_type": 1,
-                "store_type": 2,
+                "store_type": 1,
                 "operator_info": "data:TableFullScan_6"
               }
             ],
@@ -550,7 +550,7 @@
                 "est_rows": 10000,
                 "act_rows": 8,
                 "task_type": 1,
-                "store_type": 2,
+                "store_type": 1,
                 "operator_info": "data:TableFullScan_5"
               }
             ],
