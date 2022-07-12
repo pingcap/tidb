@@ -1866,7 +1866,6 @@ func TestGCWithPendingTxn(t *testing.T) {
 	require.NoError(t, err)
 
 	err = txn.Commit(ctx)
-	require.Error(t, err)
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
