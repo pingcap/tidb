@@ -33,13 +33,13 @@ type BackupEBSConfig struct {
 	Config
 
 	VolumeFile string `json:"volume-file"`
-	DryRun     bool   `json:"dry-run"`
+	SkipAWS    bool   `json:"skip-aws"`
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
 func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
-	cfg.DryRun, err = flags.GetBool(flagDryRun)
+	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -54,7 +54,7 @@ func (cfg *BackupEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 // DefineBackupEBSFlags defines common flags for the backup command.
 func DefineBackupEBSFlags(flags *pflag.FlagSet) {
 	flags.String(flagBackupVolumeFile, "./backup.json", "the file path of volume infos of TiKV node")
-	flags.Bool(flagDryRun, false, "don't access to aws environment if set to true")
+	flags.Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 }
 
 // RunBackupEBS starts a backup task to backup volume vai EBS snapshot.
@@ -176,7 +176,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cmdName string, cfg *BackupEBS
 		return errors.Trace(err)
 	}
 	snapIDMap := make(map[string]string)
-	if !cfg.DryRun {
+	if !cfg.SkipAWS {
 		log.Info("start async snapshots")
 		snapIDMap, err = ec2Session.CreateSnapshots(backupInfo)
 		if err != nil {

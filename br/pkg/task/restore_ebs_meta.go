@@ -45,7 +45,7 @@ const (
 // DefineRestoreEBSMetaFlags defines common flags for the backup command.
 func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 	command.Flags().String(flagOutputMetaFile, "output.json", "the file path of output meta file")
-	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
+	command.Flags().Bool(flagSkipAWS, false, "don't access to aws environment if set to true")
 	command.Flags().String(flagVolumeType, string(config.GP3Volume), "volume type: gp3, io1, io2")
 	command.Flags().Int64(flagVolumeIOPS, 0, "volume iops(0 means default for that volume type)")
 	command.Flags().Int64(flagVolumeThroughput, 0, "volume throughout in MiB/s(0 means default for that volume type)")
@@ -54,7 +54,7 @@ func DefineRestoreEBSMetaFlags(command *cobra.Command) {
 type RestoreEBSConfig struct {
 	Config
 	OutputFile       string               `json:"output-file"`
-	DryRun           bool                 `json:"dry-run"`
+	SkipAWS          bool                 `json:"skip-aws"`
 	VolumeType       config.EBSVolumeType `json:"volume-type"`
 	VolumeIOPS       int64                `json:"volume-iops"`
 	VolumeThroughput int64                `json:"volume-throughput"`
@@ -63,7 +63,7 @@ type RestoreEBSConfig struct {
 // ParseFromFlags parses the restore-related flags from the flag set.
 func (cfg *RestoreEBSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
-	cfg.DryRun, err = flags.GetBool(flagDryRun)
+	cfg.SkipAWS, err = flags.GetBool(flagSkipAWS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -184,17 +184,8 @@ func (h *restoreEBSMetaHelper) restore() error {
 	go progressFileWriterRoutine(ctx, progress, int64(storeCount))
 
 	resolvedTs = h.metaInfo.ClusterInfo.ResolvedTS
-	if h.cfg.DryRun {
-		totalSize = 1234
-		for i := 0; i < int(storeCount); i++ {
-			progress.Inc()
-			log.Info("mock: create volume from snapshot finished.", zap.Int("index", i))
-			time.Sleep(800 * time.Millisecond)
-		}
-	} else {
-		if totalSize, err = h.doRestore(ctx, progress); err != nil {
-			return errors.Trace(err)
-		}
+	if totalSize, err = h.doRestore(ctx, progress); err != nil {
+		return errors.Trace(err)
 	}
 
 	if err = h.writeOutputFile(); err != nil {
@@ -216,6 +207,15 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	log.Info("set pd ts = max(resolved_ts, current pd ts)", zap.Uint64("resolved ts", h.metaInfo.ClusterInfo.ResolvedTS))
 	if err := h.mgr.ResetTS(ctx, h.metaInfo.ClusterInfo.ResolvedTS); err != nil {
 		return 0, errors.Trace(err)
+	}
+
+	if h.cfg.SkipAWS {
+		for i := 0; i < int(h.metaInfo.GetStoreCount()); i++ {
+			progress.Inc()
+			log.Info("mock: create volume from snapshot finished.", zap.Int("index", i))
+			time.Sleep(800 * time.Millisecond)
+		}
+		return 1234, nil
 	}
 
 	volumeIDMap, totalSize, err := h.restoreVolumes(progress)
