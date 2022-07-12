@@ -274,6 +274,101 @@ func TestJobCodec(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isDependent)
 
+	// Test IsDependentOn for exchange partition with table.
+	// test ActionCreateSchema and ActionExchangeTablePartition is dependent.
+	job3 := &Job{
+		ID:         4,
+		TableID:    4,
+		SchemaID:   4,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{int64(6), int64(3), int64(5), "pt", true},
+	}
+	job3.RawArgs, err = json.Marshal(job3.Args)
+	isDependent, err = job3.IsDependentOn(job2)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	// test random and ActionExchangeTablePartition is dependent because TableID is same.
+	job4 := &Job{
+		ID:         5,
+		TableID:    5,
+		SchemaID:   3,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{6, 4, 2, "pt", true},
+	}
+	job4.RawArgs, err = json.Marshal(job4.Args)
+	isDependent, err = job4.IsDependentOn(job)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	// test ActionExchangeTablePartition and ActionExchangeTablePartition is dependent.
+	job5 := &Job{
+		ID:         6,
+		TableID:    6,
+		SchemaID:   6,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{2, 6, 5, "pt", true},
+	}
+	job5.RawArgs, err = json.Marshal(job5.Args)
+	isDependent, err = job5.IsDependentOn(job4)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job6 := &Job{
+		ID:         7,
+		TableID:    7,
+		SchemaID:   7,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{6, 4, 2, "pt", true},
+	}
+	job6.RawArgs, err = json.Marshal(job6.Args)
+	isDependent, err = job6.IsDependentOn(job5)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job7 := &Job{
+		ID:         8,
+		TableID:    8,
+		SchemaID:   8,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{8, 4, 6, "pt", true},
+	}
+	job7.RawArgs, err = json.Marshal(job7.Args)
+	isDependent, err = job7.IsDependentOn(job6)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job8 := &Job{
+		ID:         9,
+		TableID:    9,
+		SchemaID:   9,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{8, 9, 9, "pt", true},
+	}
+	job8.RawArgs, err = json.Marshal(job8.Args)
+	isDependent, err = job8.IsDependentOn(job7)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
+	job9 := &Job{
+		ID:         10,
+		TableID:    10,
+		SchemaID:   10,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{10, 10, 8, "pt", true},
+	}
+	job9.RawArgs, err = json.Marshal(job9.Args)
+	isDependent, err = job9.IsDependentOn(job8)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
 	require.NoError(t, err)

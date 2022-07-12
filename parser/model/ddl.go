@@ -553,11 +553,26 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 				return true, nil
 			}
 		}
+		if job.Type == ActionExchangeTablePartition {
+			var (
+				defID          int64
+				ptSchemaID     int64
+				ptID           int64
+				partName       string
+				withValidation bool
+			)
+			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if other.SchemaID == ptSchemaID {
+				return true, nil
+			}
+		}
 	}
 	return false, nil
 }
 
-func (job *Job) hasDependentSchemaForExchangePartition(other *Job) (bool, error) {
+func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
 	if job.Type == ActionExchangeTablePartition {
 		var (
 			defID          int64
@@ -572,6 +587,28 @@ func (job *Job) hasDependentSchemaForExchangePartition(other *Job) (bool, error)
 		}
 		if ptID == other.TableID || defID == other.TableID {
 			return true, nil
+		}
+
+		if other.Type == ActionExchangeTablePartition {
+			var (
+				otherDefID          int64
+				otherPtSchemaID     int64
+				otherPtID           int64
+				otherPartName       string
+				otherWithValidation bool
+			)
+			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+				return true, nil
+			}
+			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+				return true, nil
+			}
+			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
@@ -595,7 +632,7 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	if other.TableID == job.TableID {
 		return true, nil
 	}
-	isDependent, err = job.hasDependentSchemaForExchangePartition(other)
+	isDependent, err = job.hasDependentTableForExchangePartition(other)
 	if err != nil || isDependent {
 		return isDependent, errors.Trace(err)
 	}
