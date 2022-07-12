@@ -196,6 +196,6 @@ func TestCalculateShiftTS(t *testing.T) {
 	require.Equal(t, exist, true)
 
 	ms = fakeMetaDatas(stream.DefaultCF)
-	shiftTS, exist = restore.CalculateShiftTS(ms, startTs, restoreTS)
+	_, exist = restore.CalculateShiftTS(ms, startTs, restoreTS)
 	require.Equal(t, exist, false)
 }
