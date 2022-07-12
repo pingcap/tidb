@@ -8,11 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-<<<<<<< HEAD
-	"regexp"
-=======
 	"net"
->>>>>>> 613c5dce0... db(dumpling): use net.JoinHostPort to generate host-port part of URI (#36113)
+	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
