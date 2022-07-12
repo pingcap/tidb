@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",
-        "@com_github_golangci_misspell//:go_default_library",
+        "@com_github_golangci_misspell//:misspell",
         "@org_golang_x_tools//go/analysis",
     ],
 )
