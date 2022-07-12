@@ -179,6 +179,7 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingS
 	if pagingSize > 0 {
 		lastRange = &coprocessor.KeyRange{}
 		builder.paging = lastRange
+		builder.pagingSize = pagingSize
 	}
 	exec, err := builder.buildMPPExecutor(rootExec)
 	if err != nil {
