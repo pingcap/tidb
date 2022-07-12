@@ -1539,6 +1539,65 @@
     ]
   },
   {
+    "Name": "TestDecorrelateLimitInSubquery",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─HashJoin 7992.00 root  semi join, equal:[eq(test.test.id, test.test.id)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─HashJoin 7992.00 root  semi join, equal:[eq(test.test.id, test.test.id)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.test.id))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#7",
+          "└─Apply 10000.00 root  CARTESIAN semi join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 2.00 root  offset:1, count:2",
+          "    └─TableReader 3.00 root  data:Limit",
+          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
+          "        └─Selection 3.00 cop[tikv]  eq(test.test.id, test.test.id)",
+          "          └─TableFullScan 3000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3)",
+        "Plan": [
+          "Apply 10000.00 root  CARTESIAN semi join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─Selection(Probe) 2.40 root  eq(9, test.t.c)",
+          "  └─Limit 3.00 root  offset:0, count:3",
+          "    └─TableReader 3.00 root  data:Limit",
+          "      └─Limit 3.00 cop[tikv]  offset:0, count:3",
+          "        └─Selection 3.00 cop[tikv]  lt(test.t.c, test.t.c)",
+          "          └─TableFullScan 3.75 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMultiColMaxOneRow",
     "Cases": [
       {
@@ -2389,12 +2448,12 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
         "Plan": [
-          "TableReader_24 3.00 5.05 root  data:ExchangeSender_23",
-          "└─ExchangeSender_23 3.00 98.18 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_22 3.00 98.18 mpp[tiflash]  Column#4",
-          "    └─HashAgg_8 3.00 78.38 mpp[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
-          "      └─ExchangeReceiver_21 3.00 69.38 mpp[tiflash]  ",
-          "        └─ExchangeSender_20 3.00 69.38 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.a, collate: binary]",
+          "TableReader_24 3.00 4.16 root  data:ExchangeSender_23",
+          "└─ExchangeSender_23 3.00 76.80 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_22 3.00 76.80 mpp[tiflash]  Column#4",
+          "    └─HashAgg_8 3.00 57.00 mpp[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
+          "      └─ExchangeReceiver_21 3.00 48.00 mpp[tiflash]  ",
+          "        └─ExchangeSender_20 3.00 48.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.a, collate: binary]",
           "          └─TableFullScan_19 3.00 45.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
@@ -2439,12 +2498,12 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_14 1.00 19.82 root  funcs:count(1)->Column#7",
-          "└─TableReader_46 3.00 10.82 root  data:ExchangeSender_45",
-          "  └─ExchangeSender_45 3.00 216.75 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashJoin_42 3.00 216.75 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "      ├─ExchangeReceiver_21(Build) 3.00 78.38 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_20 3.00 78.38 mpp[tiflash]  ExchangeType: Broadcast",
+          "StreamAgg_14 1.00 18.93 root  funcs:count(1)->Column#7",
+          "└─TableReader_46 3.00 9.93 root  data:ExchangeSender_45",
+          "  └─ExchangeSender_45 3.00 195.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin_42 3.00 195.38 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver_21(Build) 3.00 57.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_20 3.00 57.00 mpp[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection_19 3.00 54.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "      │     └─TableFullScan_18 3.00 45.00 mpp[tiflash] table:t1 keep order:false",
           "      └─Selection_23(Probe) 3.00 54.00 mpp[tiflash]  not(isnull(test.t2.a))",
@@ -2454,15 +2513,15 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "StreamAgg_15 1.00 62.51 root  funcs:count(1)->Column#10",
-          "└─HashJoin_65 3.00 53.51 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "StreamAgg_15 1.00 60.60 root  funcs:count(1)->Column#10",
+          "└─HashJoin_65 3.00 51.60 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─IndexReader_53(Build) 3.00 11.66 root  index:IndexFullScan_52",
           "  │ └─IndexFullScan_52 3.00 130.50 cop[tikv] table:t3, index:c(b) keep order:false",
-          "  └─TableReader_39(Probe) 3.00 13.05 root  data:ExchangeSender_38",
-          "    └─ExchangeSender_38 3.00 250.13 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─HashJoin_29 3.00 250.13 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "        ├─ExchangeReceiver_35(Build) 3.00 111.75 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_34 3.00 111.75 mpp[tiflash]  ExchangeType: Broadcast",
+          "  └─TableReader_39(Probe) 3.00 11.14 root  data:ExchangeSender_38",
+          "    └─ExchangeSender_38 3.00 204.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─HashJoin_29 3.00 204.38 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "        ├─ExchangeReceiver_35(Build) 3.00 66.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_34 3.00 66.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection_33 3.00 63.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "        │     └─TableFullScan_32 3.00 54.00 mpp[tiflash] table:t1 keep order:false",
           "        └─Selection_37(Probe) 3.00 54.00 mpp[tiflash]  not(isnull(test.t2.a))",
@@ -3739,19 +3798,18 @@
           "TableReader 2.00 root  data:ExchangeSender",
           "└─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 2.00 mpp[tiflash]  Column#9, test.t2.v1, test.t2.v2",
-          "    └─HashAgg 2.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:sum(Column#22)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
+          "    └─HashAgg 2.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
           "      └─ExchangeReceiver 2.00 mpp[tiflash]  ",
           "        └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
-          "          └─HashAgg 2.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#22",
-          "            └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.t1.v1, test.t2.v1) eq(test.t1.v2, test.t2.v2)]",
-          "              ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
-          "              │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.v1, collate: binary], [name: test.t1.v2, collate: binary]",
-          "              │   └─TableFullScan 2.00 mpp[tiflash] table:t1 keep order:false",
-          "              └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
-          "                └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#14, collate: binary], [name: Column#15, collate: binary]",
-          "                  └─Projection 8.00 mpp[tiflash]  test.t2.v1, test.t2.v2, cast(test.t2.v1, decimal(20,2))->Column#14, cast(test.t2.v2, decimal(20,2))->Column#15",
-          "                    └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                      └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
+          "          └─HashJoin 2.00 mpp[tiflash]  left outer join, equal:[eq(test.t1.v1, test.t2.v1) eq(test.t1.v2, test.t2.v2)]",
+          "            ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "            │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.v1, collate: binary], [name: test.t1.v2, collate: binary]",
+          "            │   └─TableFullScan 2.00 mpp[tiflash] table:t1 keep order:false",
+          "            └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#12, collate: binary], [name: Column#13, collate: binary]",
+          "                └─Projection 8.00 mpp[tiflash]  test.t2.v1, test.t2.v2, cast(test.t2.v1, decimal(20,2))->Column#12, cast(test.t2.v2, decimal(20,2))->Column#13",
+          "                  └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
+          "                    └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
@@ -3760,18 +3818,17 @@
           "TableReader 1.00 root  data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.00 mpp[tiflash]  Column#9, test.t2.v1, test.t2.v2",
-          "    └─HashAgg 1.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:sum(Column#16)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
+          "    └─HashAgg 1.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#9, funcs:firstrow(test.t2.v1)->test.t2.v1, funcs:firstrow(test.t2.v2)->test.t2.v2",
           "      └─ExchangeReceiver 1.00 mpp[tiflash]  ",
           "        └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
-          "          └─HashAgg 1.00 mpp[tiflash]  group by:test.t2.v1, test.t2.v2, funcs:count(1)->Column#16",
-          "            └─HashJoin 1.00 mpp[tiflash]  left outer join, equal:[eq(test.t3.v1, test.t2.v1) eq(test.t3.v2, test.t2.v2)]",
-          "              ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "              │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t3.v1, collate: binary], [name: test.t3.v2, collate: binary]",
-          "              │   └─TableFullScan 1.00 mpp[tiflash] table:t3 keep order:false",
-          "              └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
-          "                └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
-          "                  └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
-          "                    └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
+          "          └─HashJoin 1.00 mpp[tiflash]  left outer join, equal:[eq(test.t3.v1, test.t2.v1) eq(test.t3.v2, test.t2.v2)]",
+          "            ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
+          "            │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t3.v1, collate: binary], [name: test.t3.v2, collate: binary]",
+          "            │   └─TableFullScan 1.00 mpp[tiflash] table:t3 keep order:false",
+          "            └─ExchangeReceiver(Probe) 8.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.v1, collate: binary], [name: test.t2.v2, collate: binary]",
+          "                └─Selection 8.00 mpp[tiflash]  not(isnull(test.t2.v1)), not(isnull(test.t2.v2))",
+          "                  └─TableFullScan 8.00 mpp[tiflash] table:t2 keep order:false"
         ]
       }
     ]
@@ -5302,24 +5359,27 @@
       {
         "SQL": "desc format = 'brief' SELECT STRAIGHT_JOIN t1 . col_varchar_64 , t1 . col_char_64_not_null FROM tt AS t1 INNER JOIN( tt AS t2 JOIN tt AS t3 ON(t3 . col_decimal_30_10_key = t2 . col_tinyint)) ON(t3 . col_varchar_64 = t2 . col_varchar_key) WHERE t3 . col_varchar_64 = t1 . col_char_64_not_null GROUP BY 1 , 2",
         "Plan": [
-          "HashAgg 8000.00 root  group by:test.tt.col_char_64_not_null, test.tt.col_varchar_64, funcs:firstrow(test.tt.col_varchar_64)->test.tt.col_varchar_64, funcs:firstrow(test.tt.col_char_64_not_null)->test.tt.col_char_64_not_null",
-          "└─TableReader 8000.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.col_char_64_not_null, test.tt.col_varchar_64, ",
-          "      └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.tt.col_char_64_not_null, test.tt.col_varchar_64)]",
-          "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_char_64_not_null, collate: utf8mb4_bin]",
-          "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-          "        └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.tt.col_varchar_key, test.tt.col_varchar_64) eq(Column#19, test.tt.col_decimal_30_10_key)]",
-          "          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_varchar_key, collate: utf8mb4_bin]",
-          "          │   └─Projection 9990.00 mpp[tiflash]  test.tt.col_varchar_key, cast(test.tt.col_tinyint, decimal(20,0) BINARY)->Column#19",
-          "          │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.col_varchar_key))",
-          "          │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-          "          └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
-          "            └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_varchar_64, collate: utf8mb4_bin]",
-          "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.col_varchar_64))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.tt.col_varchar_64, test.tt.col_char_64_not_null",
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.col_char_64_not_null, test.tt.col_varchar_64, funcs:firstrow(test.tt.col_varchar_64)->test.tt.col_varchar_64, funcs:firstrow(test.tt.col_char_64_not_null)->test.tt.col_char_64_not_null",
+          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_varchar_64, collate: utf8mb4_bin], [name: test.tt.col_char_64_not_null, collate: utf8mb4_bin]",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.tt.col_char_64_not_null, test.tt.col_varchar_64, ",
+          "            └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.tt.col_char_64_not_null, test.tt.col_varchar_64)]",
+          "              ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "              │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_char_64_not_null, collate: utf8mb4_bin]",
+          "              │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "              └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.tt.col_varchar_key, test.tt.col_varchar_64) eq(Column#19, test.tt.col_decimal_30_10_key)]",
+          "                ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_varchar_key, collate: utf8mb4_bin]",
+          "                │   └─Projection 9990.00 mpp[tiflash]  test.tt.col_varchar_key, cast(test.tt.col_tinyint, decimal(20,0) BINARY)->Column#19",
+          "                │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.col_varchar_key))",
+          "                │       └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "                └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+          "                  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.tt.col_varchar_64, collate: utf8mb4_bin]",
+          "                    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.tt.col_varchar_64))",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -5385,12 +5445,15 @@
         "SQL": "desc format = 'brief' select count(*), id + 1 from t group by id + 1",
         "Plan": [
           "Projection 8000.00 root  Column#4, plus(test.t.id, 1)->Column#5",
-          "└─HashAgg 8000.00 root  group by:Column#13, funcs:count(Column#14)->Column#4, funcs:firstrow(Column#15)->test.t.id",
-          "  └─TableReader 8000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15",
-          "        └─Projection 10000.00 mpp[tiflash]  test.t.id, plus(test.t.id, 1)->Column#17",
-          "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "└─TableReader 8000.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.id",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:Column#10, funcs:sum(Column#11)->Column#4, funcs:firstrow(Column#12)->test.t.id",
+          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#10, collate: binary]",
+          "            └─HashAgg 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#11, funcs:firstrow(Column#16)->Column#12",
+          "              └─Projection 10000.00 mpp[tiflash]  test.t.id, plus(test.t.id, 1)->Column#17",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5518,11 +5581,10 @@
           "  └─HashJoin 7992.00 mpp[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
           "    ├─Projection(Build) 7992.00 mpp[tiflash]  test.t.id",
           "    │ └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
-          "    │   └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "    │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "    │       └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
-          "    │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    │   └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "    │     └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "    │       └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "    │         └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 7992.00 mpp[tiflash]  Column#11, test.t.id",
           "      └─HashAgg 7992.00 mpp[tiflash]  group by:Column#39, funcs:sum(Column#37)->Column#11, funcs:firstrow(Column#38)->test.t.id",
           "        └─Projection 9990.00 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#37, test.t.id, test.t.id",
@@ -5586,13 +5648,12 @@
           "└─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
           "    ├─Projection(Build) 7992.00 mpp[tiflash]  Column#7, test.t.id",
-          "    │ └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#8)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
-          "    │   └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "    │     └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "    │       └─HashAgg 7992.00 mpp[tiflash]  group by:Column#19, funcs:count(Column#18)->Column#8",
-          "    │         └─Projection 9990.00 mpp[tiflash]  div(1, test.t.value)->Column#18, test.t.id",
-          "    │           └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    │ └─HashAgg 7992.00 mpp[tiflash]  group by:Column#20, funcs:count(Column#18)->Column#7, funcs:firstrow(Column#19)->test.t.id",
+          "    │   └─Projection 9990.00 mpp[tiflash]  div(1, test.t.value)->Column#18, test.t.id, test.t.id",
+          "    │     └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "    │       └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "    │         └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "    │           └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
           "      └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
           "        └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
@@ -5602,14 +5663,18 @@
       {
         "SQL": "desc format = 'brief' select /*+hash_agg()*/ sum(id) from (select value, id from t where id > value group by id, value)A group by value /*the exchange should have only one partition column: test.t.value*/",
         "Plan": [
-          "HashAgg 6400.00 root  group by:Column#20, funcs:sum(Column#19)->Column#4",
-          "└─Projection 6400.00 root  cast(test.t.id, decimal(10,0) BINARY)->Column#19, test.t.value",
-          "  └─HashAgg 6400.00 root  group by:test.t.id, test.t.value, funcs:firstrow(test.t.id)->test.t.id, funcs:firstrow(test.t.value)->test.t.value",
-          "    └─TableReader 6400.00 root  data:ExchangeSender",
-          "      └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─HashAgg 6400.00 mpp[tiflash]  group by:test.t.id, test.t.value, ",
-          "          └─Selection 8000.00 mpp[tiflash]  gt(cast(test.t.id, decimal(20,0) BINARY), test.t.value)",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader 6400.00 root  data:ExchangeSender",
+          "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 6400.00 mpp[tiflash]  Column#4",
+          "    └─HashAgg 6400.00 mpp[tiflash]  group by:Column#20, funcs:sum(Column#19)->Column#4",
+          "      └─Projection 6400.00 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#19, test.t.value",
+          "        └─Projection 6400.00 mpp[tiflash]  test.t.id, test.t.value",
+          "          └─HashAgg 6400.00 mpp[tiflash]  group by:test.t.id, test.t.value, funcs:firstrow(test.t.id)->test.t.id, funcs:firstrow(test.t.value)->test.t.value",
+          "            └─ExchangeReceiver 6400.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.value, collate: binary]",
+          "                └─HashAgg 6400.00 mpp[tiflash]  group by:test.t.id, test.t.value, ",
+          "                  └─Selection 8000.00 mpp[tiflash]  gt(cast(test.t.id, decimal(20,0) BINARY), test.t.value)",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5752,18 +5817,20 @@
       {
         "SQL": "desc format = 'brief' select sum(b) from (select t.id, t1.id as b from t join t t1 on t.id=t1.id)A group by id",
         "Plan": [
-          "HashAgg 7992.00 root  group by:test.t.id, funcs:sum(Column#9)->Column#7",
-          "└─TableReader 7992.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 7992.00 mpp[tiflash]  group by:Column#11, funcs:sum(Column#10)->Column#9",
+          "TableReader 7992.00 root  data:ExchangeSender",
+          "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 7992.00 mpp[tiflash]  Column#7",
+          "    └─HashAgg 7992.00 mpp[tiflash]  group by:Column#11, funcs:sum(Column#10)->Column#7",
           "      └─Projection 12487.50 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#10, test.t.id",
-          "        └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
-          "          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
-          "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "          │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "        └─ExchangeReceiver 12487.50 mpp[tiflash]  ",
+          "          └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "              │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "              └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5776,18 +5843,16 @@
           "    │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 7992.00 mpp[tiflash]  test.t.id",
           "    │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
-          "    │       └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "    │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "    │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
-          "    │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    │       └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "    │         └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "    │           └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 7992.00 mpp[tiflash]  Column#7, test.t.id",
-          "      └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#9)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
-          "        └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "            └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:sum(test.t.value)->Column#9",
-          "              └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:sum(test.t.value)->Column#7, funcs:firstrow(test.t.id)->test.t.id",
+          "        └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "            └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -5800,28 +5865,26 @@
           "    │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 7992.00 mpp[tiflash]  test.t.id",
           "    │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
-          "    │       └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "    │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "    │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
-          "    │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "    │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    │       └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "    │         └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "    │           └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "    │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "    └─Projection(Probe) 7992.00 mpp[tiflash]  Column#11, test.t.id",
-          "      └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:sum(Column#17)->Column#11, funcs:firstrow(test.t.id)->test.t.id",
-          "        └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "            └─HashAgg 7992.00 mpp[tiflash]  group by:Column#33, funcs:sum(Column#32)->Column#17",
-          "              └─Projection 9990.00 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#32, test.t.id",
-          "                └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
-          "                  ├─ExchangeReceiver(Build) 7992.00 mpp[tiflash]  ",
-          "                  │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "                  │   └─Projection 7992.00 mpp[tiflash]  test.t.id, Column#13",
-          "                  │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id, funcs:count(1)->Column#13",
-          "                  │       └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
-          "                  │         └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "                  │           └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                  │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "                  └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─HashAgg 7992.00 mpp[tiflash]  group by:Column#34, funcs:sum(Column#32)->Column#11, funcs:firstrow(Column#33)->test.t.id",
+          "        └─Projection 9990.00 mpp[tiflash]  cast(test.t.id, decimal(10,0) BINARY)->Column#32, test.t.id, test.t.id",
+          "          └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "            └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "              └─HashJoin 9990.00 mpp[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
+          "                ├─ExchangeReceiver(Build) 7992.00 mpp[tiflash]  ",
+          "                │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "                │   └─Projection 7992.00 mpp[tiflash]  test.t.id, Column#13",
+          "                │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id, funcs:count(1)->Column#13",
+          "                │       └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "                │         └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "                │           └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "                │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "                └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -6165,12 +6228,11 @@
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#5",
-          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.ts.col_2, funcs:group_concat(Column#9 separator \",\")->Column#5",
-          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: utf8mb4_bin]",
-          "          └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:group_concat(Column#10, Column#11, Column#12 separator \",\")->Column#9",
-          "            └─Projection 10000.00 mpp[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#12, test.ts.col_2",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:ts keep order:false, stats:pseudo"
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:group_concat(Column#10, Column#11, Column#12 separator \",\")->Column#5",
+          "      └─Projection 10000.00 mpp[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#12, test.ts.col_2",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_2, collate: utf8mb4_bin]",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:ts keep order:false, stats:pseudo"
         ],
         "Warning": [
           "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
@@ -6687,11 +6749,10 @@
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#5",
-          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.ts.id, funcs:group_concat(Column#9 separator \",\")->Column#5",
-          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.id, collate: binary]",
-          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.ts.id, funcs:group_concat(test.ts.col_0, test.ts.col_0 separator \",\")->Column#9",
-          "            └─TableFullScan 10000.00 mpp[tiflash] table:ts keep order:false, stats:pseudo"
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.ts.id, funcs:group_concat(test.ts.col_0, test.ts.col_0 separator \",\")->Column#5",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.id, collate: binary]",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:ts keep order:false, stats:pseudo"
         ],
         "Warning": [
           "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
@@ -6703,12 +6764,11 @@
           "TableReader 8000.00 root  data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  Column#5",
-          "    └─HashAgg 8000.00 mpp[tiflash]  group by:test.ts.id, funcs:group_concat(Column#9 separator \",\")->Column#5",
-          "      └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.id, collate: binary]",
-          "          └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:group_concat(Column#10, Column#11, Column#12 separator \",\")->Column#9",
-          "            └─Projection 10000.00 mpp[tiflash]  test.ts.col_0, test.ts.col_0, cast(test.ts.id, var_string(20))->Column#12, test.ts.id",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:ts keep order:false, stats:pseudo"
+          "    └─HashAgg 8000.00 mpp[tiflash]  group by:Column#13, funcs:group_concat(Column#10, Column#11, Column#12 separator \",\")->Column#5",
+          "      └─Projection 10000.00 mpp[tiflash]  test.ts.col_0, test.ts.col_0, cast(test.ts.id, var_string(20))->Column#12, test.ts.id",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.id, collate: binary]",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:ts keep order:false, stats:pseudo"
         ],
         "Warning": [
           "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
@@ -6808,11 +6868,10 @@
           "└─TableReader 8000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 8000.00 mpp[tiflash]  Column#5",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.name, funcs:sum(Column#8)->Column#5",
-          "        └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.name, collate: utf8mb4_bin]",
-          "            └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.name, funcs:count(1)->Column#8",
-          "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.name, funcs:count(1)->Column#5",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.name, collate: utf8mb4_bin]",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -6843,11 +6902,10 @@
           "        │ └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Projection 7992.00 mpp[tiflash]  test.t.id",
           "        │     └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, funcs:firstrow(test.t.id)->test.t.id",
-          "        │       └─ExchangeReceiver 7992.00 mpp[tiflash]  ",
-          "        │         └─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
-          "        │           └─HashAgg 7992.00 mpp[tiflash]  group by:test.t.id, ",
-          "        │             └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "        │               └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        │       └─ExchangeReceiver 9990.00 mpp[tiflash]  ",
+          "        │         └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "        │           └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "        │             └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
@@ -6970,6 +7028,166 @@
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#5",
           "      └─Selection 20.00 mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestTiFlashFineGrainedShuffle",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 window w1 as (partition by c1 order by c1);",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#5, stream_count: 8",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#5 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2);",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#7, Column#6, stream_count: 8",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─Window 10000.00 mpp[tiflash]  rank()->Column#6 over(partition by test.t1.c2), stream_count: 8",
+          "              └─Sort 10000.00 mpp[tiflash]  test.t1.c2, stream_count: 8",
+          "                └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "                  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
+          "                    └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2) order by 1, 2 limit 10;",
+        "Plan": [
+          "Projection 10.00 root  Column#7, Column#6",
+          "└─TopN 10.00 root  Column#7, Column#6, offset:0, count:10",
+          "  └─TableReader 10.00 root  data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#7, Column#6, offset:0, count:10",
+          "        └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "          └─Sort 10000.00 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "            └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "              └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "                └─Window 10000.00 mpp[tiflash]  rank()->Column#6 over(partition by test.t1.c2), stream_count: 8",
+          "                  └─Sort 10000.00 mpp[tiflash]  test.t1.c2, stream_count: 8",
+          "                    └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "                      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
+          "                        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c2 order by c2);",
+        "Plan": [
+          "TableReader 2666.67 root  data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4, stream_count: 8",
+          "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c2 order by test.t1.c2 rows between current row and current row), stream_count: 8",
+          "      └─Sort 2666.67 mpp[tiflash]  test.t1.c2, test.t1.c2, stream_count: 8",
+          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
+          "            └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c2",
+          "              └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#4, funcs:firstrow(test.t1.c2)->test.t1.c2",
+          "                └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
+          "                  └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary]",
+          "                    └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, count(c1) from t1 group by c2 having c2 > 10 window w1 as (partition by c1 order by c2);",
+        "Plan": [
+          "TableReader 2666.67 root  data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4, stream_count: 8",
+          "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row), stream_count: 8",
+          "      └─Sort 2666.67 mpp[tiflash]  test.t1.c1, test.t1.c2, stream_count: 8",
+          "        └─ExchangeReceiver 2666.67 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c1, test.t1.c2",
+          "              └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#4, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
+          "                └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
+          "                  └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c2, collate: binary]",
+          "                    └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c2, 10)",
+          "                      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 a join t1 b on a.c1 = b.c2 window w1 as (partition by a.c1);",
+        "Plan": [
+          "TableReader 12487.50 root  data:ExchangeSender",
+          "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 12487.50 mpp[tiflash]  Column#8, stream_count: 8",
+          "    └─Window 12487.50 mpp[tiflash]  row_number()->Column#8 over(partition by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 12487.50 mpp[tiflash]  test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 12487.50 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.c1, test.t1.c2)]",
+          "              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "              │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.c1))",
+          "              │     └─TableFullScan 10000.00 mpp[tiflash] table:a keep order:false, stats:pseudo",
+          "              └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.c2))",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:b keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 where c1 < 100 window w1 as (partition by c1 order by c1);",
+        "Plan": [
+          "TableReader 3323.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3323.33 mpp[tiflash]  Column#5, stream_count: 8",
+          "    └─Window 3323.33 mpp[tiflash]  row_number()->Column#5 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
+          "      └─Sort 3323.33 mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
+          "        └─ExchangeReceiver 3323.33 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
+          "            └─Selection 3323.33 mpp[tiflash]  lt(test.t1.c1, 100)",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t1;",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1 from t1 window w1 as (order by c1);",
+        "Plan": [
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#5",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#5 over(order by test.t1.c1 rows between current row and current row)",
+          "      └─Sort 10000.00 mpp[tiflash]  test.t1.c1",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c1 order by c2);",
+        "Plan": [
+          "TableReader 2666.67 root  data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  Column#6, Column#4",
+          "    └─Window 2666.67 mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row)",
+          "      └─Sort 2666.67 mpp[tiflash]  test.t1.c1, test.t1.c2",
+          "        └─Projection 2666.67 mpp[tiflash]  Column#4, test.t1.c1, test.t1.c2",
+          "          └─HashAgg 2666.67 mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#4, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
+          "            └─ExchangeReceiver 3333.33 mpp[tiflash]  ",
+          "              └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t1.c1, collate: binary]",
+          "                └─Selection 3333.33 mpp[tiflash]  gt(test.t1.c1, 10)",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]

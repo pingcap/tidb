@@ -94,7 +94,6 @@ go_library(
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//sessiontxn",
-        "//sessiontxn/legacy",
         "//sessiontxn/staleread",
         "//statistics",
         "//statistics/handle",
@@ -134,7 +133,6 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//kv",
-        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
@@ -144,6 +142,7 @@ go_library(
 
 go_test(
     name = "core_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "cacheable_checker_test.go",
@@ -244,6 +243,7 @@ go_test(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
     ],
 )

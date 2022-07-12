@@ -37,8 +37,9 @@ func newMockStatisticsTable(columns int, indices int, withCMS, withTopN bool) *s
 	t.Indices = make(map[int64]*statistics.Index)
 	for i := 1; i <= columns; i++ {
 		t.Columns[int64(i)] = &statistics.Column{
-			Info:            &model.ColumnInfo{ID: int64(i)},
-			ColLoadedStatus: statistics.NewColFullLoadStatus(),
+			Info:              &model.ColumnInfo{ID: int64(i)},
+			CMSketch:          statistics.NewCMSketch(1, 1),
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 		}
 		if withCMS {
 			t.Columns[int64(i)].CMSketch = statistics.NewCMSketch(1, 1)

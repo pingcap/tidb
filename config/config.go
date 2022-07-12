@@ -117,6 +117,7 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
+				"max-server-connections":        "max_connections",
 			},
 		},
 		{
@@ -255,7 +256,8 @@ type Config struct {
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 	// EnableGlobalKill indicates whether to enable global kill.
-	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -473,6 +475,7 @@ type Instance struct {
 	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
+	MaxConnections             uint32 `toml:"max_connections" json:"max_connections"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -609,8 +612,6 @@ type Performance struct {
 	ServerMemoryQuota   uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 	TxnEntrySizeLimit   uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
@@ -721,6 +722,22 @@ type PessimisticTxn struct {
 	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
 }
 
+// TrxSummary is the config for transaction summary collecting.
+type TrxSummary struct {
+	// how many transaction summary in `transaction_summary` each TiDB node should keep.
+	TransactionSummaryCapacity uint `toml:"transaction-summary-capacity" json:"transaction-summary-capacity"`
+	// how long a transaction should be executed to make it be recorded in `transaction_id_digest`.
+	TransactionIDDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
+}
+
+// Valid Validatse TrxSummary configs
+func (config *TrxSummary) Valid() error {
+	if config.TransactionSummaryCapacity > 5000 {
+		return errors.New("transaction-summary.transaction-summary-capacity should not be larger than 5000")
+	}
+	return nil
+}
+
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
@@ -728,6 +745,15 @@ func DefaultPessimisticTxn() PessimisticTxn {
 		DeadlockHistoryCapacity:         10,
 		DeadlockHistoryCollectRetryable: false,
 		PessimisticAutoCommit:           *NewAtomicBool(false),
+	}
+}
+
+// DefaultTrxSummary returns the default configuration for TrxSummary collector
+func DefaultTrxSummary() TrxSummary {
+	// TrxSummary is not enabled by default before GA
+	return TrxSummary{
+		TransactionSummaryCapacity:     500,
+		TransactionIDDigestMinDuration: 2147483647,
 	}
 }
 
@@ -824,6 +850,7 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  true,
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		MaxConnections:              0,
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -846,8 +873,6 @@ var defaultConf = Config{
 		CrossJoin:             true,
 		StatsLease:            "3s",
 		StmtCountLimit:        5000,
-		FeedbackProbability:   0.0,
-		QueryFeedbackLimit:    512,
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
 		BindInfoLease:         "3s",
@@ -916,6 +941,7 @@ var defaultConf = Config{
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
+	TrxSummary:                           DefaultTrxSummary(),
 }
 
 var (
@@ -990,6 +1016,8 @@ var removedConfig = map[string]struct{}{
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load
 	"plugin.dir":                             {}, // use plugin_dir
+	"performance.feedback-probability":       {}, // This feature is deprecated
+	"performance.query-feedback-limit":       {},
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
@@ -1181,6 +1209,9 @@ func (c *Config) Valid() error {
 
 	// For tikvclient.
 	if err := c.TiKVClient.Valid(); err != nil {
+		return err
+	}
+	if err := c.TrxSummary.Valid(); err != nil {
 		return err
 	}
 

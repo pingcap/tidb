@@ -17,7 +17,6 @@ package statistics
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -274,7 +274,7 @@ func (t *Table) String() string {
 	for _, col := range t.Columns {
 		cols = append(cols, col)
 	}
-	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+	slices.SortFunc(cols, func(i, j *Column) bool { return i.ID < j.ID })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
@@ -282,7 +282,7 @@ func (t *Table) String() string {
 	for _, idx := range t.Indices {
 		idxs = append(idxs, idx)
 	}
-	sort.Slice(idxs, func(i, j int) bool { return idxs[i].ID < idxs[j].ID })
+	slices.SortFunc(idxs, func(i, j *Index) bool { return i.ID < j.ID })
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
@@ -353,42 +353,37 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 	return healthy, true
 }
 
-type tableColumnID struct {
-	TableID  int64
-	ColumnID int64
+type neededStatsMap struct {
+	m     sync.RWMutex
+	items map[model.TableItemID]struct{}
 }
 
-type neededColumnMap struct {
-	m    sync.RWMutex
-	cols map[tableColumnID]struct{}
-}
-
-func (n *neededColumnMap) AllCols() []tableColumnID {
+func (n *neededStatsMap) AllItems() []model.TableItemID {
 	n.m.RLock()
-	keys := make([]tableColumnID, 0, len(n.cols))
-	for key := range n.cols {
+	keys := make([]model.TableItemID, 0, len(n.items))
+	for key := range n.items {
 		keys = append(keys, key)
 	}
 	n.m.RUnlock()
 	return keys
 }
 
-func (n *neededColumnMap) insert(col tableColumnID) {
+func (n *neededStatsMap) insert(col model.TableItemID) {
 	n.m.Lock()
-	n.cols[col] = struct{}{}
+	n.items[col] = struct{}{}
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Delete(col tableColumnID) {
+func (n *neededStatsMap) Delete(col model.TableItemID) {
 	n.m.Lock()
-	delete(n.cols, col)
+	delete(n.items, col)
 	n.m.Unlock()
 }
 
-func (n *neededColumnMap) Length() int {
+func (n *neededStatsMap) Length() int {
 	n.m.RLock()
 	defer n.m.RUnlock()
-	return len(n.cols)
+	return len(n.items)
 }
 
 // RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
@@ -900,8 +895,9 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			t.Indices[idx.ID] = &Index{
-				Info:      idx,
-				Histogram: *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
+				PhysicalID: fakePhysicalID,
+				Info:       idx,
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)}
 		}
 	}
 	return t

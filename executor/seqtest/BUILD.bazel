@@ -17,6 +17,7 @@ go_test(
         "//kv",
         "//meta/autoid",
         "//metrics",
+        "//parser/ast",
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",

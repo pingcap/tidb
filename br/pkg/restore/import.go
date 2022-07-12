@@ -238,7 +238,6 @@ type FileImporter struct {
 	metaClient   SplitClient
 	importClient ImporterClient
 	backend      *backuppb.StorageBackend
-	rateLimit    uint64
 
 	isRawKvMode        bool
 	rawStartKey        []byte
@@ -252,14 +251,12 @@ func NewFileImporter(
 	importClient ImporterClient,
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
-	rateLimit uint64,
 ) FileImporter {
 	return FileImporter{
 		metaClient:   metaClient,
 		backend:      backend,
 		importClient: importClient,
 		isRawKvMode:  isRawKvMode,
-		rateLimit:    rateLimit,
 	}
 }
 
@@ -499,9 +496,9 @@ func (importer *FileImporter) ImportSSTFiles(
 	return errors.Trace(err)
 }
 
-func (importer *FileImporter) setDownloadSpeedLimit(ctx context.Context, storeID uint64) error {
+func (importer *FileImporter) setDownloadSpeedLimit(ctx context.Context, storeID, rateLimit uint64) error {
 	req := &import_sstpb.SetDownloadSpeedLimitRequest{
-		SpeedLimit: importer.rateLimit,
+		SpeedLimit: rateLimit,
 	}
 	_, err := importer.importClient.SetDownloadSpeedLimit(ctx, storeID, req)
 	return errors.Trace(err)

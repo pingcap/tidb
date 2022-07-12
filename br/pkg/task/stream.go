@@ -20,8 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -48,6 +48,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -135,7 +136,8 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamStartTS, "",
 		"usually equals last full backupTS, used for backup log. Default value is current ts.\n"+
 			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.")
-	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
+	// 999999999999999999 means 2090-11-18 22:07:45
+	flags.String(flagStreamEndTS, "999999999999999999", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	_ = flags.MarkHidden(flagStreamEndTS)
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamStartSafePointTTL,
@@ -189,7 +191,7 @@ func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.Until, err = ParseTSString(tsString); err != nil {
+	if cfg.Until, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.SkipPrompt, err = flags.GetBool(flagYes); err != nil {
@@ -213,7 +215,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -222,7 +224,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.EndTS, err = ParseTSString(tsString); err != nil {
+	if cfg.EndTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -386,8 +388,8 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 
 	mRange := stream.BuildObserveMetaRange()
 	rs := append([]kv.KeyRange{*mRange}, dRanges...)
-	sort.Slice(rs, func(i, j int) bool {
-		return bytes.Compare(rs[i].StartKey, rs[j].StartKey) < 0
+	slices.SortFunc(rs, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
 
 	return rs, nil
@@ -839,7 +841,6 @@ func RunStreamStatus(
 func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	console := glue.GetConsole(g)
 	em := color.New(color.Bold).SprintFunc()
-	done := color.New(color.FgGreen).SprintFunc()
 	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
 	formatTS := func(ts uint64) string {
 		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
@@ -873,7 +874,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return err
 		}
 	}
-
+	readMetaDone := console.StartTask("Reading Metadata... ")
 	metas := restore.StreamMetadataSet{
 		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
@@ -885,20 +886,17 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err := metas.LoadFrom(ctx, storage); err != nil {
 		return err
 	}
+	readMetaDone()
 
 	fileCount := 0
-	minTS := oracle.GoTimeToTS(time.Now())
 	shiftUntilTS := ShiftTS(cfg.Until)
 	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
-		if d.MaxTs < minTS {
-			minTS = d.MaxTs
-		}
 		fileCount++
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
 		em(fileCount),
-		em(formatTS(minTS)),
+		em(formatTS(cfg.Until)),
 	)
 	if !cfg.SkipPrompt && !console.PromptBool(warn("Sure? ")) {
 		return nil
@@ -906,23 +904,30 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	removed := metas.RemoveDataBefore(shiftUntilTS)
 
-	console.Print("Removing metadata... ")
+	removeMetaDone := console.StartTask("Removing metadata... ")
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
 			return err
 		}
 	}
-	console.Println(done("DONE"))
-	console.Print("Clearing data files... ")
+	removeMetaDone()
+	clearDataFileDone := console.StartTask("Clearing data files... ")
+	worker := utils.NewWorkerPool(128, "delete files")
+	wg := new(sync.WaitGroup)
 	for _, f := range removed {
 		if !cfg.DryRun {
-			if err := storage.DeleteFile(ctx, f.Path); err != nil {
-				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-				console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
-			}
+			wg.Add(1)
+			worker.Apply(func() {
+				defer wg.Done()
+				if err := storage.DeleteFile(ctx, f.Path); err != nil {
+					log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
+					console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
+				}
+			})
 		}
 	}
-	console.Println(done("DONE"))
+	wg.Wait()
+	clearDataFileDone()
 	return nil
 }
 
@@ -981,6 +986,9 @@ func RunStreamRestore(
 
 	// restore full snapshot.
 	if len(cfg.FullBackupStorage) > 0 {
+		if err := checkPiTRRequirements(ctx, g, cfg); err != nil {
+			return errors.Trace(err)
+		}
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
@@ -991,6 +999,7 @@ func RunStreamRestore(
 		cfg.Config.Storage = logStorage
 	}
 	// restore log.
+	cfg.adjustRestoreConfigForStreamRestore()
 	if err := restoreStream(ctx, g, cfg, logMinTS, logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
@@ -1087,10 +1096,6 @@ func restoreStream(
 	updateRewriteRules(rewriteRules, schemasReplace)
 
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
-	if cfg.Concurrency > defaultRestoreStreamConcurrency {
-		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
-		client.SetConcurrency(defaultRestoreConcurrency)
-	}
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
@@ -1251,38 +1256,29 @@ func getGlobalResolvedTS(
 	ctx context.Context,
 	s storage.ExternalStorage,
 ) (uint64, error) {
-	storeMap := make(map[int64]uint64)
-
-	opt := &storage.WalkOption{SubDir: restore.GetStreamBackupMetaPrefix()}
-	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
-		if strings.Contains(path, restore.GetStreamBackupMetaPrefix()) {
-			m := &backuppb.Metadata{}
-			b, err := s.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = m.Unmarshal(b)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if resolveTS, exist := storeMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
-				storeMap[m.StoreId] = m.ResolvedTs
-			}
+	storeMap := struct {
+		sync.Mutex
+		resolvedTSMap map[int64]uint64
+	}{}
+	storeMap.resolvedTSMap = make(map[int64]uint64)
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+		storeMap.Lock()
+		if resolveTS, exist := storeMap.resolvedTSMap[m.StoreId]; !exist || resolveTS < m.ResolvedTs {
+			storeMap.resolvedTSMap[m.StoreId] = m.ResolvedTs
 		}
+		storeMap.Unlock()
 		return nil
 	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-
 	var globalCheckpointTS uint64 = 0
-	for _, resolveTS := range storeMap {
+	// TODO change the logic after checkpoint v3 implemented
+	for _, resolveTS := range storeMap.resolvedTSMap {
 		if resolveTS < globalCheckpointTS || globalCheckpointTS == 0 {
 			globalCheckpointTS = resolveTS
 		}
 	}
-
 	return globalCheckpointTS, nil
 }
 
@@ -1464,4 +1460,26 @@ func ShiftTS(startTS uint64) uint64 {
 
 func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
+}
+
+func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig) error {
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	userDBs := restore.GetExistedUserDBs(mgr.GetDomain())
+	if len(userDBs) > 0 {
+		userDBNames := make([]string, 0, len(userDBs))
+		for _, db := range userDBs {
+			userDBNames = append(userDBNames, db.Name.O)
+		}
+		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
+			"databases %s existed in restored cluster, please drop them before execute PiTR",
+			strings.Join(userDBNames, ","))
+	}
+
+	return nil
 }

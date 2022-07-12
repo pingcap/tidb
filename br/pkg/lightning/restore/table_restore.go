@@ -16,7 +16,6 @@ package restore
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +34,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type TableRestore struct {
@@ -54,10 +55,9 @@ type TableRestore struct {
 	encTable  table.Table
 	alloc     autoid.Allocators
 	logger    log.Logger
+	kvStore   tidbkv.Storage
 
 	ignoreColumns map[string]struct{}
-	rowIDLock     sync.Mutex
-	curMaxRowID   int64
 }
 
 func NewTableRestore(
@@ -67,6 +67,8 @@ func NewTableRestore(
 	tableInfo *checkpoints.TidbTableInfo,
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
+	kvStore tidbkv.Storage,
+	logger log.Logger,
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
@@ -81,7 +83,8 @@ func NewTableRestore(
 		tableMeta:     tableMeta,
 		encTable:      tbl,
 		alloc:         idAlloc,
-		logger:        log.With(zap.String("table", tableName)),
+		kvStore:       kvStore,
+		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
 }
@@ -118,7 +121,11 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 				Timestamp:         timestamp,
 			}
 			if len(chunk.Chunk.Columns) > 0 {
-				perms, err := parseColumnPermutations(tr.tableInfo.Core, chunk.Chunk.Columns, tr.ignoreColumns)
+				perms, err := parseColumnPermutations(
+					tr.tableInfo.Core,
+					chunk.Chunk.Columns,
+					tr.ignoreColumns,
+					log.FromContext(ctx))
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -145,9 +152,6 @@ func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowID
 		for _, chunk := range engine.Chunks {
 			chunk.Chunk.PrevRowIDMax += rowIDBase
 			chunk.Chunk.RowIDMax += rowIDBase
-			if chunk.Chunk.RowIDMax > tr.curMaxRowID {
-				tr.curMaxRowID = chunk.Chunk.RowIDMax
-			}
 		}
 	}
 }
@@ -166,7 +170,7 @@ func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowID
 //
 // The argument `columns` _must_ be in lower case.
 func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.ChunkCheckpoint) error {
-	colPerm, err := createColumnPermutation(columns, tr.ignoreColumns, tr.tableInfo.Core)
+	colPerm, err := createColumnPermutation(columns, tr.ignoreColumns, tr.tableInfo.Core, tr.logger)
 	if err != nil {
 		return err
 	}
@@ -174,7 +178,12 @@ func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.Chu
 	return nil
 }
 
-func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}, tableInfo *model.TableInfo) ([]int, error) {
+func createColumnPermutation(
+	columns []string,
+	ignoreColumns map[string]struct{},
+	tableInfo *model.TableInfo,
+	logger log.Logger,
+) ([]int, error) {
 	var colPerm []int
 	if len(columns) == 0 {
 		colPerm = make([]int, 0, len(tableInfo.Columns)+1)
@@ -195,7 +204,7 @@ func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}
 		}
 	} else {
 		var err error
-		colPerm, err = parseColumnPermutations(tableInfo, columns, ignoreColumns)
+		colPerm, err = parseColumnPermutations(tableInfo, columns, ignoreColumns, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -280,7 +289,7 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		for engineID, engine := range cp.Engines {
 			allEngines = append(allEngines, engineCheckpoint{engineID: engineID, checkpoint: engine})
 		}
-		sort.Slice(allEngines, func(i, j int) bool { return allEngines[i].engineID < allEngines[j].engineID })
+		slices.SortFunc(allEngines, func(i, j engineCheckpoint) bool { return i.engineID < j.engineID })
 
 		for _, ecp := range allEngines {
 			engineID := ecp.engineID
@@ -500,7 +509,7 @@ func (tr *TableRestore) restoreEngine(
 		// 	2. sql -> kvs
 		// 	3. load kvs data (into kv deliver server)
 		// 	4. flush kvs data (into tikv node)
-		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo, tr)
+		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
 		if err != nil {
 			setError(err)
 			break
@@ -620,11 +629,11 @@ func (tr *TableRestore) restoreEngine(
 		if rc.isLocalBackend() && common.IsContextCanceledError(err) {
 			// ctx is canceled, so to avoid Close engine failed, we use `context.Background()` here
 			if _, err2 := dataEngine.Close(context.Background(), dataEngineCfg); err2 != nil {
-				log.L().Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 				return nil, errors.Trace(err)
 			}
 			if err2 := trySavePendingChunks(context.Background()); err2 != nil {
-				log.L().Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
+				log.FromContext(ctx).Warn("flush all chunk checkpoints failed before manually exits", zap.Error(err2))
 			}
 		}
 		return nil, errors.Trace(err)
@@ -864,7 +873,12 @@ func (tr *TableRestore) postProcess(
 	return true, nil
 }
 
-func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns map[string]struct{}) ([]int, error) {
+func parseColumnPermutations(
+	tableInfo *model.TableInfo,
+	columns []string,
+	ignoreColumns map[string]struct{},
+	logger log.Logger,
+) ([]int, error) {
 	colPerm := make([]int, 0, len(tableInfo.Columns)+1)
 
 	columnMap := make(map[string]int)
@@ -896,7 +910,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			if _, ignore := ignoreColumns[colInfo.Name.L]; !ignore {
 				colPerm = append(colPerm, i)
 			} else {
-				log.L().Debug("column ignored by user requirements",
+				logger.Debug("column ignored by user requirements",
 					zap.Stringer("table", tableInfo.Name),
 					zap.String("colName", colInfo.Name.O),
 					zap.Stringer("colType", &colInfo.FieldType),
@@ -905,7 +919,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			}
 		} else {
 			if len(colInfo.GeneratedExprString) == 0 {
-				log.L().Warn("column missing from data file, going to fill with default value",
+				logger.Warn("column missing from data file, going to fill with default value",
 					zap.Stringer("table", tableInfo.Name),
 					zap.String("colName", colInfo.Name.O),
 					zap.Stringer("colType", &colInfo.FieldType),
@@ -1037,32 +1051,4 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	}
 
 	return threshold
-}
-
-func (tr *TableRestore) allocateRowIDs(newRowCount int64, rc *Controller) (int64, int64, error) {
-	tr.rowIDLock.Lock()
-	defer tr.rowIDLock.Unlock()
-	metaMgr := rc.metaMgrBuilder.TableMetaMgr(tr)
-	// try to re-allocate from downstream
-	// if we are using parallel import, rowID should be reconciled globally.
-	// Otherwise, this function will simply return 0.
-	newRowIDBase, newRowIDMax, err := metaMgr.ReallocTableRowIDs(context.Background(), newRowCount)
-	if err != nil {
-		return 0, 0, err
-	}
-	// TODO: refinement: currently, when we're not using SSTMode + incremental,
-	// metadata of the table restore is not maintained globally.
-	// So we have to deviate this two disparate situations here and make
-	// code complexer.
-	var rowIDBase int64
-	if newRowIDMax != 0 {
-		// re-alloc from downstream
-		rowIDBase = newRowIDBase
-		tr.curMaxRowID = newRowIDMax
-	} else {
-		// single import mode: re-allocate rowID from memory
-		rowIDBase = tr.curMaxRowID + 1
-		tr.curMaxRowID += newRowCount
-	}
-	return rowIDBase, tr.curMaxRowID, nil
 }

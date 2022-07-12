@@ -25,7 +25,6 @@
 package expression
 
 import (
-	"sort"
 	"strings"
 	"sync"
 
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -882,7 +882,7 @@ func GetBuiltinList() []string {
 		}
 		res = append(res, funcName)
 	}
-	sort.Strings(res)
+	slices.Sort(res)
 	return res
 }
 

@@ -208,7 +208,7 @@ func NewParquetParser(
 		Reader:      reader,
 		columns:     columns,
 		columnMetas: columnMetas,
-		logger:      log.L(),
+		logger:      log.FromContext(ctx),
 	}, nil
 }
 
@@ -377,7 +377,7 @@ func (pp *ParquetParser) ReadRow() error {
 	}
 	for i := 0; i < length; i++ {
 		pp.lastRow.Length += getDatumLen(v.Field(i))
-		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i]); err != nil {
+		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i], pp.logger); err != nil {
 			return err
 		}
 	}
@@ -401,8 +401,14 @@ func getDatumLen(v reflect.Value) int {
 // convert a parquet value to Datum
 //
 // See: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
-func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement) error {
+func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement, logger log.Logger) error {
 	switch v.Kind() {
+	case reflect.Bool:
+		if v.Bool() {
+			d.SetUint64(1)
+		} else {
+			d.SetUint64(0)
+		}
 	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		d.SetUint64(v.Uint())
 	case reflect.Int8, reflect.Int16:
@@ -417,10 +423,10 @@ func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement)
 		if v.IsNil() {
 			d.SetNull()
 		} else {
-			return setDatumValue(d, v.Elem(), meta)
+			return setDatumValue(d, v.Elem(), meta, logger)
 		}
 	default:
-		log.L().Error("unknown value", zap.Stringer("kind", v.Kind()),
+		logger.Error("unknown value", zap.Stringer("kind", v.Kind()),
 			zap.String("type", v.Type().Name()), zap.Reflect("value", v.Interface()))
 		return errors.Errorf("unknown value: %v", v)
 	}

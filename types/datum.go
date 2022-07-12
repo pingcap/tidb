@@ -184,6 +184,12 @@ func (d *Datum) SetFloat32(f float32) {
 	d.i = int64(math.Float64bits(float64(f)))
 }
 
+// SetFloat32FromF64 sets float32 values from f64
+func (d *Datum) SetFloat32FromF64(f float64) {
+	d.k = KindFloat32
+	d.i = int64(math.Float64bits(f))
+}
+
 // GetString gets string value.
 func (d *Datum) GetString() string {
 	return string(hack.String(d.b))
@@ -749,7 +755,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, comparer c
 		dt, err := ParseDatetime(sc, s)
 		return d.GetMysqlTime().Compare(dt), errors.Trace(err)
 	case KindMysqlDuration:
-		dur, err := ParseDuration(sc, s, MaxFsp)
+		dur, _, err := ParseDuration(sc, s, MaxFsp)
 		return d.GetMysqlDuration().Compare(dur), errors.Trace(err)
 	case KindMysqlSet:
 		return comparer.Compare(d.GetMysqlSet().String(), s), nil
@@ -796,7 +802,7 @@ func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration)
 	case KindMysqlDuration:
 		return d.GetMysqlDuration().Compare(dur), nil
 	case KindString, KindBytes:
-		dDur, err := ParseDuration(sc, d.GetString(), MaxFsp)
+		dDur, _, err := ParseDuration(sc, d.GetString(), MaxFsp)
 		return dDur.Compare(dur), errors.Trace(err)
 	default:
 		return d.compareFloat64(sc, dur.Seconds())
@@ -1375,13 +1381,13 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if timeNum < -MaxDuration {
 			return ret, ErrWrongValue.GenWithStackByArgs(TimeStr, timeStr)
 		}
-		t, err := ParseDuration(sc, timeStr, fsp)
+		t, _, err := ParseDuration(sc, timeStr, fsp)
 		ret.SetMysqlDuration(t)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
 	case KindString, KindBytes:
-		t, err := ParseDuration(sc, d.GetString(), fsp)
+		t, _, err := ParseDuration(sc, d.GetString(), fsp)
 		ret.SetMysqlDuration(t)
 		if err != nil {
 			return ret, errors.Trace(err)
@@ -1392,7 +1398,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		t, err := ParseDuration(sc, s, fsp)
+		t, _, err := ParseDuration(sc, s, fsp)
 		ret.SetMysqlDuration(t)
 		if err != nil {
 			return ret, errors.Trace(err)

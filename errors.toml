@@ -171,6 +171,11 @@ error = '''
 task not found
 '''
 
+["BR:Restore:ErrDatabasesAlreadyExisted"]
+error = '''
+databases already existed in restored cluster
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
@@ -1456,6 +1461,11 @@ error = '''
 modifying %s will require SET GLOBAL in a future version of TiDB
 '''
 
+["executor:8144"]
+error = '''
+setting %s has no effect in TiDB
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2076,6 +2086,11 @@ error = '''
 Column '%s' in ANALYZE column option does not exist in table '%s'
 '''
 
+["planner:8145"]
+error = '''
+variable %s has no effect in TiDB
+'''
+
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
@@ -2249,6 +2264,11 @@ error = '''
 ["session:8143"]
 error = '''
 non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
+'''
+
+["session:8146"]
+error = '''
+cannot migrate the current session: %s
 '''
 
 ["structure:8217"]
