@@ -17,8 +17,8 @@ package telemetry
 import (
 	"context"
 	"errors"
-	"github.com/pingcap/tidb/br/pkg/utils"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
@@ -285,5 +285,5 @@ func getGlobalKillUsageInfo() bool {
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.IsLogBackupEnabled(ctx)
+	return utils.IsLogBackupEnabled(ctx.(sqlexec.RestrictedSQLExecutor))
 }

@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1784,6 +1785,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
+	w.logBackupEnabled = utils.IsLogBackupEnabled(se.(sqlexec.RestrictedSQLExecutor))
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -1845,7 +1847,6 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	se.RollbackTxn(ctx)
-	w.logBackupEnabled = utils.IsLogBackupEnabled(se)
 	return false, nil
 }
 

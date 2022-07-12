@@ -7,7 +7,7 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -36,27 +36,31 @@ type DBExecutor interface {
 }
 
 // IsLogBackupEnabled checks if LogBackup is enabled in cluster.
-// this mainly used for three places.
+// this mainly used in three places.
 // 1. Resolve locks to scan more locks after safepoint.
-// 2. Add index to skip using lightning.
+// 2. Add index skipping use lightning to speed up.
 // 3. Telemetry of log backup feature usage statistics.
-func IsLogBackupEnabled(ctx sessionctx.Context) bool {
+// NOTE: this result shouldn't be cached by caller. because it may change every time in one cluster.
+func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) bool {
 	var valStr = "show config where name = 'log-backup.enable'"
-	rows, fields, errSQL := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.Background(), nil, valStr)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	rows, fields, errSQL := ctx.ExecRestrictedSQL(internalCtx, nil, valStr)
 	if errSQL != nil {
 		// if failed by any reason. we can simply return true this time.
 		// for GC worker it will scan more locks in one tick.
 		// for Add index it will skip using lightning this time.
-		// for Telemetry it will get a false positive usage.
+		// for Telemetry it will get a false positive usage count.
 		return true
 	}
 	if len(rows) == 0 {
+		// no rows mean not support log backup.
 		return false
 	}
 	for _, row := range rows {
 		d := row.GetDatum(3, &fields[3].Column.FieldType)
 		value, errField := d.ToString()
 		if errField != nil {
+			// met error return true.
 			return true
 		}
 		if strings.ToLower(value) == "false" {
