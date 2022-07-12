@@ -441,11 +441,15 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string, insertDeleteRan
 			if err := job.Decode(e.Value); err != nil {
 				log.Debug("failed to decode the job", zap.String("error", err.Error()), zap.String("job", string(e.Value)))
 				// The value in write-cf is like "p\XXXX\XXX" need not restore. skip it
-				// The valud in default-cf that can Decode() need restore.
+				// The value in default-cf that can Decode() need restore.
 				return nil, nil
 			}
 			if jobNeedGC(job) {
 				return nil, sr.deleteRange(job, insertDeleteRangeForTable, insertDeleteRangeForIndex)
+			}
+
+			if job.Type == model.ActionExchangeTablePartition {
+				return nil, errors.Errorf("restore of ddl `exchange-table-partition` is not supported")
 			}
 		}
 		return nil, nil
