@@ -890,7 +890,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
-			if idxMergeTask.cost() < t.cost() || planCounter.Empty() {
+
+			curIsBetter, err := compareTaskCost(ds.ctx, idxMergeTask, t)
+			if err != nil {
+				return nil, 0, err
+			}
+			if curIsBetter || planCounter.Empty() {
 				t = idxMergeTask
 			}
 			if planCounter.Empty() {
@@ -978,7 +983,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 					cntPlan += 1
 					planCounter.Dec(1)
 				}
-				if pointGetTask.cost() < t.cost() || planCounter.Empty() {
+				curIsBetter, cerr := compareTaskCost(ds.ctx, pointGetTask, t)
+				if cerr != nil {
+					return nil, 0, cerr
+				}
+				if curIsBetter || planCounter.Empty() {
 					t = pointGetTask
 					if planCounter.Empty() {
 						return
@@ -1008,7 +1017,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, tblTask, prop, opt)
-			if tblTask.cost() < t.cost() || planCounter.Empty() {
+			curIsBetter, err := compareTaskCost(ds.ctx, tblTask, t)
+			if err != nil {
+				return nil, 0, err
+			}
+			if curIsBetter || planCounter.Empty() {
 				t = tblTask
 			}
 			if planCounter.Empty() {
@@ -1029,7 +1042,11 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
-		if idxTask.cost() < t.cost() || planCounter.Empty() {
+		curIsBetter, err := compareTaskCost(ds.ctx, idxTask, t)
+		if err != nil {
+			return nil, 0, err
+		}
+		if curIsBetter || planCounter.Empty() {
 			t = idxTask
 		}
 		if planCounter.Empty() {
