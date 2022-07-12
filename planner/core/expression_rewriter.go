@@ -522,7 +522,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
-func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
+func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool, cacheIDs IDIntervalCache) {
 	if er.asScalar || not {
 		if expression.GetRowLen(r) == 1 {
 			rCol := r.(*expression.Column)
@@ -562,7 +562,7 @@ func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r e
 	if er.err != nil {
 		return
 	}
-	er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, not)
+	er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, not, cacheIDs)
 }
 
 func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.CompareSubqueryExpr) (ast.Node, bool) {
@@ -572,6 +572,8 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	if er.err != nil {
 		return v, true
 	}
+	asScalar := er.asScalar
+	curClause := er.b.curClause
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
@@ -579,8 +581,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		return v, true
 	}
 	var (
-		np  LogicalPlan
-		err error
+		np                         LogicalPlan
+		err                        error
+		cachedCompareJoinColumnIDs = NewIDIntervalCache()
 	)
 	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
 	if eNNR && er.b.analyzingPhase {
@@ -590,18 +593,46 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 			return v, true
 		}
 		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
-		if er.asScalar {
-			// append a zero expr here for the convenience of scalar check. (ignored outside)
-			// The parent expression only use the last column in schema, which represents whether the condition is matched.
-			er.ctxStack[len(er.ctxStack)-1] = expression.NewZero()
-			er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+		if curClause != fieldList {
+			if asScalar {
+				// append a zero expr here for the convenience of scalar check. (ignored outside)
+				// The parent expression only use the last column in schema, which represents whether the condition is matched.
+				er.ctxStack[len(er.ctxStack)-1] = expression.NewZero()
+				er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+			}
+			return v, true
 		}
-		return v, true
+		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
+		//
+		// eg: explain select 1 > all (select * from t1 where t2.c2 > t1.a) from t2;
+		//                                |                                    |
+		//                                +--------------Apply ----------------+
+		//                                        schema(... + bool)
+		//                                                 |
+		//     analyzing select fields        <------------+  (output the bool column as scalar out)
+		//
+		// for this case, compare-subq occurs in the projection list. in analyzing phase, we should build them out
+		// rather than returning a zero datum as a scalar expression and ignored outside.
+		//
+		// compare-subq will build apply join for this case, and append a new bool column indicating existed or not.
+		// while this column should be kept the same as it was outputted in analyzing phase all the time, so we
+		// cache the allocated column here and reuse it in formal plan building phase.
+		originNP := np
+		idLowBound := er.sctx.GetSessionVars().PlanColumnID
+		defer func() {
+			if er.err == nil {
+				// successfully exit, recording the upperBound of allocated plan id as well.
+				cachedCompareJoinColumnIDs[0] = idLowBound
+				cachedCompareJoinColumnIDs[1] = er.sctx.GetSessionVars().PlanColumnID
+				er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: originNP, compareJoinColumnIDs: cachedCompareJoinColumnIDs}
+			}
+		}()
 	}
 	if eNNR {
 		// means plan building phase under new name resolution framework, trying to use cached subq.
 		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
 			np = item.p
+			cachedCompareJoinColumnIDs = item.compareJoinColumnIDs
 		}
 	}
 	if np == nil {
@@ -649,11 +680,11 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
 		if v.Op == opcode.EQ {
 			if v.All {
-				er.handleEQAll(lexpr, rexpr, np)
+				er.handleEQAll(lexpr, rexpr, np, cachedCompareJoinColumnIDs)
 			} else {
 				// `a = any(subq)` will be rewriten as `a in (subq)`.
 				er.asScalar = true
-				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false)
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false, cachedCompareJoinColumnIDs)
 				if er.err != nil {
 					return v, true
 				}
@@ -662,12 +693,12 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 			if v.All {
 				// `a != all(subq)` will be rewriten as `a not in (subq)`.
 				er.asScalar = true
-				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true)
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true, cachedCompareJoinColumnIDs)
 				if er.err != nil {
 					return v, true
 				}
 			} else {
-				er.handleNEAny(lexpr, rexpr, np)
+				er.handleNEAny(lexpr, rexpr, np, cachedCompareJoinColumnIDs)
 			}
 		} else {
 			// TODO: Support this in future.
@@ -677,7 +708,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	default:
 		// When < all or > any , the agg function should use min.
 		useMin := ((v.Op == opcode.LT || v.Op == opcode.LE) && v.All) || ((v.Op == opcode.GT || v.Op == opcode.GE) && !v.All)
-		er.handleOtherComparableSubq(lexpr, rexpr, np, useMin, v.Op.String(), v.All)
+		er.handleOtherComparableSubq(lexpr, rexpr, np, useMin, v.Op.String(), v.All, cachedCompareJoinColumnIDs)
 	}
 	if er.asScalar {
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
@@ -688,8 +719,8 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 }
 
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
-// it will be rewrote to t.id < (select max(s.id) from s).
-func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
+// it will be rewritten to t.id < (select max(s.id) from s).
+func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool, cacheIDs IDIntervalCache) {
 	plan4Agg := LogicalAggregation{}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
@@ -706,10 +737,15 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 		er.err = err
 		return
 	}
-
+	uniqueID := int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  funcMaxOrMin.RetTp,
 	}
 	colMaxOrMin.SetCoercibility(rexpr.Coercibility())
@@ -720,11 +756,11 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
 	cond := expression.NewFunctionInternal(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin)
-	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, all)
+	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, all, cacheIDs)
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
-func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, cond, lexpr, rexpr expression.Expression, all bool) {
+func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, cond, lexpr, rexpr expression.Expression, all bool, cacheIDs IDIntervalCache) {
 	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
 
@@ -733,8 +769,14 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		er.err = err
 		return
 	}
+	uniqueID := int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	colSum := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  funcSum.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
@@ -747,8 +789,14 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		er.err = err
 		return
 	}
+	uniqueID = int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	colCount := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  funcCount.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
@@ -780,7 +828,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	// plan4Agg.buildProjectionIfNecessary()
 	if !er.asScalar {
 		// For Semi LogicalApply without aux column, the result is no matter false or null. So we can add it to join predicate.
-		er.p, er.err = er.b.buildSemiApply(er.p, plan4Agg, []expression.Expression{cond}, false, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, plan4Agg, []expression.Expression{cond}, false, false, cacheIDs)
 		return
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
@@ -794,8 +842,14 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	copy(proj.names, er.p.OutputNames())
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
+	uniqueID = int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	proj.schema.Append(&expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  cond.GetType(),
 	})
 	proj.names = append(proj.names, types.EmptyName)
@@ -806,7 +860,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 // handleNEAny handles the case of != any. For example, if the query is t.id != any (select s.id from s), it will be rewrote to
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
-func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
+func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan, cacheIDs IDIntervalCache) {
 	// If there is NULL in s.id column, s.id should be the value that isn't null in condition t.id != s.id.
 	// So use function max to filter NULL.
 	maxFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
@@ -826,13 +880,25 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.SetChildren(np)
+	uniqueID := int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	maxResultCol := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  maxFunc.RetTp,
 	}
 	maxResultCol.SetCoercibility(rexpr.Coercibility())
+	uniqueID = int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	count := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
@@ -840,12 +906,12 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
 	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
 	cond := expression.ComposeDNFCondition(er.sctx, gtFunc, neCond)
-	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false)
+	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false, cacheIDs)
 }
 
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
-func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
+func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan, cacheIDs IDIntervalCache) {
 	firstRowFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
@@ -875,21 +941,33 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	newRetTp.DelFlag(mysql.NotNullFlag)
 	firstRowFunc.RetTp = newRetTp
 
+	uniqueID := int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	firstRowResultCol := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  firstRowFunc.RetTp,
 	}
 	firstRowResultCol.SetCoercibility(rexpr.Coercibility())
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
+	uniqueID = int64(-1)
+	if cacheIDs.Valid() {
+		uniqueID = cacheIDs.Get()
+	} else {
+		uniqueID = er.sctx.GetSessionVars().AllocPlanColumnID()
+	}
 	count := &expression.Column{
-		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: uniqueID,
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
 	leFunc := expression.NewFunctionInternal(er.sctx, ast.LE, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
 	eqCond := expression.NewFunctionInternal(er.sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
 	cond := expression.ComposeCNFCondition(er.sctx, leFunc, eqCond)
-	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, true)
+	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, true, cacheIDs)
 }
 
 func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.ExistsSubqueryExpr) (ast.Node, bool) {
@@ -900,9 +978,12 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.err = errors.Errorf("Unknown exists type %T", v.Sel)
 		return v, true
 	}
+	asScalar := er.asScalar
+	curClause := er.b.curClause
 	var (
-		np  LogicalPlan
-		err error
+		np                       LogicalPlan
+		err                      error
+		cachedExistJoinColumnIDs = NewIDIntervalCache()
 	)
 	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
 	if eNNR && er.b.analyzingPhase {
@@ -912,16 +993,44 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 			return v, true
 		}
 		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
-		if er.asScalar {
-			// append a zero expr here for the convenience of scalar check. (ignored outside)
-			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+		if curClause != fieldList {
+			if asScalar {
+				// append a zero expr here for the convenience of scalar check. (ignored outside)
+				er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			}
+			return v, true
 		}
-		return v, true
+		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
+		//
+		// eg: explain select exists (select * from t1 where t2.c2 > t1.a) from t2;
+		//                                |                                    |
+		//                                +--------------Apply ----------------+
+		//                                        schema(... + bool)
+		//                                                 |
+		//     analyzing select fields        <------------+  (output the bool column as scalar out)
+		//
+		// for this case, exist-subq occurs in the projection list. in analyzing phase, we should build them out
+		// rather returning a zero datum as a scalar expression and ignored outside.
+		//
+		// exist-subq will build apply join for this case, and append a new bool column indicating existed or not.
+		// while this column should be kept the same as it was outputted in analyzing phase all the time, so we
+		// cache the allocated column here and reuse it in formal plan building phase.
+		originNP := np
+		idLowBound := er.sctx.GetSessionVars().PlanColumnID
+		defer func() {
+			if er.err == nil {
+				// successfully exit, recording the upperBound of allocated plan id as well.
+				cachedExistJoinColumnIDs[0] = idLowBound
+				cachedExistJoinColumnIDs[1] = er.sctx.GetSessionVars().PlanColumnID
+				er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: originNP, existJoinColumnIDs: cachedExistJoinColumnIDs}
+			}
+		}()
 	}
 	if eNNR {
 		// means plan building phase under new name resolution framework, trying to use cached subq.
 		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
 			np = item.p
+			cachedExistJoinColumnIDs = item.existJoinColumnIDs
 		}
 	}
 	if np == nil {
@@ -934,7 +1043,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 
 	np = er.popExistsSubPlan(np)
 	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
+		// use a concrete struct column to receive the assignment in the buildSemiApply.
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, cachedExistJoinColumnIDs)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
@@ -990,6 +1100,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	ci := er.b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
 	asScalar := er.asScalar
+	curClause := er.b.curClause
 	er.asScalar = true
 	v.Expr.Accept(er)
 	if er.err != nil {
@@ -1002,8 +1113,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		return v, true
 	}
 	var (
-		np  LogicalPlan
-		err error
+		np                    LogicalPlan
+		err                   error
+		cachedInJoinColumnIDs = NewIDIntervalCache()
 	)
 	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
 	if eNNR && er.b.analyzingPhase {
@@ -1013,17 +1125,46 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 			return v, true
 		}
 		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
-		er.ctxStackPop(1)
-		if asScalar {
-			// append a zero expr here for the convenience of scalar check. (ignored outside)
-			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+		if curClause != fieldList {
+			er.ctxStackPop(1)
+			if asScalar {
+				// append a zero expr here for the convenience of scalar check. (ignored outside)
+				er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			}
+			return v, true
 		}
-		return v, true
+		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
+		//
+		// eg: explain format = 'brief' select 1 in (select t2.c2 + t1.a from t2) from t1;
+		//                                |                                    |
+		//                                +--------------Apply ----------------+
+		//                                        schema(... + bool)
+		//                                                 |
+		//     analyzing select fields        <------------+  (output the bool column as scalar out)
+		//
+		// for this case, in-subq occurs in the projection list. in analyzing phase, we should build them out
+		// rather returning a zero datum as a scalar expression and ignored outside.
+		//
+		// in-subq will build apply join for this case, and append a new bool column indicating matched or not.
+		// while this column should be kept the same as it was outputted in analyzing phase, so we cache the
+		// allocated column here and reuse it in formal plan building phase.
+		originNP := np
+		idLowerBound := er.sctx.GetSessionVars().PlanColumnID
+		defer func() {
+			if er.err == nil {
+				// successfully exit, recording the upperBound of allocated plan id as well.
+				cachedInJoinColumnIDs[0] = idLowerBound
+				cachedInJoinColumnIDs[1] = er.sctx.GetSessionVars().PlanColumnID
+				// override map element above.
+				er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: originNP, InJoinColumnIDs: cachedInJoinColumnIDs}
+			}
+		}()
 	}
 	if eNNR {
 		// means plan building phase under new name resolution framework, trying to use cached subq.
 		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
 			np = item.p
+			cachedInJoinColumnIDs = item.InJoinColumnIDs
 		}
 	}
 	if np == nil {
@@ -1113,7 +1254,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		}
 		er.p = join
 	} else {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, cachedInJoinColumnIDs)
 		if er.err != nil {
 			return v, true
 		}
@@ -1153,6 +1294,8 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			return v, true
 		}
 		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
+		// since scalar-subq won't allocate any column id when building apply operator, so we don't need to
+		// cache any IDIntervalCache for it.
 	}
 	if eNNR {
 		// means plan building phase under new name resolution framework, trying to use cached subq.

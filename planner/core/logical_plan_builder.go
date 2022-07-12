@@ -3901,7 +3901,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// analyzing phase.
 		b.analyzingPhase = true
 		b.curScope.selectFields = sel.Fields.Fields
-		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select 1 as a from dual group by a") {
+		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select exists (select * from t1 where t2.c2 > t1.a) from t2") {
 			fmt.Println(1)
 		}
 		if err = b.analyzeProjectionList(ctx, p, sel.Fields.Fields); err != nil {
@@ -5000,10 +5000,10 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 }
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) (LogicalPlan, error) {
+func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool, cachedIDs IDIntervalCache) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 
-	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
+	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not, cachedIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -5039,7 +5039,7 @@ func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) (*LogicalJoin, error) {
+func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool, cacheIDs IDIntervalCache) (*LogicalJoin, error) {
 	joinPlan := LogicalJoin{}.Init(b.ctx, b.getSelectOffset())
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
@@ -5050,9 +5050,16 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	copy(joinPlan.names, outerPlan.OutputNames())
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
+		uniqueID := int64(-1)
+		if cacheIDs.Valid() {
+			uniqueID = cacheIDs.Get()
+		} else {
+			uniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
 		newSchema.Append(&expression.Column{
+			// change the origin column element for later cache.
 			RetType:  types.NewFieldType(mysql.TypeTiny),
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: uniqueID,
 		})
 		joinPlan.names = append(joinPlan.names, types.EmptyName)
 		joinPlan.SetSchema(newSchema)

@@ -412,6 +412,95 @@ func TestNameResolutionIssues(t *testing.T) {
 		"20", "30", "40"))
 }
 
+func TestApplyJoinCachePreAllocatedColumnInAnalyzingPhase(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_new_name_resolution=1")
+	defer tk.MustExec("set @@tidb_enable_new_name_resolution=0")
+
+	// explain format = 'brief' select 1 in (select c2 from t2) from t1;
+	// for this case, in-subq occurs in the projection list as a scalar item. in analyzing
+	// phase, we should build them out rather returning a zero datum as a scalar expression
+	// and ignored outside. Remember to cache them and reuse them in formal plan building phase.
+
+	tk.MustExec("create table t2(c int)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values(0),(1)")
+	tk.MustExec("insert into t2 values(1)")
+	// explain format = 'brief' select 1 in (select * from t2 where t1.a > t2.c) from t1;
+	tk.MustQuery("explain format = 'brief' select 1 in (select * from t2 where t1.a > t2.c) from t1;").Check(testkit.Rows(
+		"HashJoin 10000.00 root  CARTESIAN left outer semi join, other cond:eq(1, test.t2.c), gt(test.t1.a, test.t2.c)",
+		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select 1 in (select * from t2 where t1.a >= t2.c) as x from t1 order by x;").Check(testkit.Rows(
+		"0", "1"))
+
+	// explain format = 'brief' select exists (select * from t1 where t2.c2 > t1.a) from t2;
+	// for this case, exist-subq occurs in the projection list as a scalar item. in analyzing
+	// phase, we should build them out rather than returning a zero datum as a scalar expression
+	// and ignored outside. Remember to cache ids and reuse them in formal plan building phase.
+
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t2 values(0),(0),(1)")
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 values(0)")
+	// select exists (select * from t1 where t2.c2 > t1.a) from t2;
+	tk.MustQuery("explain select exists (select * from t1 where t2.c > t1.a) from t2;").Check(testkit.Rows(
+		"HashJoin_9 10000.00 root  CARTESIAN left outer semi join, other cond:gt(test.t2.c, test.t1.a)",
+		"├─TableReader_13(Build) 10000.00 root  data:TableFullScan_12",
+		"│ └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─TableReader_11(Probe) 10000.00 root  data:TableFullScan_10",
+		"  └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustQuery("select exists (select * from t1 where t2.c > t1.a) as x from t2 order by x;").Check(testkit.Rows(
+		"0", "0", "1"))
+
+	// explain select 1 > all (select * from t1 where t2.c2 > t1.a) from t2;
+	// for this case, compare-subq occurs in the projection list as a scalar item. in analyzing
+	// phase, we should build them out rather than returning a zero datum as a scalar expression
+	// and ignored outside. Remember to cache ids and reuse them in formal plan building phase.
+	tk.MustExec("delete from t1")
+	tk.MustExec("insert into t1 values(2)")
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t2 values(0),(0),(2)")
+	tk.MustQuery("explain select 1 > all (select * from t1 where t2.c > t1.a) from t2").Check(testkit.Rows(
+		"Projection_12 10000.00 root  or(and(gt(1, Column#5), if(ne(Column#6, 0), <nil>, 1)), or(eq(Column#7, 0), 0))->Column#8",
+		"└─Apply_14 10000.00 root  CARTESIAN inner join",
+		"  ├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
+		"  │ └─TableFullScan_15 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─StreamAgg_31(Probe) 1.00 root  funcs:max(Column#13)->Column#5, funcs:sum(Column#14)->Column#6, funcs:count(Column#15)->Column#7",
+		"    └─TableReader_32 1.00 root  data:StreamAgg_20",
+		"      └─StreamAgg_20 1.00 cop[tikv]  funcs:max(test.t1.a)->Column#13, funcs:sum(isnull(test.t1.a))->Column#14, funcs:count(1)->Column#15",
+		"        └─Selection_30 8000.00 cop[tikv]  gt(test.t2.c, test.t1.a)",
+		"          └─TableFullScan_29 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	// when t2.c is 0, the internal result set is empty, so 1 > all(empty) gets 1 for first two line of t2.
+	// when t2.c is 2, the internal result set is one line as 2, so 1 > all(empty) gets 0 for the last one line of t2.
+	tk.MustQuery("select 1 > all (select * from t1 where t2.c >= t1.a) as x from t2 order by x").Check(testkit.Rows(
+		"0", "1", "1"))
+
+	// explain select (select * from t1 where t2.c2 > t1.a) from t2;
+	//
+	// for this case, scalar-subq occurs in the projection list as a scalar item. in analyzing
+	// phase, we do directly build them out rather than returning a zero datum as a scalar expression
+	// and ignored outside. While the interesting thing is that even we try to do apply join in analyzing
+	// phase (for output the final scalar expression out), unlike 3 others above, apply itself didn't
+	// allocate any column ids in this process, so we don't need to cache them and use latter.
+	tk.MustQuery("explain select (select * from t1 where t2.c >= t1.a) from t2;").Check(testkit.Rows(
+		"Projection_10 10000.00 root  test.t1.a",
+		"└─Apply_12 10000.00 root  CARTESIAN left outer join",
+		"  ├─TableReader_14(Build) 10000.00 root  data:TableFullScan_13",
+		"  │ └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─MaxOneRow_15(Probe) 1.00 root  ",
+		"    └─TableReader_18 2.00 root  data:Selection_17",
+		"      └─Selection_17 2.00 cop[tikv]  ge(test.t2.c, test.t1.a)",
+		"        └─TableFullScan_16 2.50 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select (select * from t1 where t2.c >= t1.a) as x from t2 order by x").Check(testkit.Rows(
+		"<nil>", "<nil>", "2"))
+}
+
 func TestCorrelatedAggEvalContextCheck(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

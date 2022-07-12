@@ -50,6 +50,23 @@ expressionRewriter.buildAggregationDesc
 // nestingMap is used to check whether extracting correlated aggregate to outside eval context is valid.
 type nestingMap uint64
 
+type IDIntervalCache [2]int64
+
+func (ids *IDIntervalCache) Get() int64 {
+	ids[0]++
+	Assert(ids[0] <= ids[1])
+	return ids[0]
+}
+
+func (ids *IDIntervalCache) Valid() bool {
+	return ids[0] != ids[1] && ids[0] < ids[1]
+}
+
+func NewIDIntervalCache() IDIntervalCache {
+	res := [2]int64{-1, -1}
+	return res
+}
+
 type preBuiltSubQueryCacheItem struct {
 	// cache the basic sub-query plan, avoid building it again.
 	// NOTE: in analyzing phase, we build every sub-query the first we meet it, caching the basic information down. (especially those columns with allocated unique id).
@@ -76,6 +93,12 @@ type preBuiltSubQueryCacheItem struct {
 	// down in corresponding scope which will be used in later in formal plan building phase, along with correlated column within them.
 	//
 	p LogicalPlan
+	// see comment in handleInSubquery, indicating the allocated column id interval [min, max).
+	InJoinColumnIDs IDIntervalCache
+	// see comment in handleExistSubquery, indicating the allocated column id interval [min, max).
+	existJoinColumnIDs IDIntervalCache
+	// see comment in handleCompareSubquery, indicating the allocated column id interval [min, max).
+	compareJoinColumnIDs IDIntervalCache
 }
 
 // ScopeSchema is used to resolve column and register basic agg in analyzing phase.
