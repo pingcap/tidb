@@ -658,8 +658,6 @@ type SessionVars struct {
 	CPUFactor float64
 	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
 	CopCPUFactor float64
-	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
-	CopTiFlashConcurrencyFactor float64
 	// networkFactor is the network cost of transferring 1 byte data.
 	networkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -2376,8 +2374,6 @@ func (s *SessionVars) CleanupTxnReadTSIfUsed() {
 	}
 }
 
-<<<<<<< HEAD
-=======
 // GetCPUFactor returns the session variable cpuFactor
 func (s *SessionVars) GetCPUFactor() float64 {
 	if s.CostModelVersion == 2 {
@@ -2423,7 +2419,6 @@ func (s *SessionVars) GetConcurrencyFactor() float64 {
 	return s.concurrencyFactor
 }
 
->>>>>>> 017ac90e67... planner: introduce some new variables for the cost model version2 (#35241)
 // GetNetworkFactor returns the session variable networkFactor
 // returns 0 when tbl is a temporary table.
 func (s *SessionVars) GetNetworkFactor(tbl *model.TableInfo) float64 {
