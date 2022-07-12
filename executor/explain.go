@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/sessionctx"
 	"math"
 	"os"
 	"path/filepath"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
