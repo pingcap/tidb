@@ -171,6 +171,11 @@ error = '''
 task not found
 '''
 
+["BR:Restore:ErrDatabasesAlreadyExisted"]
+error = '''
+databases already existed in restored cluster
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
