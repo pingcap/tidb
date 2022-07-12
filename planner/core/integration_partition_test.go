@@ -788,6 +788,27 @@ func TestListPartitionAutoRandom(t *testing.T) {
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec(`set @@tidb_extension_non_mysql_compatible = default`)
+	tk.MustQuery(`show create table tcollist`).Check(testkit.Rows(
+		"tcollist CREATE TABLE `tcollist` (\n" +
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY LIST COLUMNS(`a`)\n" +
+			"(PARTITION `p0` VALUES IN (0,1,2,3,4),\n" +
+			" PARTITION `p1` VALUES IN (5,6,7,8,9),\n" +
+			" PARTITION `p2` VALUES IN (10,11,12,13,14))"))
+	tk.MustExec(`set @@tidb_extension_non_mysql_compatible = on`)
+	tk.MustQuery(`show create table tcollist`).Check(testkit.Rows(
+		"tcollist CREATE TABLE `tcollist` (\n" +
+			"  `a` bigint(20) NOT NULL AUTO_RANDOM(5),\n" +
+			"  PRIMARY KEY (`a`) CLUSTERED\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY LIST COLUMNS(`a`)\n" +
+			"(PARTITION `p0` VALUES IN (0,1,2,3,4),\n" +
+			" PARTITION `p1` VALUES IN (5,6,7,8,9),\n" +
+			" PARTITION `p2` VALUES IN (10,11,12,13,14))"))
+	tk.MustExec(`set @@tidb_extension_non_mysql_compatible = off`)
 }
 
 func TestListPartitionInvisibleIdx(t *testing.T) {
@@ -1037,6 +1058,19 @@ PARTITION BY LIST COLUMNS(col1) (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec(`insert into IDT_LP24306 values(-128)`)
 	tk.MustQuery(`select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128`).Sort().Check(testkit.Rows("-128"))
+	tk.MustExec(`set @@tidb_extension_non_mysql_compatible = default`)
+	tk.MustQuery(`show create table IDT_LP24306`).Check(testkit.Rows(
+		"IDT_LP24306 CREATE TABLE `IDT_LP24306` (\n" +
+			"  `COL1` tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',\n" +
+			"  KEY `UK_COL1` (`COL1`) /*!80000 INVISIBLE */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec(`set @@tidb_extension_non_mysql_compatible = 1`)
+	tk.MustQuery(`show create table IDT_LP24306`).Check(testkit.Rows(
+		"IDT_LP24306 CREATE TABLE `IDT_LP24306` (\n" +
+			"  `COL1` tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',\n" +
+			"  KEY `UK_COL1` (`COL1`) INVISIBLE\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec(`set @@tidb_extension_non_mysql_compatible = default`)
 }
 
 func TestIssue27030(t *testing.T) {

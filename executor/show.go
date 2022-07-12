@@ -1029,7 +1029,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
-			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				buf.WriteString(" /*T![auto_rand]")
+			}
+			buf.WriteString(fmt.Sprintf(" AUTO_RANDOM(%d)", tableInfo.AutoRandomBits))
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				buf.WriteString(" */")
+			}
 		}
 		if len(col.Comment) > 0 {
 			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
@@ -1089,7 +1095,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		if idxInfo.Invisible {
-			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			} else {
+				fmt.Fprintf(buf, ` INVISIBLE`)
+			}
 		}
 		if idxInfo.Comment != "" {
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
@@ -1170,7 +1180,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.AutoIdCache != 0 {
-		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " /*T![auto_id_cache]")
+		}
+		fmt.Fprintf(buf, " AUTO_ID_CACHE=%d", tableInfo.AutoIdCache)
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " */")
+		}
 	}
 
 	randomAllocator := allocators.Get(autoid.AutoRandomType)
@@ -1181,16 +1197,27 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 
 		if autoRandID > 1 {
-			fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandID)
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				fmt.Fprintf(buf, " /*T![auto_rand_base]")
+			}
+			fmt.Fprintf(buf, " AUTO_RANDOM_BASE=%d", autoRandID)
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				fmt.Fprintf(buf, " */")
+			}
 		}
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
-		fmt.Fprintf(buf, " /*T! SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
-		if tableInfo.PreSplitRegions > 0 {
-			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " /*T!")
 		}
-		buf.WriteString("*/")
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS=%d", tableInfo.ShardRowIDBits)
+		if tableInfo.PreSplitRegions > 0 {
+			fmt.Fprintf(buf, " PRE_SPLIT_REGIONS=%d", tableInfo.PreSplitRegions)
+		}
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " */")
+		}
 	}
 
 	if len(tableInfo.Comment) > 0 {
@@ -1202,7 +1229,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {
-		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " /*T![placement]")
+		}
+		fmt.Fprintf(buf, " PLACEMENT POLICY=%s", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " */")
+		}
 	}
 
 	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
@@ -1212,7 +1245,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	// add partition info here.
-	appendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+	appendPartitionInfo(ctx, tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -1347,7 +1380,7 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+func appendPartitionInfo(ctx sessionctx.Context, partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	if partitionInfo == nil {
 		return
 	}
@@ -1419,7 +1452,13 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 		if def.PlacementPolicyRef != nil {
 			// add placement ref info here
-			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				fmt.Fprintf(buf, " /*T![placement]")
+			}
+			fmt.Fprintf(buf, " PLACEMENT POLICY=%s", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				fmt.Fprintf(buf, " */")
+			}
 		}
 	}
 	buf.WriteString(")")
@@ -1430,35 +1469,55 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	sqlMode := ctx.GetSessionVars().SQLMode
 	var ifNotExistsStr string
 	if ifNotExists {
-		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+		} else {
+			ifNotExistsStr = "IF NOT EXISTS "
+		}
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if dbInfo.Charset != "" {
-		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", dbInfo.Charset)
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " /*!40100")
+		}
+		fmt.Fprintf(buf, " DEFAULT CHARACTER SET %s", dbInfo.Charset)
 		defaultCollate, err := charset.GetDefaultCollation(dbInfo.Charset)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if dbInfo.Collate != "" && dbInfo.Collate != defaultCollate {
-			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+			fmt.Fprintf(buf, " COLLATE %s", dbInfo.Collate)
 		}
-		fmt.Fprint(buf, "*/")
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " */")
+		}
 	} else if dbInfo.Collate != "" {
 		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", collInfo.CharsetName)
-		if !collInfo.IsDefault {
-			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " /*!40100")
 		}
-		fmt.Fprint(buf, "*/")
+		fmt.Fprintf(buf, " DEFAULT CHARACTER SET %s", collInfo.CharsetName)
+		if !collInfo.IsDefault {
+			fmt.Fprintf(buf, " COLLATE %s", dbInfo.Collate)
+		}
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " */")
+		}
 	}
 	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
 	// behavior unchanged because it is trivial enough.
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
-		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " /*T![placement]")
+		}
+		fmt.Fprintf(buf, " PLACEMENT POLICY=%s", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			fmt.Fprintf(buf, " */")
+		}
 	}
 	return nil
 }
