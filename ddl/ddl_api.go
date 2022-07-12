@@ -88,7 +88,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	sessionVars := ctx.GetSessionVars()
 
 	// If no charset and/or collation is specified use collation_server and character_set_server
-	charsetOpt := &ast.CharsetOpt{}
+	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
 		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
@@ -102,19 +102,17 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	explicitCharset := false
 	explicitCollation := false
-	if len(stmt.Options) != 0 {
-		for _, val := range stmt.Options {
-			switch val.Tp {
-			case ast.DatabaseOptionCharset:
-				charsetOpt.Chs = val.Value
-				explicitCharset = true
-			case ast.DatabaseOptionCollate:
-				charsetOpt.Col = val.Value
-				explicitCollation = true
-			case ast.DatabaseOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(val.Value),
-				}
+	for _, val := range stmt.Options {
+		switch val.Tp {
+		case ast.DatabaseOptionCharset:
+			charsetOpt.Chs = val.Value
+			explicitCharset = true
+		case ast.DatabaseOptionCollate:
+			charsetOpt.Col = val.Value
+			explicitCollation = true
+		case ast.DatabaseOptionPlacementPolicy:
+			placementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(val.Value),
 			}
 		}
 	}
@@ -140,7 +138,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetOpt.Chs, Col: charsetOpt.Col})
+	chs, coll, err := ResolveCharsetCollation(charsetOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}

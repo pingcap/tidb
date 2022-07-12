@@ -756,6 +756,12 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 
 	// unsupported ddl operations
 	{
+		// Test modify the same column twice.
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int default 1, b int default 2);")
+		tk.MustExec("insert into t values ();")
+		tk.MustGetErrCode("alter table t modify column a int default 2, modify column a bigint;", errno.ErrUnsupportedDDLOperation)
+
 		// Test modify and drop with same column
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a int default 1, b int default 2);")
