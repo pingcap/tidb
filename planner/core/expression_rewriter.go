@@ -316,7 +316,7 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 }
 
 // buildSubquery translates the subquery ast to plan.
-// Currently, only the IN/EXIST can apply the rewrite hint(rewrite the semi join to inner join with aggregation).
+// Currently, only the EXIST can apply the rewrite hint(rewrite the semi join to inner join with aggregation).
 func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.SubqueryExpr, rewriteHintCanTakeEffect bool) (np LogicalPlan, hasSemiJoinRewriteHint bool, err error) {
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
