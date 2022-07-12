@@ -81,7 +81,7 @@ Create a table with foreign key, check following condition when build DDL job an
 - Supports foreign key references between one column and another within a table. (A column cannot have a foreign key reference to itself.)
 - Require indexes on foreign keys and referenced keys so that foreign key checks can be fast and not require a table scan. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
 - Index prefixes on foreign key columns are not supported. Consequently, BLOB and TEXT columns cannot be included in a foreign key because indexes on those columns must always include a prefix length.
-- Does not currently support foreign keys for tables with user-defined partitioning. This includes both parent and child tables.
+- Does not currently support foreign keys for tables with user-defined partitioning. This includes both reference and child tables.
 - A foreign key constraint cannot reference a virtual generated column, but stored generated column is ok.
 
 #### Handle In DDL Owner
@@ -205,17 +205,17 @@ then when user modify the column type, TiDB will auto modify the related foreign
 
 ### DML On Child Table
 
-On Child Table Insert Or Update, need to Find FK column value whether exist in Parent table:
+On Child Table Insert Or Update, need to Find FK column value whether exist in reference table:
 
-1. Get parent table info by table name.
-2. Get related fk index of parent table.
-3. tiny optimize, check fk column value exist in parent table cache(map[string(index_key)]struct).
-3. Get related row in parent.
+1. Get reference table info by table name.
+2. Get related fk index of reference table.
+3. tiny optimize, check fk column value exist in reference table cache(map[string(index_key)]struct).
+3. Get related row in reference.
   - Construct index key and then use snapshot `Iter` and `Seek` API to scan. If the index is unique and only contain
     foreign key columns, use snapshot `Get` API.
     - `Iter` default scan batch size is 256, need to set 2 to avoid read unnecessary data.
 4. compact column value to make sure exist.
-5. put column value into parent fk column value cache.
+5. put column value into reference fk column value cache.
 
 check order should check unique/primary key constrain first:
 
@@ -253,19 +253,19 @@ test> show warnings;
 2,2
 ```
 
-### DML On Parent Table
+### DML On reference Table
 
-On Child Table Insert Or Update:
+On reference Table Insert Or Update:
 
 1. check related child table row exist.
 2. modify related child table row by referential action:
 - `CASCADE`: update/delete related child table row.
 - `SET NULL`: set related child row's foreign key columns value to NULL.
-- `RESTRICT`, `NO ACTION`: If related row doesn't exit in child table, reject update/delete parent table.
+- `RESTRICT`, `NO ACTION`: If related row exist in child table, reject update/delete reference table.
 - `SET DEFAULT`: just like `RESTRICT`.
 
 modify related child table row by following step:
-1. get child table info by name(in parent table info).
+1. get child table info by name(in reference table info).
 2. get the child table fk index's column info.
 3. build update executor to update child table rows.
 
@@ -285,7 +285,7 @@ insert into t1 values (1, 1);
 insert into t2 values (1, 1);
 ```
 
-Then delete on parent table:
+Then delete on reference table:
 ```sql
 > delete from t1 where id=1;
 Query OK, 1 row affected
