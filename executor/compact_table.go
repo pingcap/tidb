@@ -66,8 +66,9 @@ func getTiFlashStores(ctx sessionctx.Context) ([]infoschema.ServerInfo, error) {
 type CompactTableTiFlashExec struct {
 	baseExecutor
 
-	tableInfo *model.TableInfo
-	done      bool
+	tableInfo      *model.TableInfo
+	PartitionNames []model.CIStr
+	done           bool
 
 	tikvStore tikv.Storage
 }
@@ -145,7 +146,7 @@ func (task *storeCompactTask) work() error {
 	task.startAt = time.Now()
 	task.lastProgressOutputAt = task.startAt
 
-	if task.parentExec.tableInfo.Partition != nil {
+	if task.parentExec.tableInfo.Partition != nil && task.parentExec.PartitionNames == nil {
 		// There are partitions, let's do it partition by partition.
 		// There is no need for partition-level concurrency, as TiFlash will limit table compaction one at a time.
 		allPartitions := task.parentExec.tableInfo.Partition.Definitions
@@ -158,7 +159,27 @@ func (task *storeCompactTask) work() error {
 				// Stop remaining partitions when error happens.
 				break
 			}
-		} // For partition table, there must be no data in task.parentExec.tableInfo.ID. So no need to compact it.
+		}
+	} else if task.parentExec.PartitionNames != nil {
+		// User specify partitions, let's do it partition by partition.
+		// There is no need for partition-level concurrency, as TiFlash will limit table compaction one at a time.
+		allPartitions := task.parentExec.tableInfo.Partition.Definitions
+		task.allPhysicalTables = len(allPartitions)
+		task.compactedPhysicalTables = 0
+		for _, partitionName := range task.parentExec.PartitionNames {
+			partition := task.parentExec.tableInfo.FindPartitionDefinitionByName(partitionName.L)
+			if partition == nil {
+				err = errors.Errorf("invalid partition name:%s in table: %s", partitionName.O, task.parentExec.tableInfo.Name)
+				stopAllTasks = true
+				break
+			}
+			stopAllTasks, err = task.compactOnePhysicalTable(partition.ID)
+			task.compactedPhysicalTables++
+			if err != nil {
+				// Stop remaining partitions when error happens.
+				break
+			}
+		}
 	} else {
 		task.allPhysicalTables = 1
 		task.compactedPhysicalTables = 0

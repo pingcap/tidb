@@ -5004,8 +5004,9 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (Plan, error
 
 	tblInfo := node.Table.TableInfo
 	p := &CompactTable{
-		ReplicaKind: node.ReplicaKind,
-		TableInfo:   tblInfo,
+		ReplicaKind:    node.ReplicaKind,
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
 	}
 	return p, nil
 }

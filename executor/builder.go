@@ -5196,9 +5196,25 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 		return nil
 	}
 
+	// check partition
+	if v.PartitionNames != nil {
+		if v.TableInfo.Partition == nil {
+			b.err = errors.Errorf("table:%s is not a partition table, but user specify partition name list:%+v", v.TableInfo.Name.O, v.PartitionNames)
+			return nil
+		}
+		for _, partitionName := range v.PartitionNames {
+			partition := v.TableInfo.FindPartitionDefinitionByName(partitionName.L)
+			if partition == nil {
+				b.err = errors.Errorf("partition:%s is not exist in table:%s", partitionName.O, v.TableInfo.Name.O)
+				return nil
+			}
+		}
+	}
+
 	return &CompactTableTiFlashExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		tableInfo:    v.TableInfo,
-		tikvStore:    tikvStore,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		tableInfo:      v.TableInfo,
+		PartitionNames: v.PartitionNames,
+		tikvStore:      tikvStore,
 	}
 }
