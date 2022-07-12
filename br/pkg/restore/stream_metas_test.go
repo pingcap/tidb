@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -130,7 +131,7 @@ func TestTruncateSafepoint(t *testing.T) {
 	}
 }
 
-func fakeMetaDatas() []*backuppb.Metadata {
+func fakeMetaDatas(cf string) []*backuppb.Metadata {
 	ms := []*backuppb.Metadata{
 		{
 			StoreId: 1,
@@ -140,7 +141,7 @@ func fakeMetaDatas() []*backuppb.Metadata {
 				{
 					MinTs:                 1500,
 					MaxTs:                 2000,
-					Cf:                    stream.WriteCF,
+					Cf:                    cf,
 					MinBeginTsInDefaultCf: 800,
 				},
 			},
@@ -153,7 +154,7 @@ func fakeMetaDatas() []*backuppb.Metadata {
 				{
 					MinTs:                 3000,
 					MaxTs:                 4000,
-					Cf:                    stream.WriteCF,
+					Cf:                    cf,
 					MinBeginTsInDefaultCf: 2000,
 				},
 			},
@@ -166,8 +167,8 @@ func fakeMetaDatas() []*backuppb.Metadata {
 				{
 					MinTs:                 5100,
 					MaxTs:                 6100,
-					Cf:                    stream.WriteCF,
-					MinBeginTsInDefaultCf: 5000,
+					Cf:                    cf,
+					MinBeginTsInDefaultCf: 1800,
 				},
 			},
 		},
@@ -181,8 +182,20 @@ func TestCalculateShiftTS(t *testing.T) {
 		restoreTS uint64 = 4500
 	)
 
-	ms := fakeMetaDatas()
+	ms := fakeMetaDatas(stream.WriteCF)
 	shiftTS, exist := restore.CalculateShiftTS(ms, startTs, restoreTS)
 	require.Equal(t, shiftTS, uint64(2000))
 	require.Equal(t, exist, true)
+
+	shiftTS, exist = restore.CalculateShiftTS(ms, startTs, mathutil.MaxUint)
+	require.Equal(t, shiftTS, uint64(1800))
+	require.Equal(t, exist, true)
+
+	shiftTS, exist = restore.CalculateShiftTS(ms, 1999, 3001)
+	require.Equal(t, shiftTS, uint64(800))
+	require.Equal(t, exist, true)
+
+	ms = fakeMetaDatas(stream.DefaultCF)
+	shiftTS, exist = restore.CalculateShiftTS(ms, startTs, restoreTS)
+	require.Equal(t, exist, false)
 }
