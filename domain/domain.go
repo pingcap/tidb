@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
@@ -1607,6 +1608,26 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
+}
+
+// LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
+func (do *Domain) LoadSigningCertLoop() {
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("loadSigningCertLoop exited.")
+			util.Recover(metrics.LabelDomain, "loadSigningCertLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-time.After(sessionstates.LoadCertInterval):
+				sessionstates.ReloadSigningCert()
+			case <-do.exit:
+				return
+			}
+		}
+	}()
 }
 
 // ServerID gets serverID.

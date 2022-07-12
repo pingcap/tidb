@@ -2011,6 +2011,7 @@ func (e *ShowExec) fetchShowBuiltins() error {
 }
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
+	// session states
 	sessionStates := &sessionstates.SessionStates{}
 	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
 	if err != nil {
@@ -2024,8 +2025,20 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
-	// This will be implemented in future PRs.
-	tokenBytes, err := gjson.Marshal("")
+	// session token
+	var token *sessionstates.SessionToken
+	// In testing, user may be nil.
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		// The token may be leaked without TLS, so we enforce a TLS connection.
+		if e.ctx.GetSessionVars().TLSConnectionState == nil {
+			//return ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried in a TLS connection")
+			return errors.New("the token must be queried in a TLS connection")
+		}
+		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+			return err
+		}
+	}
+	tokenBytes, err := gjson.Marshal(token)
 	if err != nil {
 		return errors.Trace(err)
 	}
