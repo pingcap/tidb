@@ -46,7 +46,7 @@ func TestInfo(t *testing.T) {
 
 	integration.BeforeTest(t)
 
-	if !unixSocketAvailable() {
+	if unixSocketAvailable() {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
 	}
 
