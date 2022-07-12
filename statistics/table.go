@@ -144,8 +144,36 @@ func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64
-	DropEvicted()
 	MemoryUsage() CacheItemMemoryUsage
+
+	dropCMS()
+	dropTopN()
+	isStatsInitialized() bool
+	getEvictedStatus() int
+	statsVer() int64
+	isCMSExist() bool
+}
+
+// DropEvicted drop stats for table column/index
+func DropEvicted(item TableCacheItem) {
+	if !item.isStatsInitialized() {
+		return
+	}
+	switch item.getEvictedStatus() {
+	case allLoaded:
+		if item.isCMSExist() && item.statsVer() < Version2 {
+			item.dropCMS()
+			return
+		}
+		// For stats version2, there is no cms thus we directly drop topn
+		item.dropTopN()
+		return
+	case onlyCmsEvicted:
+		item.dropTopN()
+		return
+	default:
+		return
+	}
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem

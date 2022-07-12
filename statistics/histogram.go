@@ -1357,6 +1357,22 @@ func (c *Column) dropTopN() {
 	}
 }
 
+func (c *Column) getEvictedStatus() int {
+	return c.evictedStatus
+}
+
+func (c *Column) isStatsInitialized() bool {
+	return c.statsInitialized
+}
+
+func (c *Column) statsVer() int64 {
+	return c.StatsVer
+}
+
+func (c *Column) isCMSExist() bool {
+	return c.CMSketch != nil
+}
+
 // Index represents an index histogram.
 type Index struct {
 	Histogram
@@ -1377,35 +1393,41 @@ func (idx *Index) ItemID() int64 {
 	return idx.Info.ID
 }
 
-// DropEvicted implements TableCacheItem
-// DropEvicted drops evicted structures
-func (idx *Index) DropEvicted() {
-	switch idx.StatsVer {
-	case Version2:
-		if idx.TopN != nil {
-			idx.TopN = nil
-			return
-		}
-	default:
-		if idx.CMSketch != nil {
-			idx.CMSketch = nil
-			return
-		}
-		if idx.TopN != nil {
-			idx.TopN = nil
-			return
-		}
+func (idx *Index) dropCMS() {
+	idx.CMSketch = nil
+	idx.evictedStatus = onlyCmsEvicted
+}
+
+func (idx *Index) dropTopN() {
+	originTopNNum := int64(idx.TopN.Num())
+	idx.TopN = nil
+	if len(idx.Histogram.Buckets) == 0 && originTopNNum >= idx.Histogram.NDV {
+		// This indicates index has topn instead of histogram
+		idx.evictedStatus = allEvicted
+	} else {
+		idx.evictedStatus = onlyHistRemained
 	}
+}
+
+func (idx *Index) getEvictedStatus() int {
+	return idx.evictedStatus
+}
+
+func (idx *Index) isStatsInitialized() bool {
+	return idx.statsInitialized
+}
+
+func (idx *Index) statsVer() int64 {
+	return idx.StatsVer
+}
+
+func (idx *Index) isCMSExist() bool {
+	return idx.CMSketch != nil
 }
 
 // IsEvicted returns whether index statistics got evicted
 func (idx *Index) IsEvicted() bool {
-	switch idx.StatsVer {
-	case Version1:
-		return idx.CMSketch == nil
-	default:
-		return false
-	}
+	return idx.evictedStatus != allLoaded
 }
 
 func (idx *Index) String() string {

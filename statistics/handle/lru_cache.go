@@ -432,7 +432,7 @@ func (c *innerItemLruCache) evictIfNeeded() {
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
 		oldMem := item.innerMemUsage
-		item.innerItem.DropEvicted()
+		statistics.DropEvicted(item.innerItem)
 		newMem := item.innerItem.MemoryUsage()
 		c.calculateCost(newMem, oldMem)
 		if newMem.TrackingMemUsage() == 0 {
