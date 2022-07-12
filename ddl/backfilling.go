@@ -937,6 +937,7 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
 		}
 	})
+	jc := w.jobContext(job)
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
@@ -981,7 +982,7 @@ func (w *worker) writeTempIndexRecord(t table.PhysicalTable, bfWorkerType backfi
 			sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 			sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
 
-			idxWorker := newTempIndexWorker(sessCtx, w, i, t, indexInfo, reorgInfo)
+			idxWorker := newTempIndexWorker(sessCtx, w, i, t, indexInfo, reorgInfo, jc)
 			idxWorker.priority = job.Priority
 			mergeWorkers = append(mergeWorkers, idxWorker.backfillWorker)
 			go idxWorker.backfillWorker.runMerge(reorgInfo.d, idxWorker, job)

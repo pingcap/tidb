@@ -230,7 +230,8 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 	txnTag := "AddIndexLightningBackfillDataInTxn" + strconv.Itoa(w.id)
 
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -350,9 +351,16 @@ func (w *backFillIndexWorker) batchSkipKey(txn kv.Transaction, store kv.Storage,
 			var keyVer []byte
 			length := len(val)
 			keyVer = append(keyVer, val[length-1:]...)
+			pos := w.tmpKeyPos[i]
 			if bytes.Equal(keyVer, []byte("2")) {
-				pos := w.tmpKeyPos[i]
 				idxRecords[pos].skip = true
+			} else {
+				// We need to add this lock to make sure pessimistic transaction can realize this operation.
+				// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
+				err = txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecords[pos].key)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
@@ -381,23 +389,25 @@ type backFillIndexWorker struct {
 	tmpIdxRecords      []*temporaryIndexRecord
 	batchCheckTmpKeys  []kv.Key
 	tmpKeyPos          []int32
+	jobContext		   *JobContext
 }
 
-func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) *backFillIndexWorker {
+func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
 	// Add build openengine process.
 	return &backFillIndexWorker{
 		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
 		index:          index,
+		jobContext:     jc,
 	}
 }
 
 // BackfillDataInTxn merge temp index data in txn.
 func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
-	logutil.BgLogger().Info("Merge temp index", zap.ByteString("startKey", taskRange.startKey), zap.ByteString("endKey", taskRange.endKey))
 	oprStartTime := time.Now()
-	errInTxn = kv.RunInNewTxn(context.Background(), w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
+	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
@@ -508,7 +518,6 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 		taskDone := indexKey.Cmp(taskRange.endKey) > 0
 
 		if taskDone || len(w.tmpIdxRecords) >= w.batchCnt {
-			logutil.BgLogger().Info("return false")
 			return false, nil
 		}
 
@@ -541,12 +550,6 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 		w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
 
 		if bytes.Equal(keyVer, []byte("1")) {
-			// We need to add this lock to make sure pessimistic transaction can realize this operation.
-			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
-			err = txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
 			w.batchCheckTmpKeys = append(w.batchCheckTmpKeys, indexKey)
 			w.tmpKeyPos = append(w.tmpKeyPos, pos)
 		}

@@ -954,7 +954,7 @@ const (
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
 	DefTiDBFastDDL                                 = false
-	DefTiDBDiskQuota                               = 100 * 1024 * 1024 * 1024 // 100GB
+	DefTiDBDiskQuota                               = 10 * 1024 * 1024 * 1024 // 100GB
 )
 
 // Process global variables.

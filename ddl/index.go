@@ -625,6 +625,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Clean temp index if needed
 		if eid != 0 {
+			job.Args =job.Args[:0]
 			job.Args = []interface{}{eid, getPartitionIDs(tblInfo)}
 		}
 	default:

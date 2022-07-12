@@ -29,11 +29,11 @@ import (
 )
 
 func testLitAddIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, unique bool, indexName string, colName string, dom *domain.Domain) int64 {
-	un := ""
+	uniqueStr := ""
 	if unique {
-		un = "unique"
+		uniqueStr = "unique"
 	}
-	sql := fmt.Sprintf("alter table t add %s index %s(%s)", un, indexName, colName)
+	sql := fmt.Sprintf("alter table t add %s index %s(%s)", uniqueStr, indexName, colName)
 	tk.MustExec(sql)
 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
@@ -77,7 +77,7 @@ func TestAddIndexLit(t *testing.T) {
 	tk.MustExec("create table t (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2), (3, 3, 1);")
 	tk.MustExec("set @@global.tidb_fast_ddl = on")
-
+	
 	var tableID int64
 	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t' and table_schema='test';")
 	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
