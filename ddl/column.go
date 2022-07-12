@@ -564,7 +564,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		initAndAddColumnToTable(tblInfo, changingCol)
 		indexesToChange := findRelatedIndexesToChange(tblInfo, oldCol.Name)
 		for _, info := range indexesToChange {
-			newIdxID := allocateIndexID(tblInfo)
+			newIdxID := allocateindexID(tblInfo)
 			if !info.isTemp {
 				// We create a temp index for each normal index.
 				tmpIdx := info.indexInfo.Clone()

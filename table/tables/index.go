@@ -120,10 +120,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		tempKey []byte
 		keyVer  []byte = []byte("0")
 	)
-	if c.idxInfo.State == model.StateWriteReorganization && !c.Isbackfill {
+	// Isbackfill set to true, means this is a backfill worker should not write to temp index.
+	if c.idxInfo.State != model.StatePublic && c.idxInfo.SubState != model.StatePublic && !c.Isbackfill {
 		switch c.idxInfo.SubState {
-		case model.StatePublic:
-			// Do nothing.
 		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
 			keyVer = []byte("1")
@@ -306,10 +305,8 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		keyVer  []byte = []byte("0")
 		val     []byte
 	)
-	if c.idxInfo.State == model.StateWriteReorganization {
+	if c.idxInfo.State != model.StatePublic && c.idxInfo.SubState != model.StatePublic {
 		switch c.idxInfo.SubState {
-		case model.StatePublic:
-			// Do nothing.
 		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
 			keyVer = []byte("1")

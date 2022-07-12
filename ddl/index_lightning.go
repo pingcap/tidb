@@ -228,6 +228,8 @@ func (w *addIndexWorkerLit) BackfillDataInTxn(handleRange reorgBackfillTask) (ta
 	fetchTag := "AddIndexLightningFetchdata" + strconv.Itoa(w.id)
 	writeTag := "AddIndexLightningWritedata" + strconv.Itoa(w.id)
 	txnTag := "AddIndexLightningBackfillDataInTxn" + strconv.Itoa(w.id)
+	// Set a big batch size to enhance performance.
+	w.batchCnt *= 16
 
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), w.jobContext.ddlJobSourceType())
@@ -337,7 +339,13 @@ func (w *backFillIndexWorker) batchSkipKey(txn kv.Transaction, store kv.Storage,
 	if len(w.batchCheckTmpKeys) == 0 {
 		return nil
 	}
-
+	w.skipAll = false
+	// We need to add this lock to make sure pessimistic transaction can realize this operation.
+	// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
+	err := txn.LockKeys(context.Background(), new(kv.LockCtx), w.batchCheckTmpKeys...)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Gen a current snapshot to get latest updated.
 	snapshot := store.GetSnapshot(kv.MaxVersion)
 	// Get duplicated key from temp index.
@@ -345,26 +353,26 @@ func (w *backFillIndexWorker) batchSkipKey(txn kv.Transaction, store kv.Storage,
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	count := len(w.batchCheckTmpKeys)
 	for i, key := range w.batchCheckTmpKeys {
 		if val, found := batchVals[string(key)]; found {
 			var keyVer []byte
 			length := len(val)
 			keyVer = append(keyVer, val[length-1:]...)
-			pos := w.tmpKeyPos[i]
 			if bytes.Equal(keyVer, []byte("2")) {
-				idxRecords[pos].skip = true
-			} else {
-				// We need to add this lock to make sure pessimistic transaction can realize this operation.
-				// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
-				err = txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecords[pos].key)
-				if err != nil {
-					return errors.Trace(err)
+				idxRecords[i].skip = true
+				count--
+				if i == 0 {
+					// catch val for later use.
+					w.firstVal = w.firstVal[:0]
+					w.firstVal = append(w.firstVal, val...)
 				}
 			}
 		}
 	}
-
+	if count == 0 {
+		w.skipAll = true
+	}
 	return nil
 }
 
@@ -388,8 +396,9 @@ type backFillIndexWorker struct {
 	distinctCheckFlags []bool
 	tmpIdxRecords      []*temporaryIndexRecord
 	batchCheckTmpKeys  []kv.Key
-	tmpKeyPos          []int32
 	jobContext         *JobContext
+	skipAll            bool
+	firstVal           []byte
 }
 
 func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
@@ -427,41 +436,65 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 			return errors.Trace(err)
 		}
 
-		// Should be
+		// Skip merge change after mergeSync
 		err = w.batchSkipKey(txn, w.sessCtx.GetStore(), temporaryIndexRecords)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		for _, idxRecord := range temporaryIndexRecords {
-			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			if idxRecord.skip {
+			// If all batch are skiped, update first index key to make txn commit to release lock.
+			if idxRecord.skip && !w.skipAll {
 				continue
 			}
+			if w.skipAll {
+				isDelete := false
+				unique := false
+				length := len(w.firstVal)
+				w.firstVal = w.firstVal[:length-1]
+				length--
 
-			if !bytes.Equal(idxRecord.keyVer, []byte("1")) {
-				err = errors.New("merge temp index should not merge version 2 index data")
-				panic(err)
-			}
-
-			if idxRecord.delete {
-				if idxRecord.unique {
-					err = txn.GetMemBuffer().DeleteWithFlags(idxRecord.key, kv.SetNeedLocked)
-				} else {
-					err = txn.GetMemBuffer().Delete(idxRecord.key)
+				if bytes.Equal(w.firstVal, []byte("delete")) {
+					isDelete = true
+					w.firstVal = w.firstVal[:length-6]
+				} else if bytes.Equal(w.firstVal, []byte("deleteu")) {
+					isDelete = true
+					unique = true
+					w.firstVal = w.firstVal[:length-7]
 				}
-				logutil.BgLogger().Info("delete", zap.ByteString("key", idxRecord.key))
+				if isDelete {
+					if unique {
+						err = txn.GetMemBuffer().DeleteWithFlags(w.batchCheckTmpKeys[0], kv.SetNeedLocked)
+					} else {
+						err = txn.GetMemBuffer().Delete(w.batchCheckTmpKeys[0])
+					}
+					logutil.BgLogger().Info("delete", zap.ByteString("key", w.batchCheckTmpKeys[0]))
+				} else {
+					// set latest key/val back to temp index.
+					err = txn.GetMemBuffer().Set(w.batchCheckTmpKeys[0], w.firstVal)
+				}
+				if err != nil {
+					return err
+				}
+				break
 			} else {
-				err = txn.GetMemBuffer().Set(idxRecord.key, idxRecord.vals)
+				if idxRecord.delete {
+					if idxRecord.unique {
+						err = txn.GetMemBuffer().DeleteWithFlags(idxRecord.key, kv.SetNeedLocked)
+					} else {
+						err = txn.GetMemBuffer().Delete(idxRecord.key)
+					}
+					logutil.BgLogger().Info("delete", zap.ByteString("key", idxRecord.key))
+				} else {
+					err = txn.GetMemBuffer().Set(idxRecord.key, idxRecord.vals)
+				}
+				if err != nil {
+					return err
+				}
 			}
-			if err != nil {
-				return err
-			}
-			taskCtx.addedCount++
 		}
-
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "AddIndexMergeDataInTxn", 3000)
@@ -537,8 +570,6 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 	startTime := time.Now()
 	w.tmpIdxRecords = w.tmpIdxRecords[:0]
 	w.batchCheckTmpKeys = w.batchCheckTmpKeys[:0]
-	w.tmpKeyPos = w.tmpKeyPos[:0]
-	var pos int32 = 0
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
@@ -561,8 +592,10 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 		keyVer = append(keyVer, rawValue[length-1:]...)
 		rawValue = rawValue[:length-1]
 		length--
+		// Just skip it.
 		if bytes.Equal(keyVer, []byte("2")) {
 			skip = true
+			return true, nil
 		}
 		if bytes.Equal(rawValue, []byte("delete")) {
 			isDelete = true
@@ -580,12 +613,7 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 			idxRecord.vals = rawValue
 		}
 		w.tmpIdxRecords = append(w.tmpIdxRecords, idxRecord)
-
-		if bytes.Equal(keyVer, []byte("1")) {
-			w.batchCheckTmpKeys = append(w.batchCheckTmpKeys, indexKey)
-			w.tmpKeyPos = append(w.tmpKeyPos, pos)
-		}
-		pos++
+		w.batchCheckTmpKeys = append(w.batchCheckTmpKeys, indexKey)
 		return true, nil
 	})
 

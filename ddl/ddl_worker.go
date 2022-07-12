@@ -452,7 +452,31 @@ func jobNeedGC(job *model.Job) bool {
 		}
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			return true
+			var needGC bool = false
+			if job.State != model.JobStateRollbackDone {
+				// When using lightning backfill, the job.Args length > 0
+				var indexID int64 = 0
+				var partitionIDs []int64
+				err := job.DecodeArgs(&indexID, &partitionIDs)
+				if err != nil {
+					// Get index id error.
+					if indexID != 0 {
+						logutil.BgLogger().Info("Lightning clean temp index data failed, please clean it manually,",
+							zap.String("Job Args:", job.String()),
+							zap.String("RawArgs:", string(job.RawArgs)))
+					}
+					return false
+				}
+				if indexID != 0 {
+					needGC = true
+				}
+			} else {
+				needGC = true
+			}
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			if needGC {
+				return true
+			}
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn:
 			return true
