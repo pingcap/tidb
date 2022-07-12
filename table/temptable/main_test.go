@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+	"golang.org/x/exp/slices"
 )
 
 func TestMain(m *testing.M) {
@@ -124,10 +124,10 @@ func newMockedRetriever(t *testing.T) *mockedRetriever {
 }
 
 func (r *mockedRetriever) SetData(data []*kv.Entry) *mockedRetriever {
-	lessFunc := func(i, j int) bool { return bytes.Compare(data[i].Key, data[j].Key) < 0 }
-	if !sort.SliceIsSorted(data, lessFunc) {
+	lessFunc := func(i, j *kv.Entry) bool { return bytes.Compare(i.Key, j.Key) < 0 }
+	if !slices.IsSortedFunc(data, lessFunc) {
 		data = append([]*kv.Entry{}, data...)
-		sort.Slice(data, lessFunc)
+		slices.SortFunc(data, lessFunc)
 	}
 
 	r.data = data

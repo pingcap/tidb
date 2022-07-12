@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -442,8 +443,12 @@ func TestCreateViewWithOverlongColName(t *testing.T) {
 }
 
 func TestCreateDropDatabase(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists drop_test;")
 	tk.MustExec("drop database if exists drop_test;")
@@ -476,6 +481,9 @@ func TestCreateDropDatabase(t *testing.T) {
 	))
 	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
 
+	// ddl.SchemaTracker will not respect session charset
+	ddlChecker.Disable()
+
 	tk.MustExec("SET SESSION character_set_server='ascii'")
 	tk.MustExec("SET SESSION collation_server='ascii_bin'")
 
@@ -484,6 +492,8 @@ func TestCreateDropDatabase(t *testing.T) {
 	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET ascii */",
 	))
+
+	ddlChecker.Enable()
 
 	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test collate utf8mb4_general_ci;")
@@ -880,7 +890,8 @@ func TestShardRowIDBits(t *testing.T) {
 	tblInfo.ShardRowIDBits = 5
 	tblInfo.MaxShardRowIDBits = 5
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		_, err = m.GenSchemaVersion()
 		require.NoError(t, err)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"golang.org/x/exp/slices"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -161,7 +162,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 	}
 
 	// regions must include the primary
-	sort.Strings(regions)
+	slices.Sort(regions)
 	primaryIndex := sort.SearchStrings(regions, primaryRegion)
 	if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
 		return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)

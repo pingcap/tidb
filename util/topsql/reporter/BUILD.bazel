@@ -16,6 +16,7 @@ go_library(
         "//config",
         "//metrics",
         "//util",
+        "//util/hack",
         "//util/logutil",
         "//util/topsql/collector",
         "//util/topsql/state",

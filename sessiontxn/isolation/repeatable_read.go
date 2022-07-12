@@ -52,7 +52,7 @@ func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.RepeatableRead
 			},
-			onTxnActive: func(txn kv.Transaction) {
+			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
@@ -70,7 +70,7 @@ func (p *PessimisticRRTxnContextProvider) getForUpdateTs() (ts uint64, err error
 	}
 
 	var txn kv.Transaction
-	if txn, err = p.activateTxn(); err != nil {
+	if txn, err = p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -122,8 +122,8 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
+func (p *PessimisticRRTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	if err := p.baseTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
 
