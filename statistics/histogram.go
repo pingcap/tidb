@@ -1357,6 +1357,11 @@ func (c *Column) dropTopN() {
 	}
 }
 
+// IsAllEvicted indicates whether all stats evicted
+func (c *Column) IsAllEvicted() bool {
+	return c.statsInitialized && c.evictedStatus >= allEvicted
+}
+
 func (c *Column) getEvictedStatus() int {
 	return c.evictedStatus
 }
@@ -1391,6 +1396,11 @@ type Index struct {
 // ItemID implements TableCacheItem
 func (idx *Index) ItemID() int64 {
 	return idx.Info.ID
+}
+
+// IsAllEvicted indicates whether all stats evicted
+func (idx *Index) IsAllEvicted() bool {
+	return idx.statsInitialized && idx.evictedStatus >= allEvicted
 }
 
 func (idx *Index) dropCMS() {

@@ -145,6 +145,7 @@ func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
 type TableCacheItem interface {
 	ItemID() int64
 	MemoryUsage() CacheItemMemoryUsage
+	IsAllEvicted() bool
 
 	dropCMS()
 	dropTopN()
