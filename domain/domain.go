@@ -912,11 +912,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		if err != nil {
 			return err
 		}
-		do.wg.Add(1)
-		go func() {
-			defer do.wg.Done()
-			loop()
-		}()
+		do.wg.Run(loop)
 	}
 	return nil
 }
