@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
 	"sync/atomic"
 
 	"github.com/pingcap/errors"

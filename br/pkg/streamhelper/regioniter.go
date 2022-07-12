@@ -7,10 +7,9 @@ import (
 	"context"
 	"time"
 
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 )
