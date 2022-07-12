@@ -1021,22 +1021,17 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) (bool, error) {
-	var err error
-	tryResolveLocksTS := safePoint
-	if w.logBackupEnabled {
-		// tryResolveLocksTS is defined as `now() - gcTryResolveLocksIntervalFromNow`,
-		// it used for trying resolve locks, ts of which is smaller than tryResolveLocksTS and expired.
-		tryResolveLocksTS, err = w.getTryResolveLocksTS()
-		if err != nil {
-			return false, err
-		}
+	// tryResolveLocksTS is defined as `now() - gcTryResolveLocksIntervalFromNow`,
+	// it used for trying resolve locks, ts of which is smaller than tryResolveLocksTS and expired.
+	tryResolveLocksTS, err := w.getTryResolveLocksTS()
+	if err != nil {
+		return false, err
 	}
 
 	if tryResolveLocksTS < safePoint {
 		tryResolveLocksTS = safePoint
-	} else {
-		// to do: add a switch for tryResolveLocksTS.
-		// if the config log-backup.enable is false in PiTR, set safePoint to tryResolveLocksTS directly.
+	} else if !w.logBackupEnabled {
+		tryResolveLocksTS = safePoint
 	}
 
 	if !usePhysical {
