@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -84,6 +86,66 @@ func TestDDLStatsInfo(t *testing.T) {
 			require.Equal(t, "1", varMap[ddlJobReorgHandle])
 		}
 	}
+}
+
+func TestGetDDLInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	sess := testkit.NewTestKit(t, store).Session()
+	_, err := sess.Execute(context.Background(), "begin")
+	require.NoError(t, err)
+	txn, err := sess.Txn(true)
+	require.NoError(t, err)
+
+	dbInfo2 := &model.DBInfo{
+		ID:    2,
+		Name:  model.NewCIStr("b"),
+		State: model.StateNone,
+	}
+	job := &model.Job{
+		ID:       1,
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionCreateSchema,
+		RowCount: 0,
+	}
+	job1 := &model.Job{
+		ID:       2,
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionAddIndex,
+		RowCount: 0,
+	}
+
+	err = addDDLJobs(txn, job)
+	require.NoError(t, err)
+
+	info, err := ddl.GetDDLInfo(sess)
+	require.NoError(t, err)
+	require.Len(t, info.Jobs, 1)
+	require.Equal(t, job, info.Jobs[0])
+	require.Nil(t, info.ReorgHandle)
+
+	// two jobs
+	err = addDDLJobs(txn, job1)
+	require.NoError(t, err)
+
+	info, err = ddl.GetDDLInfo(sess)
+	require.NoError(t, err)
+	require.Len(t, info.Jobs, 2)
+	require.Equal(t, job, info.Jobs[0])
+	require.Equal(t, job1, info.Jobs[1])
+	require.Nil(t, info.ReorgHandle)
+
+	_, err = sess.Execute(context.Background(), "rollback")
+	require.NoError(t, err)
+}
+
+func addDDLJobs(txn kv.Transaction, job *model.Job) error {
+	m := meta.NewMeta(txn)
+	if job.MayNeedReorg() {
+		return m.EnQueueDDLJob(job, meta.AddIndexJobListKey)
+	}
+	return m.EnQueueDDLJob(job)
 }
 
 func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {

@@ -712,6 +712,8 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
+	normal                "NORMAL"
+	fast                  "FAST"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1693,6 +1695,20 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableSetTiFlashReplica,
 			TiFlashReplica: tiflashReplicaSpec,
+		}
+	}
+|	"SET" "TIFLASH" "MODE" "NORMAL"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:          ast.AlterTableSetTiFlashMode,
+			TiFlashMode: model.TiFlashModeNormal,
+		}
+	}
+|	"SET" "TIFLASH" "MODE" "FAST"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:          ast.AlterTableSetTiFlashMode,
+			TiFlashMode: model.TiFlashModeFast,
 		}
 	}
 |	"CONVERT" "TO" CharsetKw CharsetName OptCollate
@@ -6289,6 +6305,8 @@ NotKeywordToken:
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
+|	"NORMAL"
+|	"FAST"
 
 /************************************************************************************
  *
@@ -11896,12 +11914,13 @@ StringType:
 		tp := types.NewFieldType(mysql.TypeEnum)
 		elems := $3.([]*ast.TextString)
 		opt := $5.(*ast.OptBinary)
-		tp.SetElems(ast.TransformTextStrings(elems, opt.Charset))
+		tp.SetElems(make([]string, len(elems)))
 		fieldLen := -1 // enum_flen = max(ele_flen)
-		for i := range tp.GetElems() {
-			tp.SetElem(i, strings.TrimRight(tp.GetElem(i), " "))
-			if len(tp.GetElem(i)) > fieldLen {
-				fieldLen = len(tp.GetElem(i))
+		for i, e := range elems {
+			trimmed := strings.TrimRight(e.Value, " ")
+			tp.SetElemWithIsBinaryLit(i, trimmed, e.IsBinaryLiteral)
+			if len(trimmed) > fieldLen {
+				fieldLen = len(trimmed)
 			}
 		}
 		tp.SetFlen(fieldLen)
@@ -11916,11 +11935,12 @@ StringType:
 		tp := types.NewFieldType(mysql.TypeSet)
 		elems := $3.([]*ast.TextString)
 		opt := $5.(*ast.OptBinary)
-		tp.SetElems(ast.TransformTextStrings(elems, opt.Charset))
-		fieldLen := len(tp.GetElems()) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
-		for i := range tp.GetElems() {
-			tp.SetElem(i, strings.TrimRight(tp.GetElem(i), " "))
-			fieldLen += len(tp.GetElem(i))
+		tp.SetElems(make([]string, len(elems)))
+		fieldLen := len(elems) - 1 // set_flen = sum(ele_flen) + number_of_ele - 1
+		for i, e := range elems {
+			trimmed := strings.TrimRight(e.Value, " ")
+			tp.SetElemWithIsBinaryLit(i, trimmed, e.IsBinaryLiteral)
+			fieldLen += len(trimmed)
 		}
 		tp.SetFlen(fieldLen)
 		tp.SetCharset(opt.Charset)

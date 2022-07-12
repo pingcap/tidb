@@ -171,6 +171,11 @@ error = '''
 task not found
 '''
 
+["BR:Restore:ErrDatabasesAlreadyExisted"]
+error = '''
+databases already existed in restored cluster
+'''
+
 ["BR:Restore:ErrRestoreChecksumMismatch"]
 error = '''
 restore checksum mismatch
@@ -2259,6 +2264,11 @@ error = '''
 ["session:8143"]
 error = '''
 non-transactional job failed, job id: %d, total jobs: %d. job range: [%s, %s], job sql: %s, err: %v
+'''
+
+["session:8146"]
+error = '''
+cannot migrate the current session: %s
 '''
 
 ["structure:8217"]

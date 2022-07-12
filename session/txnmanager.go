@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -93,6 +94,36 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	return ts, nil
 }
 
+func (m *txnManager) GetTxnScope() string {
+	if m.ctxProvider == nil {
+		return kv.GlobalTxnScope
+	}
+	return m.ctxProvider.GetTxnScope()
+}
+
+func (m *txnManager) GetReadReplicaScope() string {
+	if m.ctxProvider == nil {
+		return kv.GlobalReplicaScope
+	}
+	return m.ctxProvider.GetReadReplicaScope()
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
+func (m *txnManager) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	if m.ctxProvider == nil {
+		return nil, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetSnapshotWithStmtReadTS()
+}
+
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
+func (m *txnManager) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
+	if m.ctxProvider == nil {
+		return nil, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetSnapshotWithStmtForUpdateTS()
+}
+
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 	return m.ctxProvider
 }
@@ -140,6 +171,14 @@ func (m *txnManager) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePo
 		return sessiontxn.NoIdea()
 	}
 	return m.ctxProvider.OnStmtErrorForNextAction(point, err)
+}
+
+// ActivateTxn decides to activate txn according to the parameter `active`
+func (m *txnManager) ActivateTxn() (kv.Transaction, error) {
+	if m.ctxProvider == nil {
+		return nil, errors.AddStack(kv.ErrInvalidTxn)
+	}
+	return m.ctxProvider.ActivateTxn()
 }
 
 // OnStmtRetry is the hook that should be called when a statement retry

@@ -17,15 +17,14 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/spf13/pflag"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 const (

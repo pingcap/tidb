@@ -36,8 +36,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
-
+	"net/http" //nolint:goimports
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -50,7 +49,6 @@ import (
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -719,24 +717,6 @@ func killConn(conn *clientConn) {
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
-
-	// If the connection being killed is a DDL Job,
-	// we need to CANCEL the matching jobID first.
-	if sessVars.StmtCtx.IsDDLJobInQueue {
-		jobID := sessVars.StmtCtx.DDLJobID
-		err := kv.RunInNewTxn(context.Background(), conn.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-			// errs is the error per job, there is only one submitted
-			// err is the error of the overall task
-			errs, err := ddl.CancelJobs(txn, []int64{jobID})
-			if len(errs) > 0 {
-				logutil.BgLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
-			}
-			return err
-		})
-		if err != nil {
-			logutil.BgLogger().Warn("could not cancel DDL job", zap.Error(err))
-		}
-	}
 
 	if cancelFunc != nil {
 		cancelFunc()

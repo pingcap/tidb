@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -450,8 +451,8 @@ func TestIssue5092(t *testing.T) {
 	tk.MustExec("create table t_issue_5092 (a int)")
 	tk.MustExec("alter table t_issue_5092 add column (b int, c int)")
 	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists a, drop column b, drop column c", errno.ErrCantRemoveAllFields)
-	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrCantDropFieldOrKey)
-	tk.MustExec("alter table t_issue_5092 drop column c, drop column if exists c")
+	tk.MustGetErrCode("alter table t_issue_5092 drop column if exists c, drop column c", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_issue_5092 drop column c, drop column if exists c", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("drop table t_issue_5092")
 }
 
@@ -593,9 +594,9 @@ func TestErrnoErrorCode(t *testing.T) {
 	sql = "alter table test_drop_columns drop column c1, drop column c2, drop column c3;"
 	tk.MustGetErrCode(sql, errno.ErrCantRemoveAllFields)
 	sql = "alter table test_drop_columns drop column c1, add column c2 int;"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
 	sql = "alter table test_drop_columns drop column c1, drop column c1;"
-	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	tk.MustGetErrCode(sql, errno.ErrKeyColumnDoesNotExits)
@@ -2131,8 +2132,12 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 }
 
 func TestChangingDBCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("DROP DATABASE IF EXISTS alterdb1")

@@ -17,7 +17,6 @@ package stmtctx
 import (
 	"encoding/json"
 	"math"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -39,6 +38,7 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -272,10 +272,10 @@ type StatementContext struct {
 	StatsLoad struct {
 		// Timeout to wait for sync-load
 		Timeout time.Duration
-		// NeededColumns stores the columns whose stats are needed for planner.
-		NeededColumns []model.TableColumnID
+		// NeededItems stores the columns/indices whose stats are needed for planner.
+		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan model.TableColumnID
+		ResultCh chan model.TableItemID
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
 		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
@@ -840,15 +840,15 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	d.AvgProcessTime = sc.mu.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = sc.mu.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
-	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].TimeDetail.ProcessTime < sc.mu.allExecDetails[j].TimeDetail.ProcessTime
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+		return i.TimeDetail.ProcessTime < j.TimeDetail.ProcessTime
 	})
 	d.P90ProcessTime = sc.mu.allExecDetails[n*9/10].TimeDetail.ProcessTime
 	d.MaxProcessTime = sc.mu.allExecDetails[n-1].TimeDetail.ProcessTime
 	d.MaxProcessAddress = sc.mu.allExecDetails[n-1].CalleeAddress
 
-	sort.Slice(sc.mu.allExecDetails, func(i, j int) bool {
-		return sc.mu.allExecDetails[i].TimeDetail.WaitTime < sc.mu.allExecDetails[j].TimeDetail.WaitTime
+	slices.SortFunc(sc.mu.allExecDetails, func(i, j *execdetails.ExecDetails) bool {
+		return i.TimeDetail.WaitTime < j.TimeDetail.WaitTime
 	})
 	d.P90WaitTime = sc.mu.allExecDetails[n*9/10].TimeDetail.WaitTime
 	d.MaxWaitTime = sc.mu.allExecDetails[n-1].TimeDetail.WaitTime
@@ -874,8 +874,8 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 		if len(items) == 0 {
 			continue
 		}
-		sort.Slice(items, func(i, j int) bool {
-			return items[i].sleepTime < items[j].sleepTime
+		slices.SortFunc(items, func(i, j backoffItem) bool {
+			return i.sleepTime < j.sleepTime
 		})
 		n := len(items)
 		d.MaxBackoffAddress[backoff] = items[n-1].callee
