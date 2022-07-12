@@ -623,12 +623,21 @@ func (e *LoadDataInfo) SetMessage() {
 
 func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
 	row := make([]types.Datum, 0, len(e.insertColumns))
+	sessionVars := e.Ctx.GetSessionVars()
+	setVar := func(name string, col *field) {
+		sessionVars.UsersLock.Lock()
+		if col == nil || col.isNull() {
+			sessionVars.UnsetUserVar(name)
+		} else {
+			sessionVars.SetUserVar(name, string(col.str), mysql.DefaultCollationName)
+		}
+		sessionVars.UsersLock.Unlock()
+	}
 
 	for i := 0; i < len(e.FieldMappings); i++ {
 		if i >= len(cols) {
 			if e.FieldMappings[i].Column == nil {
-				sessionVars := e.Ctx.GetSessionVars()
-				sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, "", mysql.DefaultCollationName)
+				setVar(e.FieldMappings[i].UserVar.Name, nil)
 				continue
 			}
 
@@ -643,14 +652,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 		}
 
 		if e.FieldMappings[i].Column == nil {
-			sessionVars := e.Ctx.GetSessionVars()
-			sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
+			setVar(e.FieldMappings[i].UserVar.Name, &cols[i])
 			continue
 		}
 
-		// The field with only "\N" in it is handled as NULL in the csv file.
-		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-		if cols[i].maybeNull && string(cols[i].str) == "N" {
+		if cols[i].isNull() {
 			row = append(row, types.NewDatum(nil))
 			continue
 		}
@@ -693,6 +699,12 @@ type field struct {
 	str       []byte
 	maybeNull bool
 	enclosed  bool
+}
+
+func (f *field) isNull() bool {
+	// The field with only "\N" in it is handled as NULL in the csv file.
+	// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+	return f.maybeNull && len(f.str) == 1 && f.str[0] == 'N'
 }
 
 type fieldWriter struct {
