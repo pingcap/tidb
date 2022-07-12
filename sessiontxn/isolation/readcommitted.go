@@ -219,14 +219,14 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
-	p.prepareStmtTS()
+
+	if !p.isTidbSnapshotEnabled() {
+		p.prepareStmtTS()
+	}
+
 	return nil
 }
 

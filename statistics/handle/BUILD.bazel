@@ -49,6 +49,7 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//oracle",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
