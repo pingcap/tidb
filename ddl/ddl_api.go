@@ -88,7 +88,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	sessionVars := ctx.GetSessionVars()
 
 	// If no charset and/or collation is specified use collation_server and character_set_server
-	charsetOpt := &ast.CharsetOpt{}
+	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
 		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
@@ -102,19 +102,17 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	explicitCharset := false
 	explicitCollation := false
-	if len(stmt.Options) != 0 {
-		for _, val := range stmt.Options {
-			switch val.Tp {
-			case ast.DatabaseOptionCharset:
-				charsetOpt.Chs = val.Value
-				explicitCharset = true
-			case ast.DatabaseOptionCollate:
-				charsetOpt.Col = val.Value
-				explicitCollation = true
-			case ast.DatabaseOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(val.Value),
-				}
+	for _, val := range stmt.Options {
+		switch val.Tp {
+		case ast.DatabaseOptionCharset:
+			charsetOpt.Chs = val.Value
+			explicitCharset = true
+		case ast.DatabaseOptionCollate:
+			charsetOpt.Col = val.Value
+			explicitCollation = true
+		case ast.DatabaseOptionPlacementPolicy:
+			placementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(val.Value),
 			}
 		}
 	}
@@ -140,7 +138,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetOpt.Chs, Col: charsetOpt.Col})
+	chs, coll, err := ResolveCharsetCollation(charsetOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3055,20 +3053,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
-func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
-	specType := specs[0].Tp
-	for _, spec := range specs {
-		// We think AlterTableDropPrimaryKey and AlterTableDropIndex are the same types.
-		if spec.Tp == ast.AlterTableDropPrimaryKey || spec.Tp == ast.AlterTableDropIndex {
-			continue
-		}
-		if spec.Tp != specType {
-			return false
-		}
-	}
-	return true
-}
-
 func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
 	if !variable.EnableChangeMultiSchema.Load() {
 		if len(specs) > 1 {
@@ -3077,24 +3061,8 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
 			return dbterror.ErrRunMultiSchemaChanges
 		}
-	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) && !allSupported(specs) {
-			return dbterror.ErrRunMultiSchemaChanges
-		}
 	}
 	return nil
-}
-
-func allSupported(specs []*ast.AlterTableSpec) bool {
-	for _, s := range specs {
-		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey,
-			ast.AlterTableAddConstraint:
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
@@ -4479,7 +4447,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		CtxVars: []interface{}{needChangeColData},
-		Args:    []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
