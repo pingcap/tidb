@@ -226,7 +226,7 @@ func newTrxHistoryRecorder(summariesCap uint, idDigestCap uint) TrxHistoryRecord
 // Clean clears the history recorder. For test only.
 func (recorder *TrxHistoryRecorder) Clean() {
 	recorder.summaries.cache = list.New()
-	recorder.idDigests.idDigests = make([]TrxIDDigest, 0, recorder.idDigests.capacity)
+	recorder.idDigests.idDigests = recorder.idDigests.idDigests[:0]
 }
 
 // SetMinDuration sets the minimum duration for a transaction to be recorded.
