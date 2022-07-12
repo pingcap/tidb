@@ -15,32 +15,32 @@ Table's foreign key information will be stored in `model.TableInfo`:
 ```go
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
-	...
-	ForeignKeys         []*FKInfo            `json:"fk_info"`
-	ReferredForeignKeys []*ReferredFKInfo    `json:"cited_fk_info"`
-	...
+...
+ForeignKeys         []*FKInfo            `json:"fk_info"`
+ReferredForeignKeys []*ReferredFKInfo    `json:"cited_fk_info"`
+...
 }
 
 // FKInfo provides meta data describing a foreign key constraint.
 type FKInfo struct {
-    ID        int64       `json:"id"`
-    Name      CIStr       `json:"fk_name"`
-    Enable    bool        `json:"enable"`
-    RefSchema CIStr       `json:"ref_schema"`
-    RefTable  CIStr       `json:"ref_table"`
-    RefCols   []CIStr     `json:"ref_cols"`
-    Cols      []CIStr     `json:"cols"`
-    OnDelete  int         `json:"on_delete"`
-    OnUpdate  int         `json:"on_update"`
-    State     SchemaState `json:"state"`
+ID        int64       `json:"id"`
+Name      CIStr       `json:"fk_name"`
+Enable    bool        `json:"enable"`
+RefSchema CIStr       `json:"ref_schema"`
+RefTable  CIStr       `json:"ref_table"`
+RefCols   []CIStr     `json:"ref_cols"`
+Cols      []CIStr     `json:"cols"`
+OnDelete  int         `json:"on_delete"`
+OnUpdate  int         `json:"on_update"`
+State     SchemaState `json:"state"`
 }
 
 // ReferredFKInfo provides the referred foreign key in the child table.
 type ReferredFKInfo struct {
-    Cols         []CIStr `json:"cols"`
-    ChildSchema  CIStr   `json:"child_schema"`
-    ChildTable   CIStr   `json:"child_table"`
-    ChildFKIndex CIStr   `json:"child_fk_index"`
+Cols         []CIStr `json:"cols"`
+ChildSchema  CIStr   `json:"child_schema"`
+ChildTable   CIStr   `json:"child_table"`
+ChildFKIndex CIStr   `json:"child_fk_index"`
 }
 ```
 
@@ -81,7 +81,7 @@ Create a table with foreign key, check following condition when build DDL job an
 - Supports foreign key references between one column and another within a table. (A column cannot have a foreign key reference to itself.)
 - Require indexes on foreign keys and referenced keys so that foreign key checks can be fast and not require a table scan. The size and sign of fixed precision types such as INTEGER and DECIMAL must be the same. The length of string types need not be the same. For nonbinary (character) string columns, the character set and collation must be the same.
 - Index prefixes on foreign key columns are not supported. Consequently, BLOB and TEXT columns cannot be included in a foreign key because indexes on those columns must always include a prefix length.
-- Does not currently support foreign keys for tables with user-defined partitioning. This includes both parent and child tables.
+- Does not currently support foreign keys for tables with user-defined partitioning. This includes both reference and child tables.
 - A foreign key constraint cannot reference a virtual generated column, but stored generated column is ok.
 
 #### Handle In DDL Owner
@@ -205,17 +205,17 @@ then when user modify the column type, TiDB will auto modify the related foreign
 
 ### DML On Child Table
 
-On Child Table Insert Or Update, need to Find FK column value whether exist in Parent table:
+On Child Table Insert Or Update, need to Find FK column value whether exist in reference table:
 
-1. Get parent table info by table name.
-2. Get related fk index of parent table.
-3. tiny optimize, check fk column value exist in parent table cache(map[string(index_key)]struct).
-3. Get related row in parent.
+1. Get reference table info by table name.
+2. Get related fk index of reference table.
+3. tiny optimize, check fk column value exist in reference table cache(map[string(index_key)]struct).
+3. Get related row in reference.
 - Construct index key and then use snapshot `Iter` and `Seek` API to scan. If the index is unique and only contain
   foreign key columns, use snapshot `Get` API.
     - `Iter` default scan batch size is 256, need to set 2 to avoid read unnecessary data.
 4. compact column value to make sure exist.
-5. put column value into parent fk column value cache.
+5. put column value into reference fk column value cache.
 
 check order should check unique/primary key constrain first:
 
@@ -253,19 +253,18 @@ test> show warnings;
 2,2
 ```
 
-### DML On Parent Table
+### DML On reference Table
 
-On Child Table Insert Or Update:
+On reference Table Insert Or Update:
 
-1. check related child table row exist.
-2. modify related child table row by referential action:
+1. modify related child table row by referential action:
 - `CASCADE`: update/delete related child table row.
 - `SET NULL`: set related child row's foreign key columns value to NULL.
-- `RESTRICT`, `NO ACTION`: If related row doesn't exit in child table, reject update/delete parent table.
+- `RESTRICT`, `NO ACTION`: If related row exist in child table, reject update/delete reference table.
 - `SET DEFAULT`: just like `RESTRICT`.
 
 modify related child table row by following step:
-1. get child table info by name(in parent table info).
+1. get child table info by name(in reference table info).
 2. get the child table fk index's column info.
 3. build update executor to update child table rows.
 
@@ -285,7 +284,7 @@ insert into t1 values (1, 1);
 insert into t2 values (1, 1);
 ```
 
-Then delete on parent table:
+Then delete on reference table:
 ```sql
 > delete from t1 where id=1;
 Query OK, 1 row affected
@@ -325,7 +324,7 @@ I think this is a MySQL issue, should we make TiDB plan better, at least when we
 ```sql
 CREATE TABLE customers_2 (
     id INT PRIMARY KEY
-  );
+);
 
 CREATE TABLE orders_2 (
                           id INT PRIMARY KEY,
@@ -338,9 +337,9 @@ INSERT INTO orders_2 VALUES (100,1), (101,2), (102,3), (103,1);
 
 ```sql
 > explain analyze UPDATE customers_2 SET id = 23 WHERE id = 1;
-                       info
+info
 --------------------------------------------------
-  planning time: 494µs
+planning time: 494µs
   execution time: 5ms
   distribution: local
   vectorized: true
@@ -353,51 +352,51 @@ INSERT INTO orders_2 VALUES (100,1), (101,2), (102,3), (103,1);
   • root
   │
   ├── • update
-  │   │ nodes: n1
-  │   │ regions: us-east1
-  │   │ actual row count: 1
-  │   │ table: customers_2
-  │   │ set: id
-  │   │
-  │   └── • buffer
-  │       │ label: buffer 1
-  │       │
-  │       └── • render
-  │           │ nodes: n1
-  │           │ regions: us-east1
-  │           │ actual row count: 1
-  │           │ KV rows read: 1
-  │           │ KV bytes read: 27 B
-  │           │
-  │           └── • scan
-  │                 nodes: n1
-  │                 regions: us-east1
-  │                 actual row count: 1
-  │                 KV rows read: 1
-  │                 KV bytes read: 27 B
-  │                 missing stats
-  │                 table: customers_2@primary
-  │                 spans: [/1 - /1]
-  │                 locking strength: for update
-  │
-  └── • fk-cascade
-        fk: fk_customer_id_ref_customers_2
-        input: buffer 1
+            │   │ nodes: n1
+            │   │ regions: us-east1
+            │   │ actual row count: 1
+            │   │ table: customers_2
+            │   │ set: id
+            │   │
+            │   └── • buffer
+            │       │ label: buffer 1
+            │       │
+            │       └── • render
+            │           │ nodes: n1
+            │           │ regions: us-east1
+            │           │ actual row count: 1
+            │           │ KV rows read: 1
+            │           │ KV bytes read: 27 B
+            │           │
+            │           └── • scan
+            │                 nodes: n1
+            │                 regions: us-east1
+            │                 actual row count: 1
+            │                 KV rows read: 1
+            │                 KV bytes read: 27 B
+            │                 missing stats
+            │                 table: customers_2@primary
+            │                 spans: [/1 - /1]
+            │                 locking strength: for update
+                                                        │
+                                                        └── • fk-cascade
+                                                        fk: fk_customer_id_ref_customers_2
+                                                        input: buffer 1
 ```
 
 ##### PostgreSQL DML Execution Plan
 
 ```sql
 postgres=# explain analyze UPDATE customers_2 SET id = 20 WHERE id = 23;
-                                                             QUERY PLAN
+QUERY PLAN
 -------------------------------------------------------------------------------------------------------------------------------------
- Update on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.039..0.039 rows=0 loops=1)
-   ->  Index Scan using customers_2_pkey on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.016..0.016 rows=1 loops=1)
-         Index Cond: (id = 23)
- Planning Time: 0.057 ms
- Trigger for constraint orders_2_customer_id_fkey on customers_2: time=0.045 calls=1
- Trigger for constraint orders_2_customer_id_fkey on orders_2: time=0.023 calls=2
- Execution Time: 0.129 ms
+Update on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.039..0.039 rows=0 loops=1)
+    ->  Index Scan using customers_2_pkey on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.016..0.016 rows=1 loops=1)
+    Index Cond: (id = 23)
+    Planning Time: 0.057 ms
+    Trigger for constraint orders_2_customer_id_fkey on customers_2: time=0.045 calls=1
+    Trigger for constraint orders_2_customer_id_fkey on orders_2: time=0.023 calls=2
+    Execution Time: 0.129 ms
 ```
 
 ## Other Technical Design
