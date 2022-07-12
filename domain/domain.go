@@ -318,7 +318,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
 		return true
 	}
 	return false
@@ -369,6 +369,11 @@ func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
+}
+
+// SetDDL sets DDL to domain, it's only used in tests.
+func (do *Domain) SetDDL(d ddl.DDL) {
+	do.ddl = d
 }
 
 // InfoSyncer gets infoSyncer from domain.

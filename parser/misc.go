@@ -785,6 +785,8 @@ var tokenMap = map[string]int{
 	"VERBOSE":                  verboseType,
 	"VOTER":                    voter,
 	"VOTER_CONSTRAINTS":        voterConstraints,
+	"NORMAL":                   normal,
+	"FAST":                     fast,
 	"VOTERS":                   voters,
 	"VIEW":                     view,
 	"VIRTUAL":                  virtual,
