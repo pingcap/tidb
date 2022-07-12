@@ -143,6 +143,9 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
+	if len(hg.Buckets) == 0 && len(hg.scalars) == 0 && hg.Bounds.Capacity() == 0 {
+		return
+	}
 	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
 	return
 }
@@ -1373,6 +1376,13 @@ func (c *Column) isCMSExist() bool {
 	return c.CMSketch != nil
 }
 
+func (c *Column) dropHist() {
+	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	c.Histogram.Buckets = make([]Bucket, 0, 0)
+	c.Histogram.scalars = make([]scalar, 0, 0)
+	c.evictedStatus = allEvicted
+}
+
 // Index represents an index histogram.
 type Index struct {
 	Histogram
@@ -1407,6 +1417,13 @@ func (idx *Index) dropTopN() {
 	} else {
 		idx.evictedStatus = onlyHistRemained
 	}
+}
+
+func (idx *Index) dropHist() {
+	idx.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
+	idx.Histogram.Buckets = make([]Bucket, 0, 0)
+	idx.Histogram.scalars = make([]scalar, 0, 0)
+	idx.evictedStatus = allEvicted
 }
 
 func (idx *Index) getEvictedStatus() int {
@@ -2427,6 +2444,11 @@ func (s StatsLoadedStatus) IsCMSEvicted() bool {
 // IsTopNEvicted indicates whether the topn got evicted now.
 func (s StatsLoadedStatus) IsTopNEvicted() bool {
 	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
+}
+
+// IsAllEvicted  indicates whether all the stats got evicted not.
+func (s StatsLoadedStatus) IsAllEvicted() bool {
+	return s.statsInitialized && s.evictedStatus >= allEvicted
 }
 
 // IsFullLoad indicates whether the stats are full loaded

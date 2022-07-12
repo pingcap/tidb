@@ -148,6 +148,7 @@ type TableCacheItem interface {
 
 	dropCMS()
 	dropTopN()
+	dropHist()
 	isStatsInitialized() bool
 	getEvictedStatus() int
 	statsVer() int64
@@ -170,6 +171,9 @@ func DropEvicted(item TableCacheItem) {
 		return
 	case onlyCmsEvicted:
 		item.dropTopN()
+		return
+	case onlyHistRemained:
+		item.dropHist()
 		return
 	default:
 		return
@@ -205,7 +209,7 @@ func (c *ColumnMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *ColumnMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage + c.TopNMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
 // IndexMemUsage records index memory usage
@@ -229,7 +233,7 @@ func (c *IndexMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage + c.TopNMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage + c.HistogramMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.

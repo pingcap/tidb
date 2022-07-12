@@ -427,7 +427,7 @@ func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.T
 
 func (c *innerItemLruCache) evictIfNeeded() {
 	curr := c.cache.Back()
-	for c.trackingCost > c.capacity {
+	for c.trackingCost > c.capacity && curr != nil {
 		evictCounter.Inc()
 		prev := curr.Prev()
 		item := curr.Value.(*lruCacheItem)
