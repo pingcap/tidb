@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,13 +24,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
@@ -113,8 +111,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			}()
 			go (&memoryDebugModeHandler{
 				ctx:          memoryDebugModeCtx,
-				sctx:         e.ctx,
-				minHeapInUse: int64(math.Abs(float64(minHeapInUse))),
+				minHeapInUse: mathutil.Abs(minHeapInUse),
 				alarmRatio:   alarmRatio,
 				autoGC:       minHeapInUse > 0,
 				memTracker:   e.ctx.GetSessionVars().StmtCtx.MemTracker,
@@ -158,7 +155,6 @@ func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
 
 type memoryDebugModeHandler struct {
 	ctx          context.Context
-	sctx         sessionctx.Context
 	minHeapInUse int64
 	alarmRatio   int64
 	autoGC       bool
