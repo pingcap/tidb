@@ -3,6 +3,10 @@
 - Author(s): [crazycs520](https://github.com/crazycs520)
 - Tracking Issue: https://github.com/pingcap/tidb/issues/18209
 
+## Abstract
+
+This proposes an implementation of supporting foreign key constrain.
+
 ## DDL Technical Design
 
 ### Table Information Changes
@@ -41,11 +45,13 @@ type ReferredFKInfo struct {
 ```
 
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
+  - `Enable`: uses to distinguish between old and new versions.
 Struct `ReferredFKInfo` uses for referenced table to record the child table which referenced me.
 
 ### Create Table with Foreign Key
 
 #### Build TableInfo
+
 When build `TableInfo`, auto create an index for foreign key columns if there is no index cover foreign key columns. Here is an example:
 
 ```sql
@@ -101,9 +107,10 @@ So, when create a table with foreign key, we need multi-schema version change:
 
 In step-1, we need update some table info in one schema-version. Technically, we can implement is since we already support `ActionCreateTables` DDL job.
 
-### Alter Table Add Foreign Key.
+### Alter Table Add Foreign Key
 
 Here is an example:
+
 ```sql
 create table t1 (id int key,a int, index(a));
 create table t2 (id int key,a int);
@@ -137,7 +144,7 @@ As TiDB support multi-schema change now, we can split this into 2 sub-ddl job.
 - Add Index DDL job
 - Add Foreign Key Constrain DDL job
 
-We should do add index DDL job first, after index ddl job in `write-reorg`, then start to do add foreign key constrain ddl job.
+We should do add index DDL job first, after index ddl job finish `write-reorg` and ready for public, then start to do add foreign key constrain ddl job.
 
 ### Drop Table
 
@@ -153,7 +160,7 @@ If `foreign_key_checks` is `ON`, then drop the table which has foreign key refer
 Drop index which used by foreign key will be rejected.
 
 ```sql
-> set @@foreign_key_checks=0;
+> set @@foreign_key_checks=0; -- Even disable foreign_key_checks, you still can't drop the index which used for foreign key constrain.
 Query OK, 0 rows affected
 > alter table t2 drop index fk;
 (1553, "Cannot drop index 'fk': needed in a foreign key constraint")
@@ -262,44 +269,6 @@ modify related child table row by following step:
 2. get the child table fk index's column info.
 3. build update executor to update child table rows.
 
-cascade modification test case:
-
-```sql
-drop table if exists t3,t2,t1;
-create table t1 (id int key,a int, index(a));
-create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
-create table t3 (id int key,a int, foreign key fk(a) references t2(id) ON DELETE CASCADE);
-insert into t1 values (1,1);
-insert into t2 values (2,1);
-insert into t3 values (3,2);
-delete from t1 where id = 1;  -- both t1, t2, t3 rows are deleted.
-```
-
-following is a MySQL test case about `SET DEFAULT`:
-
-```sql
-MySQL>create table t1 (a int,b int, index(a,b)) ;
-Query OK, 0 rows affected
-Time: 0.022s
-MySQL>create table t (a int, b int, foreign key fk_a(a) references test.t1(a) ON DELETE SET DEFAULT);
-Query OK, 0 rows affected
-Time: 0.019s
-MySQL>insert into t1 values (1,1);
-Query OK, 1 row affected
-Time: 0.003s
-MySQL>insert into t values (1,1);
-Query OK, 1 row affected
-Time: 0.006s
-MySQL>delete from t1 where a=1;
-(1451, 'Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`a`))')
-MySQL>select version();
-+-----------+
-| version() |
-+-----------+
-| 8.0.29    |
-+-----------+
-```
-
 ### Issue need to be discussed
 
 #### Affect Row
@@ -349,7 +318,7 @@ insert into t2 values (1, 1);
 
 From the plan, you can't see any information about the foreign key constrain which need to delete the related row in child table `t2`.
 
-I think this is a MySQL issue, do we need to be compatible with it, or make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table.
+I think this is a MySQL issue, should we make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table.
 
 ##### CockroachDB DML Execution Plan
 
@@ -431,9 +400,71 @@ postgres=# explain analyze UPDATE customers_2 SET id = 20 WHERE id = 23;
  Execution Time: 0.129 ms
 ```
 
-### Some special case
+## Other Technical Design
 
-#### Self-Referencing Tables
+### How to check foreign key integrity?
+
+How MySQL to do this? Look like MySQL doesn't provide any method, but the user can use stored procedure to do this, see: https://stackoverflow.com/questions/2250775/force-innodb-to-recheck-foreign-keys-on-a-table-tables
+
+Maybe We can use following syntax to check foreign key integrity:
+
+```sql
+ADMIN CHECK FOREIGN KEY [table_name] [foreign_key_name]
+```
+
+which implemention is use following SQL to check:
+
+```sql
+select count(*) from t where t.a not in (select id from t_refer);
+```
+
+## Impact
+
+### Impact of data replication
+
+todo
+
+## Test Case
+
+cascade modification test case:
+
+```sql
+drop table if exists t3,t2,t1;
+create table t1 (id int key,a int, index(a));
+create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
+create table t3 (id int key,a int, foreign key fk(a) references t2(id) ON DELETE CASCADE);
+insert into t1 values (1,1);
+insert into t2 values (2,1);
+insert into t3 values (3,2);
+delete from t1 where id = 1;  -- both t1, t2, t3 rows are deleted.
+```
+
+following is a MySQL test case about `SET DEFAULT`:
+
+```sql
+MySQL>create table t1 (a int,b int, index(a,b)) ;
+Query OK, 0 rows affected
+Time: 0.022s
+MySQL>create table t (a int, b int, foreign key fk_a(a) references test.t1(a) ON DELETE SET DEFAULT);
+Query OK, 0 rows affected
+Time: 0.019s
+MySQL>insert into t1 values (1,1);
+Query OK, 1 row affected
+Time: 0.003s
+MySQL>insert into t values (1,1);
+Query OK, 1 row affected
+Time: 0.006s
+MySQL>delete from t1 where a=1;
+(1451, 'Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`a`))')
+MySQL>select version();
++-----------+
+| version() |
++-----------+
+| 8.0.29    |
++-----------+
+```
+
+### Self-Referencing Tables
 
 For example, table `employee` has a column `manager_id` references to `employee.id`.
 
@@ -461,7 +492,7 @@ test> insert into t values (1,1);
 (1452, 'Cannot add or update a child row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_2` FOREIGN KEY (`id`) REFERENCES `t` (`a`) ON DELETE CASCADE)')
 ```
 
-#### Cyclical Dependencies
+### Cyclical Dependencies
 
 ```sql
 create table t1 (id int key,a int, index(a));
@@ -492,9 +523,11 @@ test> select * from t1;
 0 rows in set
 ```
 
-#### MATCH FULL or MATCH SIMPLE
+### MATCH FULL or MATCH SIMPLE
 
 This definition is from [CRDB](https://www.cockroachlabs.com/docs/v22.1/foreign-key.html#match-composite-foreign-keys-with-match-simple-and-match-full). MySQL doesn't mention it, here is a MySQL test case:
+
+Here is an MySQL example:
 
 ```sql
 create table t1 (i int, a int,b int, index(a,b)) ;
@@ -507,27 +540,6 @@ Query OK, 1 row affected
 test> insert into t values (1,null);
 Query OK, 1 row affected
 ```
-
-I think keep this behavior consistent with MySQL is better.
-
-
-## Other Technical Design
-
-### How to check foreign key integrity?
-
-How MySQL to do this? Look like MySQL doesn't provide any method, but the user can use stored procedure to do this, see: https://stackoverflow.com/questions/2250775/force-innodb-to-recheck-foreign-keys-on-a-table-tables
-
-Maybe We can use following syntax to check foreign key integrity:
-
-```sql
-ADMIN CHECK FOREIGN KEY [table_name] [foreign_key_name]
-```
-
-## Impact
-
-### Impact of data replication
-
-todo
 
 ### reference
 
