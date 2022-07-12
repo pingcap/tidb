@@ -1707,6 +1707,7 @@ var defaultSysVars = []*SysVar{
 		s.MemoryDebugModeAlarmRatio = TidbOptInt64(val, 0)
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
 		return nil
@@ -1722,15 +1723,19 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBFastDDL, Value: BoolToOnOff(DefTiDBFastDDL), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
 		return BoolToOnOff(FastDDL.Load()), nil
+=======
+	{Scope: ScopeGlobal, Name: TiDBEnableFastDDL, Value: BoolToOnOff(DefTiDBEnableFastDDL), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableFastDDL.Load()), nil
+>>>>>>> 01d327f70 (Change the system variables name(#35983))
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		FastDDL.Store(TiDBOptOn(val))
+		EnableFastDDL.Store(TiDBOptOn(val))
 		return nil
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.
-	{Scope: ScopeGlobal, Name: TiDBDiskQuota, Value: strconv.Itoa(DefTiDBDiskQuota), Type: TypeInt, MinValue: DefTiDBDiskQuota, MaxValue: 1024 * 1024 * DefTiDBDiskQuota / 100, GetGlobal: func(sv *SessionVars) (string, error) {
-		return strconv.FormatInt(DiskQuota.Load(), 10), nil
+	{Scope: ScopeGlobal, Name: TiDBDDLDiskQuota, Value: strconv.Itoa(DefTiDBDDLDiskQuota), Type: TypeInt, MinValue: DefTiDBDDLDiskQuota, MaxValue: 1024 * 1024 * DefTiDBDDLDiskQuota / 100, GetGlobal: func(sv *SessionVars) (string, error) {
+		return strconv.FormatInt(DDLDiskQuota.Load(), 10), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		DiskQuota.Store(TidbOptInt64(val, DefTiDBDiskQuota))
+		DDLDiskQuota.Store(TidbOptInt64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
 }
