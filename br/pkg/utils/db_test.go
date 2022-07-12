@@ -4,17 +4,17 @@ package utils_test
 
 import (
 	"context"
+	"testing"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type mockRestrictedSQLExecutor struct {
@@ -39,13 +39,6 @@ func (m *mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts 
 }
 
 func TestIsLogBackupEnabled(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	// no rows
-	require.False(t, utils.IsLogBackupEnabled(tk.Session().(sqlexec.RestrictedSQLExecutor)))
-
 	// config format:
 	// MySQL [(none)]> show config where name="log-backup.enable";
 	// +------+-----------------+-------------------+-------+
