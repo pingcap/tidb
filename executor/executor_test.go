@@ -6300,6 +6300,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
 
 	// Case-1: test unique index only contain foreign key columns.
 	cases := []struct {

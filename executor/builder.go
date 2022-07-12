@@ -17,6 +17,8 @@ package executor
 import (
 	"bytes"
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -2139,6 +2141,8 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
+		tbInfo := tblID2table[info.TblID].Meta()
+		logutil.BgLogger().Warn("------ build delete", zap.Int64("schema-version", b.is.SchemaMetaVersion()), zap.String("tb", tbInfo.Name.L), zap.Int("refer-fkn", len(tbInfo.ReferredForeignKeys)), zap.Uint64("update-ts", tbInfo.UpdateTS))
 	}
 
 	if b.err = b.updateForUpdateTS(); b.err != nil {
