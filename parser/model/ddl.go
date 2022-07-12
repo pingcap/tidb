@@ -81,23 +81,23 @@ const (
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
 
-	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48
-	ActionAlterTableAttributes          ActionType = 49
-	ActionAlterTablePartitionAttributes ActionType = 50
-	ActionCreatePlacementPolicy         ActionType = 51
-	ActionAlterPlacementPolicy          ActionType = 52
-	ActionDropPlacementPolicy           ActionType = 53
-	ActionAlterTablePartitionPlacement  ActionType = 54
-	ActionModifySchemaDefaultPlacement  ActionType = 55
-	ActionAlterTablePlacement           ActionType = 56
-	ActionAlterCacheTable               ActionType = 57
-	ActionAlterTableStatsOptions        ActionType = 58
-	ActionAlterNoCacheTable             ActionType = 59
-	ActionCreateTables                  ActionType = 60
-	ActionMultiSchemaChange             ActionType = 61
-
-	ActionUpdateTiFlashReplicaReadyStatus ActionType = 62
+	ActionRenameTables                    ActionType = 47
+	ActionDropIndexes                     ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionAlterTableAttributes            ActionType = 49
+	ActionAlterTablePartitionAttributes   ActionType = 50
+	ActionCreatePlacementPolicy           ActionType = 51
+	ActionAlterPlacementPolicy            ActionType = 52
+	ActionDropPlacementPolicy             ActionType = 53
+	ActionAlterTablePartitionPlacement    ActionType = 54
+	ActionModifySchemaDefaultPlacement    ActionType = 55
+	ActionAlterTablePlacement             ActionType = 56
+	ActionAlterCacheTable                 ActionType = 57
+	ActionAlterTableStatsOptions          ActionType = 58
+	ActionAlterNoCacheTable               ActionType = 59
+	ActionCreateTables                    ActionType = 60
+	ActionMultiSchemaChange               ActionType = 61
+	ActionSetTiFlashMode                  ActionType = 62
+	ActionUpdateTiFlashReplicaReadyStatus ActionType = 63
 )
 
 var actionMap = map[ActionType]string{
@@ -146,7 +146,6 @@ var actionMap = map[ActionType]string{
 	ActionAddCheckConstraint:            "add check constraint",
 	ActionDropCheckConstraint:           "drop check constraint",
 	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
 	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
@@ -159,6 +158,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
+	ActionSetTiFlashMode:                "set tiflash mode",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -666,7 +666,7 @@ func (job *Job) MayNeedReorg() bool {
 // IsRollbackable checks whether the job can be rollback.
 func (job *Job) IsRollbackable() bool {
 	switch job.Type {
-	case ActionDropIndex, ActionDropPrimaryKey, ActionDropIndexes:
+	case ActionDropIndex, ActionDropPrimaryKey:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
 		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
 		// know the type of index here, we consider all indices except primary index as non-rollbackable.
