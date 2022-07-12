@@ -47,7 +47,6 @@ type RowDecoder struct {
 	gcColMap        map[int64]Column
 	orderedGCOffset []int
 	offset2Id       map[int]int
-	datumSlice      []*types.Datum
 	colTypes        map[int64]*types.FieldType
 	defaultVals     []types.Datum
 	cols            []*table.Column
