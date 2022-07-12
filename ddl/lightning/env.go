@@ -96,9 +96,9 @@ func InitGolbalLightningBackendEnv() {
 	sbz := variable.GetSysVar("sort_buffer_size")
 	bufferSize, err = strconv.ParseUint(sbz.Value, 10, 64)
 	// If get bufferSize err, then maxMemLimtation is 128 MB
-	// Otherwise, the ddl maxMemLimitation is 1 GB
+	// Otherwise, the ddl maxMemLimitation is 2 GB
 	if err == nil {
-		maxMemLimit = bufferSize * 4 * _kb
+		maxMemLimit = bufferSize * 8 * _kb
 		log.L().Info(LitInfoSetMemLimit,
 			zap.String("Memory limitation set to:", strconv.FormatUint(maxMemLimit, 10)))
 	} else {

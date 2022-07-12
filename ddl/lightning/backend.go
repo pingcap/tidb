@@ -108,6 +108,11 @@ func GenBackendContextKey(jobID int64) string {
 // Adjust lightning memory parameters according memory root's max limitation
 func adjustImportMemory(cfg *config.Config) {
 	var scale int64
+	// Try agressive resource usage successful.
+	if tryAgressiveMemory(cfg) {
+		return
+	}
+
 	defaultMemSize := int64(cfg.TikvImporter.LocalWriterMemCacheSize) * int64(cfg.TikvImporter.RangeConcurrency)
 	defaultMemSize += 4 * int64(cfg.TikvImporter.EngineMemCacheSize)
 	log.L().Info(LitInfoInitMemSetting,
@@ -132,6 +137,22 @@ func adjustImportMemory(cfg *config.Config) {
 		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
 		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
 		zap.String("rangecounrrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
+}
+
+// tryAgressiveMemory lightning memory parameters according memory root's max limitation
+func tryAgressiveMemory(cfg *config.Config) bool {
+	var defaultMemSize int64
+	defaultMemSize = int64(128 * _mb * cfg.TikvImporter.RangeConcurrency)
+	defaultMemSize += int64(cfg.TikvImporter.EngineMemCacheSize)
+
+	if (defaultMemSize + GlobalEnv.LitMemRoot.currUsage) > GlobalEnv.LitMemRoot.maxLimit {
+		return false
+	}
+	log.L().Info(LitInfoChgMemSetting,
+		zap.String("LocalWriterMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
+		zap.String("EngineMemCacheSize:", strconv.FormatInt(int64(cfg.TikvImporter.LocalWriterMemCacheSize), 10)),
+		zap.String("rangecounrrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
+	return true
 }
 
 type glueLit struct{}
