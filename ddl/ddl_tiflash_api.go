@@ -59,6 +59,7 @@ type TiFlashReplicaStatus struct {
 	Ready          bool
 }
 
+// TiFlashReplicaReadyDDLArgs used for ddl ActionUpdateTiFlashReplicaReadyStatus
 type TiFlashReplicaReadyDDLArgs struct {
 	SchemaID   int64  `json:"schema_id"`
 	TableID    int64  `json:"table_id"`
