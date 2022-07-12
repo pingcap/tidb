@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -539,7 +540,7 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 
 func getRuntimeTLSVersion() string {
 	// get minTlsVersion
-	minTLSVersion := "TLSv1.1"
+	minTLSVersion := tlsVersionString[tlsutil.DefaultMinTLSVersion]
 	for _, v := range tlsVersionString {
 		if v == config.GetGlobalConfig().Security.MinTLSVersion {
 			minTLSVersion = v

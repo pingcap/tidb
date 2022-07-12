@@ -66,6 +66,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ssl_key", Value: ""},
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
+	{Scope: ScopeNone, Name: "tls_version", Value: getRuntimeTLSVersion()},
 	/* TiDB specific variables */
 	{Scope: ScopeNone, Name: TiDBEnableEnhancedSecurity, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},

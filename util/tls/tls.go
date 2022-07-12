@@ -15,8 +15,12 @@
 package tls
 
 import (
+	"crypto/tls"
+
 	"go.uber.org/atomic"
 )
 
 // RequireSecureTransport Process global variables
 var RequireSecureTransport = atomic.NewBool(false)
+
+var DefaultMinTLSVersion uint16 = tls.VersionTLS11
