@@ -237,25 +237,29 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
-			readFromCache := !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0
-
-			if !readFromCache {
-				e.handleVal, err = e.get(ctx, e.idxKey)
-				if err != nil {
-					if !kv.ErrNotExist.Equal(err) {
-						return err
-					}
-				}
-			} else {
-				// try lock the index key if isolation level is not read consistency
-				// also lock key if read consistency read a value
+			readFromCache := !e.ctx.GetSessionVars().IsPessimisticReadConsistency()
+			if readFromCache{
 				err = e.lockKeyIfNeeded(ctx, e.idxKey)
 				if err != nil {
 					return err
 				}
-				e.handleVal, err = e.get(ctx, e.idxKey)
-				if err != nil {
+			}
+
+			e.handleVal, err = e.get(ctx, e.idxKey)
+			if err != nil {
+				if !kv.ErrNotExist.Equal(err) {
 					return err
+				}
+			}
+
+			// try lock the index key if isolation level is not read consistency
+			// also lock key if read consistency read a value
+			if readFromCache || len(e.handleVal) == 0 {
+				if !readFromCache {
+					err = e.lockKeyIfNeeded(ctx, e.idxKey)
+					if err != nil {
+						return err
+					}
 				}
 				// Change the unique index LOCK into PUT record.
 				if e.lock && len(e.handleVal) > 0 {
