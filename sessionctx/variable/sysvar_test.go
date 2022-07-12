@@ -1078,10 +1078,10 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 
 func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	vars := NewSessionVars()
-	val, err := GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeThreshold)
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeMinHeapInUse)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeRatio)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeAlarmRatio)
 	require.NoError(t, err)
 	require.Equal(t, val, "0")
 }

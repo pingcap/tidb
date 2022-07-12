@@ -685,15 +685,15 @@ const (
 	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
 	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
 
-	// TiDBMemoryDebugModeThreshold is used to set tidb memory debug mode trigger threshold.
+	// TiDBMemoryDebugModeMinHeapInUse is used to set tidb memory debug mode trigger threshold.
 	// When set to 0, the function is disabled.
 	// When set to a negative integer, use memory debug mode to detect the issue of frequent allocation and release of memory.
 	// We do not actively trigger gc, and check whether the `tracker memory * (1+bias ratio) > heap in use` each 5s.
 	// When set to a positive integer, use memory debug mode to detect the issue of memory tracking inaccurate.
 	// We trigger runtime.GC() each 5s, and check whether the `tracker memory * (1+bias ratio) > heap in use`.
-	TiDBMemoryDebugModeThreshold = "tidb_memory_debug_mode_threshold"
-	// TiDBMemoryDebugModeRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
-	TiDBMemoryDebugModeRatio = "tidb_memory_debug_mode_ratio"
+	TiDBMemoryDebugModeMinHeapInUse = "tidb_memory_debug_mode_min_heap_inuse"
+	// TiDBMemoryDebugModeAlarmRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
+	TiDBMemoryDebugModeAlarmRatio = "tidb_memory_debug_mode_alarm_ratio"
 )
 
 // TiDB vars that have only global scope

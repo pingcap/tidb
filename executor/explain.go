@@ -194,6 +194,7 @@ func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapIn
 
 func (h *memoryDebugModeHandler) run() {
 	var err error
+	var fields []zap.Field
 	defer func() {
 		heapInUse, trackedMem := h.fetchCurrentMemoryUsage(true)
 		if err == nil {
@@ -213,8 +214,8 @@ func (h *memoryDebugModeHandler) run() {
 	logutil.BgLogger().Info("Memory Debug Mode",
 		zap.String("sql", "started"),
 		zap.Bool("autoGC", h.autoGC),
-		zap.String("threshold", memory.FormatBytes(h.minHeapInUse)),
-		zap.Int64("ratio", h.alarmRatio),
+		zap.String("minHeapInUse", memory.FormatBytes(h.minHeapInUse)),
+		zap.Int64("alarmRatio", h.alarmRatio),
 	)
 	ticker, loop := time.NewTicker(5*time.Second), 0
 	for {
@@ -225,7 +226,7 @@ func (h *memoryDebugModeHandler) run() {
 			heapInUse, trackedMem := h.fetchCurrentMemoryUsage(h.autoGC)
 			loop++
 			if loop%6 == 0 {
-				fields, err := h.genInfo("running", false, int64(heapInUse), int64(trackedMem))
+				fields, err = h.genInfo("running", false, int64(heapInUse), int64(trackedMem))
 				logutil.BgLogger().Info("Memory Debug Mode", fields...)
 				if err != nil {
 					return
@@ -234,7 +235,7 @@ func (h *memoryDebugModeHandler) run() {
 
 			if !h.autoGC {
 				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {
-					fields, err := h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
+					fields, err = h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
 					logutil.BgLogger().Warn("Memory Debug Mode", fields...)
 					if err != nil {
 						return
@@ -242,7 +243,7 @@ func (h *memoryDebugModeHandler) run() {
 				}
 			} else {
 				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {
-					fields, err := h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
+					fields, err = h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
 					logutil.BgLogger().Warn("Memory Debug Mode", fields...)
 					if err != nil {
 						return
@@ -254,10 +255,6 @@ func (h *memoryDebugModeHandler) run() {
 					}
 					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
 				}
-			}
-			if err != nil {
-				// Exit debug mode.
-				return
 			}
 		}
 	}

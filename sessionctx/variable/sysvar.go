@@ -1673,11 +1673,11 @@ var defaultSysVars = []*SysVar{
 			metrics.ToggleSimplifiedMode(TiDBOptOn(s))
 			return nil
 		}},
-	{Scope: ScopeSession, Name: TiDBMemoryDebugModeThreshold, Value: strconv.Itoa(0), Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBMemoryDebugModeMinHeapInUse, Value: strconv.Itoa(0), Type: TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemoryDebugModeMinHeapInUse = TidbOptInt64(val, 0)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBMemoryDebugModeRatio, Value: strconv.Itoa(0), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBMemoryDebugModeAlarmRatio, Value: strconv.Itoa(0), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemoryDebugModeAlarmRatio = TidbOptInt64(val, 0)
 		return nil
 	}},
