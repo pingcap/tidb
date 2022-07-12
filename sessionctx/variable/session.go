@@ -1165,6 +1165,9 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
+
+	// PrimaryKeyRequired indicates if sql_require_primary_key sysvar is set
+	PrimaryKeyRequired bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
