@@ -77,7 +77,7 @@ func TestAddIndexLit(t *testing.T) {
 	tk.MustExec("create table t (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2), (3, 3, 1);")
 	tk.MustExec("set @@global.tidb_fast_ddl = on")
-	
+
 	var tableID int64
 	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t' and table_schema='test';")
 	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))

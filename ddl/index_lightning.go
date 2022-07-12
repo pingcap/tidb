@@ -389,15 +389,15 @@ type backFillIndexWorker struct {
 	tmpIdxRecords      []*temporaryIndexRecord
 	batchCheckTmpKeys  []kv.Key
 	tmpKeyPos          []int32
-	jobContext		   *JobContext
+	jobContext         *JobContext
 }
 
-func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
+func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
 	// Add build openengine process.
 	return &backFillIndexWorker{
-		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
+		backfillWorker: newBackfillWorker(sessCtx, 0, t, reorgInfo),
 		index:          index,
 		jobContext:     jc,
 	}
@@ -485,7 +485,7 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 			if err != nil {
 				break
 			}
-			finish, err = w.updateReorgInfo(tbl, reorgInfo)
+			finish, err = w.updateMergeInfo(tbl, idx.ID, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -494,6 +494,38 @@ func (w *worker) mergeTempIndex(t table.Table, idx *model.IndexInfo, reorgInfo *
 		err = w.addPhysicalTempIndex(t.(table.PhysicalTable), idx, reorgInfo)
 	}
 	return errors.Trace(err)
+}
+
+// updateReorgInfo will find the next partition according to current reorgInfo.
+// If no more partitions, or table t is not a partitioned table, returns true to
+// indicate that the reorganize work is finished.
+func (w *worker) updateMergeInfo(t table.PartitionedTable, idxID int64, reorg *reorgInfo) (bool, error) {
+	pi := t.Meta().GetPartitionInfo()
+	if pi == nil {
+		return true, nil
+	}
+
+	pid, err := findNextPartitionID(reorg.PhysicalTableID, pi.Definitions)
+	if err != nil {
+		// Fatal error, should not run here.
+		logutil.BgLogger().Error("[ddl] find next partition ID failed", zap.Reflect("table", t), zap.Error(err))
+		return false, errors.Trace(err)
+	}
+	if pid == 0 {
+		// Next partition does not exist, all the job done.
+		return true, nil
+	}
+
+	start, end := tablecodec.GetTableIndexKeyRange(pid, tablecodec.TempIndexPrefix|idxID)
+
+	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
+	// Write the reorg info to store so the whole reorganize process can recover from panic.
+	err = reorg.UpdateReorgMeta(reorg.StartKey)
+	logutil.BgLogger().Info("[ddl] job update MergeInfo", zap.Int64("jobID", reorg.Job.ID),
+		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
+		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
+		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
+	return false, errors.Trace(err)
 }
 
 func (w *worker) addPhysicalTempIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {

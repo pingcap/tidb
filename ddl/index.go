@@ -600,13 +600,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		indexInfo.State = model.StatePublic
-		// Set eid to temp index value, if add index follow the new backfill flow.
-		var eid uint64 = 0
-		if indexInfo.SubState != model.StateNone {
-			// After merge data into TiKV, then the progress set to 100.
-			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
-			eid = codec.EncodeIntToCmpUint(tablecodec.TempIndexPrefix | indexInfo.ID)
-		}
+		// After merge data into TiKV, then the progress set to 100.
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
 		// Set sub state to stateNone to stop double write
 		indexInfo.SubState = model.StateNone
 		// Set column index flag.
@@ -624,10 +619,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Clean temp index if needed
-		if eid != 0 {
-			job.Args =job.Args[:0]
-			job.Args = []interface{}{eid, getPartitionIDs(tblInfo)}
-		}
+		job.Args = job.Args[:0]
+		job.Args = []interface{}{indexInfo.ID, getPartitionIDs(tblInfo)}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -719,15 +712,39 @@ func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 			}
 			return false, ver, nil
 		case model.StateMerge:
-			if err != nil {
-				logutil.BgLogger().Info("Lightning start merge init merge reorg info err", zap.Error(err))
-				return false, ver, errors.Trace(err)
-			}
 			logutil.BgLogger().Info("Lightning start merge the increment part of adding index")
+			err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+				defer util.Recover(metrics.LabelDDL, "onMergeIndex",
+					func() {
+						addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+					}, false)
+				return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
+			})
+			if err != nil {
+				return false, 0, errors.Trace(err)
+			}
+			logutil.BgLogger().Info("Lightning finished merge the increment part of adding index")
 			return true, ver, nil
 		default:
 			return false, 0, errors.New("Lightning go fast path wrong sub states: should not happened")
 		}
+	}
+
+	// Original backfill need also merge temp index data.
+	if indexInfo.SubState == model.StatePublic {
+		logutil.BgLogger().Info("Not Lightning start merge the increment part of adding index")
+		err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+			defer util.Recover(metrics.LabelDDL, "onMergeIndex",
+				func() {
+					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+				}, false)
+			return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
+		})
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("Not Lightning finished merge the increment part of adding index")
+		return true, ver, nil
 	}
 	return false, ver, nil
 }
@@ -756,23 +773,13 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	if indexInfo.SubState == model.StateMerge {
-		err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer util.Recover(metrics.LabelDDL, "onMergeIndex",
-				func() {
-					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
-				}, false)
-			return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
-		})
-	} else {
-		err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
-				func() {
-					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
-				}, false)
-			return w.addTableIndex(tbl, indexInfo, reorgInfo)
-		})
-	}
+	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+			func() {
+				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+			}, false)
+		return w.addTableIndex(tbl, indexInfo, reorgInfo)
+	})
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
@@ -801,29 +808,31 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return false, ver, errors.Trace(err)
 	}
 
-	done = false
 	if isLightningEnabled(job.ID) {
 		indexInfo.SubState = model.StateMergeSync
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
-
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
-		//Init reorg infor for merge task.
+		//Init merge reorgInfo for merge temp index task.
 		job.SnapshotVer = 0
-		reorgInfo, err = getMergeReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, indexInfo.ID)
+		_, err = getMergeReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, indexInfo.ID)
 		if err != nil {
 			return false, ver, errors.Trace(err)
 		}
 	} else {
-		// Check if reorg task finished.
-		if indexInfo.SubState == model.StateNone || indexInfo.SubState == model.StateMerge {
-			done = true
+		// Only indexInfo.SubState == model.StateNone, origin backfill flow.
+		if indexInfo.SubState == model.StateNone {
+			indexInfo.SubState = model.StatePublic
+			ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+			if err != nil {
+				return false, ver, errors.Trace(err)
+			}
 		}
 	}
 	// Cleanup lightning environment
 	cleanUpLightningEnv(reorgInfo, false)
-	return done, ver, errors.Trace(err)
+	return false, ver, errors.Trace(err)
 }
 
 func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

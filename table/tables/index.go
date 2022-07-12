@@ -122,9 +122,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	)
 	if c.idxInfo.State == model.StateWriteReorganization && !c.Isbackfill {
 		switch c.idxInfo.SubState {
-		case model.StateNone:
-			// do nothing.
-		case model.StateBackfillSync, model.StateBackfill:
+		case model.StatePublic:
+			// Do nothing.
+		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
 			keyVer = []byte("1")
 			tablecodec.IndexKey2TempIndexKey(c.idxInfo.ID, key)
@@ -308,9 +308,9 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	)
 	if c.idxInfo.State == model.StateWriteReorganization {
 		switch c.idxInfo.SubState {
-		case model.StateNone:
+		case model.StatePublic:
 			// Do nothing.
-		case model.StateBackfillSync, model.StateBackfill:
+		case model.StateNone, model.StateBackfillSync, model.StateBackfill:
 			// Write to the temporary index.
 			keyVer = []byte("1")
 			tempKey = append(tempKey, key...)
