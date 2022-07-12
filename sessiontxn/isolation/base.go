@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -278,7 +279,7 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return p.prepareTxnWithTS(snapshotTS)
 	}
 
-	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
 }
 
@@ -290,7 +291,7 @@ func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
 		return nil
 	}
 
-	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
 }
 
@@ -397,4 +398,29 @@ func canReuseTxnWhenExplicitBegin(sctx sessionctx.Context) bool {
 	// If the variable `tidb_snapshot` is set, we should always create a new transaction because the current txn may be
 	// initialized with snapshot ts.
 	return txnCtx.History == nil && !txnCtx.IsStaleness && sessVars.SnapshotTS == 0
+}
+
+// newOracleFuture creates new future according to the scope and the session context
+func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string) oracle.Future {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("isolation.newOracleFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	oracleStore := sctx.GetStore().GetOracle()
+	option := &oracle.Option{TxnScope: scope}
+
+	if sctx.GetSessionVars().LowResolutionTSO {
+		return oracleStore.GetLowResolutionTimestampAsync(ctx, option)
+	}
+	return oracleStore.GetTimestampAsync(ctx, option)
+}
+
+// funcFuture implements oracle.Future
+type funcFuture func() (uint64, error)
+
+// Wait returns a ts got from the func
+func (f funcFuture) Wait() (uint64, error) {
+	return f()
 }
