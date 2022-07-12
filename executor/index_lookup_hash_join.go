@@ -500,7 +500,10 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		joinResult.err = errors.New("mockIndexHashJoinInnerWorkerErr")
 	})
 	if joinResult.err != nil {
-		resultCh <- joinResult
+		select {
+		case resultCh <- joinResult:
+		case <-ctx.Done():
+		}
 		return
 	}
 	// When task.keepOuterOrder is TRUE(resultCh != iw.resultCh), the last
@@ -582,24 +585,7 @@ func (iw *indexHashJoinInnerWorker) handleHashJoinInnerWorkerPanic(r interface{}
 	iw.wg.Done()
 }
 
-<<<<<<< HEAD
 func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) error {
-=======
-func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexHashJoinTask, joinResult *indexHashJoinResult, h hash.Hash64, resultCh chan *indexHashJoinResult) (err error) {
-	defer func() {
-		iw.memTracker.Consume(-iw.memTracker.BytesConsumed())
-		if task.keepOuterOrder {
-			if err != nil {
-				joinResult.err = err
-				select {
-				case <-ctx.Done():
-				case resultCh <- joinResult:
-				}
-			}
-			close(resultCh)
-		}
-	}()
->>>>>>> 87052dc2f... executor: fix index_lookup_hash_join hang when used with limit (#35820)
 	var joinStartTime time.Time
 	if iw.stats != nil {
 		start := time.Now()
