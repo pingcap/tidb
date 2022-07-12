@@ -357,7 +357,28 @@
       "select /*+ leading(t3) */ * from ((select /*+ leading(t5) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 left join t4 on t3.a=t4.a) left join (t1 left join t2 on t1.a=t2.a) on t1.a=t4.a;",
       "select /*+ leading(t3, t1) */ * from ((select /*+ leading(t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 left join t4 on t3.a=t4.a) left join (t1 left join t2 on t1.a=t2.a) on t1.a=t4.a;",
       "select /*+ leading(t3, t1, t2) */ * from ((select /*+ leading(t6, t7) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 left join t4 on t3.a=t4.a) left join (t1 left join t2 on t1.a=t2.a) on t1.a=t4.a;",
-      "select /*+ leading(t3, t4) */ * from ((select /*+ leading(t5, t7, t8) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 left join t4 on t3.a=t4.a) left join (t1 left join t2 on t1.a=t2.a) on t1.a=t4.a;"
+      "select /*+ leading(t3, t4) */ * from ((select /*+ leading(t5, t7, t8) */ t8.a, t8.b from t8, t7, t6, t5 where t5.a = t6.a and t6.b=t7.b) t3 left join t4 on t3.a=t4.a) left join (t1 left join t2 on t1.a=t2.a) on t1.a=t4.a;",
+
+      // test cases for using the join order hint and join algorithm hint
+      "select /*+ leading(t2) hash_join(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t2) hash_join(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t2) hash_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t) hash_join(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t) hash_join(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t) hash_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t2) INL_JOIN(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t2) INL_JOIN(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t3) INL_JOIN(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t3) INL_JOIN(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t2) merge_join(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t1) merge_join(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t2) merge_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t3) merge_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t3) merge_join(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t3) merge_join(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t3) merge_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t3) merge_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+      "select /*+ leading(t2) INL_JOIN(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;"
     ]
   }
 ]
