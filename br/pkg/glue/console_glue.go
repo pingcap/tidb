@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/pingcap/log"
@@ -20,6 +21,15 @@ import (
 // ConsoleOperations are some operations based on ConsoleGlue.
 type ConsoleOperations struct {
 	ConsoleGlue
+}
+
+// StartTask prints a task start information, and mark as finished when the returned function called.
+func (ops ConsoleOperations) StartTask(message string) func() {
+	start := time.Now()
+	ops.Print(message)
+	return func() {
+		ops.Printf("%s; take = %s\n", color.HiGreenString("DONE"), time.Since(start))
+	}
 }
 
 func (ops ConsoleOperations) RootFrame() Frame {

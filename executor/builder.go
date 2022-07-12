@@ -3887,6 +3887,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
 	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
+	if !canReorderHandles {
+		// `canReorderHandles` is set to false only in IndexMergeJoin. IndexMergeJoin will trigger a dead loop problem
+		// when enabling paging(tidb/issues/35831). But IndexMergeJoin is not visible to the user and is deprecated
+		// for now. Thus, we disable paging here.
+		e.paging = false
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4071,6 +4077,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetPaging(e.paging).
 		Build()
 	if err != nil {
 		return nil, err
