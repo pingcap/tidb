@@ -2152,10 +2152,14 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID(), selExec)
 	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
+		is:             b.is,
 		baseExecutor:   base,
 		tblID2Table:    tblID2table,
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
+	}
+	if b.err = deleteExec.initForeignKeyChecker(); b.err != nil {
+		return nil
 	}
 	return deleteExec
 }

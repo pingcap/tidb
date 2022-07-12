@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/infoschema"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -37,6 +38,7 @@ import (
 type DeleteExec struct {
 	baseExecutor
 
+	is           infoschema.InfoSchema
 	IsMultiTable bool
 	tblID2Table  map[int64]table.Table
 
@@ -44,15 +46,35 @@ type DeleteExec struct {
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
+
+	deleteRowFKCheckers map[int64][]*foreignKeyChecker
 }
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	for _, fkchckers := range e.deleteRowFKCheckers {
+		for _, fkc := range fkchckers {
+			fkc.resetToBeCheckedKeys()
+		}
+	}
 	if e.IsMultiTable {
+		// todo: add fk check for this
 		return e.deleteMultiTablesByChunk(ctx)
 	}
 	return e.deleteSingleTableByChunk(ctx)
+}
+
+func (e *DeleteExec) initForeignKeyChecker() error {
+	e.deleteRowFKCheckers = make(map[int64][]*foreignKeyChecker)
+	for tid, tbl := range e.tblID2Table {
+		deleteRowFKCheckers, err := initDeleteRowForeignKeyChecker(e.ctx, e.is, tbl.Meta())
+		if err != nil {
+			return err
+		}
+		e.deleteRowFKCheckers[tid] = deleteRowFKCheckers
+	}
+	return nil
 }
 
 func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
@@ -140,6 +162,19 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	for _, fkchckers := range e.deleteRowFKCheckers {
+		for _, fkc := range fkchckers {
+			err := fkc.checkValueExistInReferTable(ctx, txn)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -211,10 +246,10 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
-	return e.removeRowsInTblRowMap(tblRowMap)
+	return e.removeRowsInTblRowMap(ctx, tblRowMap)
 }
 
-func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
+func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
 		rowMap.Range(func(h kv.Handle, val interface{}) bool {
@@ -225,7 +260,18 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 			return err
 		}
 	}
-
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	for _, fkchckers := range e.deleteRowFKCheckers {
+		for _, fkc := range fkchckers {
+			err := fkc.checkValueExistInReferTable(ctx, txn)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -238,6 +284,14 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	err = t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return err
+	}
+
+	deleteRowFKCheckers := e.deleteRowFKCheckers[t.Meta().ID]
+	for _, fkc := range deleteRowFKCheckers {
+		err = fkc.addRowNeedToCheck(ctx.GetSessionVars().StmtCtx, data)
+		if err != nil {
+			return err
+		}
 	}
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)

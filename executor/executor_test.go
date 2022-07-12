@@ -6294,3 +6294,36 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 	}
 	checkCaseFn()
 }
+
+func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Case-1: test unique index only contain foreign key columns.
+	cases := []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "create table t1 (id int key,a int, b int, unique index(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, unique index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2),(3, 3, 3), (4, 4, 4);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn := func() {
+		for _, ca := range cases {
+			if ca.err == nil {
+				tk.MustExec(ca.sql)
+			} else {
+				err := tk.ExecToErr(ca.sql)
+				require.Equal(t, ca.err, err)
+			}
+		}
+	}
+	checkCaseFn()
+
+}
