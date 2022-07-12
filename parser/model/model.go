@@ -310,6 +310,16 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 	return nil
 }
 
+// FindFKInfoByName finds FKInfo in fks by name.
+func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
+	for _, fk := range fks {
+		if fk.Name.L == name {
+			return fk
+		}
+	}
+	return nil
+}
+
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
 func FindIndexByColumns(indices []*IndexInfo, cols ...CIStr) *IndexInfo {
 	for _, index := range indices {
@@ -394,12 +404,12 @@ type TableInfo struct {
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
-	Columns          []*ColumnInfo     `json:"cols"`
-	Indices          []*IndexInfo      `json:"index_info"`
-	Constraints      []*ConstraintInfo `json:"constraint_info"`
-	ForeignKeys      []*FKInfo         `json:"fk_info"`
-	CitedForeignKeys []*CitedFKInfo    `json:"cited_fk_info"`
-	State            SchemaState       `json:"state"`
+	Columns             []*ColumnInfo     `json:"cols"`
+	Indices             []*IndexInfo      `json:"index_info"`
+	Constraints         []*ConstraintInfo `json:"constraint_info"`
+	ForeignKeys         []*FKInfo         `json:"fk_info"`
+	ReferredForeignKeys []*ReferredFKInfo `json:"referred_fk_info"`
+	State               SchemaState       `json:"state"`
 	// PKIsHandle is true when primary key is a single integer column.
 	PKIsHandle bool `json:"pk_is_handle"`
 	// IsCommonHandle is true when clustered index feature is
@@ -1403,12 +1413,12 @@ func (fk *FKInfo) String(db, tb string) string {
 	return buf.String()
 }
 
-// CitedFKInfo provides the cited foreign key in the child table.
-type CitedFKInfo struct {
-	Cols         []CIStr `json:"cols"`
-	ChildSchema  CIStr   `json:"child_schema"`
-	ChildTable   CIStr   `json:"child_table"`
-	ChildFKIndex CIStr   `json:"child_fk_index"`
+// ReferredFKInfo provides the cited foreign key in the child table.
+type ReferredFKInfo struct {
+	Cols        []CIStr `json:"cols"`
+	ChildSchema CIStr   `json:"child_schema"`
+	ChildTable  CIStr   `json:"child_table"`
+	ChildFKName CIStr   `json:"child_fk_name"`
 }
 
 // DBInfo provides meta data describing a DB.

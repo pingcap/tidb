@@ -216,11 +216,11 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			if referTableInfo.Name.L != fkInfo.RefTable.L {
 				break
 			}
-			referTableInfo.CitedForeignKeys = append(referTableInfo.CitedForeignKeys, &model.CitedFKInfo{
-				ChildSchema:  model.NewCIStr(job.SchemaName),
-				ChildTable:   tbInfo.Name,
-				ChildFKIndex: fkInfo.Name,
-				Cols:         fkInfo.RefCols,
+			referTableInfo.ReferredForeignKeys = append(referTableInfo.ReferredForeignKeys, &model.ReferredFKInfo{
+				ChildSchema: model.NewCIStr(job.SchemaName),
+				ChildTable:  tbInfo.Name,
+				ChildFKName: fkInfo.Name,
+				Cols:        fkInfo.RefCols,
 			})
 		}
 		originalSchemaID, originalTableID := job.SchemaID, job.TableID

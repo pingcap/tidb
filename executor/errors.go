@@ -72,5 +72,6 @@ var (
 	errUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	errTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
 
+	ErrRowIsReferenced2 = dbterror.ClassExecutor.NewStd(mysql.ErrRowIsReferenced2)
 	ErrNoReferencedRow2 = dbterror.ClassExecutor.NewStd(mysql.ErrNoReferencedRow2)
 )

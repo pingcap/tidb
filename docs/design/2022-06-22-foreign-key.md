@@ -17,7 +17,7 @@ Table's foreign key information will be stored in `model.TableInfo`:
 type TableInfo struct {
 ...
 ForeignKeys         []*FKInfo            `json:"fk_info"`
-ReferredForeignKeys []*ReferredFKInfo    `json:"cited_fk_info"`
+ReferredForeignKeys []*ReferredFKInfo    `json:"referred_fk_info"`
 ...
 }
 

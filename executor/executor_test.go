@@ -6090,6 +6090,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6120,6 +6121,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6140,6 +6142,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6160,6 +6163,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6182,6 +6186,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6203,6 +6208,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6224,6 +6230,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6245,6 +6252,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (2, null, 1);"},
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
+		{sql: "insert into t2 (id, a) values (10, 1);"},
 		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
@@ -6264,6 +6272,24 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t1 values (1, 1);"},
 		{sql: "insert into t2 values (1, 1);"},
 		{sql: "insert into t2 values (2, null);"},
+		{sql: "insert into t2 (id) values (10);"},
+		{sql: "insert into t2 values (3, 2);", err: executor.ErrNoReferencedRow2},
+	}
+	checkCaseFn()
+
+	// Case-10: test primary key is handle and contain foreign key column.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, primary key(id));"},
+		{sql: "create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));"},
+		{sql: "insert into t1 values (1, 1);"},
+		{sql: "insert into t2 values (1, 1);"},
+		{sql: "insert into t2 (id) values (10);", err: executor.ErrNoReferencedRow2},
 		{sql: "insert into t2 values (3, 2);", err: executor.ErrNoReferencedRow2},
 	}
 	checkCaseFn()

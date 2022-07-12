@@ -57,7 +57,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 		return tblName
 	}))
-	for _, fkc := range e.fkChecker {
+	for _, fkc := range e.addRowFKCheckers {
 		fkc.resetToBeCheckedKeys()
 	}
 
@@ -114,7 +114,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
-	for _, fkc := range e.fkChecker {
+	for _, fkc := range e.addRowFKCheckers {
 		err = fkc.checkValueExistInReferTable(ctx, txn)
 		if err != nil {
 			return err

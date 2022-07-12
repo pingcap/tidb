@@ -100,7 +100,7 @@ type InsertValues struct {
 	isLoadData bool
 	txnInUse   sync.Mutex
 
-	fkChecker []*foreignKeyChecker
+	addRowFKCheckers []*foreignKeyChecker
 }
 
 type defaultVal struct {
@@ -1067,7 +1067,7 @@ func (e *InsertValues) checkForeignKeyConstrain(ctx context.Context, rows [][]ty
 
 func (e *InsertValues) initForeignKeyChecker() error {
 	var err error
-	e.fkChecker, err = initForeignKeyChecker(e.ctx, e.is, e.Table.Meta(), e.DBName.L)
+	e.addRowFKCheckers, err = initAddRowForeignKeyChecker(e.ctx, e.is, e.Table.Meta(), e.DBName.L)
 	return err
 }
 
@@ -1240,7 +1240,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
-	for _, fkc := range e.fkChecker {
+	for _, fkc := range e.addRowFKCheckers {
 		err = fkc.addRowNeedToCheck(vars.StmtCtx, row)
 		if err != nil {
 			return err
