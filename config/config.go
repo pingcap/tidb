@@ -612,8 +612,6 @@ type Performance struct {
 	ServerMemoryQuota   uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 	TxnEntrySizeLimit   uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
@@ -875,8 +873,6 @@ var defaultConf = Config{
 		CrossJoin:             true,
 		StatsLease:            "3s",
 		StmtCountLimit:        5000,
-		FeedbackProbability:   0.0,
-		QueryFeedbackLimit:    512,
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
 		BindInfoLease:         "3s",
@@ -1020,6 +1016,8 @@ var removedConfig = map[string]struct{}{
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load
 	"plugin.dir":                             {}, // use plugin_dir
+	"performance.feedback-probability":       {}, // This feature is deprecated
+	"performance.query-feedback-limit":       {},
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
