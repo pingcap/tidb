@@ -867,7 +867,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
 		if err = sessionstates.ValidateSessionToken(authData, cc.user); err != nil {
-			logutil.BgLogger().Warn("verify session token failed", zap.Error(err))
+			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
 			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 		}
 	} else if !cc.ctx.Auth(userIdentity, authData, cc.salt) {
