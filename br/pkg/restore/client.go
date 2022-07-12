@@ -1616,11 +1616,11 @@ func (rc *Client) ReadStreamDataFiles(
 	}
 
 	// sort files firstly.
-	sort.Slice(mFiles, func(i, j int) bool {
-		if mFiles[i].ResolvedTs > 0 && mFiles[j].ResolvedTs > 0 {
-			return mFiles[i].ResolvedTs < mFiles[j].ResolvedTs
+	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
+		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
+			return i.ResolvedTs < j.ResolvedTs
 		} else {
-			return mFiles[i].MaxTs < mFiles[j].MaxTs
+			return i.MaxTs < j.MaxTs
 		}
 	})
 	return dFiles, mFiles, nil
