@@ -3,6 +3,10 @@
 - Author(s): [crazycs520](https://github.com/crazycs520)
 - Tracking Issue: https://github.com/pingcap/tidb/issues/18209
 
+## Abstract
+
+This proposes an implementation of supporting foreign key constrain.
+
 ## DDL Technical Design
 
 ### Table Information Changes
@@ -41,11 +45,13 @@ type ReferredFKInfo struct {
 ```
 
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
-Struct `ReferredFKInfo` uses for referenced table to record the child table which referenced me.
+- `Enable`: uses to distinguish between old and new versions.
+  Struct `ReferredFKInfo` uses for referenced table to record the child table which referenced me.
 
 ### Create Table with Foreign Key
 
 #### Build TableInfo
+
 When build `TableInfo`, auto create an index for foreign key columns if there is no index cover foreign key columns. Here is an example:
 
 ```sql
@@ -66,6 +72,8 @@ Create Table | CREATE TABLE `t` (
 
 As you can see, the index `fk` is auto create for foreign key usage.
 
+#### Validate
+
 Create a table with foreign key, check following condition when build DDL job and DDL owner received DDL job(aka Double-Check):
 
 - whether the user have `REFERENCES` privilege to the foreign key references table.
@@ -78,26 +86,65 @@ Create a table with foreign key, check following condition when build DDL job an
 
 #### Handle In DDL Owner
 
-DDL owner handle create table job step is:
+When DDL Owner handle create table job, DDL owner need to create a new table, and update the reference tables information.
 
-- Option-1：
-```
-1. None -> Public.
-- create a new table.
-- update parent table info.
-- **notify multi-table's schema change in 1 schema version**.
-```
-This will also need to to related change when TiDB to do `loadInfoSchema`.
+At the same point in time, there may be two versions of the schema in the TiDB cluster, so we can't create new table and
+update all reference tables in one schema version, since this may break foreign key constrain, such as delete reference table
+without foreign key constrain check in child table.
 
-- Option-2:
-```
-1. None -> Write Only(whatever): Update Parent Table info
-2. Write Only -> Done: Create Table
+```sql
+-- In TiDB-1 and Schema Version is 1
+insert into t_has_foreign_key values (1, 1);
+
+-- In TiDB-0 and  Schema Version is 0
+delete from t_reference where id = 1; --Since doesn't know foreign key information in old version, so doesn't do foreign key constrain check.
 ```
 
-### Alter Table Add Foreign Key.
+So, when create a table with foreign key, we need multi-schema version change:
 
-Not supported at this time.
+1. None -> Write Only: Create table with state is `write-only`, and update all reference tables info.
+2. Write Only -> Done: Update the new created table state to `public`.
+
+In step-1, we need update some table info in one schema-version. Technically, we can implement is since we already support `ActionCreateTables` DDL job.
+
+### Alter Table Add Foreign Key
+
+Here is an example:
+
+```sql
+create table t1 (id int key,a int, index(a));
+create table t2 (id int key,a int);
+alter  table t2 add foreign key fk(a) references t1(id) ON DELETE CASCADE;
+```
+
+Just like create table, we should validate first, and return error if the conditions for creating foreign keys are not met, and also need to do double-check.
+
+When build `TableInfo`, we need to auto create an index for foreign key columns if there is no index cover foreign key columns.
+And this is divides the problem into two cases:
+- Case-1: No need to auto create index, and only add foreign key constrain.
+- Case-2: Need auto create index for foreign key
+
+#### Case-1: Only add foreign key constrain
+
+The DDL owner handle add foreign key constrain step is:
+
+1. None -> Write Only: add foreign key constrain which state is `write-only` into table and update the reference table info.
+3. Write Only - Write Reorg: check all row in the table whether has related foreign key exists in reference table, we can use following SQL to check:
+   ```sql
+   select count(*) from t2 where t2.a not in (select id from t1);
+   ```
+   The expected result is `0`, otherwise, an error is returned and cancel the ddl job.
+4. Write Reorg -> Public: update the foreign key constrain state to `public`.
+
+DML should also check the foreign key constrain which state is `write-only`
+
+#### Case-2: Auto create index for foreign key and add foreign key constrain
+
+As TiDB support multi-schema change now, we can split this into 2 sub-ddl job.
+- Add Index DDL job
+- Add Foreign Key Constrain DDL job
+
+We should do add index DDL job first, after index ddl job finish `write-reorg` and ready for public, then start to do add foreign key constrain ddl job.
 
 ### Drop Table
 
@@ -113,7 +160,7 @@ If `foreign_key_checks` is `ON`, then drop the table which has foreign key refer
 Drop index which used by foreign key will be rejected.
 
 ```sql
-> set @@foreign_key_checks=0;
+> set @@foreign_key_checks=0; -- Even disable foreign_key_checks, you still can't drop the index which used for foreign key constrain.
 Query OK, 0 rows affected
 > alter table t2 drop index fk;
 (1553, "Cannot drop index 'fk': needed in a foreign key constraint")
@@ -151,7 +198,7 @@ Modify column which used by foreign key will be rejected.
 
 MySQL modify column problem: https://www.percona.com/blog/2019/06/04/ddl-queries-foreign-key-columns-MySQL-pxc/
 
-What if the user really need to modify column type, such as from `INT` to `BIGINT`. Maybe we can offer an variable such as `alter-foreign-keys-method=auto`, 
+What if the user really need to modify column type, such as from `INT` to `BIGINT`. Maybe we can offer an variable such as `alter-foreign-keys-method=auto`,
 then when user modify the column type, TiDB will auto modify the related foreign key column's type. For easy implementation and reduce risk, maybe only support modify column type which doesn't need to reorg table row data.
 
 ## DML Technical Design
@@ -163,18 +210,10 @@ On Child Table Insert Or Update, need to Find FK column value whether exist in P
 1. Get parent table info by table name.
 2. Get related fk index of parent table.
 3. tiny optimize, check fk column value exist in parent table cache(map[string(index_key)]struct).
-3. Get related row in parent, there are a few different implementations, I prefer option-c.
-  - option-a. use SQL string and use `ExecRestrictedSQL` API to check row exist.
-    - drawback: 
-      - Need convert `Datum` to string when construct query SQL string. is there any risk？
-      - In bulk-insert/update situation, the construct SQL string maybe very huge, may have some risk.
-      - performance is bad.
-  - option-b. manual construct a index reader to check.
-    - drawback:
-      - there is some complexity, but acceptable?
-  - option-c. Construct index key and then use snapshot `Iter` and `Seek` API to scan.
-    - `Iter` default scan batch size is 256, need to set 1.
-    - Need manual decode index key by index schema.
+3. Get related row in parent.
+- Construct index key and then use snapshot `Iter` and `Seek` API to scan. If the index is unique and only contain
+  foreign key columns, use snapshot `Get` API.
+    - `Iter` default scan batch size is 256, need to set 2 to avoid read unnecessary data.
 4. compact column value to make sure exist.
 5. put column value into parent fk column value cache.
 
@@ -214,59 +253,21 @@ test> show warnings;
 2,2
 ```
 
-### DML On Parent Table 
+### DML On Parent Table
 
 On Child Table Insert Or Update:
 
 1. check related child table row exist.
 2. modify related child table row by referential action:
-  - `CASCADE`: update/delete related child table row.
-  - `SET NULL`: set related child row's foreign key columns value to NULL.
-  - `RESTRICT`, `NO ACTION`: If related row doesn't exit in child table, reject update/delete parent table.
-  - `SET DEFAULT`: just like `RESTRICT`.
-    
+- `CASCADE`: update/delete related child table row.
+- `SET NULL`: set related child row's foreign key columns value to NULL.
+- `RESTRICT`, `NO ACTION`: If related row doesn't exit in child table, reject update/delete parent table.
+- `SET DEFAULT`: just like `RESTRICT`.
+
 modify related child table row by following step:
 1. get child table info by name(in parent table info).
 2. get the child table fk index's column info.
 3. build update executor to update child table rows.
-
-cascade modification test case:
-
-```sql
-drop table if exists t3,t2,t1;
-create table t1 (id int key,a int, index(a));
-create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
-create table t3 (id int key,a int, foreign key fk(a) references t2(id) ON DELETE CASCADE);
-insert into t1 values (1,1);
-insert into t2 values (2,1);
-insert into t3 values (3,2);
-delete from t1 where id = 1;  -- both t1, t2, t3 rows are deleted.
-```
-
-following is a MySQL test case about `SET DEFAULT`:
-
-```sql
-MySQL>create table t1 (a int,b int, index(a,b)) ;
-Query OK, 0 rows affected
-Time: 0.022s
-MySQL>create table t (a int, b int, foreign key fk_a(a) references test.t1(a) ON DELETE SET DEFAULT);
-Query OK, 0 rows affected
-Time: 0.019s
-MySQL>insert into t1 values (1,1);
-Query OK, 1 row affected
-Time: 0.003s
-MySQL>insert into t values (1,1);
-Query OK, 1 row affected
-Time: 0.006s
-MySQL>delete from t1 where a=1;
-(1451, 'Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`a`))')
-MySQL>select version();
-+-----------+
-| version() |
-+-----------+
-| 8.0.29    |
-+-----------+
-```
 
 ### Issue need to be discussed
 
@@ -317,11 +318,153 @@ insert into t2 values (1, 1);
 
 From the plan, you can't see any information about the foreign key constrain which need to delete the related row in child table `t2`.
 
-I think this is a MySQL issue, do we need to be compatible with it, or make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table.
+I think this is a MySQL issue, should we make TiDB plan better, at least when we meet some slow query, we can know maybe it is caused by modify related row in child table.
 
-### Some special case
+##### CockroachDB DML Execution Plan
 
-#### Self-Referencing Tables
+```sql
+CREATE TABLE customers_2 (
+    id INT PRIMARY KEY
+  );
+
+CREATE TABLE orders_2 (
+                          id INT PRIMARY KEY,
+                          customer_id INT REFERENCES customers_2(id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+
+INSERT INTO customers_2 VALUES (1), (2), (3);
+INSERT INTO orders_2 VALUES (100,1), (101,2), (102,3), (103,1);
+```
+
+```sql
+> explain analyze UPDATE customers_2 SET id = 23 WHERE id = 1;
+                       info
+--------------------------------------------------
+  planning time: 494µs
+  execution time: 5ms
+  distribution: local
+  vectorized: true
+  rows read from KV: 6 (170 B)
+  cumulative time spent in KV: 978µs
+  maximum memory usage: 100 KiB
+  network usage: 0 B (0 messages)
+  regions: us-east1
+
+  • root
+  │
+  ├── • update
+  │   │ nodes: n1
+  │   │ regions: us-east1
+  │   │ actual row count: 1
+  │   │ table: customers_2
+  │   │ set: id
+  │   │
+  │   └── • buffer
+  │       │ label: buffer 1
+  │       │
+  │       └── • render
+  │           │ nodes: n1
+  │           │ regions: us-east1
+  │           │ actual row count: 1
+  │           │ KV rows read: 1
+  │           │ KV bytes read: 27 B
+  │           │
+  │           └── • scan
+  │                 nodes: n1
+  │                 regions: us-east1
+  │                 actual row count: 1
+  │                 KV rows read: 1
+  │                 KV bytes read: 27 B
+  │                 missing stats
+  │                 table: customers_2@primary
+  │                 spans: [/1 - /1]
+  │                 locking strength: for update
+  │
+  └── • fk-cascade
+        fk: fk_customer_id_ref_customers_2
+        input: buffer 1
+```
+
+##### PostgreSQL DML Execution Plan
+
+```sql
+postgres=# explain analyze UPDATE customers_2 SET id = 20 WHERE id = 23;
+                                                             QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------
+ Update on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.039..0.039 rows=0 loops=1)
+   ->  Index Scan using customers_2_pkey on customers_2  (cost=0.15..8.17 rows=1 width=10) (actual time=0.016..0.016 rows=1 loops=1)
+         Index Cond: (id = 23)
+ Planning Time: 0.057 ms
+ Trigger for constraint orders_2_customer_id_fkey on customers_2: time=0.045 calls=1
+ Trigger for constraint orders_2_customer_id_fkey on orders_2: time=0.023 calls=2
+ Execution Time: 0.129 ms
+```
+
+## Other Technical Design
+
+### How to check foreign key integrity?
+
+How MySQL to do this? Look like MySQL doesn't provide any method, but the user can use stored procedure to do this, see: https://stackoverflow.com/questions/2250775/force-innodb-to-recheck-foreign-keys-on-a-table-tables
+
+Maybe We can use following syntax to check foreign key integrity:
+
+```sql
+ADMIN CHECK FOREIGN KEY [table_name] [foreign_key_name]
+```
+
+which implemention is use following SQL to check:
+
+```sql
+select count(*) from t where t.a not in (select id from t_refer);
+```
+
+## Impact
+
+### Impact of data replication
+
+todo
+
+## Test Case
+
+cascade modification test case:
+
+```sql
+drop table if exists t3,t2,t1;
+create table t1 (id int key,a int, index(a));
+create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
+create table t3 (id int key,a int, foreign key fk(a) references t2(id) ON DELETE CASCADE);
+insert into t1 values (1,1);
+insert into t2 values (2,1);
+insert into t3 values (3,2);
+delete from t1 where id = 1;  -- both t1, t2, t3 rows are deleted.
+```
+
+following is a MySQL test case about `SET DEFAULT`:
+
+```sql
+MySQL>create table t1 (a int,b int, index(a,b)) ;
+Query OK, 0 rows affected
+Time: 0.022s
+MySQL>create table t (a int, b int, foreign key fk_a(a) references test.t1(a) ON DELETE SET DEFAULT);
+Query OK, 0 rows affected
+Time: 0.019s
+MySQL>insert into t1 values (1,1);
+Query OK, 1 row affected
+Time: 0.003s
+MySQL>insert into t values (1,1);
+Query OK, 1 row affected
+Time: 0.006s
+MySQL>delete from t1 where a=1;
+(1451, 'Cannot delete or update a parent row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_1` FOREIGN KEY (`a`) REFERENCES `t1` (`a`))')
+MySQL>select version();
++-----------+
+| version() |
++-----------+
+| 8.0.29    |
++-----------+
+```
+
+### Self-Referencing Tables
 
 For example, table `employee` has a column `manager_id` references to `employee.id`.
 
@@ -349,7 +492,7 @@ test> insert into t values (1,1);
 (1452, 'Cannot add or update a child row: a foreign key constraint fails (`test`.`t`, CONSTRAINT `t_ibfk_2` FOREIGN KEY (`id`) REFERENCES `t` (`a`) ON DELETE CASCADE)')
 ```
 
-#### Cyclical Dependencies
+### Cyclical Dependencies
 
 ```sql
 create table t1 (id int key,a int, index(a));
@@ -380,9 +523,11 @@ test> select * from t1;
 0 rows in set
 ```
 
-#### MATCH FULL or MATCH SIMPLE
+### MATCH FULL or MATCH SIMPLE
 
 This definition is from [CRDB](https://www.cockroachlabs.com/docs/v22.1/foreign-key.html#match-composite-foreign-keys-with-match-simple-and-match-full). MySQL doesn't mention it, here is a MySQL test case:
+
+Here is an MySQL example:
 
 ```sql
 create table t1 (i int, a int,b int, index(a,b)) ;
@@ -395,27 +540,6 @@ Query OK, 1 row affected
 test> insert into t values (1,null);
 Query OK, 1 row affected
 ```
-
-I think keep this behavior consistent with MySQL is better.
-
-
-## Other Technical Design
-
-### How to check foreign key integrity?
-
-How MySQL to do this? Look like MySQL doesn't provide any method, but the user can use stored procedure to do this, see: https://stackoverflow.com/questions/2250775/force-innodb-to-recheck-foreign-keys-on-a-table-tables
-
-Maybe We can use following syntax to check foreign key integrity:
-
-```sql
-ADMIN CHECK FOREIGN KEY [table_name] [foreign_key_name]
-```
-
-## Impact
-
-### Impact of data replication
-
-todo
 
 ### reference
 

@@ -1481,12 +1481,6 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// TableColumnID is composed by table ID and column ID.
-type TableColumnID struct {
-	TableID  int64
-	ColumnID int64
-}
-
 // TableItemID is composed by table ID and column/index ID
 type TableItemID struct {
 	TableID int64

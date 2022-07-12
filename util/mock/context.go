@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (
@@ -61,9 +62,33 @@ type Context struct {
 
 type wrapTxn struct {
 	kv.Transaction
+	tsFuture oracle.Future
 }
 
-func (txn *wrapTxn) Wait(_ context.Context, _ sessionctx.Context) (kv.Transaction, error) {
+func (txn *wrapTxn) validOrPending() bool {
+	return txn.tsFuture != nil || txn.Transaction.Valid()
+}
+
+func (txn *wrapTxn) pending() bool {
+	return txn.Transaction == nil && txn.tsFuture != nil
+}
+
+// Wait creates a new kvTransaction
+func (txn *wrapTxn) Wait(_ context.Context, sctx sessionctx.Context) (kv.Transaction, error) {
+	if !txn.validOrPending() {
+		return txn, errors.AddStack(kv.ErrInvalidTxn)
+	}
+	if txn.pending() {
+		ts, err := txn.tsFuture.Wait()
+		if err != nil {
+			return nil, err
+		}
+		kvTxn, err := sctx.GetStore().Begin(tikv.WithStartTS(ts))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		txn.Transaction = kvTxn
+	}
 	return txn, nil
 }
 
@@ -311,7 +336,7 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // UpdateColStatsUsage updates the column stats usage.
-func (c *Context) UpdateColStatsUsage(_ []model.TableColumnID) {}
+func (c *Context) UpdateColStatsUsage(_ []model.TableItemID) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
@@ -366,11 +391,17 @@ func (c *Context) HasLockedTables() bool {
 
 // PrepareTSFuture implements the sessionctx.Context interface.
 func (c *Context) PrepareTSFuture(ctx context.Context, future oracle.Future, scope string) error {
+	c.txn.Transaction = nil
+	c.txn.tsFuture = future
 	return nil
 }
 
-// GetPreparedTxnFuture returns the prepared ts future
+// GetPreparedTxnFuture returns the TxnFuture if it is prepared.
+// It returns nil otherwise.
 func (c *Context) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	if !c.txn.validOrPending() {
+		return nil
+	}
 	return &c.txn
 }
 
