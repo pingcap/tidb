@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -78,6 +79,7 @@ type GCWorker struct {
 		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
 		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 	}
+	logBackupEnabled bool
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -1018,11 +1020,15 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurrency int, usePhysical bool) (bool, error) {
-	// tryResolveLocksTS is defined as `now() - gcTryResolveLocksIntervalFromNow`,
-	// it used for trying resolve locks, ts of which is smaller than tryResolveLocksTS and expired.
-	tryResolveLocksTS, err := w.getTryResolveLocksTS()
-	if err != nil {
-		return false, err
+	var err error
+	tryResolveLocksTS := safePoint
+	if w.logBackupEnabled {
+		// tryResolveLocksTS is defined as `now() - gcTryResolveLocksIntervalFromNow`,
+		// it used for trying resolve locks, ts of which is smaller than tryResolveLocksTS and expired.
+		tryResolveLocksTS, err = w.getTryResolveLocksTS()
+		if err != nil {
+			return false, err
+		}
 	}
 
 	if tryResolveLocksTS < safePoint {
@@ -1839,6 +1845,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	se.RollbackTxn(ctx)
+	w.logBackupEnabled = utils.IsLogBackupEnabled(se)
 	return false, nil
 }
 

@@ -1871,6 +1871,8 @@ func TestGCWithPendingTxn(t *testing.T) {
 
 func TestGCWithPendingTxn2(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
+	// only when log backup enabled will scan locks after safepoint.
+	s.gcWorker.logBackupEnabled = true
 	defer clean()
 
 	ctx := gcContext()
