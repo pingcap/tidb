@@ -60,4 +60,10 @@ var (
 		Name:      "region_request_failure",
 		Help:      "The failure reasons of requesting region checkpoints.",
 	}, []string{"reason"})
+	CurrentAdvancerState = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "current_advancer_state",
+		Help:      "The current advancer state; 1 -> full scan; 2 -> update small tree",
+	})
 )

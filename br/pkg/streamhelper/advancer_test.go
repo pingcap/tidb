@@ -18,6 +18,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func prepareConfigForTest(a *streamhelper.CheckpointAdvancer) {
+	a.UpdateConfigWith(func(c *config.Config) {
+		c.FullScanTick = 0
+		c.UpdateSmallTreeTick = 0
+		c.ConsistencyCheckTick = 0
+	})
+}
+
 func TestBasic(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
@@ -38,6 +46,7 @@ func TestBasic(t *testing.T) {
 }
 
 func TestTick(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, false)
 	defer func() {
 		fmt.Println(c)
@@ -47,6 +56,7 @@ func TestTick(t *testing.T) {
 	defer cancel()
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	prepareConfigForTest(adv)
 	adv.StartTaskListener(ctx)
 	adv.UpdateConfigWith(func(cac *config.Config) {
 		cac.FullScanTick = 0
@@ -72,10 +82,8 @@ func TestWithFailure(t *testing.T) {
 	defer cancel()
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	prepareConfigForTest(adv)
 	adv.StartTaskListener(ctx)
-	adv.UpdateConfigWith(func(cac *config.Config) {
-		cac.FullScanTick = 0
-	})
 	require.NoError(t, adv.OnTick(ctx))
 
 	cp := c.advanceCheckpoints()
@@ -86,12 +94,39 @@ func TestWithFailure(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	require.Less(t, env.getCheckpoint(), cp, "%d %d", env.getCheckpoint(), cp)
 
-	for _, v := range c.stores {
-		v.flush()
-	}
+	c.flushAll()
 
 	require.NoError(t, adv.OnTick(ctx))
 	require.Equal(t, env.getCheckpoint(), cp)
+}
+
+func TestFullWithFailure(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	c := createFakeCluster(t, 4, true)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	c.flushAll()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	prepareConfigForTest(adv)
+	adv.StartTaskListener(ctx)
+
+	cp := c.advanceCheckpoints()
+	for _, v := range c.stores {
+		v.flush()
+		break
+	}
+	require.NoError(t, adv.OnTick(ctx))
+	require.Greater(t, cp, env.checkpoint)
+
+	c.flushAll()
+	require.NoError(t, adv.OnTick(ctx))
+	require.Equal(t, cp, env.checkpoint)
 }
 
 func shouldFinishInTime(t *testing.T, d time.Duration, name string, f func()) {
@@ -126,6 +161,7 @@ func TestCollectorFailure(t *testing.T) {
 
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	prepareConfigForTest(adv)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 
 	shouldFinishInTime(t, 30*time.Second, "scan with always fail", func() {
@@ -167,6 +203,7 @@ func TestOneStoreFailure(t *testing.T) {
 
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)
+	prepareConfigForTest(adv)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
 	c.onGetClient = oneStoreFailure()

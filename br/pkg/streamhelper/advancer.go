@@ -78,30 +78,45 @@ type advancerState interface {
 	// Leave it empty for now.
 
 	// ~*fullScan | ~*updateSmallTree
+
+	// Descriptor returns the variant type of the advancer state as integer.
+	Descriptor() int
 }
 
 // fullScan is the initial state of advancer.
 // in this stage, we would "fill" the cache:
 // insert ranges that union of them become the full range of task.
 type fullScan struct {
-	fullScanTick int
+	todo              []kv.KeyRange
+	ticker            *utils.SyncIntervalExecutor
+	checkpointTillNow uint64
+}
+
+func (f *fullScan) Descriptor() int {
+	return 1
 }
 
 // updateSmallTree is the "incremental stage" of advancer.
 // we have build a "filled" cache, and we can pop a subrange of it,
 // try to advance the checkpoint of those ranges.
 type updateSmallTree struct {
-	consistencyCheckTick int
+	consistencyCheckTicker *utils.SyncIntervalExecutor
+	updateSmallTreeTicker  *utils.SyncIntervalExecutor
+}
+
+func (u *updateSmallTree) Descriptor() int {
+	return 2
 }
 
 // NewCheckpointAdvancer creates a checkpoint advancer with the env.
 func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
-	return &CheckpointAdvancer{
+	c := &CheckpointAdvancer{
 		env:   env,
 		cfg:   config.Default(),
 		cache: NewCheckpoints(),
-		state: &fullScan{},
 	}
+	c.resetToFullScan()
+	return c
 }
 
 // disableCache removes the cache.
@@ -109,14 +124,37 @@ func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 // you may need to change the config `AdvancingByCache`.
 func (c *CheckpointAdvancer) disableCache() {
 	c.cache = NoOPCheckpointCache{}
-	c.state = &fullScan{}
+	c.resetToFullScan()
 }
 
 // enable the cache.
 // also check `AdvancingByCache` in the config.
 func (c *CheckpointAdvancer) enableCache() {
 	c.cache = NewCheckpoints()
-	c.state = &fullScan{}
+	c.resetToFullScan()
+}
+
+func (c *CheckpointAdvancer) resetToFullScan() {
+	log.Info("advancer: entering into full scan.")
+	fs := &fullScan{
+		todo:              []kv.KeyRange{{}},
+		ticker:            utils.ExecuteEvery(c.Config().FullScanTick, c.onFullScanTicking),
+		checkpointTillNow: uint64(math.MaxUint64),
+	}
+	c.state = fs
+}
+
+func (c *CheckpointAdvancer) resetToUploadSmallTree() error {
+	log.Info("advancer: entering into upload small tree.")
+	if err := c.cache.ConsistencyCheck(); err != nil {
+		return err
+	}
+	ust := &updateSmallTree{
+		consistencyCheckTicker: utils.ExecuteEvery(c.Config().ConsistencyCheckTick, c.onConsistencyCheckTick),
+		updateSmallTreeTicker:  utils.ExecuteEvery(c.Config().UpdateSmallTreeTick, c.onUpdateSmallTreeTick),
+	}
+	c.state = ust
+	return nil
 }
 
 // UpdateConfig updates the config for the advancer.
@@ -125,6 +163,7 @@ func (c *CheckpointAdvancer) enableCache() {
 // (Maybe by applying changes at begin of ticking, and add locks.)
 func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
 	needRefreshCache := newConf.AdvancingByCache != c.cfg.AdvancingByCache
+	needsRefreshState := newConf.FullScanTick != c.cfg.FullScanTick
 	c.cfg = newConf
 	if needRefreshCache {
 		if c.cfg.AdvancingByCache {
@@ -132,6 +171,9 @@ func (c *CheckpointAdvancer) UpdateConfig(newConf config.Config) {
 		} else {
 			c.disableCache()
 		}
+	}
+	if needsRefreshState {
+		c.resetToFullScan()
 	}
 }
 
@@ -255,42 +297,37 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 	return ts, nil
 }
 
-// CalculateGlobalCheckpoint calculates the global checkpoint, which won't use the cache.
-func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uint64, error) {
-	var (
-		cp = uint64(math.MaxInt64)
-		// TODO: Use The task range here.
-		thisRun []kv.KeyRange = []kv.KeyRange{{}}
-		nextRun []kv.KeyRange
-	)
+// TryCalculateGlobalCheckpoint calculates the global checkpoint, which won't use the cache.
+// note this function would modify the internal status.
+func (c *CheckpointAdvancer) TryCalculateGlobalCheckpoint(ctx context.Context) (uint64, error) {
+	s := c.state.(*fullScan)
+
 	defer c.recordTimeCost("record all")
-	for {
-		coll := NewClusterCollector(ctx, c.env)
-		coll.setOnSuccessHook(c.cache.InsertRange)
-		for _, u := range thisRun {
-			err := c.GetCheckpointInRange(ctx, u.StartKey, u.EndKey, coll)
-			if err != nil {
-				return 0, err
-			}
-		}
-		result, err := coll.Finish(ctx)
+	coll := NewClusterCollector(ctx, c.env)
+	coll.setOnSuccessHook(c.cache.InsertRange)
+	for _, u := range s.todo {
+		err := c.GetCheckpointInRange(ctx, u.StartKey, u.EndKey, coll)
 		if err != nil {
 			return 0, err
 		}
-		log.Debug("full: a run finished", zap.Any("checkpoint", result))
-
-		nextRun = append(nextRun, result.FailureSubRanges...)
-		if cp > result.Checkpoint {
-			cp = result.Checkpoint
-		}
-		if len(nextRun) == 0 {
-			return cp, nil
-		}
-		thisRun = nextRun
-		nextRun = nil
-		log.Debug("backoffing with subranges", zap.Int("subranges", len(thisRun)))
-		time.Sleep(c.cfg.BackoffTime)
 	}
+	result, err := coll.Finish(ctx)
+	if err != nil {
+		return 0, err
+	}
+	log.Debug("full: a run finished", zap.Any("checkpoint", result))
+
+	if s.checkpointTillNow > result.Checkpoint {
+		s.checkpointTillNow = result.Checkpoint
+	}
+	if len(result.FailureSubRanges) == 0 {
+		return s.checkpointTillNow, nil
+	}
+	s.todo = CollapseRanges(len(result.FailureSubRanges), func(i int) kv.KeyRange {
+		return result.FailureSubRanges[i]
+	})
+	log.Debug("backing off with subranges", zap.Int("subranges", len(s.todo)))
+	return 0, nil
 }
 
 // CollapseRanges collapse ranges overlapping or adjacent.
@@ -423,12 +460,9 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
-// advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
-func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpoint func(context.Context) (uint64, error)) error {
-	start := time.Now()
-	cp, err := getCheckpoint(ctx)
-	if err != nil {
-		return err
+func (c *CheckpointAdvancer) uploadCheckpoint(ctx context.Context, cp uint64) error {
+	if cp == 0 {
+		return nil
 	}
 	log.Info("get checkpoint", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
 	if cp < c.lastCheckpoint {
@@ -437,18 +471,27 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	if cp <= c.lastCheckpoint {
 		return nil
 	}
-
-	log.Info("uploading checkpoint for task",
+	logutil.CL(ctx).Info("uploading checkpoint for task",
 		zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp)),
 		zap.Uint64("checkpoint", cp),
-		zap.String("task", c.task.Name),
-		zap.Stringer("take", time.Since(start)))
+		zap.String("task", c.task.Name))
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, cp); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
 	c.lastCheckpoint = cp
 	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
 	return nil
+}
+
+// advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
+func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpoint func(context.Context) (uint64, error)) error {
+	start := time.Now()
+	cp, err := getCheckpoint(ctx)
+	if err != nil {
+		return err
+	}
+	cx := logutil.ContextWithField(ctx, zap.Stringer("take", time.Since(start)))
+	return c.uploadCheckpoint(cx, cp)
 }
 
 // OnTick advances the inner logic clock for the advancer.
@@ -467,20 +510,32 @@ func (c *CheckpointAdvancer) OnTick(ctx context.Context) (err error) {
 	return
 }
 
-func (c *CheckpointAdvancer) onConsistencyCheckTick(s *updateSmallTree) error {
-	if s.consistencyCheckTick > 0 {
-		s.consistencyCheckTick--
-		return nil
-	}
-	defer c.recordTimeCost("consistency check")()
-	err := c.cache.ConsistencyCheck()
+func (c *CheckpointAdvancer) onUpdateSmallTreeTick(ctx context.Context) error {
+	return c.advanceCheckpointBy(ctx, c.CalculateGlobalCheckpointLight)
+}
+
+func (c *CheckpointAdvancer) onFullScanTicking(ctx context.Context) error {
+	cp, err := c.TryCalculateGlobalCheckpoint(ctx)
 	if err != nil {
-		log.Error("consistency check failed! log backup may lose data! rolling back to full scan for saving.", logutil.ShortError(err))
-		c.state = &fullScan{}
 		return err
 	}
-	log.Debug("consistency check passed.")
-	s.consistencyCheckTick = config.DefaultConsistencyCheckTick
+	if cp == 0 {
+		// failed in this run, let's try to fill todos later.
+		return nil
+	}
+	err = c.uploadCheckpoint(ctx, cp)
+	if err != nil {
+		return err
+	}
+
+	if c.cfg.AdvancingByCache {
+		err = c.resetToUploadSmallTree()
+		if err != nil {
+			return errors.Annotatef(err, "trying to enter `updateSmallTree` without full range of cache")
+		}
+		return nil
+	}
+	c.resetToFullScan()
 	return nil
 }
 
@@ -488,33 +543,22 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 
+	if c.task == nil {
+		log.Debug("No tasks yet, skipping advancing.")
+		return nil
+	}
+
+	metrics.CurrentAdvancerState.Set(float64(c.state.Descriptor()))
 	switch s := c.state.(type) {
 	case *fullScan:
-		if s.fullScanTick > 0 {
-			s.fullScanTick--
-			break
-		}
-		if c.task == nil {
-			log.Debug("No tasks yet, skipping advancing.")
-			return nil
-		}
-		defer func() {
-			s.fullScanTick = c.cfg.FullScanTick
-		}()
-		err := c.advanceCheckpointBy(ctx, c.CalculateGlobalCheckpoint)
-		if err != nil {
+		if err := s.ticker.OnTick(ctx); err != nil {
 			return err
-		}
-
-		if c.cfg.AdvancingByCache {
-			c.state = &updateSmallTree{}
 		}
 	case *updateSmallTree:
-		if err := c.onConsistencyCheckTick(s); err != nil {
+		if err := s.consistencyCheckTicker.OnTick(ctx); err != nil {
 			return err
 		}
-		err := c.advanceCheckpointBy(ctx, c.CalculateGlobalCheckpointLight)
-		if err != nil {
+		if err := s.updateSmallTreeTicker.OnTick(ctx); err != nil {
 			return err
 		}
 	default:

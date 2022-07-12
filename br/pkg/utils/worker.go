@@ -3,6 +3,8 @@
 package utils
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -129,4 +131,31 @@ func PanicToErr(err *error) {
 		*err = errors.Annotatef(berrors.ErrUnknown, "panicked when executing, message: %v", item)
 		log.Warn("checkpoint advancer panicked, recovering", zap.StackSkip("stack", 1), logutil.ShortError(*err))
 	}
+}
+
+// SyncIntervalExecutor executes tasks by a logic timer.
+type SyncIntervalExecutor struct {
+	tickInterval   int
+	beforeNextTick int
+	do             func(ctx context.Context) error
+}
+
+// ExecuteEvery creates a executor which would execute the function `f` after n ticks.
+func ExecuteEvery(nTick int, f func(ctx context.Context) error) *SyncIntervalExecutor {
+	return &SyncIntervalExecutor{
+		tickInterval:   nTick,
+		beforeNextTick: 0,
+		do:             f,
+	}
+}
+
+// OnTick advances the internal logic timer of the executor.
+func (t *SyncIntervalExecutor) OnTick(ctx context.Context) error {
+	log.Debug("tick-tok", zap.Int("interval", t.tickInterval), zap.Int("before", t.beforeNextTick))
+	if t.beforeNextTick == 0 {
+		t.beforeNextTick = t.tickInterval
+		return t.do(ctx)
+	}
+	t.beforeNextTick--
+	return nil
 }

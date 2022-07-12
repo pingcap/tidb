@@ -221,6 +221,7 @@ type runningStoreCollector struct {
 
 // clusterCollector is the controller for collecting region checkpoints for the cluster.
 // It creates multi store collectors.
+//
 //                             ┌──────────────────────┐ Requesting   ┌────────────┐
 //                          ┌─►│ StoreCollector[id=1] ├─────────────►│ TiKV[id=1] │
 //                          │  └──────────────────────┘              └────────────┘

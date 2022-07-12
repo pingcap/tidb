@@ -336,7 +336,7 @@ func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 		leader:     stores[0].id,
 		epoch:      0,
 		id:         c.idAlloc(),
-		checkpoint: 0,
+		checkpoint: 1,
 		fsim: flushSimulator{
 			enabled: simEnabled,
 		},
