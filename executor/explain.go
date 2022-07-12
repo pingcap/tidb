@@ -16,6 +16,8 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -100,17 +102,24 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 		}()
-		if e.ctx.GetSessionVars().MemoryDebugModeThreshold != 0 &&
-			e.ctx.GetSessionVars().MemoryDebugModeRatio != 0 {
-			debugModeCtx, cancel := context.WithCancel(ctx)
+		if minHeapInUse, alarmRatio := e.ctx.GetSessionVars().MemoryDebugModeMinHeapInUse, e.ctx.GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
+			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
 			waitGroup := sync.WaitGroup{}
 			waitGroup.Add(1)
-			e.runMemoryDebugGoroutine(debugModeCtx, &waitGroup)
 			defer func() {
 				// Notify and wait debug goroutine exit.
 				cancel()
 				waitGroup.Wait()
 			}()
+			go (&memoryDebugModeHandler{
+				ctx:          memoryDebugModeCtx,
+				sctx:         e.ctx,
+				minHeapInUse: int64(math.Abs(float64(minHeapInUse))),
+				alarmRatio:   alarmRatio,
+				autoGC:       minHeapInUse > 0,
+				memTracker:   e.ctx.GetSessionVars().StmtCtx.MemTracker,
+				wg:           &waitGroup,
+			}).run()
 		}
 		e.executed = true
 		chk := newFirstChunk(e.analyzeExec)
@@ -147,106 +156,116 @@ func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
 	return nil
 }
 
-func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.WaitGroup) {
-	threshold := e.ctx.GetSessionVars().MemoryDebugModeThreshold
-	ratio := e.ctx.GetSessionVars().MemoryDebugModeRatio
-	var debugMode int
-	if threshold > 0 {
-		debugMode = 2
-	} else {
-		debugMode = 1
-		threshold = -threshold
-	}
-	ticker := time.NewTicker(5 * time.Second)
-	tracker := e.ctx.GetSessionVars().StmtCtx.MemTracker
-	instanceStats := &runtime.MemStats{}
-	var heapInUse, trackedMem uint64
+type memoryDebugModeHandler struct {
+	ctx          context.Context
+	sctx         sessionctx.Context
+	minHeapInUse int64
+	alarmRatio   int64
+	autoGC       bool
+	wg           *sync.WaitGroup
+	memTracker   *memory.Tracker
 
-	updateMemoryUsage := func(gc bool) {
-		if gc {
-			runtime.GC()
-		}
-		runtime.ReadMemStats(instanceStats)
-		heapInUse = instanceStats.HeapInuse
-		trackedMem = uint64(tracker.BytesConsumed())
-	}
-
-	go func() {
-		logutil.BgLogger().Info("Memory Debug Mode",
-			zap.String("sql", "started"),
-			zap.Int("mode", debugMode),
-			zap.String("threshold", memory.FormatBytes(threshold)),
-			zap.Int64("ratio", ratio),
-		)
-
-		var infoField []zap.Field
-		var err error
-		var fileName string
-		genInfo := func(status string, needProfile bool, gc bool) []zap.Field {
-			infoField = infoField[:0]
-			infoField = append(infoField, zap.String("sql", status))
-			infoField = append(infoField, zap.String("heap in use", memory.FormatBytes(int64(heapInUse))))
-			infoField = append(infoField, zap.String("tracked memory", memory.FormatBytes(int64(trackedMem))))
-			if needProfile {
-				fileName, err = getHeapProfile(gc)
-				infoField = append(infoField, zap.String("heap profile", fileName))
-			}
-			return infoField
-		}
-
-		defer func() {
-			updateMemoryUsage(true)
-			if err == nil {
-				logutil.BgLogger().Info("Memory Debug Mode", genInfo("finished", true, false)...)
-			} else {
-				logutil.BgLogger().Error("Memory Debug Mode", genInfo("debug_mode_error", false, false)...)
-				logutil.BgLogger().Error("Memory Debug Mode Exit", zap.Error(err))
-			}
-			wg.Done()
-		}()
-		times := 0
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				updateMemoryUsage(debugMode == 2)
-
-				times++
-				if times%6 == 0 {
-					logutil.BgLogger().Info("Memory Debug Mode", genInfo("running", false, false)...)
-				}
-
-				if debugMode == 1 {
-					if heapInUse > uint64(threshold) && trackedMem/10*uint64(100+ratio) < heapInUse {
-						logutil.BgLogger().Warn("Memory Debug Mode", genInfo("warning", true, true)...)
-					}
-				} else {
-					if heapInUse > uint64(threshold) && trackedMem/100*uint64(100+ratio) < heapInUse {
-						logutil.BgLogger().Warn("Memory Debug Mode", genInfo("warning", true, false)...)
-						ts := tracker.SearchTrackerConsumedMoreThanNBytes(threshold / 5)
-						logs := make([]zap.Field, 0, len(ts))
-						for _, t := range ts {
-							logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
-						}
-						logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
-					}
-				}
-				if err != nil {
-					// Exit debug mode.
-					return
-				}
-			}
-		}
-	}()
+	infoField []zap.Field
 }
 
-func getHeapProfile(gc bool) (fileName string, err error) {
-	tempDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
-	timeString := time.Now().Format(time.RFC3339)
+func (h *memoryDebugModeHandler) fetchCurrentMemoryUsage(gc bool) (heapInUse, trackedMem uint64) {
 	if gc {
 		runtime.GC()
 	}
+	instanceStats := &runtime.MemStats{}
+	runtime.ReadMemStats(instanceStats)
+	heapInUse = instanceStats.HeapInuse
+	trackedMem = uint64(h.memTracker.BytesConsumed())
+	return
+}
+
+func (h *memoryDebugModeHandler) genInfo(status string, needProfile bool, heapInUse, trackedMem int64) (fields []zap.Field, err error) {
+	var fileName string
+	h.infoField = h.infoField[:0]
+	h.infoField = append(h.infoField, zap.String("sql", status))
+	h.infoField = append(h.infoField, zap.String("heap in use", memory.FormatBytes(heapInUse)))
+	h.infoField = append(h.infoField, zap.String("tracked memory", memory.FormatBytes(trackedMem)))
+	if needProfile {
+		fileName, err = getHeapProfile()
+		h.infoField = append(h.infoField, zap.String("heap profile", fileName))
+	}
+	return h.infoField, err
+}
+
+func (h *memoryDebugModeHandler) run() {
+	var err error
+	defer func() {
+		heapInUse, trackedMem := h.fetchCurrentMemoryUsage(true)
+		if err == nil {
+			fields, err := h.genInfo("finished", true, int64(heapInUse), int64(trackedMem))
+			logutil.BgLogger().Info("Memory Debug Mode", fields...)
+			if err != nil {
+				logutil.BgLogger().Error("Memory Debug Mode Exit", zap.Error(err))
+			}
+		} else {
+			fields, err := h.genInfo("debug_mode_error", false, int64(heapInUse), int64(trackedMem))
+			logutil.BgLogger().Error("Memory Debug Mode", fields...)
+			logutil.BgLogger().Error("Memory Debug Mode Exit", zap.Error(err))
+		}
+		h.wg.Done()
+	}()
+
+	logutil.BgLogger().Info("Memory Debug Mode",
+		zap.String("sql", "started"),
+		zap.Bool("autoGC", h.autoGC),
+		zap.String("threshold", memory.FormatBytes(h.minHeapInUse)),
+		zap.Int64("ratio", h.alarmRatio),
+	)
+	ticker, loop := time.NewTicker(5*time.Second), 0
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case <-ticker.C:
+			heapInUse, trackedMem := h.fetchCurrentMemoryUsage(h.autoGC)
+			loop++
+			if loop%6 == 0 {
+				fields, err := h.genInfo("running", false, int64(heapInUse), int64(trackedMem))
+				logutil.BgLogger().Info("Memory Debug Mode", fields...)
+				if err != nil {
+					return
+				}
+			}
+
+			if !h.autoGC {
+				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {
+					fields, err := h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
+					logutil.BgLogger().Warn("Memory Debug Mode", fields...)
+					if err != nil {
+						return
+					}
+				}
+			} else {
+				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {
+					fields, err := h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
+					logutil.BgLogger().Warn("Memory Debug Mode", fields...)
+					if err != nil {
+						return
+					}
+					ts := h.memTracker.SearchTrackerConsumedMoreThanNBytes(h.minHeapInUse / 5)
+					logs := make([]zap.Field, 0, len(ts))
+					for _, t := range ts {
+						logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
+					}
+					logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
+				}
+			}
+			if err != nil {
+				// Exit debug mode.
+				return
+			}
+		}
+	}
+}
+
+func getHeapProfile() (fileName string, err error) {
+	tempDir := filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
+	timeString := time.Now().Format(time.RFC3339)
 	fileName = filepath.Join(tempDir, "heapGC"+timeString)
 	f, err := os.Create(fileName)
 	if err != nil {

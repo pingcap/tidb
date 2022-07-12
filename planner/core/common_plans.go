@@ -1255,8 +1255,8 @@ func (e *Explain) RenderResult() error {
 			flat := FlattenPhysicalPlan(e.TargetPlan, true)
 			e.explainFlatPlanInRowFormat(flat)
 			if e.Analyze &&
-				e.SCtx().GetSessionVars().MemoryDebugModeThreshold != 0 &&
-				e.SCtx().GetSessionVars().MemoryDebugModeRatio > 0 {
+				e.SCtx().GetSessionVars().MemoryDebugModeMinHeapInUse != 0 &&
+				e.SCtx().GetSessionVars().MemoryDebugModeAlarmRatio > 0 {
 				row := e.Rows[0]
 				tracker := e.SCtx().GetSessionVars().StmtCtx.MemTracker
 				row[7] = row[7] + "(Total: " + tracker.FormatBytes(tracker.MaxConsumed()) + ")"

@@ -1166,10 +1166,11 @@ type SessionVars struct {
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
 
-	// MemoryDebugModeThreshold indicated the trigger threshold of memory tracking accuracy check.
-	MemoryDebugModeThreshold int64
-	// MemoryDebugModeRatio indicated the allowable bias ratio of memory tracking accuracy check.
-	MemoryDebugModeRatio int64
+	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
+	MemoryDebugModeMinHeapInUse int64
+	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
+	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
+	MemoryDebugModeAlarmRatio int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
