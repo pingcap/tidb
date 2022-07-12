@@ -121,7 +121,13 @@
       "select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
       "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
       "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
-      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;"
+      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t1, t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;"
     ]
   },
   {
@@ -130,7 +136,13 @@
       "select /*+ straight_join() */ * from t, t1, t2 where t.a = t1.a and t1.b=t2.b;",
       "select /*+ straight_join() */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
       "select /*+ leading(t1) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
-      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;"
+      "select /*+ leading(t1, t3) */ * from t, t1, t2, t3 where t.a = t1.a and t1.b=t2.b and t2.b=t3.b;",
+      "select /*+ leading(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t1, t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t1, t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 on t2.b=t3.b;"
     ]
   },
   {
