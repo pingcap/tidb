@@ -1668,6 +1668,13 @@ var defaultSysVars = []*SysVar{
 			s.TiFlashFineGrainedShuffleBatchSize = uint64(TidbOptInt64(val, DefTiFlashFineGrainedShuffleBatchSize))
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBExtensionNonMySQLCompatible, Value: BoolToOnOff(DefTiDBExtensionNonMySQLCompatible), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.ExtensionNonMySQLCompatible = TiDBOptOn(val)
+			return nil
+		},
+	},
+
 	{Scope: ScopeGlobal, Name: TiDBSimplifiedMetrics, Value: BoolToOnOff(DefTiDBSimplifiedMetrics), Type: TypeBool,
 		SetGlobal: func(vars *SessionVars, s string) error {
 			metrics.ToggleSimplifiedMode(TiDBOptOn(s))

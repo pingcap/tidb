@@ -1046,7 +1046,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		// If PKIsHandle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
-		buf.WriteString(" /*T![clustered_index] CLUSTERED */")
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			buf.WriteString(" /*T![clustered_index]")
+		}
+		buf.WriteString(" CLUSTERED")
+		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			buf.WriteString(" */")
+		}
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -1089,10 +1095,16 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				buf.WriteString(" /*T![clustered_index]")
+			}
 			if tableInfo.HasClusteredIndex() {
-				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
+				buf.WriteString(" CLUSTERED")
 			} else {
-				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
+				buf.WriteString(" NONCLUSTERED")
+			}
+			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+				buf.WriteString(" */")
 			}
 		}
 		if i != len(publicIndices)-1 {
@@ -1123,9 +1135,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
-	buf.WriteString("\n")
+	buf.WriteString("\n)")
 
-	buf.WriteString(") ENGINE=InnoDB")
+	if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		buf.WriteString(" ENGINE=InnoDB")
+	}
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1221,7 +1235,9 @@ func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *mode
 	} else {
 		buf.WriteString("nocycle ")
 	}
-	buf.WriteString("ENGINE=InnoDB")
+	if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		buf.WriteString("ENGINE=InnoDB")
+	}
 	if len(sequenceInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(sequenceInfo.Comment))
 	}

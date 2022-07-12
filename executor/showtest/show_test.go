@@ -458,6 +458,26 @@ func TestShowCreateTable(t *testing.T) {
 			"  `b` varchar(20) DEFAULT '\\\\',\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test tidb_extension_non_mysql_compatible
+	tk.MustExec("set tidb_extension_non_mysql_compatible = default")
+	tk.MustQuery("select @@tidb_extension_non_mysql_compatible").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+	tk.MustQuery("select @@tidb_extension_non_mysql_compatible").Check(testkit.Rows("1"))
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `b` varchar(20) DEFAULT '\\\\',\n" +
+			"  PRIMARY KEY (`a`) CLUSTERED\n" +
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+	tk.MustQuery("select @@tidb_extension_non_mysql_compatible").Check(testkit.Rows("0"))
+	tk.MustQuery("show create table t;").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL,\n" +
+			"  `b` varchar(20) DEFAULT '\\\\',\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {

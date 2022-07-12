@@ -1165,6 +1165,9 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
+
+	// ExtensionNonMySQLCompatible allows output of SHOW CREATE TABLE etc. to be non-compatible with MySQL
+	ExtensionNonMySQLCompatible bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
