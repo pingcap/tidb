@@ -1083,6 +1083,7 @@ func restoreStream(
 
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
+		client.RunGCRowsLoader(ctx)
 		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
@@ -1110,6 +1111,11 @@ func restoreStream(
 	if err = client.SaveSchemas(ctx, schemasReplace, logMinTS, cfg.RestoreTS); err != nil {
 		return errors.Trace(err)
 	}
+
+	if err = client.InsertGCRows(ctx); err != nil {
+		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
+	}
+
 	return nil
 }
 
