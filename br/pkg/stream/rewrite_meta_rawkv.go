@@ -436,7 +436,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string, insertDeleteRan
 	// skip mDDLJob
 
 	if !strings.HasPrefix(string(e.Key), "mDB") {
-		if strings.HasPrefix(string(e.Key), "mDDLJobH") { // mDDLJobHistory
+		if cf == "default_cf" && strings.HasPrefix(string(e.Key), "mDDLJobH") { // mDDLJobHistory
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
 				log.Debug("failed to decode the job", zap.String("error", err.Error()), zap.String("job", string(e.Value)))
