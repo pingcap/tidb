@@ -102,7 +102,6 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -122,7 +121,8 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage = metrics.TelemetrySQLCTECnt
+	telemetryCTEUsage               = metrics.TelemetrySQLCTECnt
+	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -447,13 +447,16 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	}
 }
 
-func (s *session) UpdateColStatsUsage(predicateColumns []model.TableColumnID) {
+func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 	if s.statsCollector == nil {
 		return
 	}
 	t := time.Now()
-	colMap := make(map[model.TableColumnID]time.Time, len(predicateColumns))
+	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
 	for _, col := range predicateColumns {
+		if col.IsIndex {
+			continue
+		}
 		colMap[col] = t
 	}
 	s.statsCollector.UpdateColStatsUsage(colMap)
@@ -2459,110 +2462,12 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-// setTxnAssertionLevel sets assertion level of a transactin. Note that assertion level should be set only once just
-// after creating a new transaction.
-func setTxnAssertionLevel(txn kv.Transaction, assertionLevel variable.AssertionLevel) {
-	switch assertionLevel {
-	case variable.AssertionLevelOff:
-		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Off)
-	case variable.AssertionLevelFast:
-		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Fast)
-	case variable.AssertionLevelStrict:
-		txn.SetOption(kv.AssertionLevel, kvrpcpb.AssertionLevel_Strict)
-	}
-}
-
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !active {
 		return &s.txn, nil
 	}
 	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
 	return &s.txn, err
-}
-
-func (s *session) NewTxn(ctx context.Context) error {
-	if err := s.checkBeforeNewTxn(ctx); err != nil {
-		return err
-	}
-	txn, err := s.store.Begin(tikv.WithTxnScope(s.sessionVars.CheckAndGetTxnScope()))
-	if err != nil {
-		return err
-	}
-	txn.SetVars(s.sessionVars.KVVars)
-	replicaReadType := s.GetSessionVars().GetReplicaRead()
-	if replicaReadType.IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, replicaReadType)
-	}
-	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
-	s.txn.changeInvalidToValid(txn)
-	is := s.GetDomainInfoSchema()
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
-			InfoSchema:  is,
-			CreateTime:  time.Now(),
-			StartTS:     txn.StartTS(),
-			ShardStep:   int(s.sessionVars.ShardAllocateStep),
-			IsStaleness: false,
-			TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
-		},
-	}
-	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	if s.GetSessionVars().InRestrictedSQL {
-		s.txn.SetOption(kv.RequestSourceInternal, true)
-		if source := ctx.Value(kv.RequestSourceKey); source != nil {
-			s.txn.SetOption(kv.RequestSourceType, source.(kv.RequestSource).RequestSourceType)
-		}
-	}
-	return nil
-}
-
-func (s *session) checkBeforeNewTxn(ctx context.Context) error {
-	if s.txn.Valid() {
-		txnStartTS := s.txn.StartTS()
-		txnScope := s.GetSessionVars().TxnCtx.TxnScope
-		err := s.CommitTxn(ctx)
-		if err != nil {
-			return err
-		}
-		logutil.Logger(ctx).Info("Try to create a new txn inside a transaction auto commit",
-			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", txnStartTS),
-			zap.String("txnScope", txnScope))
-	}
-	return nil
-}
-
-// NewStaleTxnWithStartTS create a transaction with the given StartTS.
-func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
-	if err := s.checkBeforeNewTxn(ctx); err != nil {
-		return err
-	}
-	txnScope := kv.GlobalTxnScope
-	txn, err := s.store.Begin(tikv.WithTxnScope(txnScope), tikv.WithStartTS(startTS))
-	if err != nil {
-		return err
-	}
-	txn.SetVars(s.sessionVars.KVVars)
-	txn.SetOption(kv.IsStalenessReadOnly, true)
-	txn.SetOption(kv.TxnScope, txnScope)
-	setTxnAssertionLevel(txn, s.sessionVars.AssertionLevel)
-	s.txn.changeInvalidToValid(txn)
-	is, err := getSnapshotInfoSchema(s, txn.StartTS())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx = &variable.TransactionContext{
-		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
-			InfoSchema:  is,
-			CreateTime:  time.Now(),
-			StartTS:     txn.StartTS(),
-			ShardStep:   int(s.sessionVars.ShardAllocateStep),
-			IsStaleness: true,
-			TxnScope:    txnScope,
-		},
-	}
-	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return nil
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -2878,8 +2783,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if dom.GetEtcdClient() != nil {
 		// We only want telemetry data in production-like clusters. When TiDB is deployed over other engines,
 		// for example, unistore engine (used for local tests), we just skip it. Its etcd client is nil.
-		dom.TelemetryReportLoop(ses[5])
-		dom.TelemetryRotateSubWindowLoop(ses[5])
+		go func() {
+			dom.TelemetryReportLoop(ses[5])
+			dom.TelemetryRotateSubWindowLoop(ses[5])
+		}()
 	}
 
 	// A sub context for update table stats, and other contexts for concurrent stats loading.
@@ -3134,7 +3041,9 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	}
 
 	failpoint.Inject("assertTSONotRequest", func() {
-		panic("tso shouldn't be requested")
+		if _, ok := future.(sessiontxn.ConstantFuture); !ok {
+			panic("tso shouldn't be requested")
+		}
 	})
 
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
@@ -3149,6 +3058,8 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	return nil
 }
 
+// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
+// It returns nil otherwise.
 func (s *session) GetPreparedTxnFuture() sessionctx.TxnFuture {
 	if !s.txn.validOrPending() {
 		return nil
@@ -3421,6 +3332,10 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	} else {
 		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
 	}
+
+	if ti.UseMultiSchemaChange {
+		telemetryMultiSchemaChangeUsage.Inc()
+	}
 }
 
 // GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
@@ -3439,10 +3354,6 @@ func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
 	s.functionUsageMu.Lock()
 	defer s.functionUsageMu.Unlock()
 	s.functionUsageMu.builtinFunctionUsage.Inc(scalarFuncSigName)
-}
-
-func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
-	return temptable.SessionSnapshotInterceptor(s)
 }
 
 func (s *session) GetStmtStats() *stmtstats.StatementStats {

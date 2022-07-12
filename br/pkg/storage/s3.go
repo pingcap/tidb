@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -53,6 +54,7 @@ const (
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
 	hardcodedS3ChunkSize = 5 * 1024 * 1024
+	defaultRegion        = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
 )
@@ -131,9 +133,6 @@ type S3BackendOptions struct {
 
 // Apply apply s3 options on backuppb.S3.
 func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
-	if options.Region == "" {
-		options.Region = "us-east-1"
-	}
 	if options.Endpoint != "" {
 		u, err := url.Parse(options.Endpoint)
 		if err != nil {
@@ -274,8 +273,12 @@ func createOssRamCred() (*credentials.Credentials, error) {
 func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.NewConfig().
-		WithS3ForcePathStyle(qs.ForcePathStyle).
-		WithRegion(qs.Region)
+		WithS3ForcePathStyle(qs.ForcePathStyle)
+	if qs.Region == "" {
+		awsConfig.WithRegion(defaultRegion)
+	} else {
+		awsConfig.WithRegion(qs.Region)
+	}
 	request.WithRetryer(awsConfig, defaultS3Retryer())
 	if qs.Endpoint != "" {
 		awsConfig.WithEndpoint(qs.Endpoint)
@@ -315,6 +318,34 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 	}
 
 	c := s3.New(ses)
+	// s3manager.GetBucketRegionWithClient will set credential anonymous, which works with s3.
+	// we need reassign credential to be compatible with minio authentication.
+	confCred := ses.Config.Credentials
+	setCredOpt := func(req *request.Request) {
+		if confCred != nil {
+			req.Config.Credentials = confCred
+		}
+	}
+	region, err := s3manager.GetBucketRegionWithClient(context.Background(), c, qs.Bucket, setCredOpt)
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
+	}
+
+	if qs.Region != region {
+		if qs.Region != "" {
+			return nil, errors.Trace(fmt.Errorf("s3 bucket and region are not matched, bucket=%s, input region=%s, real region=%s",
+				qs.Bucket, qs.Region, region))
+		}
+
+		qs.Region = region
+		backend.Region = region
+		if region != defaultRegion {
+			awsConfig.WithRegion(region)
+			c = s3.New(ses, awsConfig)
+		}
+	}
+	log.Info("succeed to get bucket region from s3", zap.String("bucket region", region))
+
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
