@@ -257,8 +257,7 @@ test> show warnings;
 
 On reference Table Insert Or Update:
 
-1. check related child table row exist.
-2. modify related child table row by referential action:
+1. modify related child table row by referential action:
 - `CASCADE`: update/delete related child table row.
 - `SET NULL`: set related child row's foreign key columns value to NULL.
 - `RESTRICT`, `NO ACTION`: If related row exist in child table, reject update/delete reference table.
