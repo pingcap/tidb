@@ -218,7 +218,7 @@ func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.Wait
 				}
 
 				if debugMode == 1 {
-					if heapInUse > uint64(threshold) && trackedMem/10*uint64(100+ratio) < heapInUse {
+					if heapInUse > uint64(threshold) && trackedMem/100*uint64(100+ratio) < heapInUse {
 						logutil.BgLogger().Warn("Memory Debug Mode", genInfo("warning", true, true)...)
 					}
 				} else {
