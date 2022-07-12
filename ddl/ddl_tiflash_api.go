@@ -632,8 +632,10 @@ func getInvalidTableTiflash(pollTiFlashContext *TiFlashManagementContext) (map[i
 	tiflashStoreIDs := make([]int64, len(pollTiFlashContext.TiFlashStores))
 	invalidTableIDs := make(map[int64]int)
 
-	for i, store := range pollTiFlashContext.TiFlashStores {
-		tiflashStoreIDs[i-1] = store.Store.ID
+	loopIndex := 0
+	for _, store := range pollTiFlashContext.TiFlashStores {
+		tiflashStoreIDs[loopIndex] = store.Store.ID
+		loopIndex++
 	}
 
 	sort.Slice(tiflashStoreIDs, func(i, j int) bool { return tiflashStoreIDs[i] < tiflashStoreIDs[j] })
