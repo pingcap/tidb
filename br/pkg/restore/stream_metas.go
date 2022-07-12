@@ -240,8 +240,8 @@ func CalculateShiftTS(
 	restoreTS uint64,
 ) (uint64, bool) {
 	var (
-		min_begin_ts uint64
-		isExist      bool
+		minBeginTS uint64
+		isExist    bool
 	)
 	for _, m := range metas {
 		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
@@ -249,18 +249,18 @@ func CalculateShiftTS(
 		}
 
 		for _, d := range m.Files {
-			if d.Cf == stream.DefaultCF {
+			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
 				continue
 			}
 			if d.MinTs > restoreTS || d.MaxTs < startTS {
 				continue
 			}
-			if d.MinBeginTsInDefaultCf < min_begin_ts || !isExist {
+			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
 				isExist = true
-				min_begin_ts = d.MinBeginTsInDefaultCf
+				minBeginTS = d.MinBeginTsInDefaultCf
 			}
 		}
 	}
 
-	return min_begin_ts, isExist
+	return minBeginTS, isExist
 }
