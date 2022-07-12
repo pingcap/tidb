@@ -254,7 +254,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 			// try lock the index key if isolation level is not read consistency
 			// also lock key if read consistency read a value
-			if readFromCache || len(e.handleVal) == 0 {
+			if readFromCache || len(e.handleVal) > 0 {
 				if !readFromCache {
 					err = e.lockKeyIfNeeded(ctx, e.idxKey)
 					if err != nil {
