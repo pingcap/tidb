@@ -1066,84 +1066,9 @@ func (e *InsertValues) checkForeignKeyConstrain(ctx context.Context, rows [][]ty
 }
 
 func (e *InsertValues) initForeignKeyChecker() error {
-	if !e.ctx.GetSessionVars().ForeignKeyChecks {
-		logutil.BgLogger().Warn("----- foreign key check disabled")
-		return nil
-	}
-	tbInfo := e.Table.Meta()
-	if len(tbInfo.ForeignKeys) == 0 {
-		return nil
-	}
-	for _, fk := range tbInfo.ForeignKeys {
-		idx := model.FindIndexByColumns(tbInfo.Indices, fk.Cols...)
-		if idx == nil {
-			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
-		}
-		colsOffsets := make([]int, len(fk.Cols))
-		for i := range fk.Cols {
-			if idx.Columns[i].Offset < 0 {
-				return table.ErrIndexOutBound.GenWithStackByArgs(idx.Name, idx.Columns[i].Offset, nil)
-			}
-			colsOffsets[i] = idx.Columns[i].Offset
-		}
-
-		referTable, err := e.is.TableByName(fk.RefSchema, fk.RefTable)
-		if err != nil {
-			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
-		}
-		referTbInfo := referTable.Meta()
-		if referTbInfo.PKIsHandle && len(fk.RefCols) == 1 {
-			refColInfo := model.FindColumnInfo(referTbInfo.Columns, fk.RefCols[0].L)
-			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
-				refCol := table.FindCol(referTable.Cols(), refColInfo.Name.O)
-				e.fkChecker = append(e.fkChecker, &foreignKeyChecker{
-					dbName:          e.DBName.L,
-					tbName:          tbInfo.Name.L,
-					fkInfo:          fk,
-					colsOffsets:     colsOffsets,
-					referTable:      referTable,
-					idxIsPrimaryKey: true,
-					idxIsExclusive:  true,
-					handleCols:      []*table.Column{refCol},
-				})
-				continue
-			}
-		}
-
-		referTbIdxInfo := model.FindIndexByColumns(referTbInfo.Indices, fk.RefCols...)
-		if referTbIdxInfo == nil {
-			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
-		}
-		var referTbIdx table.Index
-		for _, idx := range referTable.Indices() {
-			if idx.Meta().ID == referTbIdxInfo.ID {
-				referTbIdx = idx
-			}
-		}
-		if referTbIdx == nil {
-			return ErrNoReferencedRow2.GenWithStackByArgs(fk.String(e.DBName.L, tbInfo.Name.L))
-		}
-
-		var handleCols []*table.Column
-		if referTbIdxInfo.Primary && referTbInfo.IsCommonHandle {
-			cols := referTable.Cols()
-			for _, idxCol := range referTbIdxInfo.Columns {
-				handleCols = append(handleCols, cols[idxCol.Offset])
-			}
-		}
-
-		e.fkChecker = append(e.fkChecker, &foreignKeyChecker{
-			dbName:          e.DBName.L,
-			tbName:          tbInfo.Name.L,
-			fkInfo:          fk,
-			colsOffsets:     colsOffsets,
-			referTable:      referTable,
-			referTbIdx:      referTbIdx,
-			idxIsExclusive:  len(colsOffsets) == len(referTbIdxInfo.Columns),
-			idxIsPrimaryKey: referTbIdxInfo.Primary && referTbInfo.IsCommonHandle,
-		})
-	}
-	return nil
+	var err error
+	e.fkChecker, err = initForeignKeyChecker(e.ctx, e.is, e.Table.Meta(), e.DBName.L)
+	return err
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.

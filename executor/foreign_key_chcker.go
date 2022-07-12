@@ -2,15 +2,100 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 )
+
+func initForeignKeyChecker(ctx sessionctx.Context, is infoschema.InfoSchema, tbInfo *model.TableInfo, dbName string) ([]*foreignKeyChecker, error) {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		logutil.BgLogger().Warn("----- foreign key check disabled")
+		return nil, nil
+	}
+	if len(tbInfo.ForeignKeys) == 0 {
+		return nil, nil
+	}
+	fkCheckers := make([]*foreignKeyChecker, 0, len(tbInfo.ForeignKeys))
+	for _, fk := range tbInfo.ForeignKeys {
+		idx := model.FindIndexByColumns(tbInfo.Indices, fk.Cols...)
+		if idx == nil {
+			return nil, ErrNoReferencedRow2.GenWithStackByArgs(fk.String(dbName, tbInfo.Name.L))
+		}
+		colsOffsets := make([]int, len(fk.Cols))
+		for i := range fk.Cols {
+			if idx.Columns[i].Offset < 0 {
+				return nil, table.ErrIndexOutBound.GenWithStackByArgs(idx.Name, idx.Columns[i].Offset, nil)
+			}
+			colsOffsets[i] = idx.Columns[i].Offset
+		}
+
+		referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+		if err != nil {
+			return nil, ErrNoReferencedRow2.GenWithStackByArgs(fk.String(dbName, tbInfo.Name.L))
+		}
+		referTbInfo := referTable.Meta()
+		if referTbInfo.PKIsHandle && len(fk.RefCols) == 1 {
+			refColInfo := model.FindColumnInfo(referTbInfo.Columns, fk.RefCols[0].L)
+			if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+				refCol := table.FindCol(referTable.Cols(), refColInfo.Name.O)
+				fkCheckers = append(fkCheckers, &foreignKeyChecker{
+					dbName:          dbName,
+					tbName:          tbInfo.Name.L,
+					fkInfo:          fk,
+					colsOffsets:     colsOffsets,
+					referTable:      referTable,
+					idxIsPrimaryKey: true,
+					idxIsExclusive:  true,
+					handleCols:      []*table.Column{refCol},
+				})
+				continue
+			}
+		}
+
+		referTbIdxInfo := model.FindIndexByColumns(referTbInfo.Indices, fk.RefCols...)
+		if referTbIdxInfo == nil {
+			return nil, ErrNoReferencedRow2.GenWithStackByArgs(fk.String(dbName, tbInfo.Name.L))
+		}
+		var referTbIdx table.Index
+		for _, idx := range referTable.Indices() {
+			if idx.Meta().ID == referTbIdxInfo.ID {
+				referTbIdx = idx
+			}
+		}
+		if referTbIdx == nil {
+			return nil, ErrNoReferencedRow2.GenWithStackByArgs(fk.String(dbName, tbInfo.Name.L))
+		}
+
+		var handleCols []*table.Column
+		if referTbIdxInfo.Primary && referTbInfo.IsCommonHandle {
+			cols := referTable.Cols()
+			for _, idxCol := range referTbIdxInfo.Columns {
+				handleCols = append(handleCols, cols[idxCol.Offset])
+			}
+		}
+
+		fkCheckers = append(fkCheckers, &foreignKeyChecker{
+			dbName:          dbName,
+			tbName:          tbInfo.Name.L,
+			fkInfo:          fk,
+			colsOffsets:     colsOffsets,
+			referTable:      referTable,
+			referTbIdx:      referTbIdx,
+			idxIsExclusive:  len(colsOffsets) == len(referTbIdxInfo.Columns),
+			idxIsPrimaryKey: referTbIdxInfo.Primary && referTbInfo.IsCommonHandle,
+		})
+	}
+	return fkCheckers, nil
+}
 
 type foreignKeyChecker struct {
 	dbName          string
