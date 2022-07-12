@@ -5,11 +5,13 @@ package restore
 import (
 	"context"
 	"strconv"
+	"sync"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 )
 
 type StreamMetadataSet struct {
@@ -22,22 +24,23 @@ type StreamMetadataSet struct {
 
 // LoadFrom loads data from an external storage into the stream metadata set.
 func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
-	ms.metadata = map[string]*backuppb.Metadata{}
-	ms.writeback = map[string]*backuppb.Metadata{}
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
-	return s.WalkDir(ctx, opt, func(path string, size int64) error {
-		// Maybe load them lazily for preventing out of memory?
-		bs, err := s.ReadFile(ctx, path)
-		if err != nil {
-			return errors.Annotatef(err, "failed to read file %s", path)
-		}
-		var meta backuppb.Metadata
-		if err := meta.Unmarshal(bs); err != nil {
-			return errors.Annotatef(err, "failed to unmarshal file %s, maybe corrupted", path)
-		}
-		ms.metadata[path] = &meta
+	metadataMap := struct {
+		sync.Mutex
+		metas map[string]*backuppb.Metadata
+	}{}
+	ms.writeback = make(map[string]*backuppb.Metadata)
+	metadataMap.metas = make(map[string]*backuppb.Metadata)
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+		metadataMap.Lock()
+		metadataMap.metas[path] = m
+		metadataMap.Unlock()
 		return nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ms.metadata = metadataMap.metas
+	return nil
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {

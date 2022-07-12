@@ -88,7 +88,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	sessionVars := ctx.GetSessionVars()
 
 	// If no charset and/or collation is specified use collation_server and character_set_server
-	charsetOpt := &ast.CharsetOpt{}
+	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
 		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
@@ -102,19 +102,17 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	explicitCharset := false
 	explicitCollation := false
-	if len(stmt.Options) != 0 {
-		for _, val := range stmt.Options {
-			switch val.Tp {
-			case ast.DatabaseOptionCharset:
-				charsetOpt.Chs = val.Value
-				explicitCharset = true
-			case ast.DatabaseOptionCollate:
-				charsetOpt.Col = val.Value
-				explicitCollation = true
-			case ast.DatabaseOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(val.Value),
-				}
+	for _, val := range stmt.Options {
+		switch val.Tp {
+		case ast.DatabaseOptionCharset:
+			charsetOpt.Chs = val.Value
+			explicitCharset = true
+		case ast.DatabaseOptionCollate:
+			charsetOpt.Col = val.Value
+			explicitCollation = true
+		case ast.DatabaseOptionPlacementPolicy:
+			placementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(val.Value),
 			}
 		}
 	}
@@ -140,7 +138,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetOpt.Chs, Col: charsetOpt.Col})
+	chs, coll, err := ResolveCharsetCollation(charsetOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2997,11 +2995,21 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 // `ALTER TABLE ADD COLUMN (c1 INT, c2 INT)` is split into
 // `ALTER TABLE ADD COLUMN c1 INT, ADD COLUMN c2 INT`.
 func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
-	specs := make([]*ast.AlterTableSpec, len(spec.NewColumns))
-	for i, col := range spec.NewColumns {
+	specs := make([]*ast.AlterTableSpec, 0, len(spec.NewColumns)+len(spec.NewConstraints))
+	for _, col := range spec.NewColumns {
 		t := *spec
 		t.NewColumns = []*ast.ColumnDef{col}
-		specs[i] = &t
+		t.NewConstraints = []*ast.Constraint{}
+		specs = append(specs, &t)
+	}
+	// Split the add constraints from AlterTableSpec.
+	for _, con := range spec.NewConstraints {
+		t := *spec
+		t.NewColumns = []*ast.ColumnDef{}
+		t.NewConstraints = []*ast.Constraint{}
+		t.Constraint = con
+		t.Tp = ast.AlterTableAddConstraint
+		specs = append(specs, &t)
 	}
 	return specs
 }
@@ -3019,7 +3027,7 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
-		if spec.Tp == ast.AlterTableAddColumns && len(spec.NewColumns) > 1 {
+		if spec.Tp == ast.AlterTableAddColumns && (len(spec.NewColumns) > 1 || len(spec.NewConstraints) > 0) {
 			validSpecs = append(validSpecs, resolveAlterTableAddColumns(spec)...)
 		} else {
 			validSpecs = append(validSpecs, spec)
@@ -3078,7 +3086,8 @@ func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error
 func allSupported(specs []*ast.AlterTableSpec) bool {
 	for _, s := range specs {
 		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey:
+		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey,
+			ast.AlterTableAddConstraint:
 		default:
 			return false
 		}
@@ -3113,23 +3122,6 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 	err = checkMultiSpecs(sctx, validSpecs)
 	if err != nil {
 		return err
-	}
-
-	if len(validSpecs) > 1 {
-		useMultiSchemaChange := false
-		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn,
-			ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-			useMultiSchemaChange = true
-		default:
-			return dbterror.ErrRunMultiSchemaChanges
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !useMultiSchemaChange {
-			return nil
-		}
 	}
 
 	if len(validSpecs) > 1 {
@@ -7062,7 +7054,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 		return nil
 	}
 
-	// forbit cache table in system database.
+	// forbidden cache table in system database.
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(dbterror.ErrUnsupportedAlterCacheForSysTable)
 	} else if t.Meta().TempTableType != model.TempTableNone {
