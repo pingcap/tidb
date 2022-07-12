@@ -171,7 +171,6 @@ func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.Wait
 		trackedMem = uint64(tracker.BytesConsumed())
 	}
 
-	const GB = 1024 * 1024 * 1024
 	go func() {
 		logutil.BgLogger().Info("Memory Debug Mode",
 			zap.String("sql", "started"),
@@ -225,12 +224,12 @@ func (e *ExplainExec) runMemoryDebugGoroutine(ctx context.Context, wg *sync.Wait
 				} else {
 					if heapInUse > uint64(threshold) && trackedMem/100*uint64(100+ratio) < heapInUse {
 						logutil.BgLogger().Warn("Memory Debug Mode", genInfo("warning", true, false)...)
-						ts := tracker.SearchTrackerConsumedMoreThanNBytes(GB)
+						ts := tracker.SearchTrackerConsumedMoreThanNBytes(threshold / 5)
 						logs := make([]zap.Field, 0, len(ts))
 						for _, t := range ts {
 							logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
 						}
-						logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than 1GB", logs...)
+						logutil.BgLogger().Warn("Memory Debug Mode, Log all trackers that consumes more than threshold * 20%", logs...)
 					}
 				}
 				if err != nil {
