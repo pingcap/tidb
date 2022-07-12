@@ -238,7 +238,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 
 			readFromCache := !e.ctx.GetSessionVars().IsPessimisticReadConsistency()
-			if readFromCache{
+			if readFromCache {
 				err = e.lockKeyIfNeeded(ctx, e.idxKey)
 				if err != nil {
 					return err
