@@ -3755,6 +3755,257 @@
           "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ * from t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15593.77 root  data:ExchangeSender",
+          "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2) */ * from t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15593.77 root  data:ExchangeSender",
+          "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15593.77 root  data:ExchangeSender",
+          "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t3.b, test.t2.b)]",
+          "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3) */ * from t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15593.77 root  data:ExchangeSender",
+          "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t2) */ * from t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15593.77 root  data:ExchangeSender",
+          "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15593.77 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12475.01 mpp[tiflash]  inner join, equal:[eq(test.t3.b, test.t2.b)]",
+          "        ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1) */ * from t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 124625374.88 root  data:ExchangeSender",
+          "└─ExchangeSender 124625374.88 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 124625374.88 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 124625374.88 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t3.b, test.t2.b)]",
+          "      ├─ExchangeReceiver(Build) 9980.01 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 99800100.00 mpp[tiflash]  CARTESIAN inner join",
+          "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15609.38 root  data:ExchangeSender",
+          "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 15609.38 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15609.38 root  data:ExchangeSender",
+          "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15609.38 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15609.38 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.a))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15609.38 root  data:ExchangeSender",
+          "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15609.38 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15609.38 root  data:ExchangeSender",
+          "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15609.38 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15609.38 root  data:ExchangeSender",
+          "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 15609.38 mpp[tiflash]  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "    └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─HashJoin(Probe) 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "        ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.a))",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b",
+        "Plan": [
+          "TableReader 15609.38 root  data:ExchangeSender",
+          "└─ExchangeSender 15609.38 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 15609.38 mpp[tiflash]  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.b))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t2.a))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       }
     ]
   },
