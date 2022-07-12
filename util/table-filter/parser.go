@@ -275,7 +275,7 @@ parseLoop:
 			i = end
 
 		default:
-			if !(c == '$' || c == '_' || isASCIIAlphanumeric(c) || c >= 0x80) {
+			if c != '$' && c != '_' && !isASCIIAlphanumeric(c) && c < 0x80 {
 				return nil, "", p.errorf("unexpected special character '%c'", c)
 			}
 			literalStringBuilder.WriteByte(c)
