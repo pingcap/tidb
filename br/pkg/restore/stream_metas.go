@@ -63,12 +63,12 @@ func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
 		metadatas = append(metadatas, m)
 	}
 
-	min_begin_ts, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
+	minBeginTS, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
 	if !exist {
-		min_begin_ts = startTS
+		minBeginTS = startTS
 	}
-	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", min_begin_ts))
-	return min_begin_ts
+	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
+	return minBeginTS
 }
 
 // IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
