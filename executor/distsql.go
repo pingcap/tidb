@@ -1031,13 +1031,6 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			return
 		}
 		startTime := time.Now()
-		// Save the index order.
-		if task.indexOrder == nil {
-			task.indexOrder = kv.NewHandleMap()
-			for i, h := range task.handles {
-				task.indexOrder.Set(h, i)
-			}
-		}
 		err := w.executeTask(ctx, task)
 		if w.idxLookup.stats != nil {
 			atomic.AddInt64(&w.idxLookup.stats.TableRowScan, int64(time.Since(startTime)))
@@ -1323,12 +1316,16 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		task.memTracker.Consume(memUsage)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
-			if err != nil {
-				return err
+			rowID := 0
+			if w.keepOrder {
+				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+				if err != nil {
+					return err
+				}
+				rowIDx, _ := task.indexOrder.Get(handle)
+				rowID = rowIDx.(int)
 			}
-			rowIDx, _ := task.indexOrder.Get(handle)
-			task.rowsWithID = append(task.rowsWithID, &rowWithID{row: row, rowID: rowIDx.(int)})
+			task.rowsWithID = append(task.rowsWithID, &rowWithID{row: row, rowID: rowID})
 		}
 	}
 
