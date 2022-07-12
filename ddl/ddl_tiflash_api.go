@@ -59,6 +59,15 @@ type TiFlashReplicaStatus struct {
 	Ready          bool
 }
 
+type TiFlashReplicaReadyDDLArgs struct {
+	SchemaID   int64  `json:"schema_id"`
+	TableID    int64  `json:"table_id"`
+	SchemaName string `json:"schema_name"`
+	TableName  string `json:"table_name"`
+	PhysicalID int64  `json:"physical_id"`
+	Ready      bool   `json:"Ready"`
+}
+
 // TiFlashTick is type for backoff threshold.
 type TiFlashTick float64
 
@@ -560,6 +569,8 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 		return false, errors.Trace(err)
 	}
 
+	readyInfo := make(map[int64]bool)
+
 	for tableID, tableInfo := range tableMap {
 		if !tableInfo.Available {
 			continue
@@ -603,26 +614,22 @@ func (d *ddl) pollTiFlashPeerInfo(ctx sessionctx.Context, pollTiFlashContext *Ti
 					continue
 				}
 
-				if err := d.UpdateTableReplicaReadyInfo(ctx, tableID, false); err != nil {
-					if infoschema.ErrTableNotExists.Equal(err) && tableInfo.IsPartition {
-						logutil.BgLogger().Info("updating TiFlash replica status err, maybe false alarm by blocking add", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
-					} else {
-						logutil.BgLogger().Error("updating TiFlash replica status err", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
-					}
-				}
+				readyInfo[tableID] = false
+
 			}
 		} else {
 			if !tableInfo.Ready {
-
-				if err := d.UpdateTableReplicaReadyInfo(ctx, tableID, true); err != nil {
-					if infoschema.ErrTableNotExists.Equal(err) && tableInfo.IsPartition {
-						logutil.BgLogger().Info("updating TiFlash replica status err, maybe false alarm by blocking add", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
-					} else {
-						logutil.BgLogger().Error("updating TiFlash replica status err", zap.Error(err), zap.Int64("tableID", tableInfo.ID), zap.Bool("isPartition", tableInfo.IsPartition))
-					}
-				}
+				readyInfo[tableID] = true
 			}
 		}
+	}
+
+	if len(readyInfo) == 0 {
+		return true, nil
+	}
+
+	if err := d.UpdateTableReplicaReadyInfo(ctx, readyInfo); err != nil {
+		logutil.BgLogger().Error("updating TiFlash replica status err", zap.Error(err))
 	}
 
 	return true, nil

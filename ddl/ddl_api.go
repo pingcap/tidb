@@ -5112,34 +5112,44 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 }
 
 // UpdateTableReplicaReadyInfo updates the table flash replica ready infos.
-func (d *ddl) UpdateTableReplicaReadyInfo(ctx sessionctx.Context, physicalID int64, ready bool) error {
+func (d *ddl) UpdateTableReplicaReadyInfo(ctx sessionctx.Context, readyInfo map[int64]bool) error {
 	is := d.infoCache.GetLatest()
-	tb, ok := is.TableByID(physicalID)
-	if !ok {
-		tb, _, _ = is.FindTableByPartitionID(physicalID)
-		if tb == nil {
-			return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
-		}
-	}
-	tbInfo := tb.Meta()
-	if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Ready == ready) ||
-		(tbInfo.ID != physicalID && ready == tbInfo.TiFlashReplica.IsPartitionReady(physicalID)) {
-		return nil
-	}
 
-	db, ok := is.SchemaByTable(tbInfo)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
+	var ddlArg []TiFlashReplicaReadyDDLArgs
+
+	for physicalID, ready := range readyInfo {
+		tb, ok := is.TableByID(physicalID)
+		if !ok {
+			tb, _, _ = is.FindTableByPartitionID(physicalID)
+			if tb == nil {
+				return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
+			}
+		}
+
+		tbInfo := tb.Meta()
+		if tbInfo.TiFlashReplica == nil || (tbInfo.ID == physicalID && tbInfo.TiFlashReplica.Ready == ready) ||
+			(tbInfo.ID != physicalID && ready == tbInfo.TiFlashReplica.IsPartitionReady(physicalID)) {
+			continue
+		}
+
+		db, ok := is.SchemaByTable(tbInfo)
+		if !ok {
+			return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
+		}
+		ddlArg = append(ddlArg, TiFlashReplicaReadyDDLArgs{
+			SchemaID:   db.ID,
+			TableID:    tb.Meta().ID,
+			SchemaName: db.Name.L,
+			TableName:  tb.Meta().Name.L,
+			PhysicalID: physicalID,
+			Ready:      ready,
+		})
 	}
 
 	job := &model.Job{
-		SchemaID:   db.ID,
-		TableID:    tb.Meta().ID,
-		SchemaName: db.Name.L,
-		TableName:  tb.Meta().Name.L,
 		Type:       model.ActionUpdateTiFlashReplicaReadyStatus,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{ready, physicalID},
+		Args:       []interface{}{ddlArg},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
