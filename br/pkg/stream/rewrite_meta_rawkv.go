@@ -311,7 +311,8 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 		for i, tbl := range partitions.Definitions {
 			newID, exist := tableReplace.PartitionMap[tbl.ID]
 			if !exist {
-				newID, err := sr.genGenGlobalID(context.Background())
+				var err error
+				newID, err = sr.genGenGlobalID(context.Background())
 				if err != nil {
 					return nil, false, errors.Trace(err)
 				}
