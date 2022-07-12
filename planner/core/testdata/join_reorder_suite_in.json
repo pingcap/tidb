@@ -403,7 +403,94 @@
       "select /*+ leading(t3) merge_join(t2) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
       "select /*+ leading(t3) merge_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
       "select /*+ leading(t3) merge_join(t3) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
-      "select /*+ leading(t2) INL_JOIN(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;"
+      "select /*+ leading(t2) INL_JOIN(t1) */ * from t left join t1 on t.a = t1.a left join t2 on t1.b = t2.b join t3 ;",
+
+      // leading hint + correlated subquery
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+
+      "select /*+ leading(t4, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+
+      "select /*+ leading(t4, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+
+      // leading hint + uncorrelated subquery
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+
+      "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+      "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+
+      "select /*+ leading(t4@sel_2, t1) */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ leading(t2, t4@sel_2) */ * from (select * from t4) t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+      "select /*+ leading(t3) */ * from t1 left join t2 on t1.a=t2.a join (select * from t4) t3 on t2.b=t3.b;",
+
+      "select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+      "select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;"
     ]
   }
 ]

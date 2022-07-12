@@ -7292,6 +7292,1332 @@
           "      └─TableRowIDScan(Probe) 1.25 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12475.01 root  semi join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─Projection(Probe) 15593.77 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "  └─HashJoin 15593.77 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9980.01 root  semi join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9980.01 root  semi join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9980.01 root  semi join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9980.01 root  semi join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9980.01 root  semi join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, test.t3.a)]",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t3.a)), not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9980.01 root  data:Selection",
+          "    └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)], other cond:eq(test.t1.a, test.t3.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─Projection(Probe) 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "  └─HashJoin 15609.38 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)], other cond:eq(test.t1.a, test.t3.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)], other cond:eq(test.t1.a, test.t3.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)], other cond:eq(test.t1.a, test.t3.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)], other cond:eq(test.t1.a, test.t3.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)], other cond:eq(test.t1.a, test.t3.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─Projection(Probe) 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "  └─HashJoin 15609.38 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─Projection(Probe) 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "  └─HashJoin 15609.38 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 9990.00 root  anti semi join, equal:[eq(test.t1.b, test.t3.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 1.00 root  test.t1.a, Column#14",
+          "└─Apply 1.00 root  CARTESIAN left outer join",
+          "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  │   ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │   │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "  └─MaxOneRow(Probe) 1.00 root  ",
+          "    └─Projection 2.00 root  Column#10",
+          "      └─IndexReader 2.00 root  index:Selection",
+          "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
+          "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 1.00 root  test.t1.a, Column#14",
+          "└─Apply 1.00 root  CARTESIAN left outer join",
+          "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  │   ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │   │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "  └─MaxOneRow(Probe) 1.00 root  ",
+          "    └─Projection 2.00 root  Column#10",
+          "      └─IndexReader 2.00 root  index:Selection",
+          "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
+          "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 1.00 root  test.t1.a, Column#14",
+          "└─Apply 1.00 root  CARTESIAN left outer join",
+          "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  │   ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │   │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "  └─MaxOneRow(Probe) 1.00 root  ",
+          "    └─Projection 2.00 root  Column#10",
+          "      └─IndexReader 2.00 root  index:Selection",
+          "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
+          "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 1.00 root  test.t1.a, Column#14",
+          "└─Apply 1.00 root  CARTESIAN left outer join",
+          "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  │   ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │   │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "  └─MaxOneRow(Probe) 1.00 root  ",
+          "    └─Projection 2.00 root  Column#10",
+          "      └─IndexReader 2.00 root  index:Selection",
+          "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
+          "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 1.00 root  test.t1.a, Column#14",
+          "└─Apply 1.00 root  CARTESIAN left outer join",
+          "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  │   ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │   │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "  └─MaxOneRow(Probe) 1.00 root  ",
+          "    └─Projection 2.00 root  Column#10",
+          "      └─IndexReader 2.00 root  index:Selection",
+          "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
+          "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3, t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 1.00 root  test.t1.a, Column#14",
+          "└─Apply 1.00 root  CARTESIAN left outer join",
+          "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
+          "  │ └─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  │   ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │   │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  │   └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  │     └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "  └─MaxOneRow(Probe) 1.00 root  ",
+          "    └─Projection 2.00 root  Column#10",
+          "      └─IndexReader 2.00 root  index:Selection",
+          "        └─Selection 2.00 cop[tikv]  gt(test.t2.a, test.t1.a)",
+          "          └─IndexFullScan 2.50 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, Column#13)]",
+          "├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "│ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:max(Column#23)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "│   └─TableReader 7992.00 root  data:HashAgg",
+          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:max(test.t3.a)->Column#23",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9980.01 root  data:Selection",
+          "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, Column#13)]",
+          "  ├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "  │ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:max(Column#19)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "  │   └─TableReader 7992.00 root  data:HashAgg",
+          "  │     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:max(test.t3.a)->Column#19",
+          "  │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15593.77 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, Column#13)]",
+          "├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "│ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:max(Column#23)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "│   └─TableReader 7992.00 root  data:HashAgg",
+          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:max(test.t3.a)->Column#23",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9980.01 root  data:Selection",
+          "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b) eq(test.t1.a, Column#13)]",
+          "├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "│ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:max(Column#23)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "│   └─TableReader 7992.00 root  data:HashAgg",
+          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:max(test.t3.a)->Column#23",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9980.01 root  data:Selection",
+          "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b)], other cond:gt(test.t1.a, Column#13)",
+          "├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "│ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:min(Column#23)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "│   └─TableReader 7992.00 root  data:HashAgg",
+          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:min(test.t3.a)->Column#23",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9980.01 root  data:Selection",
+          "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "└─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b)], other cond:gt(test.t1.a, Column#13)",
+          "  ├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "  │ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:min(Column#19)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "  │   └─TableReader 7992.00 root  data:HashAgg",
+          "  │     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:min(test.t3.a)->Column#19",
+          "  │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15593.77 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b)], other cond:gt(test.t1.a, Column#13)",
+          "├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "│ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:min(Column#23)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "│   └─TableReader 7992.00 root  data:HashAgg",
+          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:min(test.t3.a)->Column#23",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9980.01 root  data:Selection",
+          "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.b, test.t3.b)], other cond:gt(test.t1.a, Column#13)",
+          "├─Selection(Build) 6393.60 root  not(isnull(Column#13))",
+          "│ └─HashAgg 7992.00 root  group by:test.t3.b, funcs:min(Column#23)->Column#13, funcs:firstrow(test.t3.b)->test.t3.b",
+          "│   └─TableReader 7992.00 root  data:HashAgg",
+          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t3.b, funcs:min(test.t3.a)->Column#23",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t1.b, test.t4.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9980.01 root  data:Selection",
+          "      └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3)",
+        "Plan": [
+          "Projection 15593.77 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "  │ └─IndexReader 9990.00 root  index:IndexFullScan",
+          "  │   └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15593.77 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9980.01 root  data:Selection",
+          "      │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 9990.00 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
+          "  ├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "  │ └─IndexReader 9990.00 root  index:IndexFullScan",
+          "  │   └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "│ └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "│ └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "│ └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t3.a)]",
+          "├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:firstrow(test.t3.a)->test.t3.a",
+          "│ └─IndexReader 9990.00 root  index:IndexFullScan",
+          "│   └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─Projection(Probe) 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "  └─HashJoin 15609.38 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 9990.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 9990.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 9990.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 9990.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 9990.00 root  CARTESIAN anti semi join, other cond:eq(test.t1.a, test.t3.a)",
+          "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 10000.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3)",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3)",
+        "Plan": [
+          "TableDual 0.00 root  rows:0"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3)",
+        "Plan": [
+          "Projection 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "└─HashJoin 15609.38 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.b, test.t1.b)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t1, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3)",
+        "Plan": [
+          "HashJoin 12487.50 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4@sel_2, t1) */ * from t1 join (select * from t4) t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t1.a, test.t1.b, test.t4.a, test.t4.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t4.b, test.t3.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t4.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t4.a)), not(isnull(test.t4.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t4) in optimizer hint /*+ LEADING(t4, t1) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t4@sel_2) */ * from (select * from t4) t1 left join t2 on t1.a=t2.a join t3 on t2.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t4.a, test.t4.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t4) in optimizer hint /*+ LEADING(t2, t4) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3) */ * from t1 left join t2 on t1.a=t2.a join (select * from t4) t3 on t2.b=t3.b;",
+        "Plan": [
+          "Projection 15593.77 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t4.a, test.t4.b",
+          "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t2.b, test.t4.b)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.b))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─TableReader(Build) 9980.01 root  data:Selection",
+          "    │ └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, <nil>->Column#14",
+          "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, <nil>->Column#14",
+          "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, <nil>->Column#14",
+          "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, <nil>->Column#14",
+          "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t1) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, <nil>->Column#14",
+          "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, <nil>->Column#14",
+          "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
+        "Plan": [
+          "Projection 12487.50 root  test.t1.a, <nil>->Column#14",
+          "└─MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t3.a",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:true, stats:pseudo",
+          "  └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "    └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name",
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table is valid"
+        ]
       }
     ]
   }
