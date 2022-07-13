@@ -17,14 +17,10 @@ package executor_test
 import (
 	"context"
 	"fmt"
-<<<<<<< HEAD
+	"io/ioutil"
 	"strconv"
 	"strings"
 	"sync"
-=======
-	"io/ioutil"
-	"strings"
->>>>>>> d10d25457... util: let TypeFloat should be decoded as Float32 in Chunk (#35978)
 	"sync/atomic"
 	"testing"
 	"time"

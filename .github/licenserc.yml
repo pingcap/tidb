@@ -28,10 +28,5 @@ header:
     - '.github/'
     - 'parser/'
     - 'dumpling/'
-<<<<<<< HEAD
-=======
-    - 'tidb-binlog/driver/example'
-    - 'tidb-binlog/proto/go-binlog/secondary_binlog.pb.go'
     - '**/*.sql'
->>>>>>> d10d25457... util: let TypeFloat should be decoded as Float32 in Chunk (#35978)
   comment: on-failure
