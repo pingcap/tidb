@@ -15,7 +15,6 @@
 package collate
 
 import (
-	"sort"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -66,6 +66,8 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
+	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 }
@@ -254,8 +256,8 @@ func GetSupportedCollations() []*charset.Collation {
 				newSupportedCollations = append(newSupportedCollations, coll)
 			}
 		}
-		sort.Slice(newSupportedCollations, func(i int, j int) bool {
-			return newSupportedCollations[i].Name < newSupportedCollations[j].Name
+		slices.SortFunc(newSupportedCollations, func(i, j *charset.Collation) bool {
+			return i.Name < j.Name
 		})
 		return newSupportedCollations
 	}

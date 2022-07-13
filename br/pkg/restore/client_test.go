@@ -4,11 +4,15 @@ package restore_test
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"sort"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -239,4 +243,158 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	for i := 0; i < len(tables); i++ {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
+}
+
+// Mock ImporterClient interface
+type FakeImporterClient struct {
+	restore.ImporterClient
+}
+
+// Record the stores that have communicated
+type RecordStores struct {
+	mu     sync.Mutex
+	stores []uint64
+}
+
+func NewRecordStores() RecordStores {
+	return RecordStores{stores: make([]uint64, 0)}
+}
+
+func (r *RecordStores) put(id uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stores = append(r.stores, id)
+}
+
+func (r *RecordStores) sort() {
+	sort.Slice(r.stores, func(i, j int) bool {
+		return r.stores[i] < r.stores[j]
+	})
+}
+
+var recordStores RecordStores
+
+const (
+	SET_SPEED_LIMIT_ERROR = 999999
+	WORKING_TIME          = 100
+)
+
+func (fakeImportCli FakeImporterClient) SetDownloadSpeedLimit(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.SetDownloadSpeedLimitRequest,
+) (*import_sstpb.SetDownloadSpeedLimitResponse, error) {
+	if storeID == SET_SPEED_LIMIT_ERROR {
+		return nil, fmt.Errorf("storeID:%v ERROR.", storeID)
+	}
+
+	time.Sleep(WORKING_TIME * time.Millisecond) // simulate doing 100 ms work
+	recordStores.put(storeID)
+	return nil, nil
+}
+
+func TestSetSpeedLimit(t *testing.T) {
+	mockStores := []*metapb.Store{
+		{Id: 1},
+		{Id: 2},
+		{Id: 3},
+		{Id: 4},
+		{Id: 5},
+		{Id: 6},
+		{Id: 7},
+		{Id: 8},
+		{Id: 9},
+		{Id: 10},
+	}
+
+	// 1. The cost of concurrent communication is expected to be less than the cost of serial communication.
+	client := restore.NewRestoreClient(fakePDClient{
+		stores: mockStores,
+	}, nil, defaultKeepaliveCfg, false)
+	ctx := context.Background()
+
+	recordStores = NewRecordStores()
+	start := time.Now()
+	err := restore.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 10)
+	cost := time.Since(start)
+	require.NoError(t, err)
+
+	recordStores.sort()
+	t.Logf("Total Cost: %v\n", cost)
+	t.Logf("Has Communicated: %v\n", recordStores.stores)
+
+	serialCost := len(mockStores) * WORKING_TIME
+	require.Less(t, cost, time.Duration(serialCost)*time.Millisecond)
+	require.Equal(t, len(mockStores), len(recordStores.stores))
+	for i := 0; i < len(recordStores.stores); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	}
+
+	// 2. Expect the number of communicated stores to be less than the length of the mockStore
+	// Because subsequent unstarted communications are aborted when an error is encountered.
+	recordStores = NewRecordStores()
+	mockStores[5].Id = SET_SPEED_LIMIT_ERROR // setting a fault store
+	client = restore.NewRestoreClient(fakePDClient{
+		stores: mockStores,
+	}, nil, defaultKeepaliveCfg, false)
+
+	// Concurrency needs to be less than the number of stores
+	err = restore.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
+	require.Error(t, err)
+	t.Log(err)
+
+	recordStores.sort()
+	sort.Slice(mockStores, func(i, j int) bool { return mockStores[i].Id < mockStores[j].Id })
+	t.Logf("Has Communicated: %v\n", recordStores.stores)
+	require.Less(t, len(recordStores.stores), len(mockStores))
+	for i := 0; i < len(recordStores.stores); i++ {
+		require.Equal(t, mockStores[i].Id, recordStores.stores[i])
+	}
+}
+
+func TestDeleteRangeQuery(t *testing.T) {
+	ctx := context.Background()
+	m := mc
+	mockStores := []*metapb.Store{
+		{
+			Id: 1,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id: 2,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+	}
+
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(fakePDClient{
+		stores: mockStores,
+	}, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
+	require.NoError(t, err)
+
+	client.RunGCRowsLoader(ctx)
+
+	client.InsertDeleteRangeForTable(2, []int64{3})
+	client.InsertDeleteRangeForTable(4, []int64{5, 6})
+
+	elementID := int64(1)
+	client.InsertDeleteRangeForIndex(7, &elementID, 8, []int64{1})
+	client.InsertDeleteRangeForIndex(9, &elementID, 10, []int64{1, 2})
+
+	querys := client.GetGCRows()
+	require.Equal(t, querys[0], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (2, 1, '748000000000000003', '748000000000000004', %[1]d)")
+	require.Equal(t, querys[1], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (4, 1, '748000000000000005', '748000000000000006', %[1]d),(4, 2, '748000000000000006', '748000000000000007', %[1]d)")
+	require.Equal(t, querys[2], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (7, 1, '7480000000000000085f698000000000000001', '7480000000000000085f698000000000000002', %[1]d)")
+	require.Equal(t, querys[3], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (9, 2, '74800000000000000a5f698000000000000001', '74800000000000000a5f698000000000000002', %[1]d),(9, 3, '74800000000000000a5f698000000000000002', '74800000000000000a5f698000000000000003', %[1]d)")
 }

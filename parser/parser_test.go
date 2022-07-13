@@ -1871,6 +1871,7 @@ func TestBuiltin(t *testing.T) {
 		// interval
 		{`select "2011-11-11 10:10:10.123456" + interval 10 second`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
 		{`select "2011-11-11 10:10:10.123456" - interval 10 second`, true, "SELECT DATE_SUB(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
+		{`select  interval 10 second + "2011-11-11 10:10:10.123456"`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
 		// for date_add
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 microsecond)`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 MICROSECOND)"},
 		{`select date_add("2011-11-11 10:10:10.123456", interval 10 second)`, true, "SELECT DATE_ADD(_UTF8MB4'2011-11-11 10:10:10.123456', INTERVAL 10 SECOND)"},
@@ -2176,7 +2177,7 @@ func TestIdentifier(t *testing.T) {
 		{`select COUNT from DESC`, false, ""},
 		{`select COUNT from SELECT.DESC`, true, "SELECT `COUNT` FROM `SELECT`.`DESC`"},
 		{"use `select`", true, "USE `select`"},
-		{"use `sel``ect`", true, "USE `sel``ect`"},
+		{"use `sel``ect`", true, "USE `sel``ect`"}, //nolint: misspell
 		{"use select", false, "USE `select`"},
 		{`select * from t as a`, true, "SELECT * FROM `t` AS `a`"},
 		{"select 1 full, 1 row, 1 abs", false, ""},
@@ -3959,6 +3960,23 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
+	// Test ORDERED_HASH_JOIN
+	stmt, _, err = p.Parse("select /*+ ORDERED_HASH_JOIN(t1, T2), ordered_hash_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "ordered_hash_join", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 2)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
+
+	require.Equal(t, "ordered_hash_join", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 2)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
+
 	// Test HASH_JOIN with SWAP_JOIN_INPUTS/NO_SWAP_JOIN_INPUTS
 	// t1 for build, t4 for probe
 	stmt, _, err = p.Parse("select /*+ HASH_JOIN(t1, T2), hash_join(t3, t4), SWAP_JOIN_INPUTS(t1), NO_SWAP_JOIN_INPUTS(t4)  */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -5717,6 +5735,7 @@ func TestNotExistsSubquery(t *testing.T) {
 }
 
 func TestWindowFunctionIdentifier(t *testing.T) {
+	//nolint: prealloc
 	var table []testCase
 	for key := range parser.WindowFuncTokenMapForTest {
 		table = append(table, testCase{fmt.Sprintf("select 1 %s", key), false, fmt.Sprintf("SELECT 1 AS `%s`", key)})
@@ -6173,6 +6192,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		node.Specs = specs
 	case *ast.Join:
 		node.ExplicitParens = false
+	case *ast.ColumnDef:
+		node.Tp.CleanElemIsBinaryLit()
 	}
 	return in, false
 }

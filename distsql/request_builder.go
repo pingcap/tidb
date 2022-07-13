@@ -267,6 +267,8 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	if sv.EnablePaging {
 		builder.SetPaging(true)
 	}
+	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
+	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	return builder
 }
 
@@ -309,15 +311,8 @@ func (builder *RequestBuilder) SetResourceGroupTagger(tagger tikvrpc.ResourceGro
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
-	// Stale Read uses the calculated TSO for the read,
-	// so there is no need to check the TxnScope here.
-	if builder.IsStaleness {
-		return nil
-	}
-	if builder.ReadReplicaScope == "" {
-		builder.ReadReplicaScope = kv.GlobalReplicaScope
-	}
-	if builder.ReadReplicaScope == kv.GlobalReplicaScope || builder.is == nil {
+	txnScope := builder.TxnScope
+	if txnScope == "" || txnScope == kv.GlobalReplicaScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -331,7 +326,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.ReadReplicaScope, phyTableID, builder.is)
+		valid := VerifyTxnScope(txnScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
@@ -343,15 +338,21 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 				tblInfo, _ = builder.is.TableByID(phyTableID)
 				tblName = tblInfo.Meta().Name.String()
 			}
-			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.ReadReplicaScope)
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, txnScope)
 			if len(partName) > 0 {
 				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
-					tblName, partName, builder.ReadReplicaScope)
+					tblName, partName, txnScope)
 			}
 			return err
 		}
 	}
 	return nil
+}
+
+// SetTxnScope sets request TxnScope
+func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
+	builder.TxnScope = scope
+	return builder
 }
 
 // SetReadReplicaScope sets request readReplicaScope
