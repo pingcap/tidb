@@ -223,6 +223,19 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 				}
 			}
 		}
+	case model.ActionModifyColumn:
+		newCol := *job.Args[0].(**model.ColumnInfo)
+		oldColName := job.Args[1].(model.CIStr)
+		pos := job.Args[2].(*ast.ColumnPosition)
+		if newCol.Name.L != oldColName.L {
+			info.AddColumns = append(info.AddColumns, newCol.Name)
+			info.DropColumns = append(info.DropColumns, oldColName)
+		} else {
+			info.ModifyColumns = append(info.ModifyColumns, newCol.Name)
+		}
+		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
+			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
+		}
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
