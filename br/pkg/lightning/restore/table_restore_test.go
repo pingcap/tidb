@@ -164,7 +164,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableRestore structure
 	var err error
-	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, log.L())
+	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -455,7 +455,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, log.L())
+	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -720,7 +720,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, log.L())
+		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -892,7 +892,6 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	defer close(chptCh)
 	cfg := config.NewConfig()
 	cfg.Mydumper.BatchSize = 1
-	cfg.PostRestore.Checksum = config.OpLevelOff
 
 	cfg.Checkpoint.Enable = false
 	cfg.TiDB.Host = "127.0.0.1"
@@ -902,8 +901,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	cfg.Mydumper.SourceDir = "."
 	cfg.Mydumper.CSV.Header = false
-	cfg.TikvImporter.Backend = config.BackendLocal
-	cfg.TikvImporter.SortedKVDir = "/tmp/sorted"
+	cfg.TikvImporter.Backend = config.BackendTiDB
 	tls, err := cfg.ToTLS()
 	require.NoError(s.T(), err)
 

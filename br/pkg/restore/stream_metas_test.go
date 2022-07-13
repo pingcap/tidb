@@ -14,6 +14,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -47,7 +49,7 @@ func fakeStreamBackup(s storage.ExternalStorage) error {
 		if err != nil {
 			panic("failed to marshal test meta")
 		}
-		name := fmt.Sprintf("%s/%04d.meta", restore.GetStreamBackupMetaPrefix(), i)
+		name := fmt.Sprintf("%s/%04d.meta", stream.GetStreamBackupMetaPrefix(), i)
 		if err = s.WriteFile(ctx, name, bs); err != nil {
 			return errors.Trace(err)
 		}
@@ -60,7 +62,7 @@ func fakeStreamBackup(s storage.ExternalStorage) error {
 func TestTruncateLog(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	backupMetaDir := filepath.Join(tmpdir, restore.GetStreamBackupMetaPrefix())
+	backupMetaDir := filepath.Join(tmpdir, stream.GetStreamBackupMetaPrefix())
 	_, err := storage.NewLocalStorage(backupMetaDir)
 	require.NoError(t, err)
 
@@ -103,7 +105,7 @@ func TestTruncateLog(t *testing.T) {
 	})
 
 	l.WalkDir(ctx, &storage.WalkOption{
-		SubDir: restore.GetStreamBackupMetaPrefix(),
+		SubDir: stream.GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, deletedFiles, s)
 		return nil
@@ -127,4 +129,73 @@ func TestTruncateSafepoint(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
 	}
+}
+
+func fakeMetaDatas(cf string) []*backuppb.Metadata {
+	ms := []*backuppb.Metadata{
+		{
+			StoreId: 1,
+			MinTs:   1500,
+			MaxTs:   2000,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 1500,
+					MaxTs:                 2000,
+					Cf:                    cf,
+					MinBeginTsInDefaultCf: 800,
+				},
+			},
+		},
+		{
+			StoreId: 2,
+			MinTs:   3000,
+			MaxTs:   4000,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 3000,
+					MaxTs:                 4000,
+					Cf:                    cf,
+					MinBeginTsInDefaultCf: 2000,
+				},
+			},
+		},
+		{
+			StoreId: 3,
+			MinTs:   5100,
+			MaxTs:   6100,
+			Files: []*backuppb.DataFileInfo{
+				{
+					MinTs:                 5100,
+					MaxTs:                 6100,
+					Cf:                    cf,
+					MinBeginTsInDefaultCf: 1800,
+				},
+			},
+		},
+	}
+	return ms
+}
+
+func TestCalculateShiftTS(t *testing.T) {
+	var (
+		startTs   uint64 = 2900
+		restoreTS uint64 = 4500
+	)
+
+	ms := fakeMetaDatas(stream.WriteCF)
+	shiftTS, exist := restore.CalculateShiftTS(ms, startTs, restoreTS)
+	require.Equal(t, shiftTS, uint64(2000))
+	require.Equal(t, exist, true)
+
+	shiftTS, exist = restore.CalculateShiftTS(ms, startTs, mathutil.MaxUint)
+	require.Equal(t, shiftTS, uint64(1800))
+	require.Equal(t, exist, true)
+
+	shiftTS, exist = restore.CalculateShiftTS(ms, 1999, 3001)
+	require.Equal(t, shiftTS, uint64(800))
+	require.Equal(t, exist, true)
+
+	ms = fakeMetaDatas(stream.DefaultCF)
+	_, exist = restore.CalculateShiftTS(ms, startTs, restoreTS)
+	require.Equal(t, exist, false)
 }

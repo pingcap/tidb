@@ -1536,17 +1536,63 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func findIndexesByColName(indexes []*model.IndexInfo, colName string) ([]*model.IndexInfo, []int) {
-	idxInfos := make([]*model.IndexInfo, 0, len(indexes))
-	offsets := make([]int, 0, len(indexes))
-	for _, idxInfo := range indexes {
-		for i, c := range idxInfo.Columns {
-			if strings.EqualFold(colName, c.Name.L) {
-				idxInfos = append(idxInfos, idxInfo)
-				offsets = append(offsets, i)
-				break
+// changingIndex is used to store the index that need to be changed during modifying column.
+type changingIndex struct {
+	indexInfo *model.IndexInfo
+	// Column offset in idxInfo.Columns.
+	offset int
+	// When the modifying column is contained in the index, a temp index is created.
+	// isTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
+	isTemp bool
+}
+
+// findRelatedIndexesToChange finds the indexes that covering the given column.
+// The normal one will be overridden by the temp one.
+func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
+	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
+	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
+	var normalIdxInfos, tempIdxInfos []changingIndex
+	for _, idxInfo := range tblInfo.Indices {
+		if pos := findIdxCol(idxInfo, colName); pos != -1 {
+			isTemp := isTempIdxInfo(idxInfo, tblInfo)
+			r := changingIndex{indexInfo: idxInfo, offset: pos, isTemp: isTemp}
+			if isTemp {
+				tempIdxInfos = append(tempIdxInfos, r)
+			} else {
+				normalIdxInfos = append(normalIdxInfos, r)
 			}
 		}
 	}
-	return idxInfos, offsets
+	// Overwrite if the index has the corresponding temp index. For example,
+	// we try to find the indexes that contain the column `b` and there are two indexes, `i(a, b)` and `$i($a, b)`.
+	// Note that the symbol `$` means temporary. The index `$i($a, b)` is temporarily created by the previous "modify a" statement.
+	// In this case, we would create a temporary index like $$i($a, $b), so the latter should be chosen.
+	result := normalIdxInfos
+	for _, tmpIdx := range tempIdxInfos {
+		origName := getChangingIndexOriginName(tmpIdx.indexInfo)
+		for i, normIdx := range normalIdxInfos {
+			if normIdx.indexInfo.Name.O == origName {
+				result[i] = tmpIdx
+			}
+		}
+	}
+	return result
+}
+
+func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	for _, idxCol := range idxInfo.Columns {
+		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func findIdxCol(idxInfo *model.IndexInfo, colName model.CIStr) int {
+	for offset, idxCol := range idxInfo.Columns {
+		if idxCol.Name.L == colName.L {
+			return offset
+		}
+	}
+	return -1
 }

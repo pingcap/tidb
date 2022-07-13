@@ -139,7 +139,8 @@
       "select t1.b from t t1 where exists(select t2.b from t t2 where t2.a = t1.a order by t2.a)",
       // `Sort` will not be eliminated, if it is not the top level operator.
       "select t1.b from t t1 where t1.b = (select t2.b from t t2 where t2.a = t1.a order by t2.a limit 1)",
-      "select (select 1 from t t1 where t1.a = t2.a) from t t2"
+      "select (select 1 from t t1 where t1.a = t2.a) from t t2",
+      "select count(1) from (select (select count(t1.a) as a  from t t1 where t1.c = t2.c) as a from t t2) as t3"
     ]
   },
   {
