@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
@@ -429,11 +431,185 @@ type cteInfo struct {
 	cteClass *CTEClass
 }
 
+type preBuiltSubQueryCacheItem struct {
+	// cache the basic sub-query plan, avoid building it again.
+	// NOTE: in analyzing phase, we build every sub-query the first we meet it, caching the basic information down. (especially those columns with allocated unique id).
+	// But we won't change the plan-tree (the handling logic of rewriter in analyzing will always ignore the generated new np)
+	//
+	// For example, Given an old plan like:
+	//
+	//      apply
+	//      /   \
+	//    agg   t1 (sub-query)         // Old Tree
+	//    /
+	//   t
+	//
+	// Since by now, the analyzing phase is carried out after buildTableRef, after which the basic p is as datasource `t`. If we change the plan tree when we rewrite a
+	// sub-query the first time we meet it at analyzing phase, the plan-tree will be change like this:
+	//
+	//      agg
+	//      /
+	//    apply                        // Shouldn't change the tree
+	//    /   \
+	//   t    t1 (sub-query)
+	//
+	// Which will cause a lot of basic test cases failure, besides that's not reasonable either. So in analyzing phase we just built the sub-query & agg out, record them
+	// down in corresponding scope which will be used in later, along with correlated column within them.
+	//
+	p LogicalPlan
+}
+
+type ScopeSchema struct {
+	scopeSchema *expression.Schema
+	scopeNames  []*types.FieldName
+
+	// agg group utility elements, aggFuncs are mapped to aggColumn and aggFuncExpr, and aggMapper is used to fast locate the offset in
+	// aggFuncs/aggColumn when an address of *AggregateFuncExpr is given.
+	aggFuncs     []*aggregation.AggFuncDesc
+	aggColumn    []*expression.Column
+	astAggFunc   []*ast.AggregateFuncExpr
+	aggMapper    map[*ast.AggregateFuncExpr]int
+	groupByItems []expression.Expression
+
+	// win group utility elements, windowFuncs are mapped to windowColumn, and windowMapper is used to fast locate the
+	// offset in windowFuncs/windowColumn when an address of *WindowFuncExpr is given.
+	windowFuncs  []*windowFuncs
+	windowColumn []*expression.Column
+	windowMapper map[*ast.WindowFuncExpr]int
+
+	// we should build the projection expr out and map them to a specific column in analyzing phase.
+	// otherwise, cases like: select (select 1) as a from dual order by a & select 1 as a, (select t.a) from t
+	// they can't resolve themselves (mainly a) from the base from scope columns here.
+	projExpr   []expression.Expression
+	projColumn []*expression.Column
+	projNames  []*types.FieldName
+
+	mapScalarSubQueryByAddr map[*ast.SubqueryExpr]*preBuiltSubQueryCacheItem
+
+	// since tidb's plan building is from bottom up，every operator only output what they care about.
+	// generally speaking, current building process is from data source -> selection -> agg -> projection -> distinct -> order by...
+	// actually, data source & selection & agg won't impose any elimination on the source schema, which means the predicate on
+	// them can refer to any columns that derived from the base table. While after projection, the schema is projected, which causing
+	// the predicate in order by can't refer to some base col if you don't notify projection operator to keep it for you in advance.
+	//
+	// that's why we analyze these clauses first before we build it, and using this fields to tell projection to reserve it for later use.
+	reservedCols                []*expression.Column
+	reservedCorrelatedCols      []*expression.CorrelatedColumn
+	projectionCol4CorrelatedAgg map[int64]*expression.Column
+
+	// inAgg is flag that used to judge whether current context is in agg.
+	inAgg bool
+}
+
+func (s *ScopeSchema) GetCol(id int64) (*expression.Column, int) {
+	for i, one := range s.scopeSchema.Columns {
+		if one.UniqueID == id {
+			return one, i
+		}
+	}
+	return nil, -1
+}
+
+func (s *ScopeSchema) ColSet() *fd.FastIntSet {
+	var colSet fd.FastIntSet
+	if s.scopeSchema == nil {
+		return &colSet
+	}
+	for _, c := range s.scopeSchema.Columns {
+		colSet.Insert(int(c.UniqueID))
+	}
+	return &colSet
+}
+
+func (s *ScopeSchema) ReservedColSet() *fd.FastIntSet {
+	var colSet fd.FastIntSet
+	for _, c := range s.reservedCols {
+		colSet.Insert(int(c.UniqueID))
+	}
+	return &colSet
+}
+
+func (s *ScopeSchema) Add(schema *expression.Schema, names []*types.FieldName) {
+	if schema == nil || len(schema.Columns) == 0 {
+		return
+	}
+	// assertion: len(schema) = len(names)
+	if s.scopeSchema == nil {
+		s.scopeSchema = expression.NewSchema(make([]*expression.Column, 0, schema.Len())...)
+	}
+	if s.scopeNames == nil {
+		s.scopeNames = make([]*types.FieldName, 0, schema.Len())
+	}
+	colSet := s.ColSet()
+	for i, col := range schema.Columns {
+		if !colSet.Has(int(col.UniqueID)) {
+			s.scopeSchema.Columns = append(s.scopeSchema.Columns, schema.Columns[i])
+			s.scopeNames = append(s.scopeNames, names[i])
+		}
+	}
+}
+
+// AddReservedCols add the correlated column from sub-query to its nearest outer scope.
+// eg: select (select (select sum(t.a+t1.a) from t t2) from t as t1) from t;
+// since the sum will be evaluated in the second select block (the nearest scope), we
+// only need to reserve t1.a on second scope, while t.a will be passed in outer apply operator.
+//
+// ps: the innermost sub-query only refer the projected column as sum(t.a+t1.a) from second
+// select block rather than do the aggregation by itself.
+func (s *ScopeSchema) AddReservedCols(corCols []*expression.CorrelatedColumn, cols []*expression.Column) {
+	aggColumnCovered := func(id int64) bool {
+		for _, aggCol := range s.aggColumn {
+			if aggCol.UniqueID == id {
+				return true
+			}
+		}
+		return false
+	}
+	// reservation comes from sub-query's correlated column.
+	for _, cc := range corCols {
+		// background: in analyzing phase, the col set of scope contains all columns it can see.
+		// make sure the correlated column is from this scope, and hasn't been added before.
+		// reserved col may be the origin base col or be the currently seen appended agg col.
+		if (s.ColSet().Has(int(cc.Column.UniqueID)) || aggColumnCovered(cc.Column.UniqueID)) && !s.ReservedColSet().Has(int(cc.Column.UniqueID)) {
+			s.reservedCols = append(s.reservedCols, &cc.Column)
+		}
+	}
+	// reservation comes from current scope's having or order-by clause.
+	for _, c := range cols {
+		// reserved col may be the origin base col or be the currently seen appended agg col.
+		if (s.ColSet().Has(int(c.UniqueID)) || aggColumnCovered(c.UniqueID)) && !s.ReservedColSet().Has(int(c.UniqueID)) {
+			s.reservedCols = append(s.reservedCols, c)
+		}
+	}
+}
+
+// AddReservedCorrelatedCols is used to adapt for old logic of correlated agg from having and order-by runtime.
+// eg: select (select 1 from t order by count(n.a) limit 1) from t n;
+// this case will keep correlated column of what count(n.a) is projected in the outer scope, for example named X here.
+// it will project correlated(X) as Y in the inner query, then latter having or order by clause can refer it from p.schema.
+// essentially, we can directly use correlated(X) in having and order by item, while that needs much detail detections.
+func (s *ScopeSchema) AddReservedCorrelatedCols(col *expression.Column) {
+	for _, cCol := range s.reservedCorrelatedCols {
+		if cCol.UniqueID == col.UniqueID {
+			// already added.
+			return
+		}
+	}
+	s.reservedCorrelatedCols = append(s.reservedCorrelatedCols, &expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)})
+}
+
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
-	ctx          sessionctx.Context
-	is           infoschema.InfoSchema
+	ctx sessionctx.Context
+	is  infoschema.InfoSchema
+	// analyzingPhase indicates that current expr rewrite is for analyzing info collection, basically don't change the logical plan tree.
+	analyzingPhase bool
+	// outerScopes indicates all column that a select block can see in its level passed from outer.
+	outerScopes []*ScopeSchema
+	// curScope indicates all column that a select block can see in its level.
+	curScope *ScopeSchema
+	// indicates schema that a certain operator(logical/physical) need to care in its level.
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
@@ -605,6 +781,7 @@ func (b *PlanBuilder) popSelectOffset() {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder() *PlanBuilder {
 	return &PlanBuilder{
+
 		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
