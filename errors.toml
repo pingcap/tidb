@@ -2231,6 +2231,11 @@ error = '''
 User %s already exists.
 '''
 
+["schema:3750"]
+error = '''
+Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.
+'''
+
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
