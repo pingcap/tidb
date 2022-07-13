@@ -568,6 +568,22 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(10)
 	}
 	req.AppendString(11, job.State.String())
+	if job.Type == model.ActionMultiSchemaChange {
+		for _, subJob := range job.MultiSchemaInfo.SubJobs {
+			req.AppendInt64(0, job.ID)
+			req.AppendString(1, schemaName)
+			req.AppendString(2, tableName)
+			req.AppendString(3, subJob.Type.String()+" /* subjob */")
+			req.AppendString(4, subJob.SchemaState.String())
+			req.AppendInt64(5, job.SchemaID)
+			req.AppendInt64(6, job.TableID)
+			req.AppendInt64(7, subJob.RowCount)
+			req.AppendNull(8)
+			req.AppendNull(9)
+			req.AppendNull(10)
+			req.AppendString(11, subJob.State.String())
+		}
+	}
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {
