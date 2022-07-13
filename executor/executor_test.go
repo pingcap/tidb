@@ -6321,7 +6321,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 				tk.MustExec(ca.sql)
 			} else {
 				err := tk.ExecToErr(ca.sql)
-				require.True(t, ca.err.Equal(err), err)
+				require.True(t, ca.err.Equal(err), ca.sql)
 			}
 		}
 	}
@@ -6471,6 +6471,26 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2;"},
 		{sql: "delete from t1 where a = 3 or a = 4;"},
 		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// todo: fix me
+	// Case-10: test primary key is handle and contain foreign key column.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, primary key(id));"},
+		{sql: "create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id) ON DELETE CASCADE);"},
+		{sql: "insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);"},
+		{sql: "insert into t2 values (1, 1);"},
+		{sql: "delete from t1 where id = 2;"},
+		{sql: "delete from t1 where a = 3 or a = 4;"},
+		// todo: test for cascade.
+		//{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 }
