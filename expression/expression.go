@@ -1157,10 +1157,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
 	case ast.GetFormat:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_GetFormat:
-			return true
-		}
+		return true
 	}
 	return false
 }
