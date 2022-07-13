@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -128,8 +129,17 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 	if err != nil {
 		panic(err)
 	}
-	s1 := result.String()
-	s2 := result2.String()
+
+	// SchemaTracker will always use NONCLUSTERED so it can support more types of DDL.
+	removeClusteredIndexComment := func(s string) string {
+		ret := strings.ReplaceAll(s, " /*T![clustered_index] NONCLUSTERED */", "")
+		ret = strings.ReplaceAll(ret, " /*T![clustered_index] CLUSTERED */", "")
+		return ret
+	}
+
+	s1 := removeClusteredIndexComment(result.String())
+	s2 := removeClusteredIndexComment(result2.String())
+
 	if s1 != s2 {
 		errStr := fmt.Sprintf("%s != %s", s1, s2)
 		panic(errStr)

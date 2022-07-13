@@ -2742,8 +2742,14 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 }
 
 func TestDropColumnWithIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")

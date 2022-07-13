@@ -172,6 +172,13 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
+	strictSQLMode := ctx.GetSessionVars().StrictSQLMode
+	enableClusteredIndex := ctx.GetSessionVars().EnableClusteredIndex
+	// avoid to interfere session context in unit test
+	defer func() {
+		ctx.GetSessionVars().StrictSQLMode = strictSQLMode
+		ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndex
+	}()
 	// suppress ErrTooLongKey
 	ctx.GetSessionVars().StrictSQLMode = false
 	// support drop PK
@@ -984,11 +991,11 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 				}
 			}
 		case ast.AlterTableIndexInvisible:
-			if idx := tblInfo.FindIndexByName(spec.IndexName.L); idx == nil {
+			idx := tblInfo.FindIndexByName(spec.IndexName.L)
+			if idx == nil {
 				return errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(spec.IndexName.O, ident.Name))
-			} else {
-				idx.Invisible = spec.Visibility == ast.IndexVisibilityInvisible
 			}
+			idx.Invisible = spec.Visibility == ast.IndexVisibilityInvisible
 		case ast.AlterTablePartitionOptions,
 			ast.AlterTableDropForeignKey,
 			ast.AlterTableCoalescePartitions,
