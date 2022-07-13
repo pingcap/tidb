@@ -17,13 +17,13 @@
 
 ## Documentation
 
-[Chinese Document](https://docs.pingcap.com/zh/tidb/v4.0/backup-and-restore-tool)
+[Chinese Document](https://docs.pingcap.com/zh/tidb/stable/backup-and-restore-overview)
 
-[English Document](https://docs.pingcap.com/tidb/v4.0/backup-and-restore-tool)
+[English Document](https://docs.pingcap.com/tidb/stable/backup-and-restore-overview)
 
-[Backup SQL Statement](https://docs.pingcap.com/tidb/v4.0/sql-statement-backup)
+[Backup SQL Statement](https://docs.pingcap.com/tidb/stable/sql-statement-backup)
 
-[Restore SQL Statement](https://docs.pingcap.com/tidb/v4.0/sql-statement-restore)
+[Restore SQL Statement](https://docs.pingcap.com/tidb/stable/sql-statement-restore)
 
 ## Building
 
