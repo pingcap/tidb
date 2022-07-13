@@ -6989,3 +6989,31 @@ func TestIssue25813(t *testing.T) {
 		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
 		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
+
+func TestIssue36194(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	// create virtual tiflash replica.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustQuery("explain format = 'brief' select * from t where a + 1 > 20 limit 100;;").Check(testkit.Rows(
+		"Limit 100.00 root  offset:0, count:100",
+		"└─TableReader 100.00 root  data:ExchangeSender",
+		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
+		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
+		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+}
