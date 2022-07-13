@@ -93,11 +93,17 @@ type preBuiltSubQueryCacheItem struct {
 	// down in corresponding scope which will be used in later in formal plan building phase, along with correlated column within them.
 	//
 	p LogicalPlan
-	// see comment in handleInSubquery, indicating the allocated column id interval [min, max).
-	InJoinColumnIDs IDIntervalCache
-	// see comment in handleExistSubquery, indicating the allocated column id interval [min, max).
+
+	// some non-correlated subq, the internal mechanism will instantly build them out, and thus we can get the final evaluated expr and name directly.
+	eval       bool
+	evaledName *types.FieldName
+	evaledExpr expression.Expression
+
+	// inJoinColumnIDs see comment in handleInSubquery, indicating the allocated column id interval [min, max).
+	inJoinColumnIDs IDIntervalCache
+	// existJoinColumnIDs see comment in handleExistSubquery, indicating the allocated column id interval [min, max).
 	existJoinColumnIDs IDIntervalCache
-	// see comment in handleCompareSubquery, indicating the allocated column id interval [min, max).
+	// compareJoinColumnIDs see comment in handleCompareSubquery, indicating the allocated column id interval [min, max).
 	compareJoinColumnIDs IDIntervalCache
 }
 

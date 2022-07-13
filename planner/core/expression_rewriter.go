@@ -1031,6 +1031,10 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
 			np = item.p
 			cachedExistJoinColumnIDs = item.existJoinColumnIDs
+			if item.eval {
+				er.ctxStackAppend(item.evaledExpr, item.evaledName)
+				return v, true
+			}
 		}
 	}
 	if np == nil {
@@ -1069,6 +1073,9 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		} else {
 			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
 		}
+		evaledExpr := er.ctxStack[len(er.ctxStack)-1]
+		evaledName := er.ctxNameStk[len(er.ctxNameStk)-1]
+		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np, eval: true, evaledExpr: evaledExpr, evaledName: evaledName}
 	}
 	return v, true
 }
@@ -1156,7 +1163,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 				cachedInJoinColumnIDs[0] = idLowerBound
 				cachedInJoinColumnIDs[1] = er.sctx.GetSessionVars().PlanColumnID
 				// override map element above.
-				er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: originNP, InJoinColumnIDs: cachedInJoinColumnIDs}
+				er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: originNP, inJoinColumnIDs: cachedInJoinColumnIDs}
 			}
 		}()
 	}
@@ -1164,7 +1171,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		// means plan building phase under new name resolution framework, trying to use cached subq.
 		if item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]; ok {
 			np = item.p
-			cachedInJoinColumnIDs = item.InJoinColumnIDs
+			cachedInJoinColumnIDs = item.inJoinColumnIDs
 		}
 	}
 	if np == nil {
@@ -1302,6 +1309,10 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		item, ok := er.b.curScope.mapScalarSubQueryByAddr[subq]
 		if ok {
 			np = item.p
+			if item.eval {
+				er.ctxStackAppend(item.evaledExpr, item.evaledName)
+				return v, true
+			}
 		}
 	}
 	if np == nil {
@@ -1331,6 +1342,11 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		}
 		return v, true
 	}
+	// once a subq is evaluated in analyzing phase
+	// 1: we better keep the directly scalar output down.
+	// 2: since np has changed during logical optimization and physical optimization, the recursive optimization to np will cause some problem.
+	//    eg: explain select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from t1;
+	//
 	// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
 	NthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
 	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
@@ -1368,6 +1384,9 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
 		er.ctxStackAppend(constant, types.EmptyName)
 	}
+	evaledExpr := er.ctxStack[len(er.ctxStack)-1]
+	evaledName := er.ctxNameStk[len(er.ctxNameStk)-1]
+	er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np, eval: true, evaledExpr: evaledExpr, evaledName: evaledName}
 	return v, true
 }
 
