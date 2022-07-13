@@ -212,7 +212,7 @@ const (
 	CollationLatin1 = "latin1_bin"
 	// CollationGBKBin is the default collation for CharsetGBK when new collation is disabled.
 	CollationGBKBin = "gbk_bin"
-	// CollationGBKChineseCI is the default collation for CollationGBKChineseCI.
+	// CollationGBKChineseCI is the default collation for CharsetGBK when new collation is enabled.
 	CollationGBKChineseCI = "gbk_chinese_ci"
 )
 
