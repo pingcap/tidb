@@ -604,6 +604,18 @@ type TiFlashReplicaInfo struct {
 	LocationLabels        []string
 	Available             bool
 	AvailablePartitionIDs []int64
+	Ready                 bool
+	ReadyPartitionIDs     []int64
+}
+
+// IsPartitionReady checks whether the partition table replica was ready.
+func (tr *TiFlashReplicaInfo) IsPartitionReady(pid int64) bool {
+	for _, id := range tr.ReadyPartitionIDs {
+		if id == pid {
+			return true
+		}
+	}
+	return false
 }
 
 // IsPartitionAvailable checks whether the partition table replica was available.

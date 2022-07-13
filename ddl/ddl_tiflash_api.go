@@ -56,6 +56,15 @@ type TiFlashReplicaStatus struct {
 	IsPartition    bool
 }
 
+type TiFlashReplicaReadyDDLArgs struct {
+	SchemaID   int64  `json:"schema_id"`
+	TableID    int64  `json:"table_id"`
+	SchemaName string `json:"schema_name"`
+	TableName  string `json:"table_name"`
+	PhysicalID int64  `json:"physical_id"`
+	Ready      bool   `json:"Ready"`
+}
+
 // TiFlashTick is type for backoff threshold.
 type TiFlashTick float64
 

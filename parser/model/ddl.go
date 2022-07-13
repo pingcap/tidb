@@ -81,22 +81,23 @@ const (
 	// Just left a tombstone here for compatibility.
 	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
 
-	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionAlterTableAttributes          ActionType = 49
-	ActionAlterTablePartitionAttributes ActionType = 50
-	ActionCreatePlacementPolicy         ActionType = 51
-	ActionAlterPlacementPolicy          ActionType = 52
-	ActionDropPlacementPolicy           ActionType = 53
-	ActionAlterTablePartitionPlacement  ActionType = 54
-	ActionModifySchemaDefaultPlacement  ActionType = 55
-	ActionAlterTablePlacement           ActionType = 56
-	ActionAlterCacheTable               ActionType = 57
-	ActionAlterTableStatsOptions        ActionType = 58
-	ActionAlterNoCacheTable             ActionType = 59
-	ActionCreateTables                  ActionType = 60
-	ActionMultiSchemaChange             ActionType = 61
-	ActionSetTiFlashMode                ActionType = 62
+	ActionRenameTables                    ActionType = 47
+	ActionDropIndexes                     ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionAlterTableAttributes            ActionType = 49
+	ActionAlterTablePartitionAttributes   ActionType = 50
+	ActionCreatePlacementPolicy           ActionType = 51
+	ActionAlterPlacementPolicy            ActionType = 52
+	ActionDropPlacementPolicy             ActionType = 53
+	ActionAlterTablePartitionPlacement    ActionType = 54
+	ActionModifySchemaDefaultPlacement    ActionType = 55
+	ActionAlterTablePlacement             ActionType = 56
+	ActionAlterCacheTable                 ActionType = 57
+	ActionAlterTableStatsOptions          ActionType = 58
+	ActionAlterNoCacheTable               ActionType = 59
+	ActionCreateTables                    ActionType = 60
+	ActionMultiSchemaChange               ActionType = 61
+	ActionSetTiFlashMode                  ActionType = 62
+	ActionUpdateTiFlashReplicaReadyStatus ActionType = 63
 )
 
 var actionMap = map[ActionType]string{

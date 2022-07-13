@@ -1218,6 +1218,72 @@ func onUpdateFlashReplicaStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
+func onUpdateFlashReplicaReadyStatus(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var replicaDDLArgs []TiFlashReplicaReadyDDLArgs
+	if err := job.DecodeArgs(&replicaDDLArgs); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	for _, replicaDDLArg := range replicaDDLArgs {
+		job.TableID = replicaDDLArg.TableID
+		job.SchemaID = replicaDDLArg.SchemaID
+		job.TableName = replicaDDLArg.TableName
+		job.SchemaName = replicaDDLArg.SchemaName
+		tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		if tblInfo.TiFlashReplica == nil || (tblInfo.ID != replicaDDLArg.PhysicalID && replicaDDLArg.Ready == tblInfo.TiFlashReplica.IsPartitionReady(replicaDDLArg.PhysicalID)) {
+			job.State = model.JobStateCancelled
+			return ver, errors.Errorf("the replica Ready status of table %s is already updated", tblInfo.Name.String())
+		}
+
+		if tblInfo.ID == replicaDDLArg.PhysicalID && tblInfo.TiFlashReplica.Ready == replicaDDLArg.Ready {
+			continue
+		}
+
+		if tblInfo.ID == replicaDDLArg.PhysicalID {
+			tblInfo.TiFlashReplica.Ready = replicaDDLArg.Ready
+		} else if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			// Partition replica become Ready.
+			if replicaDDLArg.Ready {
+				allReady := true
+				for _, p := range pi.Definitions {
+					if p.ID == replicaDDLArg.PhysicalID {
+						tblInfo.TiFlashReplica.ReadyPartitionIDs = append(tblInfo.TiFlashReplica.ReadyPartitionIDs, replicaDDLArg.PhysicalID)
+					}
+					allReady = allReady && tblInfo.TiFlashReplica.IsPartitionReady(p.ID)
+				}
+				tblInfo.TiFlashReplica.Ready = allReady
+			} else {
+				// Partition replica become unready.
+				for i, id := range tblInfo.TiFlashReplica.ReadyPartitionIDs {
+					if id == replicaDDLArg.PhysicalID {
+						newIDs := tblInfo.TiFlashReplica.ReadyPartitionIDs[:i]
+						newIDs = append(newIDs, tblInfo.TiFlashReplica.ReadyPartitionIDs[i+1:]...)
+						tblInfo.TiFlashReplica.ReadyPartitionIDs = newIDs
+						tblInfo.TiFlashReplica.Ready = false
+						break
+					}
+				}
+			}
+		} else {
+			job.State = model.JobStateCancelled
+			return ver, errors.Errorf("unknown physical ID %v in table %v", replicaDDLArg.PhysicalID, tblInfo.Name.O)
+		}
+
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	}
+
+	return ver, nil
+}
+
 func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName string) error {
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
