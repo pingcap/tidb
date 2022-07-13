@@ -5952,7 +5952,7 @@
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
           "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "        └─Selection(Probe) 0.80 mpp[tiflash]  not(isnull(test.t.id))",
           "          └─TableFullScan 0.80 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
@@ -5968,7 +5968,7 @@
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
           "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "        └─Selection(Probe) 0.80 mpp[tiflash]  not(isnull(test.t.id))",
           "          └─TableFullScan 0.80 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
@@ -5985,7 +5985,7 @@
           "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
           "          │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
           "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "          └─Selection(Probe) 16.00 mpp[tiflash]  not(isnull(test.t.id))",
           "            └─TableFullScan 16.02 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
