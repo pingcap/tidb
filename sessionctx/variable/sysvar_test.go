@@ -708,6 +708,16 @@ func TestSkipInitIsUsed(t *testing.T) {
 			// Skipinit has no use on noop funcs, since noop funcs always skipinit.
 			require.False(t, sv.IsNoop, fmt.Sprintf("skipInit has no effect on noop variables: %s", sv.Name))
 
+			// Test for variables that have a default of "0" or "OFF"
+			// If it is session-only scoped there is likely no bug now.
+			// If it is also global-scoped, then there is a bug as soon as the global changes.
+			if !(sv.Name == RandSeed1 || sv.Name == RandSeed2) {
+				// The bug is because the tests might not realize the SetSession func was not called on init,
+				// because it would initialize some session field to the empty value anyway.
+				require.NotEqual(t, "0", sv.Value, fmt.Sprintf("default value is zero: %s", sv.Name))
+				require.NotEqual(t, "OFF", sv.Value, fmt.Sprintf("default value is OFF: %s", sv.Name))
+			}
+
 			// Many of these variables might allow skipInit to be removed,
 			// they need to be checked first. The purpose of this test is to make
 			// sure we don't introduce any new variables with skipInit, which seems
@@ -715,21 +725,13 @@ func TestSkipInitIsUsed(t *testing.T) {
 			switch sv.Name {
 			case TiDBTxnScope,
 				TiDBSnapshot,
-				TiDBOptDistinctAggPushDown,
-				TiDBOptWriteRowID,
-				TiDBBatchInsert,
-				TiDBBatchDelete,
-				TiDBBatchCommit,
 				TiDBEnableChunkRPC,
 				TxnIsolationOneShot,
-				TiDBOptimizerSelectivityLevel,
 				TiDBOptimizerEnableOuterJoinReorder,
 				TiDBDDLReorgPriority,
 				TiDBSlowQueryFile,
 				TiDBWaitSplitRegionFinish,
 				TiDBWaitSplitRegionTimeout,
-				TiDBLowResolutionTSO,
-				TiDBAllowRemoveAutoInc,
 				TiDBMetricSchemaStep,
 				TiDBMetricSchemaRangeDuration,
 				RandSeed1,
@@ -740,9 +742,7 @@ func TestSkipInitIsUsed(t *testing.T) {
 				CharacterSetConnection,
 				CharacterSetServer,
 				TiDBOptTiFlashConcurrencyFactor,
-				TiDBOptSeekFactor,
-				TiDBOptJoinReorderThreshold,
-				TiDBStatsLoadSyncWait:
+				TiDBOptSeekFactor:
 				continue
 			}
 			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
