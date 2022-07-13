@@ -277,7 +277,7 @@ func TestGetGlobalResolvedTS(t *testing.T) {
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
 	require.Nil(t, err)
-	require.Equal(t, uint64(100), globalResolvedTS)
+	require.Equal(t, uint64(101), globalResolvedTS)
 }
 
 func TestGetGlobalResolvedTS2(t *testing.T) {
@@ -309,5 +309,5 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
 	require.Nil(t, err)
-	require.Equal(t, uint64(98), globalResolvedTS)
+	require.Equal(t, uint64(99), globalResolvedTS)
 }
