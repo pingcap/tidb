@@ -18,14 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-<<<<<<< HEAD
+	"io/ioutil"
 	"strconv"
 	"strings"
 	"sync"
-=======
-	"io/ioutil"
-	"strings"
->>>>>>> d10d25457... util: let TypeFloat should be decoded as Float32 in Chunk (#35978)
 	"sync/atomic"
 	"testing"
 	"time"
@@ -766,7 +762,6 @@ func TestHashInTopN(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3394,7 +3389,8 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tbl := h.GetTableStats(tableInfo)
 	require.Equal(t, int64(6), tbl.Columns[tableInfo.Columns[0].ID].Histogram.NDV)
-=======
+}
+
 func TestAnalyzePartitionTableForFloat(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3413,5 +3409,4 @@ func TestAnalyzePartitionTableForFloat(t *testing.T) {
 		tk.MustExec(sql)
 	}
 	tk.MustExec("analyze table t1")
->>>>>>> d10d25457... util: let TypeFloat should be decoded as Float32 in Chunk (#35978)
 }
