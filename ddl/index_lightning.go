@@ -401,12 +401,12 @@ type backFillIndexWorker struct {
 	firstVal           []byte
 }
 
-func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
+func newTempIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, jc *JobContext) *backFillIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
 	// Add build openengine process.
 	return &backFillIndexWorker{
-		backfillWorker: newBackfillWorker(sessCtx, 0, t, reorgInfo),
+		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
 		index:          index,
 		jobContext:     jc,
 	}

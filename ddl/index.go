@@ -766,7 +766,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	doReorg, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
 	if indexInfo.SubState != model.StatePublic {
 		if err != nil {
-			logutil.BgLogger().Error("Lightning: Add index backfill processing:", zap.String("Error:", err.Error()))
+			logutil.BgLogger().Error("Lightning: Add index fast path processing:", zap.String("Error:", err.Error()))
 			return doReorg, ver, err
 		}
 		// Only when SubState is in BackFill state, then need start to start new backfill task.
