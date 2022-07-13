@@ -505,6 +505,133 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 	tk.MustExec("admin check table t;")
 }
 
+func TestMultiSchemaChangeModifyColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	// unsupported ddl operations
+	{
+		// Test modify the same column twice.
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int default 1, b int default 2);")
+		tk.MustExec("insert into t values ();")
+		tk.MustGetErrCode("alter table t modify column a int default 2, modify column a bigint;", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify and drop with same column
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int default 1, b int default 2);")
+		tk.MustExec("insert into t values ();")
+		tk.MustGetErrCode("alter table t modify column b double, drop column b", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify column related with dropped column
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int default 1, b int default 2, c int default 3);")
+		tk.MustExec("insert into t values ();")
+		tk.MustGetErrCode("alter table t modify column b double after c, drop column c", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify column related with add index
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 2);")
+		tk.MustGetErrCode("alter table t add index i(a), modify column a int null default 1 after a;", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify column related with add primary index
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 2);")
+		tk.MustGetErrCode("alter table t add primary key(a), modify column a int null default 1 after a;", errno.ErrUnsupportedDDLOperation)
+
+		// Test modify column related with expression index
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 2);")
+		tk.MustGetErrCode("alter table t modify column b double, add index idx((a + b));", errno.ErrUnsupportedDDLOperation)
+	}
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("alter table t modify column b double default 2 after a, add column c int default 3 after a;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 3 2"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t modify column a bigint, modify column b bigint;")
+	tk.MustExec("insert into t values (9223372036854775807, 9223372036854775807, 1);")
+	tk.MustQuery("select * from t;").Check(
+		testkit.Rows("1 2 3", "9223372036854775807 9223372036854775807 1"))
+
+	// Modify index-covered columns.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, index i1(a), index i2(b), index i3(c), index i4(a, b), index i5(a, b, c));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t modify column a tinyint, modify column b tinyint, modify column c tinyint;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+	tk.MustQuery("select * from t use index(i1, i2, i3, i4, i5);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
+
+	// Modify index-covered columns with position change.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, index i1(a), index i2(b), index i3(c), index i4(a, b), index i5(a, b, c));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t modify column a tinyint after c, modify column b tinyint, modify column c tinyint first;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 2 1"))
+	tk.MustQuery("select * from t use index(i1, i2, i3, i4, i5);").Check(testkit.Rows("3 2 1"))
+	tk.MustExec("admin check table t;")
+
+	// Modify columns that require and don't require reorganization of data.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, index i1(a), index i2(c, b));")
+	tk.MustExec("insert into t values (1, 2, 3), (11, 22, 33);")
+	tk.MustExec("alter table t modify column b char(255) after c, modify column a bigint;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 2", "11 33 22"))
+	tk.MustQuery("select * from t use index(i1, i2);").Check(testkit.Rows("1 3 2", "11 33 22"))
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, _Col$_a double, index _Idx$_i(a, _Col$_a), index i(a, _Col$_a));")
+	tk.MustExec("alter table t modify column a tinyint;")
+	tk.MustQuery("select count(distinct KEY_NAME) from information_schema.TIDB_INDEXES where TABLE_NAME='t';").Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a BIGINT NULL DEFAULT '-283977870758975838', b double);")
+	tk.MustExec("insert into t values (-283977870758975838, 0);")
+	tk.MustGetErrCode("alter table t change column a c tinyint null default '111' after b, modify column b time null default '13:51:02' FIRST;", errno.ErrDataOutOfRange)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int);")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustGetErrCode("alter table t add index i(b), modify column a int null default 1 after a;", errno.ErrBadField)
+}
+
+func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	originHook := dom.DDL().GetHook()
+
+	// Test for cancelling the job in a middle state.
+	tk.MustExec("create table t (a int, b int, c int, index i1(a), unique index i2(b), index i3(a, b));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
+	})
+	dom.DDL().SetHook(hook)
+	sql := "alter table t modify column a tinyint, modify column b bigint, modify column c char(20);"
+	tk.MustGetErrCode(sql, errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(originHook)
+	hook.MustCancelDone(t)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+	tk.MustQuery("select * from t use index (i1, i2, i3);").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("admin check table t;")
+	tk.MustQuery("select data_type from information_schema.columns where table_name = 't' and column_name = 'c';").
+		Check(testkit.Rows("int"))
+}
+
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
