@@ -992,7 +992,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if resp.detail != nil {
-				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
+				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, worker.req.Paging) {
 					data := make([]byte, len(resp.pbResp.Data))
 					copy(data, resp.pbResp.Data)
 
