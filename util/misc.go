@@ -16,6 +16,10 @@ package util
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -615,12 +619,9 @@ func QueryStrForLog(query string) string {
 	return query
 }
 
-func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
-	privkey, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
-	if err != nil {
-		return err
-	}
-
+// CreateCertificates creates and writes a cert based on the params.
+func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyAlgo x509.PublicKeyAlgorithm,
+	signAlgo x509.SignatureAlgorithm) error {
 	certValidity := 90 * 24 * time.Hour // 90 days
 	notBefore := time.Now()
 	notAfter := notBefore.Add(certValidity)
@@ -633,14 +634,29 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 		Subject: pkix.Name{
 			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
 		},
-		SerialNumber: big.NewInt(1),
-		NotBefore:    notBefore,
-		NotAfter:     notAfter,
-		DNSNames:     []string{hostname},
+		SerialNumber:       big.NewInt(1),
+		NotBefore:          notBefore,
+		NotAfter:           notAfter,
+		DNSNames:           []string{hostname},
+		SignatureAlgorithm: signAlgo,
 	}
 
+	var privKey crypto.Signer
+	switch pubKeyAlgo {
+	case x509.RSA:
+		privKey, err = rsa.GenerateKey(rand.Reader, rsaKeySize)
+	case x509.ECDSA:
+		privKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	case x509.Ed25519:
+		_, privKey, err = ed25519.GenerateKey(rand.Reader)
+	default:
+		return errors.Errorf("unknown public key algorithm: %s", pubKeyAlgo.String())
+	}
+	if err != nil {
+		return err
+	}
 	// DER: Distinguished Encoding Rules, this is the ASN.1 encoding rule of the certificate.
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privkey.PublicKey, privkey)
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, privKey.Public(), privKey)
 	if err != nil {
 		return err
 	}
@@ -661,7 +677,7 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 		return err
 	}
 
-	privBytes, err := x509.MarshalPKCS8PrivateKey(privkey)
+	privBytes, err := x509.MarshalPKCS8PrivateKey(privKey)
 	if err != nil {
 		return err
 	}
@@ -677,4 +693,9 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
 		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
+}
+
+func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
+	// use RSA and unspecified signature algorithm
+	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 }
