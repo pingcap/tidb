@@ -2003,7 +2003,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 
 	// Check if table has a primary key if required.
 	if ctx.GetSessionVars().PrimaryKeyRequired && len(tbInfo.GetPkName().String()) == 0 {
-		return infoschema.ErrNoPrimaryKey
+		return infoschema.ErrTableWithoutPrimaryKey
 	}
 	if tbInfo.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
@@ -6125,6 +6125,10 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	isPK, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
 	if err != nil {
 		return err
+	}
+
+	if ctx.GetSessionVars().PrimaryKeyRequired && isPK {
+		return infoschema.ErrTableWithoutPrimaryKey
 	}
 
 	if indexInfo == nil {

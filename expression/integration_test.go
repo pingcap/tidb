@@ -6695,13 +6695,24 @@ func TestPrimaryKeyRequiredSysvar(t *testing.T) {
 	tk.MustGetErrCode(`CREATE TABLE t (
 		name varchar(60),
 		age int
-	  )`, errno.ErrRequiresPrimaryKey)
+	  )`, errno.ErrTableWithoutPrimaryKey)
 	// but with primary key should work as usual
 	tk.MustExec(`CREATE TABLE t (
 		id bigint(20) NOT NULL PRIMARY KEY AUTO_RANDOM,
 		name varchar(60),
 		age int
 	  )`)
+	tk.MustGetErrMsg(`ALTER TABLE t
+       DROP COLUMN id`, "[ddl:8200]Unsupported drop integer primary key")
+
+	// test with non-clustered primary key
+	tk.MustExec(`CREATE TABLE t2 (
+       id int(11) NOT NULL,
+       c1 int(11) DEFAULT NULL,
+       PRIMARY KEY(id) NONCLUSTERED)`)
+	tk.MustGetErrMsg(`ALTER TABLE t2
+       DROP COLUMN id`, "[ddl:8200]can't drop column id with composite index covered or Primary Key covered now")
+	tk.MustGetErrCode(`ALTER TABLE t2 DROP PRIMARY KEY`, errno.ErrTableWithoutPrimaryKey)
 }
 
 // issue https://github.com/pingcap/tidb/issues/26111
