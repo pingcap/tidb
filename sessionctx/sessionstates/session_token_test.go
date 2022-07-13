@@ -238,8 +238,9 @@ func TestLoadAndReadConcurrently(t *testing.T) {
 	}
 	// the reader
 	for i := 0; i < 3; i++ {
+		id := i
 		wg.Run(func() {
-			username := fmt.Sprintf("test_user_%d", i)
+			username := fmt.Sprintf("test_user_%d", id)
 			for time.Now().Before(deadline) {
 				_, tokenBytes := createNewToken(t, username)
 				time.Sleep(10 * time.Millisecond)
