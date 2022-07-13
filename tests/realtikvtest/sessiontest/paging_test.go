@@ -39,6 +39,7 @@ func TestPagingActRowsAndProcessKeys(t *testing.T) {
 	session := testkit.NewTestKit(t, store)
 	session.MustExec("use test;")
 	session.MustExec("drop table if exists t;")
+	session.MustExec(`set @@tidb_wait_split_region_finish=1`)
 	session.MustExec("create table t(a int,b int,c int,index idx(a,b), primary key(a));")
 	// prepare data, insert 10w record
 	// [0, 999999]
