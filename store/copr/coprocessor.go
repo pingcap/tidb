@@ -211,7 +211,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			// the size will grow every round.
 			pagingSize := uint64(0)
 			if req.Paging {
-				pagingSize = paging.MinPagingSize
+				pagingSize = req.MinPagingSize
 			}
 			tasks = append(tasks, &copTask{
 				region:        loc.Location.Region,
@@ -868,6 +868,7 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		// So we finish here.
 		return nil, nil
 	}
+
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
 	if task.ranges.Len() == 0 {

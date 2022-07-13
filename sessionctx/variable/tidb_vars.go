@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/paging"
 	"go.uber.org/atomic"
 )
 
@@ -362,6 +363,9 @@ const (
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
+
+	// TiDBMinPagingSize is used to control the min paging size in the coprocessor paging protocol.
+	TiDBMinPagingSize = "tidb_min_paging_size"
 
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
@@ -820,6 +824,7 @@ const (
 	DefBatchCommit                                 = false
 	DefCurretTS                                    = 0
 	DefInitChunkSize                               = 32
+	DefMinPagingSize                               = int(paging.MinPagingSize)
 	DefMaxChunkSize                                = 1024
 	DefDMLBatchSize                                = 0
 	DefMaxPreparedStmtCount                        = -1
