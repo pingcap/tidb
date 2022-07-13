@@ -79,6 +79,8 @@ func TestNormalSessionPool(t *testing.T) {
 	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
+	conf.Socket = ""
+	conf.Port = 0
 	conf.Socket = strings.Replace(conf.Socket, "{Port}", fmt.Sprintf("%d", uint(4000+rand.Intn(1000))), 1)
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
@@ -111,7 +113,8 @@ func TestAbnormalSessionPool(t *testing.T) {
 	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
-	conf.Socket = strings.Replace(conf.Socket, "{Port}", fmt.Sprintf("%d", uint(4200+rand.Intn(1000))), 1)
+	conf.Socket = ""
+	conf.Port = 0
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
