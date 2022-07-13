@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//br/pkg/lightning/metric",
         "//br/pkg/redact",
+        "//kv",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
