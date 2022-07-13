@@ -237,8 +237,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
-			readFromCache := !e.ctx.GetSessionVars().IsPessimisticReadConsistency()
-			if readFromCache {
+			lockNonExistIdxKey := !e.ctx.GetSessionVars().IsPessimisticReadConsistency()
+			// Non-exist keys are also locked if the isolation level is not read consistency,
+			// lock it before read here, then it's able to read from pessimistic lock cache.
+			if lockNonExistIdxKey {
 				err = e.lockKeyIfNeeded(ctx, e.idxKey)
 				if err != nil {
 					return err
@@ -252,10 +254,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			}
 
-			// try lock the index key if isolation level is not read consistency
 			// also lock key if read consistency read a value
-			if readFromCache || len(e.handleVal) > 0 {
-				if !readFromCache {
+			// TODO: pessimistic lock support lock-if-exist.
+			if lockNonExistIdxKey || len(e.handleVal) > 0 {
+				if !lockNonExistIdxKey {
 					err = e.lockKeyIfNeeded(ctx, e.idxKey)
 					if err != nil {
 						return err
