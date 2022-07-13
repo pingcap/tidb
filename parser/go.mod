@@ -8,7 +8,6 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/stretchr/testify v1.7.0
-	github.com/tjfoc/gmsm v1.4.1
 	go.uber.org/goleak v1.1.10
 	go.uber.org/zap v1.18.1
 	golang.org/x/exp v0.0.0-20220428152302-39d4317da171

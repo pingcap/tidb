@@ -6,6 +6,7 @@ go_library(
         "auth.go",
         "caching_sha2.go",
         "mysql_native_password.go",
+        "sm3.go",
     ],
     importpath = "github.com/pingcap/tidb/parser/auth",
     visibility = ["//visibility:public"],
@@ -21,6 +22,7 @@ go_test(
     srcs = [
         "caching_sha2_test.go",
         "mysql_native_password_test.go",
+        "sm3_test.go",
     ],
     embed = [":auth"],
     deps = ["@com_github_stretchr_testify//require"],
