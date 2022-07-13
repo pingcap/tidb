@@ -154,7 +154,9 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				return s.optimize(ctx, p, opt)
 			}
 		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
-			allConst := true
+			// After the column pruning, some expressions in the projection operator may be pruned.
+			// In this situation, we can decorrelate the apply operator.
+			allConst := len(proj.Exprs) > 0
 			for _, expr := range proj.Exprs {
 				if len(expression.ExtractCorColumns(expr)) > 0 || !expression.ExtractColumnSet(expr).IsEmpty() {
 					allConst = false
