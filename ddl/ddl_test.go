@@ -76,12 +76,6 @@ func createMockStore(t *testing.T) kv.Storage {
 	return store
 }
 
-func testNewContext(d *ddl) sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.Store = d.store
-	return ctx
-}
-
 func TestGetIntervalFromPolicy(t *testing.T) {
 	policy := []time.Duration{
 		1 * time.Second,
