@@ -177,24 +177,24 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 	return buf.String()
 }
 
-// Checks if a MySQL style caching_sha2 authentication string matches a password
+// CheckShaPassword checks if a MySQL style caching_sha2 authentication string matches a password
 func CheckShaPassword(pwhash []byte, password string) (bool, error) {
-	pwhash_parts := bytes.Split(pwhash, []byte("$"))
-	if len(pwhash_parts) != 4 {
+	pwhashParts := bytes.Split(pwhash, []byte("$"))
+	if len(pwhashParts) != 4 {
 		return false, errors.New("failed to decode hash parts")
 	}
 
-	hash_type := string(pwhash_parts[1])
-	if hash_type != "A" {
+	hashType := string(pwhashParts[1])
+	if hashType != "A" {
 		return false, errors.New("digest type is incompatible")
 	}
 
-	iterations, err := strconv.Atoi(string(pwhash_parts[2]))
+	iterations, err := strconv.Atoi(string(pwhashParts[2]))
 	if err != nil {
 		return false, errors.New("failed to decode iterations")
 	}
 	iterations = iterations * ITERATION_MULTIPLIER
-	salt := pwhash_parts[3][:SALT_LENGTH]
+	salt := pwhashParts[3][:SALT_LENGTH]
 
 	newHash := sha256crypt(password, salt, iterations)
 

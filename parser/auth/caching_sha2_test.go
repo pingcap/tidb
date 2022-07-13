@@ -58,7 +58,7 @@ func TestCheckShaPasswordIterationsInvalid(t *testing.T) {
 	require.Error(t, err)
 }
 
-// The output from NewSha2Password is not stable as the hash is based on the genrated salt.
+// The output from NewSha2Password is not stable as the hash is based on the generated salt.
 // This is why CheckShaPassword is used here.
 func TestNewSha2Password(t *testing.T) {
 	pwd := "testpwd"

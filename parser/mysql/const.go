@@ -166,6 +166,7 @@ const (
 const (
 	AuthNativePassword      = "mysql_native_password" // #nosec G101
 	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
+	AuthSM3Password         = "sm3_password"          // #nosec G101
 	AuthSocket              = "auth_socket"
 )
 
@@ -231,6 +232,7 @@ const MaxTypeSetMembers = 64
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
 const SHAPWDHashLen = 70
+const SM3PWDHashLen = 64
 
 // Command2Str is the command information to command name.
 var Command2Str = map[byte]string{

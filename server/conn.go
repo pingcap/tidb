@@ -729,6 +729,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		if err != nil {
 			return err
 		}
+	case mysql.AuthSM3Password:
+		// TODO
 	case mysql.AuthNativePassword:
 	case mysql.AuthSocket:
 	default:
@@ -755,6 +757,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 
 		switch resp.AuthPlugin {
 		case mysql.AuthCachingSha2Password:
+		case mysql.AuthSM3Password:
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
 		default:

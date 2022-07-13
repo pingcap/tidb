@@ -198,6 +198,14 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return false
 	}
 
+	if record.AuthPlugin == mysql.AuthSM3Password {
+		if len(pwd) == mysql.SM3PWDHashLen {
+			return true
+		}
+		logutil.BgLogger().Error("user password from system DB not like a sm3_password format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		return false
+	}
+
 	if record.AuthPlugin == mysql.AuthSocket {
 		return true
 	}
@@ -346,12 +354,21 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 			return
 		}
 	} else if record.AuthPlugin == mysql.AuthCachingSha2Password {
-		authok, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
+		authOK, err := auth.CheckShaPassword([]byte(pwd), string(authentication))
 		if err != nil {
 			logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
 		}
 
-		if !authok {
+		if !authOK {
+			return
+		}
+	} else if record.AuthPlugin == mysql.AuthSM3Password {
+		authOK, err := auth.CheckSM3Password([]byte(pwd), string(authentication))
+		if err != nil {
+			logutil.BgLogger().Error("Failed to check sm3_password", zap.Error(err))
+		}
+
+		if !authOK {
 			return
 		}
 	} else if record.AuthPlugin == mysql.AuthSocket {
