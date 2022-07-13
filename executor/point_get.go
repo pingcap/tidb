@@ -237,6 +237,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
+			// lockNonExistIdxKey indicates the key will be locked regardless of its existence.
 			lockNonExistIdxKey := !e.ctx.GetSessionVars().IsPessimisticReadConsistency()
 			// Non-exist keys are also locked if the isolation level is not read consistency,
 			// lock it before read here, then it's able to read from pessimistic lock cache.
