@@ -387,6 +387,9 @@ func (c *innerItemLruCache) put(tblID, id int64, isIndex bool, item statistics.T
 			c.evictIfNeeded()
 		}
 	}()
+	if itemMem.TrackingMemUsage() < 1 {
+		return
+	}
 	isIndexSet, ok := c.elements[tblID]
 	if !ok {
 		c.elements[tblID] = make(map[bool]map[int64]*list.Element)
@@ -435,7 +438,7 @@ func (c *innerItemLruCache) evictIfNeeded() {
 		statistics.DropEvicted(item.innerItem)
 		newMem := item.innerItem.MemoryUsage()
 		c.calculateCost(newMem, oldMem)
-		if newMem.TrackingMemUsage() == 0 {
+		if newMem.TrackingMemUsage() == 0 || item.innerItem.IsAllEvicted() {
 			// remove from lru
 			c.cache.Remove(curr)
 			delete(c.elements[item.tblID][item.isIndex], item.id)
