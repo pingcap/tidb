@@ -23,7 +23,6 @@ import (
 	"math"
 	"math/rand"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +58,7 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // PreparedStmtCount is exported for test.
@@ -1158,6 +1158,19 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// TiFlash related optimization, only for MPP.
+	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
+
+	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
+	MemoryDebugModeMinHeapInUse int64
+	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
+	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
+	MemoryDebugModeAlarmRatio int64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1682,6 +1695,11 @@ func (s *SessionVars) IsPessimisticReadConsistency() bool {
 func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	s.preparedStmtID++
 	return s.preparedStmtID
+}
+
+// SetNextPreparedStmtID sets the next prepared statement id. It's only used in restoring session states.
+func (s *SessionVars) SetNextPreparedStmtID(preparedStmtID uint32) {
+	s.preparedStmtID = preparedStmtID
 }
 
 // Location returns the value of time_zone session variable. If it is nil, then return time.Local.
@@ -2414,7 +2432,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 			for backoff := range logItems.CopTasks.TotBackoffTimes {
 				backoffs = append(backoffs, backoff)
 			}
-			sort.Strings(backoffs)
+			slices.Sort(backoffs)
 
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",

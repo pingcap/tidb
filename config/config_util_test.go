@@ -50,8 +50,6 @@ func TestMergeConfigItems(t *testing.T) {
 	newConf.Performance.MaxProcs = 123
 	newConf.Performance.MaxMemory = 123
 	newConf.Performance.CrossJoin = false
-	newConf.Performance.FeedbackProbability = 123
-	newConf.Performance.QueryFeedbackLimit = 123
 	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.TiKVClient.StoreLimit = 123
 
@@ -62,7 +60,7 @@ func TestMergeConfigItems(t *testing.T) {
 	newConf.Instance.SlowThreshold = 2345
 
 	as, rs := MergeConfigItems(oldConf, newConf)
-	require.Equal(t, 8, len(as))
+	require.Equal(t, 6, len(as))
 	require.Equal(t, 3, len(rs))
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
@@ -76,8 +74,6 @@ func TestMergeConfigItems(t *testing.T) {
 	require.Equal(t, newConf.Performance.MaxProcs, oldConf.Performance.MaxProcs)
 	require.Equal(t, newConf.Performance.MaxMemory, oldConf.Performance.MaxMemory)
 	require.Equal(t, newConf.Performance.CrossJoin, oldConf.Performance.CrossJoin)
-	require.Equal(t, newConf.Performance.FeedbackProbability, oldConf.Performance.FeedbackProbability)
-	require.Equal(t, newConf.Performance.QueryFeedbackLimit, oldConf.Performance.QueryFeedbackLimit)
 	require.Equal(t, newConf.Performance.PseudoEstimateRatio, oldConf.Performance.PseudoEstimateRatio)
 	require.Equal(t, newConf.TiKVClient.StoreLimit, oldConf.TiKVClient.StoreLimit)
 	require.Equal(t, newConf.Instance.SlowThreshold, oldConf.Instance.SlowThreshold)

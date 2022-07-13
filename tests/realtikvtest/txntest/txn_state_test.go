@@ -58,7 +58,7 @@ func TestBasicTxnState(t *testing.T) {
 	info = tk.Session().TxnInfo()
 	_, expectedDigest := parser.NormalizeDigest("select * from t for update;")
 	require.Equal(t, expectedDigest.String(), info.CurrentSQLDigest)
-	require.Equal(t, txninfo.TxnLockWaiting, info.State)
+	require.Equal(t, txninfo.TxnLockAcquiring, info.State)
 	require.True(t, info.BlockStartTime.Valid)
 	require.Equal(t, startTS, info.StartTS)
 
@@ -182,7 +182,7 @@ func TestBlocked(t *testing.T) {
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	require.Equal(t, txninfo.TxnLockWaiting, tk2.Session().TxnInfo().State)
+	require.Equal(t, txninfo.TxnLockAcquiring, tk2.Session().TxnInfo().State)
 	require.NotNil(t, tk2.Session().TxnInfo().BlockStartTime)
 	tk1.MustExec("commit;")
 	<-ch
@@ -360,7 +360,7 @@ func TestTxnInfoWithPSProtocol(t *testing.T) {
 	info = tk.Session().TxnInfo()
 	require.Greater(t, info.StartTS, uint64(0))
 	require.Equal(t, digest2.String(), info.CurrentSQLDigest)
-	require.Equal(t, txninfo.TxnLockWaiting, info.State)
+	require.Equal(t, txninfo.TxnLockAcquiring, info.State)
 	require.True(t, info.BlockStartTime.Valid)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic")
 	require.Equal(t, []string{beginDigest.String(), digest1.String(), digest2.String()}, info.AllSQLDigests)

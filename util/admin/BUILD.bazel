@@ -28,6 +28,7 @@ go_library(
 
 go_test(
     name = "admin_test",
+    timeout = "short",
     srcs = [
         "admin_integration_test.go",
         "main_test.go",

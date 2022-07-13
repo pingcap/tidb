@@ -9,6 +9,7 @@ go_library(
         "//parser/mysql",
         "//util/hack",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
     ],
 )
 
