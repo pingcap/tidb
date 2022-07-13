@@ -700,33 +700,30 @@ func TestSettersandGetters(t *testing.T) {
 func TestSkipInitIsUsed(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		if sv.skipInit {
+			// skipInit only ever applied to session scope, so if anyone is setting it on
+			// a variable without session, that doesn't make sense.
+			require.True(t, sv.HasSessionScope(), fmt.Sprintf("skipInit has no effect on a variable without session scope: %s", sv.Name))
+			// Since SetSession is the "init function" there is no init function to skip.
+			require.NotNil(t, sv.SetSession, fmt.Sprintf("skipInit has no effect on variables without an init (setsession) func: %s", sv.Name))
+			// Skipinit has no use on noop funcs, since noop funcs always skipinit.
+			require.False(t, sv.IsNoop, fmt.Sprintf("skipInit has no effect on noop variables: %s", sv.Name))
+
 			// Many of these variables might allow skipInit to be removed,
 			// they need to be checked first. The purpose of this test is to make
 			// sure we don't introduce any new variables with skipInit, which seems
 			// to be a problem.
 			switch sv.Name {
-			case Timestamp,
-				WarningCount,
-				ErrorCount,
-				LastInsertID,
-				Identity,
-				TiDBTxnScope,
+			case TiDBTxnScope,
 				TiDBSnapshot,
 				TiDBOptDistinctAggPushDown,
 				TiDBOptWriteRowID,
-				TiDBChecksumTableConcurrency,
 				TiDBBatchInsert,
 				TiDBBatchDelete,
 				TiDBBatchCommit,
-				TiDBCurrentTS,
-				TiDBLastTxnInfo,
-				TiDBLastQueryInfo,
 				TiDBEnableChunkRPC,
 				TxnIsolationOneShot,
 				TiDBOptimizerSelectivityLevel,
 				TiDBOptimizerEnableOuterJoinReorder,
-				TiDBLogFileMaxDays,
-				TiDBConfig,
 				TiDBDDLReorgPriority,
 				TiDBSlowQueryFile,
 				TiDBWaitSplitRegionFinish,
@@ -735,40 +732,17 @@ func TestSkipInitIsUsed(t *testing.T) {
 				TiDBAllowRemoveAutoInc,
 				TiDBMetricSchemaStep,
 				TiDBMetricSchemaRangeDuration,
-				TiDBFoundInPlanCache,
-				TiDBFoundInBinding,
 				RandSeed1,
 				RandSeed2,
-				TiDBLastDDLInfo,
-				TiDBGeneralLog,
-				TiDBSlowLogThreshold,
-				TiDBRecordPlanInSlowLog,
-				TiDBEnableSlowLog,
-				TiDBCheckMb4ValueInUTF8,
-				TiDBPProfSQLCPU,
-				TiDBDDLSlowOprThreshold,
-				TiDBForcePriority,
-				TiDBMemoryUsageAlarmRatio,
-				TiDBEnableCollectExecutionInfo,
-				TiDBPersistAnalyzeOptions,
-				TiDBEnableColumnTracking,
-				TiDBStatsLoadPseudoTimeout,
-				SQLLogBin,
-				ForeignKeyChecks,
 				CollationDatabase,
-				CharacterSetClient,
-				CharacterSetResults,
 				CollationConnection,
 				CharsetDatabase,
-				GroupConcatMaxLen,
 				CharacterSetConnection,
 				CharacterSetServer,
-				TiDBBuildStatsConcurrency,
 				TiDBOptTiFlashConcurrencyFactor,
 				TiDBOptSeekFactor,
 				TiDBOptJoinReorderThreshold,
-				TiDBStatsLoadSyncWait,
-				CharacterSetFilesystem:
+				TiDBStatsLoadSyncWait:
 				continue
 			}
 			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
@@ -1084,4 +1058,14 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	// expected to set to min value
 	require.Equal(t, val, fmt.Sprintf("%d", expected))
 	require.NoError(t, err)
+}
+
+func TestDefaultMemoryDebugModeValue(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeMinHeapInUse)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeAlarmRatio)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
 }
