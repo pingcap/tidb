@@ -43,8 +43,8 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
-func runEBSRestoreCommand(command *cobra.Command, cmdName string) error {
-	cfg := task.RestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}
+func runRestoreDataCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.RestoreDataConfig{Config: task.Config{LogProgress: HasLogFile()}}
 	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
 		return errors.Trace(err)
@@ -56,8 +56,8 @@ func runEBSRestoreCommand(command *cobra.Command, cmdName string) error {
 		ctx, store = trace.TracerStartSpan(ctx)
 		defer trace.TracerFinishSpan(ctx, store)
 	}
-	if err := task.RunRestoreEBS(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
-		log.Error("failed to restore", zap.Error(err))
+	if err := task.RunRestoreData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+		log.Error("failed to restore data", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil
@@ -110,7 +110,7 @@ func NewRestoreCommand() *cobra.Command {
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
 		newStreamRestoreCommand(),
-		newEBSRestoreCommand(),
+		newRestoreDataCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -185,16 +185,16 @@ func newStreamRestoreCommand() *cobra.Command {
 	return command
 }
 
-func newEBSRestoreCommand() *cobra.Command {
+func newRestoreDataCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "ebs",
-		Short: "restore data from ebs snapshot volume",
+		Use:   "data",
+		Short: "phase 2 - restore data from snapshot volume where tikv runing on, it requires phase 1 command 'restore ebs' run before.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runEBSRestoreCommand(command, task.EBSRestoreCmd)
+			return runRestoreDataCommand(command, task.EBSRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineRestoreDataFlags(command)
 	command.Hidden = true
 	return command
 }

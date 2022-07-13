@@ -52,7 +52,6 @@ import (
 
 const (
 	flagYes              = "yes"
-	flagDryRun           = "dry-run"
 	flagUntil            = "until"
 	flagStreamJSONOutput = "json"
 	flagStreamTaskName   = "task-name"

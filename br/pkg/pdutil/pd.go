@@ -36,6 +36,7 @@ const (
 	regionCountPrefix    = "pd/api/v1/stats/region"
 	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
+	recoveringMarkPrefix = "pd/api/v1/admin/recovering-mark"
 	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	scheduleConfigPrefix = "pd/api/v1/config/schedule"
 	configPrefix         = "pd/api/v1/config"
@@ -399,6 +400,25 @@ func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []strin
 		}
 	}
 	return removedSchedulers, nil
+}
+
+func (p *PdController) UnmarkRecovering(ctx context.Context) error {
+	return p.operateRecoveringMark(ctx, http.MethodDelete)
+}
+
+func (p *PdController) operateRecoveringMark(ctx context.Context, method string) error {
+	var err error
+	for _, addr := range p.addrs {
+		_, e := pdRequest(ctx, addr, recoveringMarkPrefix, p.cli, method, nil)
+		if e != nil {
+			log.Warn("failed to operate recovering mark", zap.String("method", method),
+				zap.String("addr", addr), zap.Error(e))
+			err = e
+			continue
+		}
+		return nil
+	}
+	return errors.Trace(err)
 }
 
 func (p *PdController) pauseSchedulersAndConfigWith(

@@ -4,36 +4,118 @@ package task
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 const (
 	EBSRestoreCmd = "EBS Restore"
 )
 
-//TODO P1: get resolved_ts and num of tikv from S3 backup meta
-func ReadBackupMetaData() (uint64, int) {
-	return 476457456, 3
+const (
+	flagRegionInfo = "region-info"
+	flagLeaderInfo = "leader-info"
+)
+
+// DefineRestoreEBSMetaFlags defines common flags for the backup command.
+func DefineRestoreDataFlags(command *cobra.Command) {
+	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
+	command.Flags().String(flagRegionInfo, "regionInfo", "print all region infos")
+	command.Flags().String(flagLeaderInfo, "leader", "pring all region leaders")
+}
+
+type RestoreDataConfig struct {
+	Config
+	RegionInfo string `json:"region-info"`
+	DryRun     bool   `json:"dry-run"`
+	LeaderInfo string `json:"leader-info"`
+}
+
+// ParseFromFlags parses the restore-related flags from the flag set.
+func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	var err error
+	cfg.DryRun, err = flags.GetBool(flagDryRun)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RegionInfo, err = flags.GetString(flagRegionInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.LeaderInfo, err = flags.GetString(flagLeaderInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return cfg.Config.ParseFromFlags(flags)
+}
+
+func checkEBSBRMeta(meta *config.EBSBasedBRMeta) error {
+	if meta.ClusterInfo == nil {
+		return errors.New("no cluster info")
+	}
+	if _, err := semver.NewVersion(meta.ClusterInfo.Version); err != nil {
+		return errors.Annotatef(err, "invalid cluster version")
+	}
+	if meta.ClusterInfo.ResolvedTS == 0 {
+		return errors.New("invalid resolved ts")
+	}
+	if meta.GetStoreCount() == 0 {
+		return errors.New("tikv info is empty")
+	}
+	return nil
+}
+
+func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64, int, error) {
+	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	metaInfo := &config.EBSBasedBRMeta{}
+	err = json.Unmarshal(metaBytes, metaInfo)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	if err = checkEBSBRMeta(metaInfo); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	return metaInfo.ClusterInfo.ResolvedTS, metaInfo.TiKVComponent.Replicas, nil
 }
 
 // RunRestore starts a restore task inside the current goroutine.
-func RunRestoreEBS(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
-	defer summary.Summary(cmdName)
+func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
+	var finished bool
+	defer func() {
+		if finished {
+			summary.Log("EBS restore success")
+		} else {
+			summary.Log("EBS restore failed, please check the log for details.")
+		}
+	}()
+
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunRestoreEBS", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("task.RunRestoreData", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -47,50 +129,39 @@ func RunRestoreEBS(c context.Context, g glue.Glue, cmdName string, cfg *RestoreC
 
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
-	err = configureRestoreClient(ctx, client, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
-	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
-	if cfg.CheckRequirements && backupVersion != nil {
-		if versionErr := version.CheckClusterVersion(ctx, mgr.GetPDClient(), version.CheckVersionForBackup(backupVersion)); versionErr != nil {
-			return errors.Trace(versionErr)
+	var resolveTs uint64
+	var numOfStores int
+	if cfg.DryRun {
+		resolveTs = 46464574745
+		numOfStores = 3
+	} else {
+
+		_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		resolveTs, numOfStores, err = ReadBackupMetaData(ctx, externStorage)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
-
-	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader); err != nil {
-		return errors.Trace(err)
-	}
-
-	resolveTs, numOfStores := ReadBackupMetaData()
 
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       utils.MakeSafePointID(),
 	}
 
-	// restore checksum will check safe point with its start ts, see details at
-	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
-	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
 	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	//TODO: switch PD into recovery mode, which lead to the TiKV will prepare the region meta and wait BR to pull it
-	restore.SwitchToRecoveryMode(mgr.GetPDClient())
 
 	var allStores []*metapb.Store
 	allStores, err = conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), conn.SkipTiFlash)
@@ -98,13 +169,23 @@ func RunRestoreEBS(c context.Context, g glue.Glue, cmdName string, cfg *RestoreC
 		return errors.Trace(err)
 	}
 
-	err = restore.RecoverCluster(ctx, resolveTs, numOfStores, allStores, mgr.GetTLSConfig())
+	if len(allStores) != numOfStores {
+		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster")
+		return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
+			"number of tikvs mismatch")
+	}
+
+	err = restore.RecoverCluster(ctx, resolveTs, allStores, mgr.GetTLSConfig())
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	defer restore.SwitchToNormalMode(mgr.GetPDClient())
+	log.Info("unmark recovering")
+	if err := mgr.UnmarkRecovering(ctx); err != nil {
+		return errors.Trace(err)
+	}
 
+	finished = true
 	return nil
 
 }
