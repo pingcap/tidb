@@ -3645,7 +3645,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 			"  KEY `val` (`val`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`id`)\n" +
+			"PARTITION BY RANGE (`id`) /*T![interval_partitioning] INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90) MAXVALUE PARTITION */\n" +
 			"(PARTITION `SYS_P_LT_10` VALUES LESS THAN (10),\n" +
 			" PARTITION `SYS_P_LT_20` VALUES LESS THAN (20),\n" +
 			" PARTITION `SYS_P_LT_30` VALUES LESS THAN (30),\n" +
@@ -3690,7 +3690,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 			"  KEY `val` (`val`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`id`)\n" +
+			"PARTITION BY RANGE (`id`) /*T![interval_partitioning] INTERVAL (10) FIRST PARTITION LESS THAN (30) LAST PARTITION LESS THAN (90) MAXVALUE PARTITION */\n" +
 			"(PARTITION `SYS_P_LT_30` VALUES LESS THAN (30),\n" +
 			" PARTITION `SYS_P_LT_40` VALUES LESS THAN (40),\n" +
 			" PARTITION `SYS_P_LT_50` VALUES LESS THAN (50),\n" +
@@ -3728,7 +3728,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) /*T![interval_partitioning] INTERVAL (1 WEEK) FIRST PARTITION LESS THAN (2022-02-01) LAST PARTITION LESS THAN (2022-03-29) NULL PARTITION MAXVALUE PARTITION */\n" +
 			"(PARTITION `SYS_P_NULL` VALUES LESS THAN ('0000-01-01'),\n" +
 			" PARTITION `SYS_P_LT_2022-02-01` VALUES LESS THAN ('2022-02-01'),\n" +
 			" PARTITION `SYS_P_LT_2022-02-08` VALUES LESS THAN ('2022-02-08'),\n" +
@@ -3772,7 +3772,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) /*T![interval_partitioning] INTERVAL (1 MONTH) FIRST PARTITION LESS THAN (2022-01-31) LAST PARTITION LESS THAN (2022-05-31) */\n" +
 			"(PARTITION `SYS_P_LT_2022-01-31` VALUES LESS THAN ('2022-01-31'),\n" +
 			" PARTITION `SYS_P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
 			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
@@ -3796,7 +3796,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) /*T![interval_partitioning] INTERVAL (1 MONTH) FIRST PARTITION LESS THAN (2022-02-28) LAST PARTITION LESS THAN (2022-05-31) */\n" +
 			"(PARTITION `SYS_P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
 			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
 			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
@@ -3827,7 +3827,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  KEY `val` (`val`),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE COLUMNS(`id`)\n" +
+			"PARTITION BY RANGE COLUMNS(`id`) /*T![interval_partitioning] INTERVAL (1 MONTH) FIRST PARTITION LESS THAN (2022-02-28) LAST PARTITION LESS THAN (2022-06-30) */\n" +
 			"(PARTITION `SYS_P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
 			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
 			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
@@ -3864,7 +3864,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 			"  KEY `val` (`val`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`id`)\n" +
+			"PARTITION BY RANGE (`id`) /*T![interval_partitioning] INTERVAL (10) FIRST PARTITION LESS THAN (20) LAST PARTITION LESS THAN (100) */\n" +
 			"(PARTITION `SYS_P_LT_20` VALUES LESS THAN (20),\n" +
 			" PARTITION `SYS_P_LT_30` VALUES LESS THAN (30),\n" +
 			" PARTITION `SYS_P_LT_40` VALUES LESS THAN (40),\n" +
@@ -3896,7 +3896,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `id` timestamp NULL DEFAULT NULL,\n" +
 			"  `val` varchar(255) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (UNIX_TIMESTAMP(`id`))\n" +
+			"PARTITION BY RANGE (UNIX_TIMESTAMP(`id`)) /*T![interval_partitioning] INTERVAL (3600) FIRST PARTITION LESS THAN (1640991600) LAST PARTITION LESS THAN (1641078000) */\n" +
 			"(PARTITION `SYS_P_LT_1640991600` VALUES LESS THAN (1640991600),\n" +
 			" PARTITION `SYS_P_LT_1640995200` VALUES LESS THAN (1640995200),\n" +
 			" PARTITION `SYS_P_LT_1640998800` VALUES LESS THAN (1640998800),\n" +
@@ -3939,7 +3939,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"  `id` tinyint(4) DEFAULT NULL,\n" +
 			"  `val` varchar(255) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-			"PARTITION BY RANGE (`id`)\n" +
+			"PARTITION BY RANGE (`id`) /*T![interval_partitioning] INTERVAL (50) FIRST PARTITION LESS THAN (-300) LAST PARTITION LESS THAN (300) */\n" +
 			"(PARTITION `SYS_P_LT_-300` VALUES LESS THAN (-300),\n" +
 			" PARTITION `SYS_P_LT_-250` VALUES LESS THAN (-250),\n" +
 			" PARTITION `SYS_P_LT_-200` VALUES LESS THAN (-200),\n" +
@@ -3954,13 +3954,25 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `SYS_P_LT_250` VALUES LESS THAN (250),\n" +
 			" PARTITION `SYS_P_LT_300` VALUES LESS THAN (300))"))
 	tk.MustExec("drop table t")
+
+	err = tk.ExecToErr("create table t (id int unsigned, val float, comment varchar(255))" +
+		" partition by range columns (val) interval (1000 * 1000)" +
+		" first partition less than (0)" +
+		" last partition less than (100 * 1000 * 1000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1659]Field 'val' is of a not allowed type for this type of partitioning", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range columns (val) interval (1000 * 1000)" +
+		" first partition less than ('0')" +
+		" last partition less than ('10000000') NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8215]Failed to repair table: INTERVAL partitioning only supports Date, Datetime and INT types", err.Error())
 	// TODO:
 	// test unsigned and different ranges for INT type
 	// test unsigned and different ranges for things like TO_DAYS()/TO_SECONDS()
 	// Test other offsets, including when first and last have different offset vs INTERVAL
 	// Test out-of-range?
 	// Test non integer/Date column types in RANGE COLUMNS
-	// Test float types in RANGE COLUMNS?
 	// Test first and last set to NULL?
 	// Test normal DROP / ADD partition and try to see either if it will work with INTERVAL or not (if not issue a warning that interval partitioning has been removed!)
 	// Extra feature take a well ranged partitioned table and add INTERVAL?

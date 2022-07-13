@@ -503,9 +503,22 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only allowed on RANGE partitioning")
 	}
-	if len(partOptions.ColumnNames) > 1 {
+	if len(partOptions.ColumnNames) > 1 || len(tbInfo.Partition.Columns) > 1 {
 		// Hijacked error from below... TODO better error?
 		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow RANGE COLUMNS with more than one column")
+	}
+	var partCol *model.ColumnInfo
+	if len(tbInfo.Partition.Columns) > 0 {
+		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
+		if partCol == nil {
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning internal error, could not find any RANGE COLUMNS")
+		}
+		// Only support Datetime, date and INT column types for RANGE INTERVAL! (TODO: list and check all!)
+		switch partCol.FieldType.EvalType() {
+		case types.ETInt, types.ETDatetime:
+		default:
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only supports Date, Datetime and INT types")
+		}
 	}
 	if len(partOptions.Definitions) > 0 {
 		// Suggested syntax does not allow partition definitions for INTERVAL range partitioning
@@ -546,22 +559,31 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	}
 	if partOptions.Interval.NullPart {
 		var partExpr ast.ExprNode
-		if len(partOptions.ColumnNames) == 0 || partOptions.Interval.IntervalExpr.TimeUnit == ast.TimeUnitInvalid {
+		if len(tbInfo.Partition.Columns) == 0 {
 			// Get int type from partition column, so we can get minimum value (signed/unsigned and range)
-			// First PoC try, just set LESS THAN MinInt64
+			// currently use https://github.com/pingcap/tidb/issues/36022, just set LESS THAN MinInt64
 			// TODO: use collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
 			if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
 				partExpr = ast.NewValueExpr(0, "", "")
 			} else {
+				// currently use https://github.com/pingcap/tidb/issues/36022, just set LESS THAN MinInt64
 				partExpr = ast.NewValueExpr(math.MinInt64, "", "")
 			}
 		} else {
-			// Get col type from partition column, so we can get minimum date?
-			// First PoC try, just set LESS THAN ZeroTime
-			// TODO: Check compatibility with MySQL:
-			// https://dev.mysql.com/doc/refman/8.0/en/datetime.html says range 1000-01-01 - 9999-12-31
-			// https://docs.pingcap.com/tidb/dev/data-type-date-and-time says The supported range is '0000-01-01' to '9999-12-31'
-			partExpr = ast.NewValueExpr("0000-01-01", "", "")
+			if partOptions.Interval.IntervalExpr.TimeUnit != ast.TimeUnitInvalid {
+				// Get col type from partition column, so we can get minimum date?
+				// First PoC try, just set LESS THAN ZeroTime
+				// TODO: Check compatibility with MySQL:
+				// https://dev.mysql.com/doc/refman/8.0/en/datetime.html says range 1000-01-01 - 9999-12-31
+				// https://docs.pingcap.com/tidb/dev/data-type-date-and-time says The supported range is '0000-01-01' to '9999-12-31'
+				partExpr = ast.NewValueExpr("0000-01-01", "", "")
+			} else {
+				if mysql.HasUnsignedFlag(partCol.GetFlag()) {
+					partExpr = ast.NewValueExpr(0, "", "")
+				} else {
+					partExpr = ast.NewValueExpr(math.MinInt64, "", "")
+				}
+			}
 		}
 		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
 			Name: model.NewCIStr("SYS_P_NULL"),
