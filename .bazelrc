@@ -1,11 +1,6 @@
 startup --host_jvm_args=-Xmx8g
 startup --unlimit_coredumps
 
-build --java_language_version=17
-build --java_runtime_version=17
-build --tool_java_language_version=17
-build --tool_java_runtime_version=17
-
 run --color=yes
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp
 build:release --config=ci
