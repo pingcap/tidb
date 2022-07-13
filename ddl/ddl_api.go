@@ -2000,7 +2000,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	}
 
 	// Check if table has a primary key if required.
-	if ctx.GetSessionVars().PrimaryKeyRequired && len(tbInfo.GetPkName().String()) == 0 {
+	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && len(tbInfo.GetPkName().String()) == 0 {
 		return infoschema.ErrTableWithoutPrimaryKey
 	}
 	if tbInfo.Partition != nil {
