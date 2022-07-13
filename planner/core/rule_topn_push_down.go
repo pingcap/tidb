@@ -77,7 +77,17 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 	if topN == nil {
 		return ls.baseLogicalPlan.pushDownTopN(nil, opt)
 	} else if topN.isLimit() {
-		topN.ByItems = ls.ByItems
+		baseCols := make([]*expression.Column, 0, len(ls.ByItems))
+		for _, by := range ls.ByItems {
+			cols := expression.ExtractColumns(by.Expr)
+			baseCols = append(baseCols, cols...)
+		}
+		if len(baseCols) != 0 {
+			// try push sorted items down.
+			topN.ByItems = ls.ByItems
+		}
+		// else just push limit down. eg: sort items are all correlated column or constant.
+		//  before eNNR, sort item won't occur correlated item because it has been projected as normal column in projection OP.
 		appendSortPassByItemsTraceStep(ls, topN, opt)
 		return ls.children[0].pushDownTopN(topN, opt)
 	}
