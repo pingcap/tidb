@@ -79,14 +79,8 @@ func (d Checker) checkDBInfo(ctx sessionctx.Context, dbName model.CIStr) {
 		if dbInfo == nil && dbInfo2 == nil {
 			return
 		}
-		if dbInfo == nil {
-			errStr := fmt.Sprintf("%s should not exist", dbName)
-			panic(errStr)
-		}
-		if dbInfo2 == nil {
-			errStr := fmt.Sprintf("%s should exist", dbName)
-			panic(errStr)
-		}
+		errStr := fmt.Sprintf("inconsistent dbInfo, dbName: %s, real ddl: %p, schematracker：%p", dbName, dbInfo, dbInfo2)
+		panic(errStr)
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
@@ -119,14 +113,9 @@ func (d Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName model.
 		if tableInfo == nil && tableInfo2 == nil {
 			return
 		}
-		if tableInfo == nil {
-			errStr := fmt.Sprintf("%s.%s should not exist", dbName, tableName)
-			panic(errStr)
-		}
-		if tableInfo2 == nil {
-			errStr := fmt.Sprintf("%s.%s should exist", dbName, tableName)
-			panic(errStr)
-		}
+		errStr := fmt.Sprintf("inconsistent tableInfo, dbName: %s, tableName: %s, real ddl: %p, schematracker：%p",
+			dbName, tableName, tableInfo, tableInfo2)
+		panic(errStr)
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
