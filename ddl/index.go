@@ -104,7 +104,8 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 	return idxParts, nil
 }
 
-func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
+// CheckPKOnGeneratedColumn checks the specification of PK is valid.
+func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications []*ast.IndexPartSpecification) (*model.ColumnInfo, error) {
 	var lastCol *model.ColumnInfo
 	for _, colName := range indexPartSpecifications {
 		lastCol = getColumnInfoByName(tblInfo, colName.Column.Name.L)
@@ -330,7 +331,8 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	}
 }
 
-func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+// ValidateRenameIndex checks if index name is ok to be renamed.
+func ValidateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := tbl.FindIndexByName(from.L); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
@@ -524,7 +526,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	if indexInfo == nil {
 		if len(hiddenCols) > 0 {
 			for _, hiddenCol := range hiddenCols {
-				initAndAddColumnToTable(tblInfo, hiddenCol)
+				InitAndAddColumnToTable(tblInfo, hiddenCol)
 			}
 		}
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
@@ -547,7 +549,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, errors.Trace(err)
 		}
 		if isPK {
-			if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
+			if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, err
 			}
@@ -625,7 +627,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Set column index flag.
 		AddIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
-			if err = updateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+			if err = UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
 		}
@@ -907,7 +909,7 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 	}
 
 	// Double check. See function `RenameIndex` in ddl_api.go
-	duplicate, err := validateRenameIndex(from, to, tblInfo)
+	duplicate, err := ValidateRenameIndex(from, to, tblInfo)
 	if duplicate {
 		return nil, from, to, nil
 	}
@@ -1562,26 +1564,26 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-// changingIndex is used to store the index that need to be changed during modifying column.
-type changingIndex struct {
-	indexInfo *model.IndexInfo
+// ChangingIndex is used to store the index that need to be changed during modifying column.
+type ChangingIndex struct {
+	IndexInfo *model.IndexInfo
 	// Column offset in idxInfo.Columns.
-	offset int
+	Offset int
 	// When the modifying column is contained in the index, a temp index is created.
-	// isTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
-	isTemp bool
+	// IsTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
+	IsTemp bool
 }
 
-// findRelatedIndexesToChange finds the indexes that covering the given column.
+// FindRelatedIndexesToChange finds the indexes that covering the given column.
 // The normal one will be overridden by the temp one.
-func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
+func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []ChangingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
-	var normalIdxInfos, tempIdxInfos []changingIndex
+	var normalIdxInfos, tempIdxInfos []ChangingIndex
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
 			isTemp := isTempIdxInfo(idxInfo, tblInfo)
-			r := changingIndex{indexInfo: idxInfo, offset: pos, isTemp: isTemp}
+			r := ChangingIndex{IndexInfo: idxInfo, Offset: pos, IsTemp: isTemp}
 			if isTemp {
 				tempIdxInfos = append(tempIdxInfos, r)
 			} else {
@@ -1595,9 +1597,9 @@ func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) [
 	// In this case, we would create a temporary index like $$i($a, $b), so the latter should be chosen.
 	result := normalIdxInfos
 	for _, tmpIdx := range tempIdxInfos {
-		origName := getChangingIndexOriginName(tmpIdx.indexInfo)
+		origName := getChangingIndexOriginName(tmpIdx.IndexInfo)
 		for i, normIdx := range normalIdxInfos {
-			if normIdx.indexInfo.Name.O == origName {
+			if normIdx.IndexInfo.Name.O == origName {
 				result[i] = tmpIdx
 			}
 		}

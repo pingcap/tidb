@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	field_types "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -172,6 +174,8 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 
 	// suppress ErrTooLongKey
 	ctx.GetSessionVars().StrictSQLMode = false
+	// support drop PK
+	ctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 
 	var (
 		referTbl *model.TableInfo
@@ -436,9 +440,577 @@ func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName
 	return nil
 }
 
+// addColumn is used by AlterTable.
+func (d SchemaTracker) addColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	schema := d.SchemaByName(ti.Schema)
+	if schema == nil {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
+	}
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return err
+	}
+	t := tables.MockTableFromMeta(tblInfo)
+	colName := specNewColumn.Name.Name.O
+
+	if col := table.FindCol(t.Cols(), colName); col != nil {
+		if spec.IfNotExists {
+			return nil
+		}
+		return infoschema.ErrColumnExists.GenWithStackByArgs(colName)
+	}
+
+	col, err := ddl.CreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = ddl.CheckAfterPositionExists(tblInfo, spec.Position)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	columnInfo := ddl.InitAndAddColumnToTable(tblInfo, col.ColumnInfo)
+	offset, err := ddl.LocateOffsetToMove(columnInfo.Offset, spec.Position, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
+	columnInfo.State = model.StatePublic
+	return nil
+}
+
+// dropColumn is used by AlterTable.
+func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return err
+	}
+	colName := spec.OldColumnName.Name
+
+	i := -1
+	for i = range tblInfo.Columns {
+		if tblInfo.Columns[i].Name.L == colName.L {
+			break
+		}
+	}
+	if i == -1 {
+		if spec.IfExists {
+			return nil
+		}
+		return dbterror.ErrCantDropFieldOrKey.GenWithStackByArgs(colName)
+	}
+	if len(tblInfo.Columns) == 1 {
+		return dbterror.ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
+			colName, tblInfo.Name)
+	}
+
+	// do drop column
+	tblInfo.Columns = append(tblInfo.Columns[:i], tblInfo.Columns[i+1:]...)
+	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		j := -1
+		for j = range idx.Columns {
+			if idx.Columns[j].Name.L == colName.L {
+				break
+			}
+		}
+		if j == -1 {
+			newIndices = append(newIndices, idx)
+			continue
+		}
+
+		idx.Columns = append(idx.Columns[:j], idx.Columns[j+1:]...)
+		if len(idx.Columns) == 0 {
+			continue
+		}
+		newIndices = append(newIndices, idx)
+	}
+	tblInfo.Indices = newIndices
+	return nil
+}
+
+// renameColumn is used by AlterTable.
+func (d SchemaTracker) renameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	oldColName := spec.OldColumnName.Name
+	newColName := spec.NewColumnName.Name
+
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
+	tbl := tables.MockTableFromMeta(tblInfo)
+
+	oldCol := table.FindCol(tbl.VisibleCols(), oldColName.L)
+	if oldCol == nil {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, ident.Name)
+	}
+
+	if oldColName.L == newColName.L {
+		return nil
+	}
+	if newColName.L == model.ExtraHandleName.L {
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
+	}
+
+	allCols := tbl.Cols()
+	colWithNewNameAlreadyExist := table.FindCol(allCols, newColName.L) != nil
+	if colWithNewNameAlreadyExist {
+		return infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
+	}
+
+	if fkInfo := ddl.GetColumnForeignKeyInfo(oldColName.L, tbl.Meta().ForeignKeys); fkInfo != nil {
+		return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(oldColName, fkInfo.Name)
+	}
+
+	// Check generated expression.
+	for _, col := range allCols {
+		if col.GeneratedExpr == nil {
+			continue
+		}
+		dependedColNames := ddl.FindColumnNamesInExpr(col.GeneratedExpr)
+		for _, name := range dependedColNames {
+			if name.Name.L == oldColName.L {
+				if col.Hidden {
+					return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
+				}
+				return dbterror.ErrDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
+			}
+		}
+	}
+
+	oldCol.Name = newColName
+	return nil
+}
+
+// alterColumn is used by AlterTable.
+func (d SchemaTracker) alterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
+	t := tables.MockTableFromMeta(tblInfo)
+
+	colName := specNewColumn.Name.Name
+	// Check whether alter column has existed.
+	oldCol := table.FindCol(t.Cols(), colName.L)
+	if oldCol == nil {
+		return dbterror.ErrBadField.GenWithStackByArgs(colName, ident.Name)
+	}
+
+	// Clean the NoDefaultValueFlag value.
+	oldCol.DelFlag(mysql.NoDefaultValueFlag)
+	if len(specNewColumn.Options) == 0 {
+		oldCol.DefaultIsExpr = false
+		err = oldCol.SetDefaultValue(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		oldCol.AddFlag(mysql.NoDefaultValueFlag)
+	} else {
+		_, err := ddl.SetDefaultValue(ctx, oldCol, specNewColumn.Options[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// modifyColumn is used by AlterTable.
+func (d SchemaTracker) modifyColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
+		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
+	}
+	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
+		return dbterror.ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
+	}
+	return d.handleModifyColumn(ctx, sctx, ident, specNewColumn.Name.Name, spec)
+}
+
+// changeColumn is used by AlterTable.
+func (d SchemaTracker) changeColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
+		return dbterror.ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
+	}
+	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
+		return dbterror.ErrWrongDBName.GenWithStackByArgs(spec.OldColumnName.Schema.O)
+	}
+	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
+		return dbterror.ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
+	}
+	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
+		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
+	}
+	return d.handleModifyColumn(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+}
+
+func (d SchemaTracker) handleModifyColumn(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	ident ast.Ident,
+	originalColName model.CIStr,
+	spec *ast.AlterTableSpec,
+) error {
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
+	schema := d.SchemaByName(ident.Schema)
+	t := tables.MockTableFromMeta(tblInfo)
+	job, err := ddl.GetModifiableColumnJob(ctx, sctx, ident, originalColName, schema, t, spec)
+	if err != nil {
+		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
+			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	newColInfo := (*job.Args[0].(**table.Column)).ColumnInfo
+	oldColName := job.Args[1].(model.CIStr)
+	updatedAutoRandomBits := job.Args[4].(uint64)
+
+	tblInfo.AutoRandomBits = updatedAutoRandomBits
+	oldCol := table.FindCol(t.Cols(), oldColName.L).ColumnInfo
+
+	changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+	newColName := model.NewCIStr(ddl.GenChangingColumnUniqueName(tblInfo, oldCol))
+	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
+		job.State = model.JobStateCancelled
+		msg := "this column has primary key flag"
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+
+	changingCol := newColInfo.Clone()
+	changingCol.Name = newColName
+	changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
+	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx, changingCol, oldCol)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = changingCol.SetOriginDefaultValue(originDefVal); err != nil {
+		return errors.Trace(err)
+	}
+
+	ddl.InitAndAddColumnToTable(tblInfo, changingCol)
+	indexesToChange := ddl.FindRelatedIndexesToChange(tblInfo, oldCol.Name)
+	changingIndexInfo := make([]*model.IndexInfo, 0, len(indexesToChange))
+	for _, info := range indexesToChange {
+		newIdxID := ddl.AllocateIndexID(tblInfo)
+		if !info.IsTemp {
+			// We create a temp index for each normal index.
+			tmpIdx := info.IndexInfo.Clone()
+			tmpIdxName := ddl.GenChangingIndexUniqueName(tblInfo, info.IndexInfo)
+			ddl.SetIdxIDName(tmpIdx, newIdxID, model.NewCIStr(tmpIdxName))
+			ddl.SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
+			changingIndexInfo = append(changingIndexInfo, tmpIdx)
+			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
+		} else {
+			// The index is a temp index created by previous modify column job(s).
+			// We can overwrite it to reduce reorg cost, because it will be dropped eventually.
+			tmpIdx := info.IndexInfo
+			ddl.SetIdxIDName(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
+			ddl.SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
+		}
+	}
+
+	err = ddl.AdjustTableInfoAfterModifyColumnWithData(tblInfo, changingColPos, oldCol, changingCol, newColName, changingIndexInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ddl.UpdateChangingObjState(changingCol, changingIndexInfo, model.StatePublic)
+	return nil
+}
+
+// renameIndex is used by AlterTable.
+func (d SchemaTracker) renameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return err
+	}
+	duplicate, err := ddl.ValidateRenameIndex(spec.FromKey, spec.ToKey, tblInfo)
+	if duplicate {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	idx := tblInfo.FindIndexByName(spec.FromKey.L)
+	idx.Name = spec.ToKey
+	return nil
+}
+
+// addTablePartitions is used by AlterTable.
+func (d SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partInfo, err := ddl.BuildAddedPartitionInfo(ctx, tblInfo, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblInfo.Partition.Definitions = append(tblInfo.Partition.Definitions, partInfo.Definitions...)
+	return nil
+}
+
+// dropTablePartitions is used by AlterTable.
+func (d SchemaTracker) dropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partNames := make([]string, len(spec.PartitionNames))
+	for i, partCIName := range spec.PartitionNames {
+		partNames[i] = partCIName.L
+	}
+	err = ddl.CheckDropTablePartition(tblInfo, partNames)
+	if err != nil {
+		if dbterror.ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions)-len(partNames))
+	for _, def := range tblInfo.Partition.Definitions {
+		found := false
+		for _, partName := range partNames {
+			if def.Name.L == partName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			newDefs = append(newDefs, def)
+		}
+	}
+	tblInfo.Partition.Definitions = newDefs
+	return nil
+}
+
+// createPrimaryKey is used by AlterTable.
+func (d SchemaTracker) createPrimaryKey(
+	ctx sessionctx.Context,
+	ti ast.Ident,
+	indexName model.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+) error {
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	indexName = model.NewCIStr(mysql.PrimaryKeyName)
+	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		tblInfo.PKIsHandle {
+		return infoschema.ErrMultiplePriKey
+	}
+
+	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
+	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
+	for _, idxPart := range indexPartSpecifications {
+		if idxPart.Expr != nil {
+			return dbterror.ErrFunctionalIndexPrimaryKey
+		}
+	}
+
+	if _, err = ddl.CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
+		return err
+	}
+
+	indexInfo, err := ddl.BuildIndexInfo(
+		ctx,
+		tblInfo.Columns,
+		indexName,
+		true,
+		true,
+		false,
+		indexPartSpecifications,
+		indexOption,
+		model.StatePublic,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	indexInfo.ID = ddl.AllocateIndexID(tblInfo)
+	tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+	// Set column index flag.
+	ddl.AddIndexColumnFlag(tblInfo, indexInfo)
+	if err = ddl.UpdateColsNull2NotNull(tblInfo, indexInfo); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // AlterTable implements the DDL interface.
 func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
-	panic("not implemented")
+	validSpecs, err := ddl.ResolveAlterTableSpec(sctx, stmt.Specs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// TODO: reorder specs to follow MySQL's order, drop index -> drop column -> rename column -> add column -> add index
+	// https://github.com/mysql/mysql-server/blob/8d8c986e5716e38cb776b627a8eee9e92241b4ce/sql/sql_table.cc#L16698-L16714
+
+	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
+	// TODO: precheck about table existence?
+
+	for _, spec := range validSpecs {
+		var handledCharsetOrCollate bool
+		switch spec.Tp {
+		case ast.AlterTableAddColumns:
+			err = d.addColumn(sctx, ident, spec)
+		case ast.AlterTableAddPartitions:
+			err = d.addTablePartitions(sctx, ident, spec)
+		case ast.AlterTableDropColumn:
+			err = d.dropColumn(sctx, ident, spec)
+		case ast.AlterTableDropIndex:
+			err = d.dropIndex(sctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
+		case ast.AlterTableDropPrimaryKey:
+			err = d.dropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+		case ast.AlterTableRenameIndex:
+			err = d.renameIndex(sctx, ident, spec)
+		case ast.AlterTableDropPartition:
+			err = d.dropTablePartition(sctx, ident, spec)
+		case ast.AlterTableAddConstraint:
+			constr := spec.Constraint
+			switch spec.Constraint.Tp {
+			case ast.ConstraintKey, ast.ConstraintIndex:
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeNone, model.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
+			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
+				err = d.createIndex(sctx, ident, ast.IndexKeyTypeUnique, model.NewCIStr(constr.Name),
+					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
+			case ast.ConstraintPrimaryKey:
+				err = d.createPrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+			case ast.ConstraintForeignKey,
+				ast.ConstraintFulltext,
+				ast.ConstraintCheck:
+			default:
+				// Nothing to do now.
+			}
+		case ast.AlterTableModifyColumn:
+			err = d.modifyColumn(ctx, sctx, ident, spec)
+		case ast.AlterTableChangeColumn:
+			err = d.changeColumn(ctx, sctx, ident, spec)
+		case ast.AlterTableRenameColumn:
+			err = d.renameColumn(sctx, ident, spec)
+		case ast.AlterTableAlterColumn:
+			err = d.alterColumn(sctx, ident, spec)
+		case ast.AlterTableRenameTable:
+			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
+			err = d.renameTable(sctx, []ast.Ident{ident}, []ast.Ident{newIdent}, true)
+		case ast.AlterTableOption:
+			tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for i, opt := range spec.Options {
+				switch opt.Tp {
+				case ast.TableOptionShardRowID:
+				case ast.TableOptionAutoIncrement:
+				case ast.TableOptionAutoIdCache:
+				case ast.TableOptionAutoRandomBase:
+				case ast.TableOptionComment:
+					tblInfo.Comment = opt.StrValue
+				case ast.TableOptionCharset, ast.TableOptionCollate:
+					// getCharsetAndCollateInTableOption will get the last charset and collate in the options,
+					// so it should be handled only once.
+					if handledCharsetOrCollate {
+						continue
+					}
+					var toCharset, toCollate string
+					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options)
+					if err != nil {
+						return err
+					}
+					needsOverwriteCols := ddl.NeedToOverwriteColCharset(spec.Options)
+
+					if toCharset != "" {
+						tblInfo.Charset = toCharset
+					}
+					if toCollate != "" {
+						tblInfo.Collate = toCollate
+					}
+					if needsOverwriteCols {
+						// update column charset.
+						for _, col := range tblInfo.Columns {
+							if field_types.HasCharset(&col.FieldType) {
+								col.SetCharset(toCharset)
+								col.SetCollate(toCollate)
+							} else {
+								col.SetCharset(charset.CharsetBin)
+								col.SetCollate(charset.CharsetBin)
+							}
+						}
+					}
+
+					handledCharsetOrCollate = true
+				case ast.TableOptionPlacementPolicy:
+				case ast.TableOptionEngine:
+				default:
+					err = dbterror.ErrUnsupportedAlterTableOption
+				}
+
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		case ast.AlterTablePartitionOptions,
+			ast.AlterTableDropForeignKey,
+			ast.AlterTableCoalescePartitions,
+			ast.AlterTableReorganizePartition,
+			ast.AlterTableCheckPartitions,
+			ast.AlterTableRebuildPartition,
+			ast.AlterTableOptimizePartition,
+			ast.AlterTableRemovePartitioning,
+			ast.AlterTableRepairPartition,
+			ast.AlterTableTruncatePartition,
+			ast.AlterTableWriteable,
+			ast.AlterTableExchangePartition,
+			ast.AlterTablePartition,
+			ast.AlterTableSetTiFlashReplica,
+			ast.AlterTableOrderByColumns,
+			ast.AlterTableIndexInvisible,
+			ast.AlterTableAlterCheck,
+			ast.AlterTableDropCheck,
+			ast.AlterTableWithValidation,
+			ast.AlterTableWithoutValidation,
+			ast.AlterTableAddStatistics,
+			ast.AlterTableDropStatistics,
+			ast.AlterTableAttributes,
+			ast.AlterTablePartitionAttributes,
+			ast.AlterTableCache,
+			ast.AlterTableNoCache:
+		default:
+			// Nothing to do now.
+		}
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return err
 }
 
 // TruncateTable implements the DDL interface, it's no-op in DM's case.

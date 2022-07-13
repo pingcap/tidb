@@ -19,6 +19,7 @@
 package schematracker
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -78,5 +79,40 @@ func TestCreateTableLongIndex(t *testing.T) {
 	tracker := NewSchemaTracker(2)
 	tracker.createTestDB()
 	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+}
+
+func TestAlterPK(t *testing.T) {
+	sql := "create table test.t (c1 int primary key, c2 blob);"
+
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	tracker := NewSchemaTracker(2)
+	tracker.createTestDB()
+	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+
+	sql = "alter table test.t drop primary key;"
+	stmt, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = tracker.AlterTable(ctx, sctx, stmt.(*ast.AlterTableStmt))
+	require.NoError(t, err)
+
+	sctx2 := mock.NewContext()
+
+	sql = "alter table test.t add primary key(c1);"
+	stmt, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = tracker.AlterTable(ctx, sctx2, stmt.(*ast.AlterTableStmt))
+	require.NoError(t, err)
+
+	sql = "alter table test.t drop primary key;"
+	stmt, err = p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = tracker.AlterTable(ctx, sctx2, stmt.(*ast.AlterTableStmt))
 	require.NoError(t, err)
 }

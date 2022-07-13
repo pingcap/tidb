@@ -965,8 +965,8 @@ func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (interface
 	return 0, false, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
 }
 
-// checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
-func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
+// CheckDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
+func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
 	pi := meta.Partition
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
 		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
@@ -1125,7 +1125,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	switch job.SchemaState {
 	case model.StatePublic:
 		// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
-		err = checkDropTablePartition(tblInfo, partNames)
+		err = CheckDropTablePartition(tblInfo, partNames)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
