@@ -131,7 +131,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
-	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets)
+	corrXYSum, err := buildHist(sc, hg, samples, count, ndv, numBuckets, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 
 // buildHist builds histogram from samples and other information.
 // It stores the built histogram in hg and return corrXYSum used for calculating the correlation.
-func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64) (corrXYSum float64, err error) {
+func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleItem, count, ndv, numBuckets int64, memTracker *memory.Tracker) (corrXYSum float64, err error) {
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
@@ -158,9 +158,23 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 	var lastCount int64
 	corrXYSum = float64(0)
 	hg.AppendBucket(&samples[0].Value, &samples[0].Value, int64(sampleFactor), int64(ndvFactor))
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer func() {
+		if memTracker != nil {
+			memTracker.Consume(bufferedMemSize)
+			memTracker.Release(bufferedReleaseSize)
+		}
+	}()
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
-		cmp, err := hg.GetUpper(bucketIdx).Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
+		upper := hg.GetUpper(bucketIdx)
+		if memTracker != nil {
+			deltaSize := upper.MemUsage()
+			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
+		}
+		cmp, err := upper.Compare(sc, &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -379,7 +393,7 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
-		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets))
+		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
 		}
