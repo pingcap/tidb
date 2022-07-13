@@ -51,15 +51,14 @@ const (
 )
 
 type mppExecBuilder struct {
-	sc         *stmtctx.StatementContext
-	dbReader   *dbreader.DBReader
-	mppCtx     *MPPCtx
-	dagReq     *tipb.DAGRequest
-	dagCtx     *dagContext
-	counts     []int64
-	ndvs       []int64
-	paging     *coprocessor.KeyRange
-	pagingSize uint64
+	sc       *stmtctx.StatementContext
+	dbReader *dbreader.DBReader
+	mppCtx   *MPPCtx
+	dagReq   *tipb.DAGRequest
+	dagCtx   *dagContext
+	counts   []int64
+	ndvs     []int64
+	paging   *coprocessor.KeyRange
 }
 
 func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
@@ -200,7 +199,7 @@ func (b *mppExecBuilder) buildLimit(pb *tipb.Limit) (*limitExec, error) {
 	return exec, nil
 }
 
-func (b *mppExecBuilder) buildTopN(pb *tipb.TopN) (mppExec, error) {
+func (b *mppExecBuilder) buildTopN(pb *tipb.TopN) (*topNExec, error) {
 	child, err := b.buildMPPExecutor(pb.Child)
 	if err != nil {
 		return nil, err
@@ -228,12 +227,6 @@ func (b *mppExecBuilder) buildTopN(pb *tipb.TopN) (mppExec, error) {
 		row:         newTopNSortRow(len(conds)),
 		topn:        pb.Limit,
 	}
-
-	// When using paging protocol, if paging size < topN limit, the topN exec degenerate to do nothing.
-	if b.paging != nil && b.pagingSize < pb.Limit {
-		exec.dummy = true
-	}
-
 	return exec, nil
 }
 
