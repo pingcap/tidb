@@ -470,7 +470,6 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 					} else {
 						err = txn.GetMemBuffer().Delete(w.batchCheckTmpKeys[0])
 					}
-					logutil.BgLogger().Info("delete", zap.ByteString("key", w.batchCheckTmpKeys[0]))
 				} else {
 					// set latest key/val back to temp index.
 					err = txn.GetMemBuffer().Set(w.batchCheckTmpKeys[0], w.firstVal)
@@ -486,7 +485,6 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 					} else {
 						err = txn.GetMemBuffer().Delete(idxRecord.key)
 					}
-					logutil.BgLogger().Info("delete", zap.ByteString("key", idxRecord.key))
 				} else {
 					err = txn.GetMemBuffer().Set(idxRecord.key, idxRecord.vals)
 				}
