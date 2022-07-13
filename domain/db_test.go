@@ -80,6 +80,7 @@ func TestNormalSessionPool(t *testing.T) {
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
+	conf.Host = "127.0.0.1"
 	conf.Port = 0
 	conf.Socket = strings.Replace(conf.Socket, "{Port}", fmt.Sprintf("%d", uint(4000+rand.Intn(1000))), 1)
 	svr, err := server.NewServer(conf, nil)
@@ -114,6 +115,7 @@ func TestAbnormalSessionPool(t *testing.T) {
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
 	conf.Socket = ""
+	conf.Host = "127.0.0.1"
 	conf.Port = 0
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
