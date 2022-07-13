@@ -1341,8 +1341,9 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			schema.Append(col)
 			newNames = append(newNames, name)
 		} else {
-			if i >= len(b.curScope.projExpr) {
-				// only some appended col from resolveWindowFunc
+			if i >= len(b.curScope.projExpr) || (considerWindow && isWindowFuncField) {
+				// 1: for only some appended col from resolveWindowFunc, which will be removed in eNNR stage 2.
+				// 2: newly built windows column, use the expr newExpr directly.
 				proj.Exprs = append(proj.Exprs, newExpr)
 				col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
 				if err != nil {
@@ -1352,6 +1353,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				newNames = append(newNames, name)
 				continue
 			}
+			// non-window column, use the current scope's projected column and expr.
 			proj.Exprs = append(proj.Exprs, b.curScope.projExpr[i])
 			schema.Append(b.curScope.projColumn[i])
 			newNames = append(newNames, b.curScope.projNames[i])
@@ -3901,7 +3903,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// analyzing phase.
 		b.analyzingPhase = true
 		b.curScope.selectFields = sel.Fields.Fields
-		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select exists (select * from t1 where t2.c2 > t1.a) from t2") {
+		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b") {
 			fmt.Println(1)
 		}
 		if err = b.analyzeProjectionList(ctx, p, sel.Fields.Fields); err != nil {
@@ -4048,7 +4050,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select (select cnt from (select count(a) as cnt) n) from t") {
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select count(*) from e, lo where lo.a=e.a and e.b=22336") {
 		fmt.Println(1)
 	}
 
@@ -5183,6 +5185,11 @@ func buildColumns2Handle(
 }
 
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	b.pushSelectOffset(0)
 	b.pushTableHints(update.TableHints, 0)
 	defer func() {
@@ -5202,6 +5209,10 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		err := b.buildWith(ctx, update.With)
 		if err != nil {
 			return nil, err
+		}
+		if eNNR {
+			// don't let scope elements in with-clause pollute main clause.
+			b.cleanCurScope()
 		}
 	}
 
@@ -5557,6 +5568,11 @@ func IsDefaultExprSameColumn(names types.NameSlice, node ast.ExprNode) bool {
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	b.pushSelectOffset(0)
 	b.pushTableHints(ds.TableHints, 0)
 	defer func() {
@@ -5577,8 +5593,13 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		if err != nil {
 			return nil, err
 		}
+		if eNNR {
+			// don't let scope elements in with-clause pollute main clause.
+			b.cleanCurScope()
+		}
 	}
 
+	// kind of building tableRefs.
 	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
