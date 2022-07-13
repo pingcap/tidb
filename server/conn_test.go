@@ -1284,6 +1284,7 @@ func TestAuthTokenPlugin(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER auth_session_token")
+	tk.MustExec("CREATE USER another_user")
 	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningCert, certPath))
 	tk.MustExec(fmt.Sprintf("set global %s='%s'", variable.TiDBAuthSigningKey, keyPath))
 
@@ -1331,7 +1332,13 @@ func TestAuthTokenPlugin(t *testing.T) {
 	// wrong token should fail
 	tokenBytes[0] ^= 0xff
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "Access denied")
+	tokenBytes[0] ^= 0xff
+
+	// using the token to auth with another user should fail
+	cc.user = "another_user"
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	require.ErrorContains(t, err, "Access denied")
 }
 
 func TestMaxAllowedPacket(t *testing.T) {
