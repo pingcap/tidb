@@ -3617,6 +3617,99 @@ func TestDuplicatePartitionNames(t *testing.T) {
 		" PARTITION `p3` VALUES IN (3))"))
 }
 
+func checkCreateSyntax(t *testing.T, tk *testkit.TestKit, ok bool, sql, legacyOut, simpleOut string) {
+	for _, sqlStmt := range []string{sql, legacyOut, simpleOut} {
+		_, err := tk.Exec(sqlStmt)
+		// ignore warnings for now
+		if ok {
+			require.NoError(t, err, "sql: %s", sql)
+		} else {
+			require.Error(t, err, "sql: %s", sql)
+			// If not ok, no need to check anything else
+			return
+		}
+		tk.MustExec("set tidb_extension_non_mysql_compatible = off")
+		res := tk.MustQuery("show create table t")
+		require.Equal(t, legacyOut, res.Rows()[0][1], "sql: %s", legacyOut)
+		tk.MustExec("set tidb_extension_non_mysql_compatible = on")
+		res = tk.MustQuery("show create table t")
+		require.Equal(t, simpleOut, res.Rows()[0][1], "sql: %s", sql)
+		tk.MustExec("drop table t")
+	}
+}
+func TestCreateIntervalPartitionSyntax(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database IntervalPartitionSyntax")
+	defer tk.MustExec("drop database IntervalPartitionSyntax")
+	tk.MustExec("use IntervalPartitionSyntax")
+
+	type testCase struct {
+		sql       string
+		ok        bool
+		legacyOut string
+		simpleOut string
+	}
+
+	cases := []testCase{
+
+		{
+			"create table t (id int) partition by range (id) interval (10000000) first partition less than (0) last partition less than (90000000) NULL PARTITION maxvalue partition",
+			true,
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`id`) /*T![interval_partitioning] INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION */\n" +
+				"(PARTITION `SYS_P_NULL` VALUES LESS THAN (-9223372036854775808),\n" +
+				" PARTITION `SYS_P_LT_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `SYS_P_LT_10000000` VALUES LESS THAN (10000000),\n" +
+				" PARTITION `SYS_P_LT_20000000` VALUES LESS THAN (20000000),\n" +
+				" PARTITION `SYS_P_LT_30000000` VALUES LESS THAN (30000000),\n" +
+				" PARTITION `SYS_P_LT_40000000` VALUES LESS THAN (40000000),\n" +
+				" PARTITION `SYS_P_LT_50000000` VALUES LESS THAN (50000000),\n" +
+				" PARTITION `SYS_P_LT_60000000` VALUES LESS THAN (60000000),\n" +
+				" PARTITION `SYS_P_LT_70000000` VALUES LESS THAN (70000000),\n" +
+				" PARTITION `SYS_P_LT_80000000` VALUES LESS THAN (80000000),\n" +
+				" PARTITION `SYS_P_LT_90000000` VALUES LESS THAN (90000000),\n" +
+				" PARTITION `SYS_P_MAXVALUE` VALUES LESS THAN (MAXVALUE))",
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE (`id`) INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION",
+		},
+		{
+			"create table t (id int) partition by range columns (id) interval (10000000) first partition less than (0) last partition less than (90000000) NULL PARTITION maxvalue partition",
+			true,
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE COLUMNS(`id`) /*T![interval_partitioning] INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION */\n" +
+				"(PARTITION `SYS_P_NULL` VALUES LESS THAN (-2147483648),\n" +
+				" PARTITION `SYS_P_LT_0` VALUES LESS THAN (0),\n" +
+				" PARTITION `SYS_P_LT_10000000` VALUES LESS THAN (0 + 1 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_20000000` VALUES LESS THAN (0 + 2 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_30000000` VALUES LESS THAN (0 + 3 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_40000000` VALUES LESS THAN (0 + 4 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_50000000` VALUES LESS THAN (0 + 5 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_60000000` VALUES LESS THAN (0 + 6 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_70000000` VALUES LESS THAN (0 + 7 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_80000000` VALUES LESS THAN (0 + 8 * 10000000),\n" +
+				" PARTITION `SYS_P_LT_90000000` VALUES LESS THAN (0 + 9 * 10000000),\n" +
+				" PARTITION `SYS_P_MAXVALUE` VALUES LESS THAN (MAXVALUE))",
+			"CREATE TABLE `t` (\n" +
+				"  `id` int(11) DEFAULT NULL\n" +
+				") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+				"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION",
+		},
+	}
+	for _, tt := range cases {
+		checkCreateSyntax(t, tk, tt.ok, tt.sql, tt.legacyOut, tt.simpleOut)
+	}
+
+}
+
 func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

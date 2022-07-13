@@ -459,8 +459,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		Num:    s.Num,
 	}
 	tbInfo.Partition = pi
+	var partExpressionCols []*model.ColumnInfo
 	if s.Expr != nil {
-		if err := checkPartitionFuncValid(ctx, tbInfo, s.Expr); err != nil {
+		var err error
+		partExpressionCols, err = checkPartitionFuncValid(ctx, tbInfo, s.Expr)
+		if err != nil {
 			return errors.Trace(err)
 		}
 		buf := new(bytes.Buffer)
@@ -479,7 +482,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 	}
 
-	err := generatePartitionDefinitionsFromInterval(ctx, s, tbInfo)
+	err := generatePartitionDefinitionsFromInterval(ctx, s, tbInfo, partExpressionCols)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -495,7 +498,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 // generatePartitionDefinitionsFromInterval takes generates partition Definitions on the tbInfo from the Interval definition
 // So there are no tbInfo.Partition.Definitions created yet, so we only generate ast.PartitionDefinitions
-func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo) error {
+func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo, partExprCols []*model.ColumnInfo) error {
 	if partOptions.Interval == nil {
 		return nil
 	}
@@ -520,11 +523,8 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only supports Date, Datetime and INT types")
 		}
 	}
-	if len(partOptions.Definitions) > 0 {
-		// Suggested syntax does not allow partition definitions for INTERVAL range partitioning
-		// Hijacked error from below... TODO better error?
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow partition definitions")
-	}
+	// Allow given partition definitions, but check it later!
+	definedPartDefs := partOptions.Definitions
 	partOptions.Definitions = make([]*ast.PartitionDefinition, 0, 1)
 	if partOptions.Interval.FirstRangeEnd == nil || partOptions.Interval.LastRangeEnd == nil {
 		// Hijacked error from below... TODO better error?
@@ -559,28 +559,36 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	}
 	if partOptions.Interval.NullPart {
 		var partExpr ast.ExprNode
-		if len(tbInfo.Partition.Columns) == 0 {
-			// Get int type from partition column, so we can get minimum value (signed/unsigned and range)
-			// currently use https://github.com/pingcap/tidb/issues/36022, just set LESS THAN MinInt64
-			// TODO: use collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
-			if isColUnsigned(tbInfo.Columns, tbInfo.Partition) {
-				partExpr = ast.NewValueExpr(0, "", "")
-			} else {
-				// currently use https://github.com/pingcap/tidb/issues/36022, just set LESS THAN MinInt64
-				partExpr = ast.NewValueExpr(math.MinInt64, "", "")
-			}
+		if len(tbInfo.Partition.Columns) == 1 && partOptions.Interval.IntervalExpr.TimeUnit != ast.TimeUnitInvalid {
+			// Get col type from partition column, so we can get minimum date?
+			// First PoC try, just set LESS THAN ZeroTime
+			// TODO: Check compatibility with MySQL:
+			// https://dev.mysql.com/doc/refman/8.0/en/datetime.html says range 1000-01-01 - 9999-12-31
+			// https://docs.pingcap.com/tidb/dev/data-type-date-and-time says The supported range is '0000-01-01' to '9999-12-31'
+			partExpr = ast.NewValueExpr("0000-01-01", "", "")
 		} else {
-			if partOptions.Interval.IntervalExpr.TimeUnit != ast.TimeUnitInvalid {
-				// Get col type from partition column, so we can get minimum date?
-				// First PoC try, just set LESS THAN ZeroTime
-				// TODO: Check compatibility with MySQL:
-				// https://dev.mysql.com/doc/refman/8.0/en/datetime.html says range 1000-01-01 - 9999-12-31
-				// https://docs.pingcap.com/tidb/dev/data-type-date-and-time says The supported range is '0000-01-01' to '9999-12-31'
-				partExpr = ast.NewValueExpr("0000-01-01", "", "")
-			} else {
+			if partCol != nil {
 				if mysql.HasUnsignedFlag(partCol.GetFlag()) {
 					partExpr = ast.NewValueExpr(0, "", "")
 				} else {
+					partExpr = ast.NewValueExpr(types.IntergerSignedLowerBound(partCol.GetType()), "", "")
+				}
+			} else {
+				var isUnsigned bool = false
+				// TODO: find a good lower bound?
+				if len(partExprCols) > 0 {
+					for _, col := range partExprCols {
+						if mysql.HasUnsignedFlag(col.FieldType.GetFlag()) {
+							isUnsigned = true
+							break
+						}
+					}
+				}
+				// Get int type from partition column, so we can get minimum value (signed/unsigned and range)
+				if isUnsigned {
+					partExpr = ast.NewValueExpr(0, "", "")
+				} else {
+					// currently use https://github.com/pingcap/tidb/issues/36022, just set LESS THAN MinInt64
 					partExpr = ast.NewValueExpr(math.MinInt64, "", "")
 				}
 			}
@@ -607,6 +615,49 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 			},
 		})
 		tbInfo.Partition.IntervalMaxPart = true
+	}
+
+	if len(definedPartDefs) > 0 {
+		if len(definedPartDefs) != len(partOptions.Definitions) {
+			// Hijacked error from below... TODO better error?
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning number of partitions generated != partition defined (%d != %d)", len(partOptions.Definitions), len(definedPartDefs))
+		}
+		for i := range definedPartDefs {
+			if definedPartDefs[i].Name.O != partOptions.Definitions[i].Name.O {
+				// Hijacked error from below... TODO better error?
+				return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning name for partition %d differs between generated and defined (%s != %s)", i, partOptions.Definitions[i].Name.O, definedPartDefs[i].Name.O))
+			}
+			// TODO: How to compare expressions? Evaluate them and then compare?
+			lessThan, ok := definedPartDefs[i].Clause.(*ast.PartitionDefinitionClauseLessThan)
+			if !ok {
+				// Hijacked error from below... TODO better error?
+				return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does not have the right type", partOptions.Definitions[i].Name.O))
+			}
+			definedExpr := lessThan.Exprs[0]
+			generatedExpr := partOptions.Definitions[i].Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs[0]
+			_, maxVD := definedExpr.(*ast.MaxValueExpr)
+			_, maxVG := generatedExpr.(*ast.MaxValueExpr)
+			if maxVG || maxVD {
+				if maxVG && maxVD {
+					continue
+				}
+				// Hijacked error from below... TODO better error?
+				return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning MAXVALUE clause defined for partition %s differs between generated and defined", partOptions.Definitions[i].Name.O))
+			}
+			cmpExpr := &ast.BinaryOperationExpr{
+				Op: opcode.EQ,
+				L:  definedExpr,
+				R:  generatedExpr,
+			}
+			cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
+			if err != nil {
+				return err
+			}
+			if cmp.GetInt64() != 1 {
+				// Hijacked error from below... TODO better error?
+				return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause for partition %s differs between generated and defined", partOptions.Definitions[i].Name.O))
+			}
+		}
 	}
 
 	return nil
@@ -1103,19 +1154,19 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 }
 
 // checkPartitionFuncValid checks partition function validly.
-func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
+func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) ([]*model.ColumnInfo, error) {
 	if expr == nil {
-		return nil
+		return nil, nil
 	}
 	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed)
 	expr.Accept(exprChecker)
 	if exprChecker.err != nil {
-		return errors.Trace(exprChecker.err)
+		return nil, errors.Trace(exprChecker.err)
 	}
 	if len(exprChecker.columns) == 0 {
-		return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
+		return nil, errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
 	}
-	return nil
+	return exprChecker.columns, nil
 }
 
 // checkResultOK derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc

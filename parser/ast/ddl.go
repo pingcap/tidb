@@ -3894,13 +3894,7 @@ func (n *PartitionOptions) Validate() error {
 			n.Num = 1
 		}
 	case model.PartitionTypeRange, model.PartitionTypeList:
-		if n.Interval != nil {
-			// TODO: Add checks for INTERVAL partitioning.
-			if len(n.Definitions) > 0 {
-				// TODO: Create a new error
-				return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
-			}
-		} else if len(n.Definitions) == 0 {
+		if n.Interval == nil && len(n.Definitions) == 0 {
 			return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
 		}
 	case model.PartitionTypeSystemTime:
