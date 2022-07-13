@@ -1349,6 +1349,12 @@ func (w *worker) doModifyColumn(
 		}
 	}
 
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, false)
+	}
+
 	if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
@@ -1505,6 +1511,13 @@ func updateColumnDefaultValue(d *ddlCtx, t *meta.Meta, job *model.Job, newCol *m
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, false)
+	}
+
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled

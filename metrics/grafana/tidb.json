@@ -6912,7 +6912,7 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "decimals": null,
-          "description": "TiDB plan cache hit total",
+          "description": "TiDB plan cache miss total",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -6963,7 +6963,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_server_plan_cache_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "expr": "sum(rate(tidb_server_plan_cache_miss_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
@@ -6975,7 +6975,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Queries Using Plan Cache OPS",
+          "title": "Plan Cache Miss OPS",
           "tooltip": {
             "msResolution": false,
             "shared": true,
