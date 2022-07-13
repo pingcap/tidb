@@ -2017,9 +2017,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			var err error
 			if types.IsTypeTime(hists[0].Tp.Tp) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
-				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
-			} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
-				_, d, err = codec.DecodeAsFloat32(meta.Encoded, hists[0].Tp.GetType())
+				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.Tp, sc.TimeZone)
+			} else if types.IsTypeFloat(hists[0].Tp.Tp) {
+				_, d, err = codec.DecodeAsFloat32(meta.Encoded, hists[0].Tp.Tp)
 			} else {
 				_, d, err = codec.DecodeOne(meta.Encoded)
 			}
