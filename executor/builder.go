@@ -2142,6 +2142,10 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
 		tbInfo := tblID2table[info.TblID].Meta()
+		tbl, err := b.is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+		if err == nil {
+			logutil.BgLogger().Warn("------ build delete, get tbl by name", zap.Int64("schema-version", b.is.SchemaMetaVersion()), zap.String("tb", tbl.Meta().Name.L), zap.Int("refer-fkn", len(tbl.Meta().ReferredForeignKeys)), zap.Uint64("update-ts", tbl.Meta().UpdateTS))
+		}
 		logutil.BgLogger().Warn("------ build delete", zap.Int64("schema-version", b.is.SchemaMetaVersion()), zap.String("tb", tbInfo.Name.L), zap.Int("refer-fkn", len(tbInfo.ReferredForeignKeys)), zap.Uint64("update-ts", tbInfo.UpdateTS))
 	}
 
