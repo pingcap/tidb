@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//go:build !race
 
 package ddl_test
 
@@ -178,16 +177,14 @@ func TestTableResume(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 	defer clean()
 
-	d := dom.DDL()
-
 	dbInfo, err := testSchemaInfo(store, "test_table")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
 	defer func() {
-		testDropSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+		testDropSchema(t, testkit.NewTestKit(t, store).Session(), dom.DDL(), dbInfo)
 	}()
 
-	require.True(t, d.OwnerManager().IsOwner())
+	require.True(t, dom.DDL().OwnerManager().IsOwner())
 
 	tblInfo, err := testTableInfo(store, "t1", 3)
 	require.NoError(t, err)
