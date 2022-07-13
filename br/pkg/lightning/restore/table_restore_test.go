@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -162,7 +163,7 @@ func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
 func (s *tableRestoreSuiteBase) setupTest(t *testing.T) {
 	// Collect into the test TableRestore structure
 	var err error
-	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(t, err)
 
 	s.cfg = config.NewConfig()
@@ -356,12 +357,12 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
-	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
+	realBackend := tidb.NewTiDBBackend(ctx, nil, "replace", nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).
-		Return(realBackend.NewEncoder(tbl, &kv.SessionOptions{})).
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(realBackend.NewEncoder(ctx, tbl, &kv.SessionOptions{})).
 		AnyTimes()
 	mockBackend.EXPECT().MakeEmptyRows().Return(realBackend.MakeEmptyRows()).AnyTimes()
 	mockBackend.EXPECT().LocalWriter(gomock.Any(), gomock.Any(), dataUUID).Return(noop.Writer{}, nil)
@@ -453,7 +454,7 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader() {
 	cfg.Mydumper.StrictFormat = true
 	rc := &Controller{cfg: cfg, ioWorkers: worker.NewPool(context.Background(), 1, "io"), store: store}
 
-	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	tr, err := NewTableRestore("`db`.`table`", tableMeta, s.dbInfo, s.tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), tr.populateChunks(context.Background(), rc, cp))
 
@@ -718,7 +719,7 @@ func (s *tableRestoreSuite) TestInitializeColumnsGenerated() {
 		require.NoError(s.T(), err)
 		core.State = model.StatePublic
 		tableInfo := &checkpoints.TidbTableInfo{Name: "table", DB: "db", Core: core}
-		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		s.tr, err = NewTableRestore("`db`.`table`", s.tableMeta, s.dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 		require.NoError(s.T(), err)
 		ccp := &checkpoints.ChunkCheckpoint{}
 
@@ -879,17 +880,17 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 
-	chunkPendingBase := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	chunkFinishedBase := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	engineFinishedBase := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
-	tableFinishedBase := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
+	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
+	chunkPendingBase := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkFinishedBase := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	engineFinishedBase := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
+	tableFinishedBase := metric.ReadCounter(metrics.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 
-	ctx := context.Background()
+	ctx := metric.NewContext(context.Background(), metrics)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
 	cfg := config.NewConfig()
 	cfg.Mydumper.BatchSize = 1
-	cfg.PostRestore.Checksum = config.OpLevelOff
 
 	cfg.Checkpoint.Enable = false
 	cfg.TiDB.Host = "127.0.0.1"
@@ -899,8 +900,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 
 	cfg.Mydumper.SourceDir = "."
 	cfg.Mydumper.CSV.Header = false
-	cfg.TikvImporter.Backend = config.BackendLocal
-	cfg.TikvImporter.SortedKVDir = "/tmp/sorted"
+	cfg.TikvImporter.Backend = config.BackendTiDB
 	tls, err := cfg.ToTLS()
 	require.NoError(s.T(), err)
 
@@ -935,7 +935,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		closedEngineLimit: worker.NewPool(ctx, 1, "closed_engine"),
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
-		errorMgr:          errormanager.New(nil, cfg),
+		errorMgr:          errormanager.New(nil, cfg, log.L()),
 		taskMgr:           noopTaskMetaMgr{},
 	}
 	go func() {
@@ -956,15 +956,15 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	err = rc.restoreTables(ctx)
 	require.NoError(s.T(), err)
 
-	chunkPending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
-	chunkFinished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkPending := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+	chunkFinished := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 	require.Equal(s.T(), float64(7), chunkPending-chunkPendingBase)
 	require.Equal(s.T(), chunkPending-chunkPendingBase, chunkFinished-chunkFinishedBase)
 
-	engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
+	engineFinished := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
 	require.Equal(s.T(), float64(8), engineFinished-engineFinishedBase)
 
-	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
+	tableFinished := metric.ReadCounter(metrics.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 	require.Equal(s.T(), float64(1), tableFinished-tableFinishedBase)
 }
 
@@ -987,7 +987,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
 	}
 	rc.checkpointsWg.Add(1)
-	go rc.listenCheckpointUpdates()
+	go rc.listenCheckpointUpdates(log.L())
 
 	rc.errorSummaries = makeErrorSummaries(log.L())
 
@@ -1324,11 +1324,11 @@ func (s *tableRestoreSuite) TestEstimate() {
 	require.NoError(s.T(), err)
 
 	mockBackend.EXPECT().MakeEmptyRows().Return(kv.MakeRowsFromKvPairs(nil)).AnyTimes()
-	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
+	mockBackend.EXPECT().NewEncoder(gomock.Any(), gomock.Any(), gomock.Any()).Return(kv.NewTableKVEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        s.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		AutoRandomSeed: 0,
-	})).AnyTimes()
+	}, nil, log.L())).AnyTimes()
 	importer := backend.MakeBackend(mockBackend)
 	s.cfg.TikvImporter.Backend = config.BackendLocal
 

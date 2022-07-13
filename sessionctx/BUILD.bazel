@@ -9,6 +9,7 @@ go_library(
         "//kv",
         "//metrics",
         "//parser/model",
+        "//sessionctx/sessionstates",
         "//sessionctx/variable",
         "//util",
         "//util/kvcache",
@@ -23,6 +24,7 @@ go_library(
 
 go_test(
     name = "sessionctx_test",
+    timeout = "short",
     srcs = [
         "context_test.go",
         "main_test.go",

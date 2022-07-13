@@ -5,11 +5,16 @@ package restore
 import (
 	"context"
 	"strconv"
+	"sync"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 type StreamMetadataSet struct {
@@ -22,22 +27,23 @@ type StreamMetadataSet struct {
 
 // LoadFrom loads data from an external storage into the stream metadata set.
 func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
-	ms.metadata = map[string]*backuppb.Metadata{}
-	ms.writeback = map[string]*backuppb.Metadata{}
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
-	return s.WalkDir(ctx, opt, func(path string, size int64) error {
-		// Maybe load them lazily for preventing out of memory?
-		bs, err := s.ReadFile(ctx, path)
-		if err != nil {
-			return errors.Annotatef(err, "failed to read file %s", path)
-		}
-		var meta backuppb.Metadata
-		if err := meta.Unmarshal(bs); err != nil {
-			return errors.Annotatef(err, "failed to unmarshal file %s, maybe corrupted", path)
-		}
-		ms.metadata[path] = &meta
+	metadataMap := struct {
+		sync.Mutex
+		metas map[string]*backuppb.Metadata
+	}{}
+	ms.writeback = make(map[string]*backuppb.Metadata)
+	metadataMap.metas = make(map[string]*backuppb.Metadata)
+	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, m *backuppb.Metadata) error {
+		metadataMap.Lock()
+		metadataMap.metas[path] = m
+		metadataMap.Unlock()
 		return nil
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ms.metadata = metadataMap.metas
+	return nil
 }
 
 func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
@@ -48,6 +54,21 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 			}
 		}
 	}
+}
+
+// CalculateShiftTS calculates the shift-ts.
+func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
+	metadatas := make([]*backuppb.Metadata, 0, len(ms.metadata))
+	for _, m := range ms.metadata {
+		metadatas = append(metadatas, m)
+	}
+
+	minBeginTS, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
+	if !exist {
+		minBeginTS = startTS
+	}
+	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
+	return minBeginTS
 }
 
 // IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
@@ -210,4 +231,36 @@ func SetTSToFile(
 ) error {
 	content := strconv.FormatUint(safepoint, 10)
 	return truncateAndWrite(ctx, s, filename, []byte(content))
+}
+
+// CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
+func CalculateShiftTS(
+	metas []*backuppb.Metadata,
+	startTS uint64,
+	restoreTS uint64,
+) (uint64, bool) {
+	var (
+		minBeginTS uint64
+		isExist    bool
+	)
+	for _, m := range metas {
+		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+			continue
+		}
+
+		for _, d := range m.Files {
+			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+				continue
+			}
+			if d.MinTs > restoreTS || d.MaxTs < startTS {
+				continue
+			}
+			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
+				isExist = true
+				minBeginTS = d.MinBeginTsInDefaultCf
+			}
+		}
+	}
+
+	return minBeginTS, isExist
 }

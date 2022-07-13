@@ -106,6 +106,7 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//oracle",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_tools//container/intsets",
         "@org_uber_go_zap//:zap",
     ],
@@ -113,6 +114,7 @@ go_library(
 
 go_test(
     name = "expression_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "builtin_arithmetic_test.go",
@@ -173,6 +175,8 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":expression"],
+    flaky = True,
+    shard_count = 50,
     deps = [
         "//config",
         "//domain",

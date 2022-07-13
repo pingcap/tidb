@@ -26,7 +26,7 @@ For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/ti
 
 TiDB Cloud is the fully-managed service of TiDB, currently available on AWS and GCP.
 
-Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/signup).
+Quickly check out TiDB Cloud with [a free trial](https://tidbcloud.com/free-trial).
 
 See [TiDB Cloud Quick Start Guide](https://docs.pingcap.com/tidbcloud/tidb-cloud-quickstart).
 
@@ -60,11 +60,7 @@ The [community repository](https://github.com/pingcap/community) hosts all infor
 
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
-Contributions are welcomed and greatly appreciated. See [Contribution to TiDB](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/introduction.html) for details on typical contribution workflows. For more contributing information, click on the contributor icon above.
-
-## Adopters
-
-View the current list of in-production TiDB adopters [here](https://docs.pingcap.com/tidb/stable/adopters).
+Contributions are welcomed and greatly appreciated. All the contributors are welcomed to claim your reward by filing this [form](https://forms.pingcap.com/f/tidb-contribution-swag). See [Contribution to TiDB](https://pingcap.github.io/tidb-dev-guide/contribute-to-tidb/introduction.html) for details on typical contribution workflows. For more contributing information, click on the contributor icon above.
 
 ## Case studies
 

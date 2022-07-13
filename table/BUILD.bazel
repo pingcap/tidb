@@ -37,6 +37,7 @@ go_library(
 
 go_test(
     name = "table_test",
+    timeout = "short",
     srcs = [
         "column_test.go",
         "main_test.go",
@@ -44,7 +45,7 @@ go_test(
     ],
     embed = [":table"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 50,
     deps = [
         "//errno",
         "//expression",

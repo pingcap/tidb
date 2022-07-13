@@ -63,19 +63,14 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	if err != nil {
 		return res, err
 	}
-	if record {
-		res.output = make([]testCases, len(res.input))
-		for i := range res.input {
-			res.output[i].Name = res.input[i].Name
-		}
-	} else {
-		res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
-		if err != nil {
-			return res, err
-		}
-		if len(res.input) != len(res.output) {
-			return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
-		}
+
+	// Load all test cases result in order to keep the unrelated test results.
+	res.output, err = loadTestSuiteCases(fmt.Sprintf("%s_out.json", res.filePathPrefix))
+	if err != nil {
+		return res, err
+	}
+	if len(res.input) != len(res.output) {
+		return res, errors.New(fmt.Sprintf("Number of test input cases %d does not match test output cases %d", len(res.input), len(res.output)))
 	}
 	res.funcMap = make(map[string]int, len(res.input))
 	for i, test := range res.input {
@@ -88,6 +83,7 @@ func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 }
 
 func loadTestSuiteCases(filePath string) (res []testCases, err error) {
+	//nolint: gosec
 	jsonFile, err := os.Open(filePath)
 	if err != nil {
 		return res, err
@@ -188,16 +184,25 @@ func (td *TestData) generateOutputIfNeeded() error {
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
+	isRecord4ThisSuite := false
 	for i, test := range td.output {
-		err := enc.Encode(test.decodedOut)
-		if err != nil {
-			return err
+		if test.decodedOut != nil {
+			// Only update the results for the related test cases.
+			isRecord4ThisSuite = true
+			err := enc.Encode(test.decodedOut)
+			if err != nil {
+				return err
+			}
+			res := make([]byte, len(buf.Bytes()))
+			copy(res, buf.Bytes())
+			buf.Reset()
+			rm := json.RawMessage(res)
+			td.output[i].Cases = &rm
 		}
-		res := make([]byte, len(buf.Bytes()))
-		copy(res, buf.Bytes())
-		buf.Reset()
-		rm := json.RawMessage(res)
-		td.output[i].Cases = &rm
+	}
+	// Skip the record for the unrelated test files.
+	if !isRecord4ThisSuite {
+		return nil
 	}
 	err := enc.Encode(td.output)
 	if err != nil {

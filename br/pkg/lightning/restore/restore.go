@@ -53,8 +53,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	pd "github.com/tikv/pd/client"
@@ -187,6 +189,7 @@ const (
 )
 
 type Controller struct {
+	taskCtx       context.Context
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
 	dbInfos       map[string]*checkpoints.TidbDBInfo
@@ -301,7 +304,7 @@ func NewRestoreControllerWithPauser(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	errorMgr := errormanager.New(db, cfg)
+	errorMgr := errormanager.New(db, cfg, log.FromContext(ctx))
 	if err := errorMgr.Init(ctx); err != nil {
 		return nil, common.ErrInitErrManager.Wrap(err).GenWithStackByArgs()
 	}
@@ -309,7 +312,7 @@ func NewRestoreControllerWithPauser(
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
-		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate, errorMgr)
+		backend = tidb.NewTiDBBackend(ctx, db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.Rlim_t
 		rLimit, err = local.GetSystemRLimit()
@@ -325,7 +328,7 @@ func NewRestoreControllerWithPauser(
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
-					log.L().Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
+					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
 					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 				} else {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
@@ -364,6 +367,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	rc := &Controller{
+		taskCtx:       ctx,
 		cfg:           cfg,
 		dbMetas:       p.DBMetas,
 		tableWorkers:  nil,
@@ -378,7 +382,7 @@ func NewRestoreControllerWithPauser(
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
 
-		errorSummaries:    makeErrorSummaries(log.L()),
+		errorSummaries:    makeErrorSummaries(log.FromContext(ctx)),
 		checkpointsDB:     cpdb,
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
@@ -410,7 +414,7 @@ func (rc *Controller) Run(ctx context.Context) error {
 		rc.cleanCheckpoints,
 	}
 
-	task := log.L().Begin(zap.InfoLevel, "the whole procedure")
+	task := log.FromContext(ctx).Begin(zap.InfoLevel, "the whole procedure")
 
 	var err error
 	finished := false
@@ -429,7 +433,6 @@ outside:
 			break outside
 		default:
 			logger.Error("run failed")
-			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break outside // ps : not continue
 		}
 	}
@@ -474,13 +477,14 @@ type schemaJob struct {
 }
 
 type restoreSchemaWorker struct {
-	ctx   context.Context
-	quit  context.CancelFunc
-	jobCh chan *schemaJob
-	errCh chan error
-	wg    sync.WaitGroup
-	glue  glue.Glue
-	store storage.ExternalStorage
+	ctx    context.Context
+	quit   context.CancelFunc
+	logger log.Logger
+	jobCh  chan *schemaJob
+	errCh  chan error
+	wg     sync.WaitGroup
+	glue   glue.Glue
+	store  storage.ExternalStorage
 }
 
 func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
@@ -617,9 +621,9 @@ loop:
 					break loop
 				}
 			}
-			logger := log.With(zap.String("db", job.dbName), zap.String("table", job.tblName))
+			logger := worker.logger.With(zap.String("db", job.dbName), zap.String("table", job.tblName))
 			sqlWithRetry := common.SQLWithRetry{
-				Logger: log.L(),
+				Logger: worker.logger,
 				DB:     session,
 			}
 			for _, stmt := range job.stmts {
@@ -694,16 +698,17 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// create table with schema file
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
-	logTask := log.L().Begin(zap.InfoLevel, "restore all schema")
+	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all schema")
 	concurrency := mathutil.Min(rc.cfg.App.RegionConcurrency, 8)
 	childCtx, cancel := context.WithCancel(ctx)
 	worker := restoreSchemaWorker{
-		ctx:   childCtx,
-		quit:  cancel,
-		jobCh: make(chan *schemaJob, concurrency),
-		errCh: make(chan error),
-		glue:  rc.tidbGlue,
-		store: rc.store,
+		ctx:    childCtx,
+		quit:   cancel,
+		logger: log.FromContext(ctx),
+		jobCh:  make(chan *schemaJob, concurrency),
+		errCh:  make(chan error),
+		glue:   rc.tidbGlue,
+		store:  rc.store,
 	}
 	for i := 0; i < concurrency; i++ {
 		go worker.doJob()
@@ -721,6 +726,20 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	dbInfos, err := LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// For local backend, we need DBInfo.ID to operate the global autoid allocator.
+	if rc.isLocalBackend() {
+		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		dbIDs := make(map[string]int64)
+		for _, db := range dbs {
+			dbIDs[db.Name.L] = db.ID
+		}
+		for _, dbInfo := range dbInfos {
+			dbInfo.ID = dbIDs[strings.ToLower(dbInfo.Name)]
+		}
 	}
 	rc.dbInfos = dbInfos
 
@@ -740,12 +759,12 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 		return common.ErrInitCheckpoint.Wrap(err).GenWithStackByArgs()
 	}
 	failpoint.Inject("InitializeCheckpointExit", func() {
-		log.L().Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
+		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
 	})
 
 	rc.checkpointsWg.Add(1) // checkpointsWg will be done in `rc.listenCheckpointUpdates`
-	go rc.listenCheckpointUpdates()
+	go rc.listenCheckpointUpdates(log.FromContext(ctx))
 
 	// Estimate the number of chunks for progress reporting
 	return rc.estimateChunkCountIntoMetrics(ctx)
@@ -815,7 +834,7 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 			file := local.Engine{UUID: eID}
 			err := file.Exist(dir)
 			if err != nil {
-				log.L().Error("can't find local file",
+				log.FromContext(ctx).Error("can't find local file",
 					zap.String("table name", tableName),
 					zap.Int32("engine ID", engineID))
 				if os.IsNotExist(err) {
@@ -885,9 +904,11 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 			}
 		}
 	}
-	metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(estimatedChunkCount)
-	metric.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess).
-		Add(float64(estimatedEngineCnt))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated).Add(estimatedChunkCount)
+		m.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess).
+			Add(float64(estimatedEngineCnt))
+	}
 	rc.tidbGlue.Record(glue.RecordEstimatedChunk, uint64(estimatedChunkCount))
 	return nil
 }
@@ -904,13 +925,12 @@ func firstErr(errors ...error) error {
 func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string, engineID int32, err error, statusIfSucceed checkpoints.CheckpointStatus) error {
 	merger := &checkpoints.StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
-	logger := log.L().With(zap.String("table", tableName), zap.Int32("engine_id", engineID),
+	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Int32("engine_id", engineID),
 		zap.String("new_status", statusIfSucceed.MetricName()), zap.Error(err))
 	logger.Debug("update checkpoint")
 
 	switch {
 	case err == nil:
-		break
 	case utils.MessageIsRetryableStorageError(err.Error()), common.IsContextCanceledError(err):
 		// recoverable error, should not be recorded in checkpoint
 		// which will prevent lightning from automatically recovering
@@ -921,10 +941,12 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	}
 
-	if engineID == checkpoints.WholeTableEngineID {
-		metric.RecordTableCount(statusIfSucceed.MetricName(), err)
-	} else {
-		metric.RecordEngineCount(statusIfSucceed.MetricName(), err)
+	if m, ok := metric.FromContext(ctx); ok {
+		if engineID == checkpoints.WholeTableEngineID {
+			m.RecordTableCount(statusIfSucceed.MetricName(), err)
+		} else {
+			m.RecordEngineCount(statusIfSucceed.MetricName(), err)
+		}
 	}
 
 	waitCh := make(chan error, 1)
@@ -942,7 +964,7 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 }
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
-func (rc *Controller) listenCheckpointUpdates() {
+func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
 	var waiters []chan<- error
@@ -963,7 +985,7 @@ func (rc *Controller) listenCheckpointUpdates() {
 			failpoint.Inject("SlowDownCheckpointUpdate", func() {})
 
 			if len(cpd) > 0 {
-				err := rc.checkpointsDB.Update(cpd)
+				err := rc.checkpointsDB.Update(rc.taskCtx, cpd)
 				for _, w := range ws {
 					w <- common.NormalizeOrWrapErr(common.ErrUpdateCheckpoint, err)
 				}
@@ -1027,7 +1049,7 @@ func (rc *Controller) listenCheckpointUpdates() {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
 				if err := common.KillMySelf(); err != nil {
-					log.L().Warn("KillMySelf() failed to kill itself", log.ShortError(err))
+					logger.Warn("KillMySelf() failed to kill itself", log.ShortError(err))
 				}
 				for scp := range rc.saveCpCh {
 					if scp.waitCh != nil {
@@ -1096,10 +1118,10 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 			for {
 				select {
 				case <-ctx.Done():
-					log.L().Warn("stopping periodic actions", log.ShortError(ctx.Err()))
+					log.FromContext(ctx).Warn("stopping periodic actions", log.ShortError(ctx.Err()))
 					return
 				case <-stop:
-					log.L().Info("everything imported, stopping periodic actions")
+					log.FromContext(ctx).Info("everything imported, stopping periodic actions")
 					return
 
 				case <-switchModeChan:
@@ -1107,29 +1129,34 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					rc.switchToImportMode(ctx)
 
 				case <-logProgressChan:
+					metrics, ok := metric.FromContext(ctx)
+					if !ok {
+						log.FromContext(ctx).Warn("couldn't find metrics from context, skip log progress")
+						continue
+					}
 					// log the current progress periodically, so OPS will know that we're still working
 					nanoseconds := float64(time.Since(start).Nanoseconds())
-					totalRestoreBytes := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
-					restoredBytes := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateRestored))
+					totalRestoreBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
+					restoredBytes := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestored))
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
-					estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
-					pending := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
+					estimated := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
+					pending := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStatePending))
 					if estimated < pending {
 						estimated = pending
 					}
-					finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-					totalTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
-					completedTables := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStateCompleted, metric.TableResultSuccess))
-					bytesRead := metric.ReadHistogramSum(metric.RowReadBytesHistogram)
-					engineEstimated := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess))
-					enginePending := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.ChunkStatePending, metric.TableResultSuccess))
+					finished := metric.ReadCounter(metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
+					totalTables := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+					completedTables := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStateCompleted, metric.TableResultSuccess))
+					bytesRead := metric.ReadHistogramSum(metrics.RowReadBytesHistogram)
+					engineEstimated := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.ChunkStateEstimated, metric.TableResultSuccess))
+					enginePending := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.ChunkStatePending, metric.TableResultSuccess))
 					if engineEstimated < enginePending {
 						engineEstimated = enginePending
 					}
-					engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
-					bytesWritten := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten))
-					bytesImported := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateImported))
+					engineFinished := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
+					bytesWritten := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten))
+					bytesImported := metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.BytesStateImported))
 
 					var state string
 					var remaining zap.Field
@@ -1164,7 +1191,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					totalPercent := 0.0
 					if restoredBytes > 0 {
 						restorePercent := math.Min(restoredBytes/totalRestoreBytes, 1.0)
-						metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
+						metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
 						if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
 							var importPercent float64
 							if bytesWritten > 0 {
@@ -1179,7 +1206,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 								importBytesField = zap.String("import-bytes", fmt.Sprintf("%s/%s(estimated)",
 									units.BytesSize(bytesImported), units.BytesSize(totalImportBytes)))
 							}
-							metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseImport).Set(importPercent)
+							metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseImport).Set(importPercent)
 							totalPercent = (restorePercent + importPercent) / 2
 						} else {
 							totalPercent = restorePercent
@@ -1191,7 +1218,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						restoreBytesField = zap.String("restore-bytes", fmt.Sprintf("%s/%s",
 							units.BytesSize(restoredBytes), units.BytesSize(totalRestoreBytes)))
 					}
-					metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseTotal).Set(totalPercent)
+					metrics.ProgressGauge.WithLabelValues(metric.ProgressPhaseTotal).Set(totalPercent)
 
 					formatPercent := func(num, denom float64) string {
 						if denom > 0 {
@@ -1207,7 +1234,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					}
 
 					// Note: a speed of 28 MiB/s roughly corresponds to 100 GiB/hour.
-					log.L().Info("progress",
+					log.FromContext(ctx).Info("progress",
 						zap.String("total", fmt.Sprintf("%.1f%%", totalPercent*100)),
 						// zap.String("files", fmt.Sprintf("%.0f/%.0f (%.1f%%)", finished, estimated, finished/estimated*100)),
 						zap.String("tables", fmt.Sprintf("%.0f/%.0f%s", completedTables, totalTables, formatPercent(completedTables, totalTables))),
@@ -1225,19 +1252,23 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					rc.enforceDiskQuota(ctx)
 
 				case <-glueProgressTicker.C:
-					finished := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
-					rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
+					if m, ok := metric.FromContext(ctx); ok {
+						finished := metric.ReadCounter(m.ChunkCounter.WithLabelValues(metric.ChunkStateFinished))
+						rc.tidbGlue.Record(glue.RecordFinishedChunk, uint64(finished))
+					}
 				}
 			}
 		}, func(do bool) {
-			log.L().Info("cancel periodic actions", zap.Bool("do", do))
+			log.FromContext(ctx).Info("cancel periodic actions", zap.Bool("do", do))
 			for _, f := range cancelFuncs {
 				f(do)
 			}
 		}
 }
 
-var checksumManagerKey struct{}
+type checksumManagerKeyType struct{}
+
+var checksumManagerKey checksumManagerKeyType
 
 const (
 	pauseGCTTLForDupeRes      = time.Hour
@@ -1278,7 +1309,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 			paused = true
 			break
 		}
-		log.L().Warn(
+		log.FromContext(ctx).Warn(
 			"Failed to register GC safe point because the current minimum safe point is newer"+
 				" than what we assume, will retry newMinSafePoint next time",
 			zap.Uint64("minSafePoint", minSafePoint),
@@ -1301,11 +1332,11 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 			case <-ticker.C:
 				minSafePoint, err := pdCli.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
 				if err != nil {
-					log.L().Warn("Failed to register GC safe point", zap.Error(err))
+					log.FromContext(ctx).Warn("Failed to register GC safe point", zap.Error(err))
 					continue
 				}
 				if minSafePoint > safePoint {
-					log.L().Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
+					log.FromContext(ctx).Warn("The current minimum safe point is newer than what we hold, duplicate records are at"+
 						"risk of being GC and not detectable",
 						zap.Uint64("safePoint", safePoint),
 						zap.Uint64("minSafePoint", minSafePoint),
@@ -1315,7 +1346,7 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 			case <-ctx.Done():
 				stopCtx, cancelFunc := context.WithTimeout(context.Background(), time.Second*5)
 				if _, err := pdCli.UpdateServiceGCSafePoint(stopCtx, serviceID, 0, safePoint); err != nil {
-					log.L().Warn("Failed to reset safe point ttl to zero", zap.Error(err))
+					log.FromContext(ctx).Warn("Failed to reset safe point ttl to zero", zap.Error(err))
 				}
 				// just make compiler happy
 				cancelFunc()
@@ -1343,7 +1374,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		}()
 	}
 
-	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
+	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all tables data")
 	if rc.tableWorkers == nil {
 		rc.tableWorkers = worker.NewPool(ctx, rc.cfg.App.TableConcurrency, "table")
 	}
@@ -1355,43 +1386,70 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	// make split region and ingest sst more stable
 	// because importer backend is mostly use for v3.x cluster which doesn't support these api,
 	// so we also don't do this for import backend
-	finishSchedulers := func() {}
+	finishSchedulers := func() {
+		if rc.taskMgr != nil {
+			rc.taskMgr.Close()
+		}
+	}
 	// if one lightning failed abnormally, and can't determine whether it needs to switch back,
 	// we do not do switch back automatically
 	switchBack := false
 	cleanup := false
 	postProgress := func() error { return nil }
-	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+	var kvStore tidbkv.Storage
 
-		logTask.Info("removing PD leader&region schedulers")
+	if rc.isLocalBackend() {
+		var (
+			restoreFn pdutil.UndoFunc
+			err       error
+		)
 
-		restoreFn, err := rc.taskMgr.CheckAndPausePdSchedulers(ctx)
-		if err != nil {
-			return errors.Trace(err)
+		if !rc.taskMgr.CanPauseSchedulerByKeyRange() {
+			logTask.Info("removing PD leader&region schedulers")
+
+			restoreFn, err = rc.taskMgr.CheckAndPausePdSchedulers(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		finishSchedulers = func() {
-			if restoreFn != nil {
-				taskFinished := finalErr == nil
-				// use context.Background to make sure this restore function can still be executed even if ctx is canceled
-				restoreCtx := context.Background()
-				needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
-				if err != nil {
-					logTask.Warn("check restore pd schedulers failed", zap.Error(err))
-					return
+			taskFinished := finalErr == nil
+			// use context.Background to make sure this restore function can still be executed even if ctx is canceled
+			restoreCtx := context.Background()
+			needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
+			if err != nil {
+				logTask.Warn("check restore pd schedulers failed", zap.Error(err))
+				return
+			}
+			switchBack = needSwitchBack
+			cleanup = needCleanup
+
+			if needSwitchBack && restoreFn != nil {
+				logTask.Info("add back PD leader&region schedulers")
+				if restoreE := restoreFn(restoreCtx); restoreE != nil {
+					logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 				}
-				switchBack = needSwitchBack
-				if needSwitchBack {
-					logTask.Info("add back PD leader&region schedulers")
-					if restoreE := restoreFn(restoreCtx); restoreE != nil {
-						logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
-					}
-				}
-				cleanup = needCleanup
 			}
 
-			rc.taskMgr.Close()
+			if rc.taskMgr != nil {
+				rc.taskMgr.Close()
+			}
 		}
+
+		// Disable GC because TiDB enables GC already.
+		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
+			fmt.Sprintf("tikv://%s?disableGC=true", rc.cfg.TiDB.PdAddr),
+			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		manager, err := newChecksumManager(ctx, rc, kvStore)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 	}
 
 	type task struct {
@@ -1436,28 +1494,30 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(err))
 			}
 		}
+		if kvStore != nil {
+			if err := kvStore.Close(); err != nil {
+				logTask.Warn("failed to close kv store", zap.Error(err))
+			}
+		}
 	}()
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager, err := newChecksumManager(ctx, rc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ctx2 := context.WithValue(ctx, &checksumManagerKey, manager)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
-				needPostProcess, err := task.tr.restoreTable(ctx2, rc, task.cp)
+				needPostProcess, err := task.tr.restoreTable(ctx, rc, task.cp)
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
-				metric.RecordTableCount(metric.TableStateCompleted, err)
+				if m, ok := metric.FromContext(ctx); ok {
+					m.RecordTableCount(metric.TableStateCompleted, err)
+				}
 				restoreErr.Set(err)
 				if needPostProcess {
 					postProcessTaskChan <- task
@@ -1485,7 +1545,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap())
+			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, log.FromContext(ctx))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1506,7 +1566,9 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		}
 	}
 
-	metric.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+	if m, ok := metric.FromContext(ctx); ok {
+		m.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+	}
 
 	for i := range allTasks {
 		wg.Add(1)
@@ -1521,7 +1583,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	// if context is done, should return directly
 	select {
 	case <-ctx.Done():
-		err = restoreErr.Get()
+		err := restoreErr.Get()
 		if err == nil {
 			err = ctx.Err()
 		}
@@ -1540,7 +1602,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				for task := range postProcessTaskChan {
 					metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
 					// force all the remain post-process tasks to be executed
-					_, err2 := task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
+					_, err2 := task.tr.postProcess(ctx, rc, task.cp, true, metaMgr)
 					restoreErr.Set(err2)
 				}
 			}()
@@ -1666,12 +1728,12 @@ func (rc *Controller) outpuErrorSummary() {
 // do full compaction for the whole data.
 func (rc *Controller) fullCompact(ctx context.Context) error {
 	if !rc.cfg.PostRestore.Compact {
-		log.L().Info("skip full compaction")
+		log.FromContext(ctx).Info("skip full compaction")
 		return nil
 	}
 
 	// wait until any existing level-1 compact to complete first.
-	task := log.L().Begin(zap.InfoLevel, "wait for completion of existing level 1 compaction")
+	task := log.FromContext(ctx).Begin(zap.InfoLevel, "wait for completion of existing level 1 compaction")
 	for !rc.compactState.CAS(compactStateIdle, compactStateDoing) {
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -1706,7 +1768,7 @@ func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode)
 		return
 	}
 
-	log.L().Info("switch import mode", zap.Stringer("mode", mode))
+	log.FromContext(ctx).Info("switch import mode", zap.Stringer("mode", mode))
 
 	// It is fine if we miss some stores which did not switch to Import mode,
 	// since we're running it periodically, so we exclude disconnected stores.
@@ -1766,10 +1828,12 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 
 			quota := int64(rc.cfg.TikvImporter.DiskQuota)
 			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := rc.backend.CheckDiskQuota(quota)
-			metric.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
-			metric.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
+			if m, ok := metric.FromContext(ctx); ok {
+				m.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
+				m.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
+			}
 
-			logger := log.With(
+			logger := log.FromContext(ctx).With(
 				zap.Int64("diskSize", totalDiskSize),
 				zap.Int64("memSize", totalMemSize),
 				zap.Int64("quota", quota),
@@ -1830,7 +1894,7 @@ func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// we should enable/disable new collation here since in server mode, tidb config
 	// may be different in different tasks
 	collate.SetNewCollationEnabledForTest(enabled)
-	log.L().Info("new_collation_enabled", zap.Bool("enabled", enabled))
+	log.FromContext(ctx).Info("new_collation_enabled", zap.Bool("enabled", enabled))
 
 	return nil
 }
@@ -1848,7 +1912,7 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 		return nil
 	}
 
-	logger := log.With(
+	logger := log.FromContext(ctx).With(
 		zap.Stringer("keepAfterSuccess", rc.cfg.Checkpoint.KeepAfterSuccess),
 		zap.Int64("taskID", rc.cfg.TaskID),
 	)
@@ -1938,13 +2002,13 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				err = rc.localResource(source)
+				err = rc.localResource(ctx, source)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
 				}
 				if err := rc.clusterResource(ctx, source); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
-						log.L().Warn("cleanup task failed", zap.Error(err1))
+						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 					}
 				}
@@ -1962,7 +2026,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if !taskExist && rc.taskMgr != nil {
 			err := rc.taskMgr.CleanupTask(ctx)
 			if err != nil {
-				log.L().Warn("cleanup task failed", zap.Error(err))
+				log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err))
 			}
 		}
 		return common.ErrPreCheckFailed.GenWithStackByArgs(rc.checkTemplate.FailedMsg())
@@ -2059,12 +2123,12 @@ func newChunkRestore(
 		if err != nil {
 			return nil, err
 		}
-		parser, err = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
+		parser, err = mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
-		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
+		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
@@ -2089,7 +2153,7 @@ func newChunkRestore(
 }
 
 func (cr *chunkRestore) close() {
-	cr.parser.Close()
+	_ = cr.parser.Close()
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
@@ -2225,13 +2289,15 @@ func (cr *chunkRestore) deliverLoop(
 				return errors.Trace(err)
 			}
 
-			deliverDur := time.Since(start)
-			deliverTotalDur += deliverDur
-			metric.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-			metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
-			metric.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
-			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
-			metric.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
+			if m, ok := metric.FromContext(ctx); ok {
+				deliverDur := time.Since(start)
+				deliverTotalDur += deliverDur
+				m.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumSize()))
+				m.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumSize()))
+				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).Observe(float64(dataChecksum.SumKVS()))
+				m.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).Observe(float64(indexChecksum.SumKVS()))
+			}
 			return nil
 		}()
 		if err != nil {
@@ -2252,7 +2318,9 @@ func (cr *chunkRestore) deliverLoop(
 		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
 
-		metric.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+		if m, ok := metric.FromContext(ctx); ok {
+			m.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
+		}
 
 		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
@@ -2432,7 +2500,7 @@ func (cr *chunkRestore) encodeLoop(
 
 			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
-				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
+				rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
 				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				if encodeErr != nil {
 					err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(&cr.chunk.Key, newOffset)
@@ -2463,17 +2531,21 @@ func (cr *chunkRestore) encodeLoop(
 			}
 		}
 		encodeTotalDur += encodeDur
-		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
 		readTotalDur += readDur
-		metric.RowReadSecondsHistogram.Observe(readDur.Seconds())
-		metric.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+		if m, ok := metric.FromContext(ctx); ok {
+			m.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+			m.RowReadSecondsHistogram.Observe(readDur.Seconds())
+			m.RowReadBytesHistogram.Observe(float64(newOffset - offset))
+		}
 
 		if len(kvPacket) != 0 {
 			deliverKvStart := time.Now()
 			if err = send(kvPacket); err != nil {
 				return
 			}
-			metric.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
+			if m, ok := metric.FromContext(ctx); ok {
+				m.RowKVDeliverSecondsHistogram.Observe(time.Since(deliverKvStart).Seconds())
+			}
 		}
 	}
 
@@ -2489,7 +2561,7 @@ func (cr *chunkRestore) restore(
 	rc *Controller,
 ) error {
 	// Create the encoder.
-	kvEncoder, err := rc.backend.NewEncoder(t.encTable, &kv.SessionOptions{
+	kvEncoder, err := rc.backend.NewEncoder(ctx, t.encTable, &kv.SessionOptions{
 		SQLMode:   rc.cfg.TiDB.SQLMode,
 		Timestamp: cr.chunk.Timestamp,
 		SysVars:   rc.sysVars,

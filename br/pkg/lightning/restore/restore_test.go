@@ -62,6 +62,7 @@ func TestNewTableRestore(t *testing.T) {
 
 		dbInfo.Tables[tc.name] = &checkpoints.TidbTableInfo{
 			Name: tc.name,
+			DB:   dbInfo.Name,
 			Core: tableInfo,
 		}
 	}
@@ -69,7 +70,7 @@ func TestNewTableRestore(t *testing.T) {
 	for _, tc := range testCases {
 		tableInfo := dbInfo.Tables[tc.name]
 		tableName := common.UniqueTable("mockdb", tableInfo.Name)
-		tr, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+		tr, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 		require.NotNil(t, tr)
 		require.NoError(t, err)
 	}
@@ -78,6 +79,7 @@ func TestNewTableRestore(t *testing.T) {
 func TestNewTableRestoreFailure(t *testing.T) {
 	tableInfo := &checkpoints.TidbTableInfo{
 		Name: "failure",
+		DB:   "mockdb",
 		Core: &model.TableInfo{},
 	}
 	dbInfo := &checkpoints.TidbDBInfo{Name: "mockdb", Tables: map[string]*checkpoints.TidbTableInfo{
@@ -85,7 +87,7 @@ func TestNewTableRestoreFailure(t *testing.T) {
 	}}
 	tableName := common.UniqueTable("mockdb", "failure")
 
-	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil)
+	_, err := NewTableRestore(tableName, nil, dbInfo, tableInfo, &checkpoints.TableCheckpoint{}, nil, nil, log.L())
 	require.Regexp(t, `failed to tables\.TableFromMeta.*`, err.Error())
 }
 
@@ -218,7 +220,7 @@ func TestPreCheckFailed(t *testing.T) {
 		metaMgrBuilder: failMetaMgrBuilder{},
 		checkTemplate:  NewSimpleTemplate(),
 		tidbGlue:       g,
-		errorMgr:       errormanager.New(nil, cfg),
+		errorMgr:       errormanager.New(nil, cfg, log.L()),
 	}
 
 	mock.ExpectBegin()

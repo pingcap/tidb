@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -227,13 +228,17 @@ func TestPaginateScanRegion(t *testing.T) {
 	regionMap := make(map[uint64]*restore.RegionInfo)
 	var regions []*restore.RegionInfo
 	var batch []*restore.RegionInfo
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/scanRegionBackoffer", "return(true)"))
 	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 	require.Regexp(t, ".*scan region return empty result.*", err.Error())
 
 	regionMap, regions = makeRegions(1)
-	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	tc := NewTestClient(stores, regionMap, 0)
+	tc.InjectErr = true
+	tc.InjectTimes = 2
+	batch, err = restore.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions, batch)
 
@@ -273,11 +278,12 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
 	require.Regexp(t, ".*startKey > endKey.*", err.Error())
 
-	tc := NewTestClient(stores, regionMap, 0)
+	tc = NewTestClient(stores, regionMap, 0)
 	tc.InjectErr = true
-	_, err = restore.PaginateScanRegion(ctx, tc, regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	tc.InjectTimes = 5
+	_, err = restore.PaginateScanRegion(ctx, tc, []byte{}, []byte{}, 3)
 	require.Error(t, err)
-	require.Regexp(t, ".*mock scan error.*", err.Error())
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
@@ -286,6 +292,7 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
 
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/scanRegionBackoffer"))
 }
 
 func TestRewriteFileKeys(t *testing.T) {
