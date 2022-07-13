@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -332,12 +333,107 @@ func (d SchemaTracker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt)
 
 // CreateIndex implements the DDL interface.
 func (d SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
-	panic("not implemented")
+	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
+	return d.createIndex(ctx, ident, stmt.KeyType, model.NewCIStr(stmt.IndexName),
+		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
+}
+
+// createIndex is shared by CreateIndex and AlterTable.
+func (d SchemaTracker) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+
+	unique := keyType == ast.IndexKeyTypeUnique
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return err
+	}
+	t := tables.MockTableFromMeta(tblInfo)
+
+	// Deal with anonymous index.
+	if len(indexName.L) == 0 {
+		colName := model.NewCIStr("expression_index")
+		if indexPartSpecifications[0].Column != nil {
+			colName = indexPartSpecifications[0].Column.Name
+		}
+		indexName = ddl.GetName4AnonymousIndex(t, colName, model.NewCIStr(""))
+	}
+
+	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil {
+		if ifNotExists {
+			return nil
+		}
+		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+	}
+
+	// Skip build hidden column for expression index
+
+	indexInfo, err := ddl.BuildIndexInfo(
+		ctx,
+		tblInfo.Columns,
+		indexName,
+		false,
+		unique,
+		false,
+		indexPartSpecifications,
+		indexOption,
+		model.StatePublic,
+	)
+	if err != nil {
+		return err
+	}
+	indexInfo.ID = ddl.AllocateIndexID(tblInfo)
+	tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+
+	ddl.AddIndexColumnFlag(tblInfo, indexInfo)
+	return nil
 }
 
 // DropIndex implements the DDL interface.
 func (d SchemaTracker) DropIndex(ctx sessionctx.Context, stmt *ast.DropIndexStmt) error {
-	panic("not implemented")
+	ti := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
+	err := d.dropIndex(ctx, ti, model.NewCIStr(stmt.IndexName), stmt.IfExists)
+	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && stmt.IfExists {
+		err = nil
+	}
+	return err
+}
+
+// dropIndex is shared by DropIndex and AlterTable.
+func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr, ifExists bool) error {
+	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
+	t := tables.MockTableFromMeta(tblInfo)
+
+	indexInfo := tblInfo.FindIndexByName(indexName.L)
+
+	_, err = ddl.CheckIsDropPrimaryKey(indexName, indexInfo, t)
+	if err != nil {
+		return err
+	}
+
+	if indexInfo == nil {
+		if ifExists {
+			return nil
+		}
+		return dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+	}
+
+	err = ddl.CheckDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
+	if err != nil {
+		return err
+	}
+
+	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L != indexInfo.Name.L {
+			newIndices = append(newIndices, idx)
+		}
+	}
+	tblInfo.Indices = newIndices
+	ddl.DropIndexColumnFlag(tblInfo, indexInfo)
+	return nil
 }
 
 // AlterTable implements the DDL interface.
@@ -455,7 +551,12 @@ func (d SchemaTracker) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.Al
 
 // BatchCreateTableWithInfo implements the DDL interface, it will call CreateTableWithInfo for each table.
 func (d SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema model.CIStr, info []*model.TableInfo, onExist ddl.OnExist) error {
-	panic("not implemented")
+	for _, tableInfo := range info {
+		if err := d.CreateTableWithInfo(ctx, schema, tableInfo, onExist); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CreatePlacementPolicyWithInfo implements the DDL interface, it's no-op in DM's case.

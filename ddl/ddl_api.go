@@ -1869,43 +1869,46 @@ func BuildTableInfo(
 			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
 			continue
 		}
-		// build index info.
-		idxInfo, err := buildIndexInfo(ctx, tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(hiddenCols) > 0 {
-			addIndexColumnFlag(tbInfo, idxInfo)
-		}
+
+		var (
+			indexName       = constr.Name
+			primary, unique bool
+		)
+
 		// check if the index is primary or unique.
 		switch constr.Tp {
 		case ast.ConstraintPrimaryKey:
-			idxInfo.Primary = true
-			idxInfo.Unique = true
-			idxInfo.Name = model.NewCIStr(mysql.PrimaryKeyName)
+			primary = true
+			unique = true
+			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
-			idxInfo.Unique = true
+			unique = true
 		}
-		// set index type.
-		if constr.Option != nil {
-			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &constr.Option.Comment, dbterror.ErrTooLongIndexComment)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				idxInfo.Invisible = true
-			}
-			if constr.Option.Tp == model.IndexTypeInvalid {
-				// Use btree as default index type.
-				idxInfo.Tp = model.IndexTypeBtree
-			} else {
-				idxInfo.Tp = constr.Option.Tp
-			}
-		} else {
-			// Use btree as default index type.
-			idxInfo.Tp = model.IndexTypeBtree
+
+		// build index info.
+		idxInfo, err := BuildIndexInfo(
+			ctx,
+			tbInfo.Columns,
+			model.NewCIStr(indexName),
+			primary,
+			unique,
+			false,
+			constr.Keys,
+			constr.Option,
+			model.StatePublic,
+		)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		idxInfo.ID = allocateIndexID(tbInfo)
+
+		if len(hiddenCols) > 0 {
+			AddIndexColumnFlag(tbInfo, idxInfo)
+		}
+		_, err = validateCommentLength(ctx.GetSessionVars(), idxInfo.Name.String(), &idxInfo.Comment, dbterror.ErrTooLongIndexComment)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.ID = AllocateIndexID(tbInfo)
 		tbInfo.Indices = append(tbInfo.Indices, idxInfo)
 	}
 
@@ -5602,7 +5605,8 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
+// GetName4AnonymousIndex returns a valid name for anonymous index.
+func GetName4AnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
 	// `id` is used to indicated the index name's suffix.
 	id := 2
 	l := len(t.Indices())
@@ -5620,7 +5624,7 @@ func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) 
 		if t.Indices()[i].Meta().Name.L == indexName.L {
 			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
 			if err := checkTooLongIndex(indexName); err != nil {
-				indexName = getAnonymousIndex(t, model.NewCIStr(colName.O[:30]), model.NewCIStr(fmt.Sprintf("%s_%d", colName.O[:30], 2)))
+				indexName = GetName4AnonymousIndex(t, model.NewCIStr(colName.O[:30]), model.NewCIStr(fmt.Sprintf("%s_%d", colName.O[:30], 2)))
 			}
 			i = -1
 			id++
@@ -5827,7 +5831,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
-		indexName = getAnonymousIndex(t, colName, model.NewCIStr(""))
+		indexName = GetName4AnonymousIndex(t, colName, model.NewCIStr(""))
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
@@ -6095,7 +6099,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
 
-	isPK, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
+	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)
 	if err != nil {
 		return err
 	}
@@ -6110,7 +6114,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	// Check for drop index on auto_increment column.
-	err = checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
+	err = CheckDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6136,7 +6140,8 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	return errors.Trace(err)
 }
 
-func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t table.Table) (bool, error) {
+// CheckIsDropPrimaryKey checks if we will drop PK, there are many PK implementations so we provide a helper function.
+func CheckIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t table.Table) (bool, error) {
 	var isPK bool
 	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
 		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.

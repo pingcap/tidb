@@ -236,12 +236,23 @@ func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
 }
 
-func buildIndexInfo(ctx sessionctx.Context, tblInfo *model.TableInfo, indexName model.CIStr, indexPartSpecifications []*ast.IndexPartSpecification, state model.SchemaState) (*model.IndexInfo, error) {
+// BuildIndexInfo builds a new IndexInfo according to the index information.
+func BuildIndexInfo(
+	ctx sessionctx.Context,
+	allTableColumns []*model.ColumnInfo,
+	indexName model.CIStr,
+	isPrimary bool,
+	isUnique bool,
+	isGlobal bool,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	state model.SchemaState,
+) (*model.IndexInfo, error) {
 	if err := checkTooLongIndex(indexName); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	idxColumns, err := buildIndexColumns(ctx, tblInfo.Columns, indexPartSpecifications)
+	idxColumns, err := buildIndexColumns(ctx, allTableColumns, indexPartSpecifications)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -251,11 +262,32 @@ func buildIndexInfo(ctx sessionctx.Context, tblInfo *model.TableInfo, indexName 
 		Name:    indexName,
 		Columns: idxColumns,
 		State:   state,
+		Primary: isPrimary,
+		Unique:  isUnique,
+		Global:  isGlobal,
 	}
+
+	if indexOption != nil {
+		idxInfo.Comment = indexOption.Comment
+		if indexOption.Visibility == ast.IndexVisibilityInvisible {
+			idxInfo.Invisible = true
+		}
+		if indexOption.Tp == model.IndexTypeInvalid {
+			// Use btree as default index type.
+			idxInfo.Tp = model.IndexTypeBtree
+		} else {
+			idxInfo.Tp = indexOption.Tp
+		}
+	} else {
+		// Use btree as default index type.
+		idxInfo.Tp = model.IndexTypeBtree
+	}
+
 	return idxInfo, nil
 }
 
-func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+// AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
+func AddIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
 			tblInfo.Columns[col.Offset].AddFlag(mysql.PriKeyFlag)
@@ -271,7 +303,8 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	}
 }
 
-func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+// DropIndexColumnFlag drops the column flag of columns in TableInfo according to the IndexInfo.
+func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
 			tblInfo.Columns[col.Offset].DelFlag(mysql.PriKeyFlag)
@@ -293,7 +326,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 			continue
 		}
 
-		addIndexColumnFlag(tblInfo, index)
+		AddIndexColumnFlag(tblInfo, index)
 	}
 }
 
@@ -498,37 +531,28 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		indexInfo, err = buildIndexInfo(nil, tblInfo, indexName, indexPartSpecifications, model.StateNone)
+		indexInfo, err = BuildIndexInfo(
+			nil,
+			tblInfo.Columns,
+			indexName,
+			isPK,
+			unique,
+			global,
+			indexPartSpecifications,
+			indexOption,
+			model.StateNone,
+		)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		if indexOption != nil {
-			indexInfo.Comment = indexOption.Comment
-			if indexOption.Visibility == ast.IndexVisibilityInvisible {
-				indexInfo.Invisible = true
-			}
-			if indexOption.Tp == model.IndexTypeInvalid {
-				// Use btree as default index type.
-				indexInfo.Tp = model.IndexTypeBtree
-			} else {
-				indexInfo.Tp = indexOption.Tp
-			}
-		} else {
-			// Use btree as default index type.
-			indexInfo.Tp = model.IndexTypeBtree
-		}
-		indexInfo.Primary = false
 		if isPK {
 			if _, err = checkPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, err
 			}
-			indexInfo.Primary = true
 		}
-		indexInfo.Unique = unique
-		indexInfo.Global = global
-		indexInfo.ID = allocateIndexID(tblInfo)
+		indexInfo.ID = AllocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
 			job.State = model.JobStateCancelled
@@ -599,7 +623,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		// Set column index flag.
-		addIndexColumnFlag(tblInfo, indexInfo)
+		AddIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
 			if err = updateColsNull2NotNull(tblInfo, indexInfo); err != nil {
 				return ver, errors.Trace(err)
@@ -714,7 +738,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// reorganization -> absent
 		indexInfo.State = model.StateNone
 		// Set column index flag.
-		dropIndexColumnFlag(tblInfo, indexInfo)
+		DropIndexColumnFlag(tblInfo, indexInfo)
 		removeDependentHiddenColumns(tblInfo, indexInfo)
 		removeIndexInfo(tblInfo, indexInfo)
 
@@ -802,7 +826,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	}
 
 	// Double check for drop index on auto_increment column.
-	err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
+	err = CheckDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, false, autoid.ErrWrongAutoKey
@@ -841,7 +865,8 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
+// CheckDropIndexOnAutoIncrementColumn checks if the index to drop is on auto_increment column.
+func CheckDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
 		flag := cols[idxCol.Offset].GetFlag()
@@ -1367,7 +1392,8 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
-func allocateIndexID(tblInfo *model.TableInfo) int64 {
+// AllocateIndexID allocates an index ID from TableInfo.
+func AllocateIndexID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxIndexID++
 	return tblInfo.MaxIndexID
 }
