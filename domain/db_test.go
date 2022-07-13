@@ -16,7 +16,9 @@ package domain_test
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,8 +79,7 @@ func TestNormalSessionPool(t *testing.T) {
 	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
-	conf.Port = uint(4000 + rand.Intn(1000))
-	conf.Status.StatusPort = uint(10046 + rand.Intn(1000))
+	conf.Socket = strings.Replace(conf.Socket, "{Port}", fmt.Sprintf("%d", uint(4000+rand.Intn(1000))), 1)
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
@@ -110,8 +111,7 @@ func TestAbnormalSessionPool(t *testing.T) {
 	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	require.NoError(t, err1)
 	conf := config.GetGlobalConfig()
-	conf.Port = uint(4200 + rand.Intn(1000))
-	conf.Status.StatusPort = uint(12046 + rand.Intn(1000))
+	conf.Socket = strings.Replace(conf.Socket, "{Port}", fmt.Sprintf("%d", uint(4200+rand.Intn(1000))), 1)
 	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
