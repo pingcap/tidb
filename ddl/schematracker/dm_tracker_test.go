@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -96,11 +97,16 @@ func TestAlterPK(t *testing.T) {
 	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 
+	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfo.Indices))
+
 	sql = "alter table test.t drop primary key;"
 	stmt, err = p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	err = tracker.AlterTable(ctx, sctx, stmt.(*ast.AlterTableStmt))
 	require.NoError(t, err)
+	require.Equal(t, 0, len(tblInfo.Indices))
 
 	sctx2 := mock.NewContext()
 
@@ -109,10 +115,12 @@ func TestAlterPK(t *testing.T) {
 	require.NoError(t, err)
 	err = tracker.AlterTable(ctx, sctx2, stmt.(*ast.AlterTableStmt))
 	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfo.Indices))
 
 	sql = "alter table test.t drop primary key;"
 	stmt, err = p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 	err = tracker.AlterTable(ctx, sctx2, stmt.(*ast.AlterTableStmt))
 	require.NoError(t, err)
+	require.Equal(t, 0, len(tblInfo.Indices))
 }

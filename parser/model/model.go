@@ -742,7 +742,7 @@ func (t *TableInfo) IsLocked() bool {
 	return t.Lock != nil && len(t.Lock.Sessions) > 0
 }
 
-// MoveColumnInfo moves a column to another offset.
+// MoveColumnInfo moves a column to another offset. It maintains the offsets of all affects columns and index columns,
 func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return

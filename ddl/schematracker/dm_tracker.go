@@ -486,15 +486,20 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 	if err != nil {
 		return err
 	}
-	colName := spec.OldColumnName.Name
 
-	i := -1
-	for i = range tblInfo.Columns {
-		if tblInfo.Columns[i].Name.L == colName.L {
+	colName := spec.OldColumnName.Name
+	var (
+		colInfo *model.ColumnInfo
+		found   = false
+	)
+
+	for _, colInfo = range tblInfo.Columns {
+		if colInfo.Name.L == colName.L {
+			found = true
 			break
 		}
 	}
-	if i == -1 {
+	if !found {
 		if spec.IfExists {
 			return nil
 		}
@@ -506,21 +511,25 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 	}
 
 	// do drop column
-	tblInfo.Columns = append(tblInfo.Columns[:i], tblInfo.Columns[i+1:]...)
+	tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
+	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
-		j := -1
-		for j = range idx.Columns {
-			if idx.Columns[j].Name.L == colName.L {
+		var i int
+		found = false
+		for i = range idx.Columns {
+			if idx.Columns[i].Name.L == colName.L {
+				found = true
 				break
 			}
 		}
-		if j == -1 {
+		if !found {
 			newIndices = append(newIndices, idx)
 			continue
 		}
 
-		idx.Columns = append(idx.Columns[:j], idx.Columns[j+1:]...)
+		idx.Columns = append(idx.Columns[:i], idx.Columns[i+1:]...)
 		if len(idx.Columns) == 0 {
 			continue
 		}
@@ -872,7 +881,10 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 	// https://github.com/mysql/mysql-server/blob/8d8c986e5716e38cb776b627a8eee9e92241b4ce/sql/sql_table.cc#L16698-L16714
 
 	ident := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
-	// TODO: precheck about table existence?
+	tblInfo, err := d.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
@@ -920,10 +932,6 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.renameTable(sctx, []ast.Ident{ident}, []ast.Ident{newIdent}, true)
 		case ast.AlterTableOption:
-			tblInfo, err := d.TableByName(ident.Schema, ident.Name)
-			if err != nil {
-				return errors.Trace(err)
-			}
 			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
@@ -975,6 +983,12 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 					return errors.Trace(err)
 				}
 			}
+		case ast.AlterTableIndexInvisible:
+			if idx := tblInfo.FindIndexByName(spec.IndexName.L); idx == nil {
+				return errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(spec.IndexName.O, ident.Name))
+			} else {
+				idx.Invisible = spec.Visibility == ast.IndexVisibilityInvisible
+			}
 		case ast.AlterTablePartitionOptions,
 			ast.AlterTableDropForeignKey,
 			ast.AlterTableCoalescePartitions,
@@ -990,7 +1004,6 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 			ast.AlterTablePartition,
 			ast.AlterTableSetTiFlashReplica,
 			ast.AlterTableOrderByColumns,
-			ast.AlterTableIndexInvisible,
 			ast.AlterTableAlterCheck,
 			ast.AlterTableDropCheck,
 			ast.AlterTableWithValidation,
@@ -1036,9 +1049,14 @@ func (d SchemaTracker) renameTable(ctx sessionctx.Context, oldIdents, newIdents 
 	tablesCache := make(map[string]int64)
 	is := InfoStoreAdaptor{inner: d.InfoStore}
 	for i := range oldIdents {
-		_, _, err := ddl.ExtractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tablesCache)
+		schema, _, err := ddl.ExtractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tablesCache)
 		if err != nil {
 			return err
+		}
+
+		// no-op for ALTER TABLE RENAME t1 TO T1
+		if schema == nil && isAlterTable {
+			return nil
 		}
 	}
 

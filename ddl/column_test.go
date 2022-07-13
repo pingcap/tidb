@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -157,6 +158,11 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 func TestColumnBasic(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -642,6 +648,12 @@ func testGetColumn(t table.Table, name string, isExist bool) error {
 func TestAddColumn(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -669,7 +681,6 @@ func TestAddColumn(t *testing.T) {
 
 	checkOK := false
 
-	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		if checkOK {
@@ -703,6 +714,12 @@ func TestAddColumn(t *testing.T) {
 func TestAddColumns(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
@@ -736,7 +753,6 @@ func TestAddColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		mu.Lock()

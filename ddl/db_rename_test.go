@@ -103,21 +103,16 @@ func TestAlterTableRenameTable(t *testing.T) {
 func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 	var (
 		store kv.Storage
+		dom   *domain.Domain
 		clean func()
 	)
 
-	if isAlterTable {
-		store, clean = testkit.CreateMockStore(t)
-		defer clean()
-	} else {
-		var dom *domain.Domain
-		store, dom, clean = testkit.CreateMockStoreAndDomain(t)
-		defer clean()
+	store, dom, clean = testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
-		ddlChecker := schematracker.NewChecker(dom.DDL())
-		dom.SetDDL(ddlChecker)
-		ddlChecker.CreateTestDB()
-	}
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -1371,8 +1371,13 @@ func TestResolveCharset(t *testing.T) {
 
 func TestAddColumnDefaultNow(t *testing.T) {
 	// Related Issue: https://github.com/pingcap/tidb/issues/31968
-	mockStore, clean := testkit.CreateMockStore(t)
+	mockStore, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, mockStore)
 	const dateHourLength = len("yyyy-mm-dd hh:")
 
@@ -1439,7 +1444,6 @@ func TestAddColumnDefaultNow(t *testing.T) {
 	require.True(t, amsterdamC2YMDH != shanghaiC2YMDH, "The timestamp before 'hour' should not be equivalent")
 	require.Equal(t, amsterdamC1MS, shanghaiC1MS, "The timestamp after 'hour' should be equivalent")
 	require.Equal(t, amsterdamC2MS, shanghaiC2MS, "The timestamp after 'hour' should be equivalent")
-
 }
 
 func TestAddColumnTooMany(t *testing.T) {
@@ -2714,8 +2718,13 @@ func queryIndexOnTable(dbName, tableName string) string {
 }
 
 func TestDropColumnWithCompositeIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+
 	tk := testkit.NewTestKit(t, store)
 	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx")
 	tk.MustExec("create database if not exists drop_composite_index_test")
