@@ -223,10 +223,10 @@ func createTableWithForeignKeys(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				Cols:        fkInfo.RefCols,
 			})
 		}
-		originalSchemaID, originalTableID := job.SchemaID, job.TableID
-		job.SchemaID, job.TableID = referDBInfo.ID, referTableInfo.ID
+		originalSchemaID, originalTableID, originalJobType := job.SchemaID, job.TableID, job.Type
+		job.SchemaID, job.TableID, job.Type = referDBInfo.ID, referTableInfo.ID, model.ActionAddForeignKey
 		ver, err = updateVersionAndTableInfo(d, t, job, referTableInfo, true)
-		job.SchemaID, job.TableID = originalSchemaID, originalTableID
+		job.SchemaID, job.TableID, job.Type = originalSchemaID, originalTableID, originalJobType
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

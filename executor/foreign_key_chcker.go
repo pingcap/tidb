@@ -2,8 +2,6 @@ package executor
 
 import (
 	"context"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -52,7 +50,6 @@ func initDeleteRowForeignKeyChecker(ctx sessionctx.Context, is infoschema.InfoSc
 		logutil.BgLogger().Warn("----- foreign key check disabled")
 		return nil, nil
 	}
-	logutil.BgLogger().Warn("init delete fk check 0", zap.Int64("schema-version", is.SchemaMetaVersion()), zap.Int("fkn", len(tbInfo.ReferredForeignKeys)), zap.String("name", tbInfo.Name.L))
 	fkCheckers := make([]*foreignKeyChecker, 0, len(tbInfo.ReferredForeignKeys))
 	for _, referredFK := range tbInfo.ReferredForeignKeys {
 		colsOffsets, err := getForeignKeyColumnsOffsets(tbInfo, referredFK.Cols)
@@ -62,27 +59,22 @@ func initDeleteRowForeignKeyChecker(ctx sessionctx.Context, is infoschema.InfoSc
 		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
 			// todo: append warning?
-			logutil.BgLogger().Warn("init delete fk check 01 err")
 			continue
 		}
-		logutil.BgLogger().Warn("init delete fk check 1")
 		fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
 		if fk == nil {
 			// todo: append warning?
 			continue
 		}
-		logutil.BgLogger().Warn("init delete fk check 2")
 		switch ast.ReferOptionType(fk.OnDelete) {
 		case ast.ReferOptionCascade, ast.ReferOptionSetNull:
 			continue
 		}
-		logutil.BgLogger().Warn("init delete fk check 3")
 		failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
 		fkChecker, err := buildForeignKeyChecker(childTable, fk.Cols, colsOffsets, failedErr)
 		if err != nil {
 			return nil, err
 		}
-		logutil.BgLogger().Warn("init delete fk check 4", zap.Bool("fk-nil", fkChecker != nil))
 		if fkChecker != nil {
 			fkChecker.expectedExist = false
 			fkCheckers = append(fkCheckers, fkChecker)
@@ -214,8 +206,11 @@ func (fkc *foreignKeyChecker) checkHandleKeysExistInReferTable(ctx context.Conte
 			}
 			continue
 		}
-		if fkc.expectedExist && kv.IsErrNotFound(err) {
-			return fkc.failedErr
+		if kv.IsErrNotFound(err) {
+			if fkc.expectedExist {
+				return fkc.failedErr
+			}
+			return nil
 		}
 		return err
 	}
@@ -233,15 +228,17 @@ func (fkc *foreignKeyChecker) checkUniqueKeysExistInReferTable(ctx context.Conte
 	}
 	for _, uk := range fkc.toBeCheckedUniqueKeys {
 		_, err := txn.Get(ctx, uk)
-		logutil.BgLogger().Warn("------ get uk", zap.Bool("expectExist", fkc.expectedExist), zap.Error(err))
 		if err == nil {
 			if !fkc.expectedExist {
 				return fkc.failedErr
 			}
 			continue
 		}
-		if fkc.expectedExist && kv.IsErrNotFound(err) {
-			return fkc.failedErr
+		if kv.IsErrNotFound(err) {
+			if fkc.expectedExist {
+				return fkc.failedErr
+			}
+			return nil
 		}
 		return err
 	}

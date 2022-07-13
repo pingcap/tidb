@@ -314,11 +314,6 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions
 
-	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	if err == nil {
-		logutil.BgLogger().Warn("------- get t1 table", zap.Int64("v", is.SchemaMetaVersion()), zap.Int("refer_fkn", len(t1.Meta().ReferredForeignKeys)), zap.Uint64("update-ts", t1.Meta().UpdateTS))
-	}
-
 	return is, &relatedChange, nil
 }
 

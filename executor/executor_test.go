@@ -6170,7 +6170,6 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 	}
 	checkCaseFn()
 
-	// todo: add primary key index and pk is int, aka pk is handle.
 	// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
 	cases = []struct {
 		sql string
@@ -6223,7 +6222,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "set @@tidb_enable_clustered_index=0;"},
 		{sql: "drop table if exists t2;"},
 		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
 		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
 		{sql: "insert into t1 values (-1, 1, 1);"},
 		{sql: "insert into t2 values (1, 1, 1);"},
@@ -6309,10 +6308,11 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 	}{
 		{sql: "create table t1 (id int key,a int, b int, unique index(a, b));"},
 		{sql: "create table t2 (id int key,a int, b int, unique index (a,b), foreign key fk(a, b) references t1(a, b));"},
-		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2),(3, 3, 3), (4, 4, 4);"},
-		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
 		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
 	}
 	checkCaseFn := func() {
@@ -6321,10 +6321,156 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 				tk.MustExec(ca.sql)
 			} else {
 				err := tk.ExecToErr(ca.sql)
-				require.Equal(t, ca.err, err)
+				require.True(t, ca.err.Equal(err), err)
 			}
 		}
 	}
 	checkCaseFn()
 
+	// Case-2: test unique index contain foreign key columns and other columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int, a int, b int, unique index (a, b, id));"},
+		{sql: "create table t2 (id int, a int, b int, unique index (a, b, id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-3: test non-unique index only contain foreign key columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int key,a int, b int, index(a, b));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-4: test non-unique index contain foreign key columns and other columns.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int key,a int, b int, index(a, b, id));"},
+		{sql: "create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "insert into t2 values (1, 1, 1), (5, 5, null), (6, null, 6), (7, null, null);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
+		{sql: "insert into t2 values (1, 1, 1)"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=1;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b, id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=1;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, b int, primary key(a, b, id));"},
+		{sql: "create table t2 (id int,a int, b int, primary key(a, b, id), foreign key fk(a, b) references t1(a, b));"},
+		{sql: "insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4)"},
+		{sql: "insert into t2 values (1, 1, 1);"},
+		{sql: "delete from t1 where id = 2"},
+		{sql: "delete from t1 where a = 3 or b = 4"},
+		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
+
+	// Case-9: test primary key is handle and contain foreign key column.
+	cases = []struct {
+		sql string
+		err *terror.Error
+	}{
+		{sql: "set @@tidb_enable_clustered_index=0;"},
+		{sql: "drop table if exists t2;"},
+		{sql: "drop table if exists t1;"},
+		{sql: "create table t1 (id int,a int, primary key(id));"},
+		{sql: "create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id));"},
+		{sql: "insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);"},
+		{sql: "insert into t2 values (1, 1);"},
+		{sql: "delete from t1 where id = 2;"},
+		{sql: "delete from t1 where a = 3 or a = 4;"},
+		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+	}
+	checkCaseFn()
 }

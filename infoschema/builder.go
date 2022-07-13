@@ -643,7 +643,6 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	logutil.BgLogger().Warn("------- load schema", zap.String("tb", tblInfo.Name.L), zap.Int("refferedFK", len(tblInfo.ReferredForeignKeys)), zap.Uint64("update-ts", tblInfo.UpdateTS))
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)

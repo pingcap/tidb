@@ -167,9 +167,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		return err
 	}
 	for _, fkchckers := range e.deleteRowFKCheckers {
-		logutil.BgLogger().Warn("------delete fk check", zap.Int("size", len(fkchckers)))
 		for _, fkc := range fkchckers {
-			logutil.BgLogger().Warn("------delete fk check", zap.Bool("expectExist", fkc.expectedExist))
 			err := fkc.checkValueExistInReferTable(ctx, txn)
 			if err != nil {
 				return err
