@@ -26,7 +26,7 @@ import (
 	inner "github.com/bazelbuild/rules_go/go/tools/bazel"
 )
 
-// BuiltWithBazel return true iff this library was built with Bazel.
+// BuiltWithBazel returns true iff this library was built with Bazel.
 func BuiltWithBazel() bool {
 	return true
 }
@@ -36,7 +36,7 @@ func Runfile(path string) (string, error) {
 	return inner.Runfile(path)
 }
 
-// SetGoEnv is get go env from bazel
+// SetGoEnv will get go env from bazel
 func SetGoEnv() {
 	gobin, err := Runfile("bin/go")
 	if err != nil {
