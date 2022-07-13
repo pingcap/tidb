@@ -6095,7 +6095,7 @@ func (d *ddl) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return err
 	}
 
-	if ctx.GetSessionVars().PrimaryKeyRequired && isPK {
+	if !ctx.GetSessionVars().InRestrictedSQL && ctx.GetSessionVars().PrimaryKeyRequired && isPK {
 		return infoschema.ErrTableWithoutPrimaryKey
 	}
 
