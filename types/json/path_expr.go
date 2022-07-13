@@ -85,9 +85,9 @@ const (
 )
 
 // containsAnyAsterisk returns true if pef contains any asterisk.
-func (pef *pathExpressionFlag) containsAnyAsterisk() bool {
-	*pef &= pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk
-	return byte(*pef) != 0
+func (pef pathExpressionFlag) containsAnyAsterisk() bool {
+	pef &= pathExpressionContainsAsterisk | pathExpressionContainsDoubleAsterisk
+	return byte(pef) != 0
 }
 
 // PathExpression is for JSON path expression.
