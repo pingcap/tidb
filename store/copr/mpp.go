@@ -16,7 +16,6 @@ package copr
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util"
 	"io"
 	"strconv"
 	"sync"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
