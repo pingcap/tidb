@@ -1292,7 +1292,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+		er.err = variable.ErrUnknownSystemVar.FastGenByArgs(name)
 		if err := variable.CheckSysVarIsRemoved(name); err != nil {
 			// Removed vars still return an error, but we customize it from
 			// "unknown" to an explanation of why it is not supported.

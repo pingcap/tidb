@@ -149,8 +149,13 @@ func TestInvalidNameWhenCreateTable(t *testing.T) {
 
 // TestCreateTableIfNotExistsLike for issue #6879
 func TestCreateTableIfNotExistsLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("USE test;")
@@ -176,8 +181,13 @@ func TestCreateTableIfNotExistsLike(t *testing.T) {
 
 // for issue #9910
 func TestCreateTableWithKeyWord(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("USE test;")

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -536,8 +537,12 @@ func TestAddConstraintCheck(t *testing.T) {
 }
 
 func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
