@@ -87,6 +87,8 @@ type actionMu struct {
 // GCAwareMemoryTrack is used to turn on/off the GC-aware memory track
 var GCAwareMemoryTrack = atomicutil.NewBool(false)
 
+// https://golang.google.cn/pkg/runtime/#SetFinalizer
+// It is not guaranteed that a finalizer will run if the size of *obj is zero bytes.
 type finalizerRef struct {
 	byte
 }
