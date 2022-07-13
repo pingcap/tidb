@@ -20,6 +20,7 @@ package schematracker
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -80,6 +81,12 @@ func (d SchemaTracker) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateData
 		onExist = ddl.OnExistIgnore
 	}
 	return d.CreateSchemaWithInfo(ctx, dbInfo, onExist)
+}
+
+func (d SchemaTracker) createTestDB() {
+	_ = d.CreateSchema(nil, &ast.CreateDatabaseStmt{
+		Name: model.NewCIStr("test"),
+	})
 }
 
 // CreateSchemaWithInfo implements the DDL interface.
@@ -156,7 +163,51 @@ func (d SchemaTracker) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabase
 
 // CreateTable implements the DDL interface.
 func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) error {
-	panic("not implemented")
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	schema := d.SchemaByName(ident.Schema)
+	if schema == nil {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	// suppress ErrTooLongKey
+	ctx.GetSessionVars().StrictSQLMode = false
+
+	var (
+		referTbl *model.TableInfo
+		err      error
+	)
+	if s.ReferTable != nil {
+		referTbl, err = d.TableByName(s.ReferTable.Schema, s.ReferTable.Name)
+		if err != nil {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(s.ReferTable.Schema, s.ReferTable.Name)
+		}
+	}
+
+	// build tableInfo
+	var (
+		tbInfo *model.TableInfo
+	)
+	if s.ReferTable != nil {
+		tbInfo, err = ddl.BuildTableInfoWithLike(ctx, ident, referTbl, s)
+	} else {
+		tbInfo, err = ddl.BuildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, nil)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// TODO: to reuse the constant fold of expression in partition range definition we use CheckTableInfoValidWithStmt,
+	// but it may also introduce unwanted limit check in DM's use case. Should check it later.
+	if err = ddl.CheckTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return err
+	}
+
+	onExist := ddl.OnExistError
+	if s.IfNotExists {
+		onExist = ddl.OnExistIgnore
+	}
+
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
 }
 
 // CreateTableWithInfo implements the DDL interface.
@@ -166,18 +217,83 @@ func (d SchemaTracker) CreateTableWithInfo(
 	info *model.TableInfo,
 	onExist ddl.OnExist,
 ) error {
-	panic("not implemented")
+	schema := d.SchemaByName(dbName)
+	if schema == nil {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
 
+	oldTable, _ := d.TableByName(dbName, info.Name)
+	if oldTable != nil {
+		switch onExist {
+		case ddl.OnExistIgnore:
+			return nil
+		case ddl.OnExistReplace:
+			return d.PutTable(dbName, info)
+		default:
+			return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: dbName, Name: info.Name})
+		}
+	}
+
+	return d.PutTable(dbName, info)
 }
 
 // CreateView implements the DDL interface.
 func (d SchemaTracker) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) error {
-	panic("not implemented")
+	viewInfo, err := ddl.BuildViewInfo(ctx, s)
+	if err != nil {
+		return err
+	}
+
+	cols := make([]*table.Column, len(s.Cols))
+	for i, v := range s.Cols {
+		cols[i] = table.ToColumn(&model.ColumnInfo{
+			Name:   v,
+			ID:     int64(i),
+			Offset: i,
+			State:  model.StatePublic,
+		})
+	}
+
+	tbInfo, err := ddl.BuildTableInfo(ctx, s.ViewName.Name, cols, nil, "", "")
+	if err != nil {
+		return err
+	}
+	tbInfo.View = viewInfo
+
+	onExist := ddl.OnExistError
+	if s.OrReplace {
+		onExist = ddl.OnExistReplace
+	}
+
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
 // DropTable implements the DDL interface.
 func (d SchemaTracker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	panic("not implemented")
+	notExistTables := make([]string, 0, len(stmt.Tables))
+	for _, name := range stmt.Tables {
+		tb, err := d.TableByName(name.Schema, name.Name)
+		if err != nil || !tb.IsBaseTable() {
+			if stmt.IfExists {
+				continue
+			}
+
+			id := ast.Ident{Schema: name.Schema, Name: name.Name}
+			notExistTables = append(notExistTables, id.String())
+			// For statement dropping multiple tables, we should return error after try to drop all tables.
+			continue
+		}
+
+		// Without IF EXISTS, the statement drops all named tables that do exist, and returns an error indicating which
+		// nonexisting tables it was unable to drop.
+		// https://dev.mysql.com/doc/refman/5.7/en/drop-table.html
+		_ = d.DeleteTable(name.Schema, name.Name)
+	}
+
+	if len(notExistTables) > 0 {
+		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
+	}
+	return nil
 }
 
 // RecoverTable implements the DDL interface, which is no-op in DM's case.
@@ -187,7 +303,31 @@ func (d SchemaTracker) RecoverTable(ctx sessionctx.Context, recoverInfo *ddl.Rec
 
 // DropView implements the DDL interface.
 func (d SchemaTracker) DropView(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
-	panic("not implemented")
+	notExistTables := make([]string, 0, len(stmt.Tables))
+	for _, name := range stmt.Tables {
+		tb, err := d.TableByName(name.Schema, name.Name)
+		if err != nil {
+			if stmt.IfExists {
+				continue
+			}
+
+			id := ast.Ident{Schema: name.Schema, Name: name.Name}
+			notExistTables = append(notExistTables, id.String())
+			continue
+		}
+
+		// the behaviour is fast fail when type is wrong.
+		if !tb.IsView() {
+			return dbterror.ErrWrongObject.GenWithStackByArgs(name.Schema, name.Name, "VIEW")
+		}
+
+		_ = d.DeleteTable(name.Schema, name.Name)
+	}
+
+	if len(notExistTables) > 0 {
+		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
+	}
+	return nil
 }
 
 // CreateIndex implements the DDL interface.
@@ -212,7 +352,42 @@ func (d SchemaTracker) TruncateTable(ctx sessionctx.Context, tableIdent ast.Iden
 
 // RenameTable implements the DDL interface.
 func (d SchemaTracker) RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error {
-	panic("not implemented")
+	oldIdents := make([]ast.Ident, 0, len(stmt.TableToTables))
+	newIdents := make([]ast.Ident, 0, len(stmt.TableToTables))
+	for _, tablePair := range stmt.TableToTables {
+		oldIdent := ast.Ident{Schema: tablePair.OldTable.Schema, Name: tablePair.OldTable.Name}
+		newIdent := ast.Ident{Schema: tablePair.NewTable.Schema, Name: tablePair.NewTable.Name}
+		oldIdents = append(oldIdents, oldIdent)
+		newIdents = append(newIdents, newIdent)
+	}
+	return d.renameTable(ctx, oldIdents, newIdents, false)
+}
+
+// renameTable is used by RenameTable and AlterTable.
+func (d SchemaTracker) renameTable(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
+	tablesCache := make(map[string]int64)
+	is := InfoStoreAdaptor{inner: d.InfoStore}
+	for i := range oldIdents {
+		_, _, err := ddl.ExtractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tablesCache)
+		if err != nil {
+			return err
+		}
+	}
+
+	for i := range oldIdents {
+		tableInfo, err := d.TableByName(oldIdents[i].Schema, oldIdents[i].Name)
+		if err != nil {
+			return err
+		}
+		if err = d.DeleteTable(oldIdents[i].Schema, oldIdents[i].Name); err != nil {
+			return err
+		}
+		tableInfo.Name = newIdents[i].Name
+		if err = d.PutTable(newIdents[i].Schema, tableInfo); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // LockTables implements the DDL interface, it's no-op in DM's case.
