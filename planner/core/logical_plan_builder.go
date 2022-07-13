@@ -5606,7 +5606,51 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
+	for _, tbl := range tblID2table {
+		if len(tbl.Meta().ForeignKeys) == 0 {
+			continue
+		}
+	}
 	return del, err
+}
+
+func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]Plan, error) {
+	if !b.ctx.GetSessionVars().ForeignKeyChecks {
+		return nil, nil
+	}
+	tblInfo := tbl.Meta()
+	triggerPlans := make([]Plan, 0, len(tblInfo.ReferredForeignKeys))
+	for _, referredFK := range tblInfo.ReferredForeignKeys {
+		childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+		if err != nil {
+			// todo: append warning?
+			continue
+		}
+		fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+		if fk == nil || !fk.Enable {
+			continue
+		}
+		switch ast.ReferOptionType(fk.OnDelete) {
+		case ast.ReferOptionCascade:
+			p, err := b.buildForeignKeyCascadeDelete(ctx, childTable, fk)
+			if err != nil {
+				return nil, err
+			}
+			triggerPlans = append(triggerPlans, p)
+		case ast.ReferOptionSetNull:
+			// todo:
+			continue
+		default:
+			continue
+		}
+	}
+
+	return nil, nil
+}
+
+func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, tbl table.Table, fk *model.FKInfo) (Plan, error) {
+
+	return nil, nil
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]HandleCols, schema *expression.Schema) (map[int64][]HandleCols, error) {

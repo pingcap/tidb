@@ -1359,6 +1359,7 @@ func (t *TableInfo) FindColumnNameByID(id int64) string {
 type FKInfo struct {
 	ID        int64       `json:"id"`
 	Name      CIStr       `json:"fk_name"`
+	Enable    bool        `json:"enable"`
 	RefSchema CIStr       `json:"ref_schema"`
 	RefTable  CIStr       `json:"ref_table"`
 	RefCols   []CIStr     `json:"ref_cols"`

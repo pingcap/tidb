@@ -21,7 +21,7 @@ func initAddRowForeignKeyChecker(ctx sessionctx.Context, is infoschema.InfoSchem
 		logutil.BgLogger().Warn("----- foreign key check disabled")
 		return nil, nil
 	}
-	fkCheckers := make([]*foreignKeyChecker, 0, len(tbInfo.ForeignKeys)+len(tbInfo.ReferredForeignKeys))
+	fkCheckers := make([]*foreignKeyChecker, 0, len(tbInfo.ForeignKeys))
 	for _, fk := range tbInfo.ForeignKeys {
 		colsOffsets, err := getForeignKeyColumnsOffsets(tbInfo, fk.Cols)
 		if err != nil {
