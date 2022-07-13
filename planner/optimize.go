@@ -186,9 +186,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			for _, warn := range warns {
 				sessVars.StmtCtx.AppendWarning(warn)
 			}
-			if err := setFoundInBinding(sctx, true, chosenBinding.BindSQL); err != nil {
-				logutil.BgLogger().Warn("set tidb_found_in_binding failed", zap.Error(err))
-			}
+			sessVars.StmtCtx.BindSQL = chosenBinding.BindSQL
+			sessVars.FoundInBinding = true
 			if sessVars.StmtCtx.InVerboseExplain {
 				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
@@ -662,13 +661,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	offs = append(offs, setVarsOffs...)
 	return
-}
-
-func setFoundInBinding(sctx sessionctx.Context, opt bool, bindSQL string) error {
-	vars := sctx.GetSessionVars()
-	vars.StmtCtx.BindSQL = bindSQL
-	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(opt))
-	return err
 }
 
 func init() {
