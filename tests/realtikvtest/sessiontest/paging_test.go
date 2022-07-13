@@ -94,8 +94,8 @@ func TestPagingActRowsAndProcessKeys(t *testing.T) {
 		_ = session.MustQuery(fmt.Sprintf("split table t between (0) and (1000000) regions %v;", regionNum))
 		_ = session.MustQuery(fmt.Sprintf("split table t index idx between (0) and (1000000) regions %v;", regionNum))
 		for _, sql := range sqls {
-			for _, pagingSql := range openOrClosePaging {
-				session.MustExec(pagingSql)
+			for _, pagingSQL := range openOrClosePaging {
+				session.MustExec(pagingSQL)
 				rows := session.MustQuery(sql)
 				checkResult(rows.Rows())
 			}
