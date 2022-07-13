@@ -16,6 +16,7 @@ package copr
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util"
 	"io"
 	"strconv"
 	"sync"
@@ -341,19 +342,16 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	// send cancel cmd to all stores where tasks run
-	wg := new(sync.WaitGroup)
+	wg := util.WaitGroupWrapper{}
 	for addr := range usedStoreAddrs {
-		wg.Add(1)
-		go func(storeAddr string) {
-			defer func() {
-				wg.Done()
-			}()
+		storeAddr := addr
+		wg.Run(func() {
 			_, err := m.store.GetTiKVClient().SendRequest(context.Background(), storeAddr, wrappedReq, tikv.ReadTimeoutShort)
 			logutil.BgLogger().Debug("cancel task", zap.Uint64("query id ", m.startTs), zap.String("on addr", storeAddr))
 			if err != nil {
 				logutil.BgLogger().Error("cancel task error", zap.Error(err), zap.Uint64("query id", m.startTs), zap.String("on addr", storeAddr))
 			}
-		}(addr)
+		})
 	}
 	wg.Wait()
 }
