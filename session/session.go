@@ -447,13 +447,16 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	}
 }
 
-func (s *session) UpdateColStatsUsage(predicateColumns []model.TableColumnID) {
+func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 	if s.statsCollector == nil {
 		return
 	}
 	t := time.Now()
-	colMap := make(map[model.TableColumnID]time.Time, len(predicateColumns))
+	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
 	for _, col := range predicateColumns {
+		if col.IsIndex {
+			continue
+		}
 		colMap[col] = t
 	}
 	s.statsCollector.UpdateColStatsUsage(colMap)
@@ -3364,23 +3367,23 @@ func (s *session) EncodeSessionStates(ctx context.Context, sctx sessionctx.Conte
 	valid := s.txn.Valid()
 	s.txn.mu.Unlock()
 	if valid {
-		return ErrCannotMigrateSession.GenWithStackByArgs("session has an active transaction")
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has an active transaction")
 	}
 	// Data in local temporary tables is hard to encode, so we do not support it.
 	// Check temporary tables here to avoid circle dependency.
 	if s.sessionVars.LocalTemporaryTables != nil {
 		localTempTables := s.sessionVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
 		if localTempTables.Count() > 0 {
-			return ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has local temporary tables")
 		}
 	}
 	// The advisory locks will be released when the session is closed.
 	if len(s.advisoryLocks) > 0 {
-		return ErrCannotMigrateSession.GenWithStackByArgs("session has advisory locks")
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has advisory locks")
 	}
 	// The TableInfo stores session ID and server ID, so the session cannot be migrated.
 	if len(s.lockedTables) > 0 {
-		return ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
+		return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("session has locked tables")
 	}
 
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
