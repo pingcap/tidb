@@ -42,7 +42,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// AuthSwitchRequest is Protocol Features
+// AuthSwitchRequest is a protocol feature.
 const AuthSwitchRequest byte = 0xfe
 
 // Server information.
