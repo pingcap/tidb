@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -75,60 +74,6 @@ func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	return store
-}
-
-func testNewContext(d *ddl) sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.Store = d.store
-	return ctx
-}
-
-func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := sessiontxn.NewTxn(context.Background(), ctx)
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	ver, err := m.GetSchemaVersion()
-	require.NoError(t, err)
-	return ver
-}
-
-type historyJobArgs struct {
-	ver    int64
-	db     *model.DBInfo
-	tbl    *model.TableInfo
-	tblIDs map[int64]struct{}
-}
-
-func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
-	require.Equal(t, t1.ID, t2.ID)
-	require.Equal(t, t1.Name, t2.Name)
-	require.Equal(t, t1.Charset, t2.Charset)
-	require.Equal(t, t1.Collate, t2.Collate)
-	require.Equal(t, t1.PKIsHandle, t2.PKIsHandle)
-	require.Equal(t, t1.Comment, t2.Comment)
-	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
-}
-
-func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	historyJob, err := GetHistoryJobByID(ctx, id)
-	require.NoError(t, err)
-	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
-
-	if args.tbl != nil {
-		require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
-		checkEqualTable(t, historyJob.BinlogInfo.TableInfo, args.tbl)
-		return
-	}
-
-	// for handling schema job
-	require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
-	require.Equal(t, historyJob.BinlogInfo.DBInfo, args.db)
-	// only for creating schema job
-	if args.db != nil && len(args.tblIDs) == 0 {
-		return
-	}
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
@@ -410,94 +355,6 @@ func TestNotifyDDLJob(t *testing.T) {
 	case <-d1.workers[generalWorker].ddlJobCh:
 		require.FailNow(t, "should not get the general job notification")
 	default:
-	}
-}
-
-func testSchemaInfo(d *ddl, name string) (*model.DBInfo, error) {
-	dbInfo := &model.DBInfo{
-		Name: model.NewCIStr(name),
-	}
-	genIDs, err := d.genGlobalIDs(1)
-	if err != nil {
-		return nil, err
-	}
-	dbInfo.ID = genIDs[0]
-	return dbInfo, nil
-}
-
-func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.DoDDLJob(ctx, job))
-
-	v := getSchemaVer(t, ctx)
-	dbInfo.State = model.StatePublic
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
-	dbInfo.State = model.StateNone
-	return job
-}
-
-func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-}
-
-func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
-	job := buildDropSchemaJob(dbInfo)
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
-	require.NoError(t, err)
-	ver := getSchemaVer(t, ctx)
-	return job, ver
-}
-
-func isDDLJobDone(test *testing.T, t *meta.Meta) bool {
-	job, err := t.GetDDLJobByIdx(0)
-	require.NoError(test, err)
-	if job == nil {
-		return true
-	}
-
-	time.Sleep(testLease)
-	return false
-}
-
-func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state model.SchemaState) {
-	isDropped := true
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	for {
-		err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			info, err := t.GetDatabase(dbInfo.ID)
-			require.NoError(test, err)
-
-			if state == model.StateNone {
-				isDropped = isDDLJobDone(test, t)
-				if !isDropped {
-					return nil
-				}
-				require.Nil(test, info)
-				return nil
-			}
-
-			require.Equal(test, info.Name, dbInfo.Name)
-			require.Equal(test, info.State, state)
-			return nil
-		})
-		require.NoError(test, err)
-
-		if isDropped {
-			break
-		}
 	}
 }
 
