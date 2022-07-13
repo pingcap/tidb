@@ -59,7 +59,7 @@ func TestSysVar(t *testing.T) {
 	f = GetSysVar("version_compile_machine")
 	require.Equal(t, runtime.GOARCH, f.Value)
 
-	f = GetSysVar("tidb_extension_non_mysql_compatible")
+	f = GetSysVar("tidb_enable_simplified_show_create_table")
 	require.Equal(t, "OFF", f.Value)
 }
 

@@ -1029,11 +1029,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			}
 		}
 		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				buf.WriteString(" /*T![auto_rand]")
 			}
 			buf.WriteString(fmt.Sprintf(" AUTO_RANDOM(%d)", tableInfo.AutoRandomBits))
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				buf.WriteString(" */")
 			}
 		}
@@ -1052,11 +1052,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		// If PKIsHandle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			buf.WriteString(" /*T![clustered_index]")
 		}
 		buf.WriteString(" CLUSTERED")
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			buf.WriteString(" */")
 		}
 	}
@@ -1095,7 +1095,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
 		if idxInfo.Invisible {
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 			} else {
 				fmt.Fprintf(buf, ` INVISIBLE`)
@@ -1105,7 +1105,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				buf.WriteString(" /*T![clustered_index]")
 			}
 			if tableInfo.HasClusteredIndex() {
@@ -1113,7 +1113,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			} else {
 				buf.WriteString(" NONCLUSTERED")
 			}
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				buf.WriteString(" */")
 			}
 		}
@@ -1147,7 +1147,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	buf.WriteString("\n)")
 
-	if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+	if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 		buf.WriteString(" ENGINE=InnoDB")
 	}
 	// We need to explicitly set the default charset and collation
@@ -1180,11 +1180,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.AutoIdCache != 0 {
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " /*T![auto_id_cache]")
 		}
 		fmt.Fprintf(buf, " AUTO_ID_CACHE=%d", tableInfo.AutoIdCache)
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " */")
 		}
 	}
@@ -1197,25 +1197,25 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 
 		if autoRandID > 1 {
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				fmt.Fprintf(buf, " /*T![auto_rand_base]")
 			}
 			fmt.Fprintf(buf, " AUTO_RANDOM_BASE=%d", autoRandID)
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				fmt.Fprintf(buf, " */")
 			}
 		}
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " /*T!")
 		}
 		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS=%d", tableInfo.ShardRowIDBits)
 		if tableInfo.PreSplitRegions > 0 {
 			fmt.Fprintf(buf, " PRE_SPLIT_REGIONS=%d", tableInfo.PreSplitRegions)
 		}
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " */")
 		}
 	}
@@ -1229,11 +1229,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " /*T![placement]")
 		}
 		fmt.Fprintf(buf, " PLACEMENT POLICY=%s", stringutil.Escape(tableInfo.PlacementPolicyRef.Name.String(), sqlMode))
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " */")
 		}
 	}
@@ -1268,7 +1268,7 @@ func ConstructResultOfShowCreateSequence(ctx sessionctx.Context, tableInfo *mode
 	} else {
 		buf.WriteString("nocycle ")
 	}
-	if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+	if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 		buf.WriteString("ENGINE=InnoDB")
 	}
 	if len(sequenceInfo.Comment) > 0 {
@@ -1452,11 +1452,11 @@ func appendPartitionInfo(ctx sessionctx.Context, partitionInfo *model.PartitionI
 		}
 		if def.PlacementPolicyRef != nil {
 			// add placement ref info here
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				fmt.Fprintf(buf, " /*T![placement]")
 			}
 			fmt.Fprintf(buf, " PLACEMENT POLICY=%s", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+			if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 				fmt.Fprintf(buf, " */")
 			}
 		}
@@ -1469,7 +1469,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	sqlMode := ctx.GetSessionVars().SQLMode
 	var ifNotExistsStr string
 	if ifNotExists {
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
 		} else {
 			ifNotExistsStr = "IF NOT EXISTS "
@@ -1477,7 +1477,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if dbInfo.Charset != "" {
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " /*!40100")
 		}
 		fmt.Fprintf(buf, " DEFAULT CHARACTER SET %s", dbInfo.Charset)
@@ -1488,7 +1488,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 		if dbInfo.Collate != "" && dbInfo.Collate != defaultCollate {
 			fmt.Fprintf(buf, " COLLATE %s", dbInfo.Collate)
 		}
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " */")
 		}
 	} else if dbInfo.Collate != "" {
@@ -1496,14 +1496,14 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " /*!40100")
 		}
 		fmt.Fprintf(buf, " DEFAULT CHARACTER SET %s", collInfo.CharsetName)
 		if !collInfo.IsDefault {
 			fmt.Fprintf(buf, " COLLATE %s", dbInfo.Collate)
 		}
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " */")
 		}
 	}
@@ -1511,11 +1511,11 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	// behavior unchanged because it is trivial enough.
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " /*T![placement]")
 		}
 		fmt.Fprintf(buf, " PLACEMENT POLICY=%s", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
+		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 			fmt.Fprintf(buf, " */")
 		}
 	}

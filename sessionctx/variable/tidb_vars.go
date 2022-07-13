@@ -685,10 +685,10 @@ const (
 	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
 	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
 
-	// TiDBExtensionNonMySQLCompatible changes output for SHOW CREATE TABLE etc. for TiDB enhancements
+	// TiDBEnableSimplifiedShowCreateTable changes output for SHOW CREATE TABLE etc. for TiDB enhancements
 	// that are not compatible with MySQL, like CLUSTERED index etc.
 	// as well as remove MySQL specific syntax that are not used by TiDB, like ENGINE = InnoDB
-	TiDBExtensionNonMySQLCompatible = "tidb_extension_non_mysql_compatible"
+	TiDBEnableSimplifiedShowCreateTable = "tidb_enable_simplified_show_create_table"
 )
 
 // TiDB vars that have only global scope
@@ -954,7 +954,7 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
-	DefTiDBExtensionNonMySQLCompatible             = false
+	DefTiDBEnableSimplifiedShowCreateTable         = false
 )
 
 // Process global variables.
