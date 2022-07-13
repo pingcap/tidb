@@ -86,7 +86,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 			// try push sorted items down.
 			topN.ByItems = ls.ByItems
 		}
-		// else just push limit down. eg: sort items are all correlated column or constant.
+		// else just push limit down. eg: sort items are all correlated column or constant, it can be eliminated.
 		//  before eNNR, sort item won't occur correlated item because it has been projected as normal column in projection OP.
 		appendSortPassByItemsTraceStep(ls, topN, opt)
 		return ls.children[0].pushDownTopN(topN, opt)
