@@ -356,11 +356,12 @@ func (t *Tracker) Consume(bytes int64) {
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		bytesReleased := atomic.LoadInt64(&t.bytesReleased)
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
-		if bytesConsumed >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
+		if bytesConsumed+bytesReleased >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
 			rootExceed = tracker
 		}
-		if bytesConsumed >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
+		if bytesConsumed+bytesReleased >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
 			rootExceedForSoftLimit = tracker
 		}
 
