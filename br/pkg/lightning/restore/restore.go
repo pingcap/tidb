@@ -745,7 +745,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	// For local backend, we need DBInfo.ID to operate the global autoid allocator.
-	if rc.isLocalBackend() {
+	if isLocalBackend(rc.cfg) {
 		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
 		if err != nil {
 			return errors.Trace(err)
@@ -1411,7 +1411,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	postProgress := func() error { return nil }
 	var kvStore tidbkv.Storage
 
-	if rc.isLocalBackend() {
+	if isLocalBackend(rc.cfg) {
 		var (
 			restoreFn pdutil.UndoFunc
 			err       error
