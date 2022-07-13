@@ -2011,7 +2011,6 @@ func (e *ShowExec) fetchShowBuiltins() error {
 }
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
-	// session states
 	sessionStates := &sessionstates.SessionStates{}
 	err := e.ctx.EncodeSessionStates(ctx, e.ctx, sessionStates)
 	if err != nil {
@@ -2029,10 +2028,9 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	var token *sessionstates.SessionToken
 	// In testing, user may be nil.
 	if user := e.ctx.GetSessionVars().User; user != nil {
-		// The token may be leaked without TLS, so we enforce a TLS connection.
-		if e.ctx.GetSessionVars().TLSConnectionState == nil {
-			//return ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried in a TLS connection")
-			return errors.New("the token must be queried in a TLS connection")
+		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
+		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
 		}
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
 			return err

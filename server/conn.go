@@ -2427,9 +2427,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 }
 
 func (cc *clientConn) handleCommonConnectionReset(ctx context.Context) error {
-	if plugin.IsEnable(plugin.Audit) {
-		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	}
+	cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
 
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)

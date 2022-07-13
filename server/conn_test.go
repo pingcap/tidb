@@ -1305,17 +1305,22 @@ func TestAuthTokenPlugin(t *testing.T) {
 	cc.setCtx(tc)
 	// create a token without TLS
 	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
+	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
 	err = tk1.QueryToErr("show session_states")
-	require.ErrorContains(t, err, "TLS")
+	require.ErrorContains(t, err, "secure transport")
 
 	// create a token with TLS
-	tc, err = drv.OpenCtx(uint64(0), 0, uint8(mysql.DefaultCollationID), "", &tls.ConnectionState{})
-	require.NoError(t, err)
-	cc.setCtx(tc)
-	tk2 := testkit.NewTestKitWithSession(t, store, tc.Session)
-	tk2.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
-	rows := tk2.MustQuery("show session_states").Rows()
+	cc.tlsConn = &tls.Conn{}
+	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	tk1.Session().Auth(&auth.UserIdentity{Username: "auth_session_token", Hostname: "localhost"}, nil, nil)
+	tk1.MustQuery("show session_states")
+
+	// create a token with UnixSocket
+	cc.tlsConn = nil
+	cc.isUnixSocket = true
+	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	rows := tk1.MustQuery("show session_states").Rows()
 	tokenBytes := []byte(rows[0][1].(string))
 
 	// auth with the token

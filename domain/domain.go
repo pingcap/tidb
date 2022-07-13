@@ -1616,8 +1616,8 @@ func (do *Domain) LoadSigningCertLoop() {
 	go func() {
 		defer func() {
 			do.wg.Done()
-			logutil.BgLogger().Info("loadSigningCertLoop exited.")
-			util.Recover(metrics.LabelDomain, "loadSigningCertLoop", nil, false)
+			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
+			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
 		}()
 		for {
 			select {
