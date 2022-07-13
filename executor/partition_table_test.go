@@ -373,6 +373,27 @@ func TestOrderByandLimit(t *testing.T) {
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
 
+	// test indexLookUp with order property pushed down.
+	for i := 0; i < 100; i++ {
+		// explain select * from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
+		// select * from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
+		x := rand.Intn(1099)
+		y := rand.Intn(2000) + 1
+		// Since we only use order by a not order by a, b, the result is not stable when we read both a and b.
+		// We cut the max element so that the result can be stable.
+		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(a), 1100) from (select * from tregular use index(idx_a) where a > %v order by a limit %v) t", x, y)).Rows()[0][0]
+		queryRangePartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from trange use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
+		queryHashPartitionWithLimitHint := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v", x, x+1, maxEle, y)
+		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v and a < greatest(%v+1, %v) order by a limit %v;", x, x+1, maxEle, y)
+		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "Limit"))
+		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "IndexLookUp"))
+		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "Limit"))
+		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
+		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
+		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
+		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
+	}
+
 	// test tableReader
 	for i := 0; i < 100; i++ {
 		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
@@ -385,6 +406,24 @@ func TestOrderByandLimit(t *testing.T) {
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
 
+	// test tableReader with order property pushed down.
+	for i := 0; i < 100; i++ {
+		// explain select * from t where a > {y}  ignore index(idx_a) order by a limit {x}; // check if IndexLookUp is used
+		// select * from t where a > {y} ignore index(idx_a) order by a limit {x}; // it can return the correct result
+		x := rand.Intn(1099)
+		y := rand.Intn(2000) + 1
+		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from trange ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		queryRegular := fmt.Sprintf("select * from tregular ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
+		require.True(t, tk.HasPlan(queryRangePartition, "TableReader")) // check if tableReader is used
+		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
+		require.False(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is not pushed
+		require.False(t, tk.HasPlan(queryHashPartition, "Limit"))
+		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
+		tk.MustQuery(queryRangePartition).Sort().Check(regularResult)
+		tk.MustQuery(queryHashPartition).Sort().Check(regularResult)
+	}
+
 	// test indexReader
 	for i := 0; i < 100; i++ {
 		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
@@ -395,6 +434,24 @@ func TestOrderByandLimit(t *testing.T) {
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
 		require.True(t, tk.HasPlan(queryPartition, "IndexReader")) // check if indexReader is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
+	}
+
+	// test indexReader with order property pushed down.
+	for i := 0; i < 100; i++ {
+		// explain select a from t where a > {y}  use index(idx_a) order by a limit {x}; // check if IndexLookUp is used
+		// select a from t where a > {y} use index(idx_a) order by a limit {x}; // it can return the correct result
+		x := rand.Intn(1099)
+		y := rand.Intn(2000) + 1
+		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
+		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
+		require.True(t, tk.HasPlan(queryRangePartition, "IndexReader")) // check if indexReader is used
+		require.True(t, tk.HasPlan(queryHashPartition, "IndexReader"))
+		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
+		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
+		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
+		tk.MustQuery(queryRangePartition).Sort().Check(regularResult)
+		tk.MustQuery(queryHashPartition).Sort().Check(regularResult)
 	}
 
 	// test indexMerge

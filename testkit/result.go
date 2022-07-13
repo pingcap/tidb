@@ -49,6 +49,10 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
+func (res *Result) AddComment(c string) {
+	res.comment += "\n" + c
+}
+
 // CheckWithFunc asserts the result match the expected results in the way `f` specifies.
 func (res *Result) CheckWithFunc(expected [][]interface{}, f func([]string, []interface{}) bool) {
 	res.require.Equal(len(res.rows), len(expected), res.comment+"\nResult length mismatch")

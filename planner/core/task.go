@@ -1116,7 +1116,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		}
 
 		propMatched := checkIndexMatchProp(idxScan.IdxCols, idxScan.IdxColLens, idxScan.constColsByCond, colsProp)
-		logutil.BgLogger().Warn("push down top-n", zap.Bool("prop is matched", propMatched))
 		if !propMatched {
 			return nil, false
 		}
