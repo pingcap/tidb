@@ -341,9 +341,9 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 
 	// send cancel cmd to all stores where tasks run
-	var wg sync.WaitGroup
-	wg.Add(len(usedStoreAddrs))
+	wg := new(sync.WaitGroup)
 	for addr := range usedStoreAddrs {
+		wg.Add(1)
 		go func(storeAddr string) {
 			defer func() {
 				wg.Done()
