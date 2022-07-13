@@ -522,6 +522,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 	int32Column := genColumn(mysql.TypeLong, 8)
 	float32Column := genColumn(mysql.TypeFloat, 9)
 	enumColumn := genColumn(mysql.TypeEnum, 10)
+	durationColumn := genColumn(mysql.TypeDuration, 11)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
@@ -1122,6 +1123,26 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// WeekOfYear
 	function, err = NewFunction(mock.NewContext(), ast.WeekOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// TimeToSec
+	function, err = NewFunction(mock.NewContext(), ast.TimeToSec, types.NewFieldType(mysql.TypeDuration), durationColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_RightShift
+	function, err = NewFunction(mock.NewContext(), ast.RightShift, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// ReverseUTF8 test
+	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// Reverse
+	function, err = NewFunction(mock.NewContext(), ast.Reverse, types.NewFieldType(mysql.TypeBlob), stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
