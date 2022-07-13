@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 )
 
-// Digest generates the digest of statements.
+// Digest stores the fixed length hash value.
 type Digest struct {
 	b   []byte
 	str string
