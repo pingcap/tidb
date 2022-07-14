@@ -319,7 +319,8 @@ func (e *indexScanExec) Process(key, value []byte) error {
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)
 		if e.paging != nil {
-			e.chunkLastProcessedKeys = append(e.chunkLastProcessedKeys, key)
+			lastProcessed := kv.Key(append([]byte{}, key...)) // need a deep copy to store the key
+			e.chunkLastProcessedKeys = append(e.chunkLastProcessedKeys, lastProcessed)
 		}
 		e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 	}
@@ -423,6 +424,9 @@ type topNExec struct {
 	conds []expression.Expression
 	row   *sortRow
 	recv  []*chunk.Chunk
+
+	// When dummy is true, topNExec just copy what it read from children to its parent.
+	dummy bool
 }
 
 func (e *topNExec) open() error {
@@ -432,6 +436,11 @@ func (e *topNExec) open() error {
 	if err != nil {
 		return err
 	}
+
+	if e.dummy {
+		return nil
+	}
+
 	for {
 		chk, err = e.children[0].next()
 		if err != nil {
@@ -466,6 +475,10 @@ func (e *topNExec) open() error {
 }
 
 func (e *topNExec) next() (*chunk.Chunk, error) {
+	if e.dummy {
+		return e.children[0].next()
+	}
+
 	chk := chunk.NewChunkWithCapacity(e.getFieldTypes(), DefaultBatchSize)
 	for ; !chk.IsFull() && e.idx < e.topn && e.idx < uint64(e.heap.heapSize); e.idx++ {
 		row := e.heap.rows[e.idx]
