@@ -5,12 +5,13 @@ package utils
 import (
 	"context"
 	"database/sql"
+	"strings"
+
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
-	"strings"
 )
 
 var (
