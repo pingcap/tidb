@@ -129,6 +129,24 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 	}
 }
 
+// CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
+// Note: BR'version > 6.1.0 at least in this function
+func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
+	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
+	if err != nil {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
+	}
+
+	// The versions of BR and TiKV should be the same, such as
+	// BR 6.1 <-> TiKV 6.1, BR 6.2 <-> TiKV 6.2
+	if BRVersion.Major != tikvVersion.Major {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s major version mismatch when use PiTR, please use the same version of BR",
+			s.Address, tikvVersion, build.ReleaseVersion)
+	}
+
+	return nil
+}
+
 // CheckVersionForBR checks whether version of the cluster and BR itself is compatible.
 func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))

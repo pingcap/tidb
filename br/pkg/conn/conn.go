@@ -47,6 +47,13 @@ const (
 	DefaultMergeRegionKeyCount uint64 = 960000
 )
 
+type CmdType int
+
+const (
+	NormalCmd CmdType = iota
+	StreamCmd
+)
+
 // Mgr manages connections to a TiDB cluster.
 type Mgr struct {
 	*pdutil.PdController
@@ -177,6 +184,7 @@ func NewMgr(
 	storeBehavior StoreBehavior,
 	checkRequirements bool,
 	needDomain bool,
+	cmdType CmdType,
 ) (*Mgr, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("conn.NewMgr", opentracing.ChildOf(span.Context()))
@@ -192,7 +200,16 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 	if checkRequirements {
-		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBR)
+		var checker version.VerChecker
+		switch cmdType {
+		case NormalCmd:
+			checker = version.CheckVersionForBR
+		case StreamCmd:
+			checker = version.CheckVersionForBRPiTR
+		default:
+			return nil, errors.Errorf("unknown command type, comman code is %d", cmdType)
+		}
+		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), checker)
 		if err != nil {
 			return nil, errors.Annotate(err, "running BR in incompatible version of cluster, "+
 				"if you believe it's OK, use --check-requirements=false to skip.")

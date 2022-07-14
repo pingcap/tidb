@@ -562,6 +562,7 @@ func NewMgr(ctx context.Context,
 	keepalive keepalive.ClientParameters,
 	checkRequirements bool,
 	needDomain bool,
+	cmdType conn.CmdType,
 ) (*conn.Mgr, error) {
 	var (
 		tlsConf *tls.Config
@@ -586,7 +587,7 @@ func NewMgr(ctx context.Context,
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
 		ctx, g, pdAddress, tlsConf, securityOption, keepalive, conn.SkipTiFlash,
-		checkRequirements, needDomain,
+		checkRequirements, needDomain, cmdType,
 	)
 }
 
