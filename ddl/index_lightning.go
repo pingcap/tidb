@@ -445,7 +445,7 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 		for i, idxRecord := range temporaryIndexRecords {
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			// If all batch are skiped, update first index key to make txn commit to release lock.
+			// If all batch are skipped, update first index key to make txn commit to release lock.
 			if idxRecord.skip && !w.skipAll {
 				continue
 			}
@@ -601,7 +601,6 @@ func (w *backFillIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange r
 		length--
 		// Just skip it.
 		if bytes.Equal(keyVer, []byte("2")) {
-			skip = true
 			return true, nil
 		}
 		if bytes.Equal(rawValue, []byte("delete")) {

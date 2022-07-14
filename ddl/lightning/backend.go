@@ -108,7 +108,7 @@ func GenBackendContextKey(jobID int64) string {
 // Adjust lightning memory parameters according memory root's max limitation
 func adjustImportMemory(cfg *config.Config) {
 	var scale int64
-	// Try agressive resource usage successful.
+	// Try aggressive resource usage successful.
 	if tryAggressiveMemory(cfg) {
 		return
 	}
@@ -139,7 +139,7 @@ func adjustImportMemory(cfg *config.Config) {
 		zap.String("rangecounrrency:", strconv.Itoa(cfg.TikvImporter.RangeConcurrency)))
 }
 
-// tryAgressiveMemory lightning memory parameters according memory root's max limitation
+// tryAggressiveMemory lightning memory parameters according memory root's max limitation
 func tryAggressiveMemory(cfg *config.Config) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(128 * _mb * cfg.TikvImporter.RangeConcurrency)
