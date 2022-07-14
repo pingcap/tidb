@@ -9,6 +9,7 @@ go_test(
         "session_fail_test.go",
         "session_test.go",
         "temporary_table_test.go",
+        "paging_test.go"
     ],
     flaky = True,
     shard_count = 50,
