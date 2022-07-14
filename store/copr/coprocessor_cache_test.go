@@ -79,7 +79,7 @@ func TestDisable(t *testing.T) {
 	v2 := cache.Get([]byte("foo"))
 	require.Nil(t, v2)
 
-	v = cache.CheckResponseAdmission(1024, time.Second*5)
+	v = cache.CheckResponseAdmission(1024, time.Second*5, false)
 	require.False(t, v)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{CapacityMB: 0.001})
@@ -104,34 +104,34 @@ func TestAdmission(t *testing.T) {
 	v = cache.CheckRequestAdmission(1000)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(0, 0)
+	v = cache.CheckResponseAdmission(0, 0, false)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(0, 4*time.Millisecond)
+	v = cache.CheckResponseAdmission(0, 4*time.Millisecond, false)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(0, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(0, 5*time.Millisecond, false)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1, 0)
+	v = cache.CheckResponseAdmission(1, 0, false)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1, 4*time.Millisecond)
+	v = cache.CheckResponseAdmission(1, 4*time.Millisecond, false)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1, 5*time.Millisecond, false)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(1024, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024, 5*time.Millisecond, false)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(1024*1024, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024*1024, 5*time.Millisecond, false)
 	require.True(t, v)
 
-	v = cache.CheckResponseAdmission(1024*1024+1, 5*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024*1024+1, 5*time.Millisecond, false)
 	require.False(t, v)
 
-	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond)
+	v = cache.CheckResponseAdmission(1024*1024+1, 4*time.Millisecond, false)
 	require.False(t, v)
 
 	cache, err = newCoprCache(&config.CoprocessorCache{AdmissionMaxRanges: 5, AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})

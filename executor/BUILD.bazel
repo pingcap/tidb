@@ -328,6 +328,7 @@ go_test(
         "//config",
         "//ddl",
         "//ddl/placement",
+        "//ddl/schematracker",
         "//ddl/testutil",
         "//ddl/util",
         "//distsql",
