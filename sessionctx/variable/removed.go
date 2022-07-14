@@ -34,6 +34,7 @@ const (
 	placementChecks                = "placement_checks"
 	tiDBEnableStreaming            = "tidb_enable_streaming"
 	tiDBOptBCJ                     = "tidb_opt_broadcast_join"
+	tidbEnableChangeMultiSchema    = "tidb_enable_change_multi_schema"
 )
 
 var removedSysVars = map[string]string{
@@ -49,6 +50,7 @@ var removedSysVars = map[string]string{
 	tiDBMemQuotaIndexLookupJoin:    "use tidb_mem_quota_query instead",
 	tiDBEnableStreaming:            "streaming is no longer supported",
 	tiDBOptBCJ:                     "tidb_opt_broadcast_join is removed and use tidb_allow_mpp instead",
+	tidbEnableChangeMultiSchema:    "alter multiple schema objects in a table is now always enabled",
 }
 
 // IsRemovedSysVar returns true if the sysvar has been removed
