@@ -5,7 +5,6 @@ build --java_language_version=17
 build --java_runtime_version=17
 build --tool_java_language_version=17
 build --tool_java_runtime_version=17
-build --experimental_remote_cache_compression
 
 run --color=yes
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp
