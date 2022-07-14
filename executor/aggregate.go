@@ -570,6 +570,10 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 
+		if tp.GetType() == mysql.TypeEnum {
+			tp.AddFlag(mysql.EnumSetAsIntFlag)
+		}
+
 		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
 			expression.PutColumn(buf)
 			return nil, err
