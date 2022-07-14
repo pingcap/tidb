@@ -42,7 +42,7 @@ type DBExecutor interface {
 // 3. Telemetry of log backup feature usage statistics.
 // NOTE: this result shouldn't be cached by caller. because it may change every time in one cluster.
 func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) bool {
-	var valStr = "show config where name = 'log-backup.enable'"
+	valStr := "show config where name = 'log-backup.enable'"
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
 	rows, fields, errSQL := ctx.ExecRestrictedSQL(internalCtx, nil, valStr)
 	if errSQL != nil {
