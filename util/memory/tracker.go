@@ -90,7 +90,7 @@ var GCAwareMemoryTrack = atomicutil.NewBool(false)
 // https://golang.google.cn/pkg/runtime/#SetFinalizer
 // It is not guaranteed that a finalizer will run if the size of *obj is zero bytes.
 type finalizerRef struct {
-	byte
+	byte // nolint
 }
 
 // softScale means the scale of the soft limit to the hard limit.
