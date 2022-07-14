@@ -53,6 +53,7 @@ go_library(
 
 go_test(
     name = "distsql_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "distsql_test.go",

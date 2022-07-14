@@ -786,7 +786,7 @@ func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.
 		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
 		// but the column has been removed from the binlog of the write operation.
 		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		((job.Type == model.ActionDropColumn) && job.SchemaState == model.StateDeleteOnly) {
+		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
 		if skipWriteBinlog(job) {
 			return
 		}
@@ -877,7 +877,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
 
-	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
+	if job.Type != model.ActionMultiSchemaChange {
+		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
+	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = t.StartTS
