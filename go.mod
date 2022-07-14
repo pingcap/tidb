@@ -99,6 +99,7 @@ require (
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/charithe/durationcheck v0.0.9
 	github.com/daixiang0/gci v0.3.4
+	github.com/emirpasic/gods v1.18.1
 	github.com/golangci/gofmt v0.0.0-20190930125516-244bba706f1a
 	github.com/golangci/misspell v0.3.5
 	github.com/golangci/unconvert v0.0.0-20180507085042-28b1c447d1f4
@@ -229,3 +230,5 @@ replace github.com/pingcap/tidb/parser => ./parser
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.2
+
+replace github.com/pingcap/kvproto => ../../kvproto

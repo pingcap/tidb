@@ -43,6 +43,26 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	return nil
 }
 
+func runRestoreDataCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.RestoreDataConfig{Config: task.Config{LogProgress: HasLogFile()}}
+	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+	if err := task.RunRestoreData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
+		log.Error("failed to restore data", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.RestoreRawConfig{
 		RawKvConfig: task.RawKvConfig{Config: task.Config{LogProgress: HasLogFile()}},
@@ -111,6 +131,7 @@ func NewRestoreCommand() *cobra.Command {
 		newRawRestoreCommand(),
 		newStreamRestoreCommand(),
 		newEBSMetaRestoreCommand(),
+		newRestoreDataCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -195,6 +216,20 @@ func newEBSMetaRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineRestoreEBSMetaFlags(command)
+	command.Hidden = true
+	return command
+}
+
+func newRestoreDataCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "data",
+		Short: "phase 2 - restore data from snapshot volume where tikv runing on, it requires phase 1 command 'restore ebs' run before.",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runRestoreDataCommand(command, task.EBSRestoreCmd)
+		},
+	}
+	task.DefineRestoreDataFlags(command)
 	command.Hidden = true
 	return command
 }
