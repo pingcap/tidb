@@ -1976,10 +1976,10 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	checkExistTableBundlesInPD(t, dom, "test", "tp")
 
 	// exchange par0, t2
-	tk.MustGetErrCode("alter table tp exchange partition p0 with table t2", mysql.ErrPlacementPolicyNotEqual)
+	tk.MustGetErrCode("alter table tp exchange partition p0 with table t2", mysql.ErrTablesDifferentMetadata)
 
 	// exchange par1, t2
-	tk.MustGetErrCode("alter table tp exchange partition p1 with table t2", mysql.ErrPlacementPolicyNotEqual)
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t2", mysql.ErrTablesDifferentMetadata)
 }
 
 func TestPDFail(t *testing.T) {

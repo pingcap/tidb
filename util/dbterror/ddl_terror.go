@@ -330,9 +330,6 @@ var (
 	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
 	ErrPlacementPolicyInUse = ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
 
-	// ErrPlacementPolicyNotEqual is returns when exchange partition with table.
-	ErrPlacementPolicyNotEqual = ClassDDL.NewStd(mysql.ErrPlacementPolicyNotEqual)
-
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 
