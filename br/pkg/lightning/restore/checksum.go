@@ -32,9 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
@@ -68,7 +66,7 @@ type ChecksumManager interface {
 	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error)
 }
 
-func newChecksumManager(ctx context.Context, rc *Controller) (ChecksumManager, error) {
+func newChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (ChecksumManager, error) {
 	// if we don't need checksum, just return nil
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.PostRestore.Checksum == config.OpLevelOff {
 		return nil, nil
@@ -85,19 +83,6 @@ func newChecksumManager(ctx context.Context, rc *Controller) (ChecksumManager, e
 	if pdVersion.Major >= 4 {
 		tlsOpt := rc.tls.ToPDSecurityOption()
 		pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tlsOpt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// TODO: make tikv.Driver{}.Open use arguments instead of global variables
-		if tlsOpt.CAPath != "" {
-			conf := tidbcfg.GetGlobalConfig()
-			conf.Security.ClusterSSLCA = tlsOpt.CAPath
-			conf.Security.ClusterSSLCert = tlsOpt.CertPath
-			conf.Security.ClusterSSLKey = tlsOpt.KeyPath
-			tidbcfg.StoreGlobalConfig(conf)
-		}
-		store, err := driver.TiKVDriver{}.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
