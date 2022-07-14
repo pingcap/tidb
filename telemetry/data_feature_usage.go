@@ -290,22 +290,22 @@ type TiFlashModeStatistics struct {
 
 func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
 	is := GetDomainInfoSchema(ctx)
-	var fast_mode_table_count int64 = 0
-	var all_mode_table_with_tiflash_replica_count int64 = 0
+	var fastModeTableCount int64 = 0
+	var allModeTableWithTiflashReplicaCount int64 = 0
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
 			if tbInfo.Meta().TiFlashReplica != nil {
-				all_mode_table_with_tiflash_replica_count += 1
+				allModeTableWithTiflashReplicaCount += 1
 				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
-					fast_mode_table_count += 1
+					fastModeTableCount += 1
 				}
 			}
 		}
 	}
 
-	if all_mode_table_with_tiflash_replica_count == 0 {
+	if allModeTableWithTiflashReplicaCount == 0 {
 		return TiFlashModeStatistics{FastModeTableProportion: float64(0)}
 	}
 
-	return TiFlashModeStatistics{FastModeTableProportion: float64(fast_mode_table_count) / float64(all_mode_table_with_tiflash_replica_count)}
+	return TiFlashModeStatistics{FastModeTableProportion: float64(fastModeTableCount) / float64(allModeTableWithTiflashReplicaCount)}
 }
