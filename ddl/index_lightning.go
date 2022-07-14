@@ -441,8 +441,8 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		for _, idxRecord := range temporaryIndexRecords {
+		endPos := len(temporaryIndexRecords)
+		for i, idxRecord := range temporaryIndexRecords {
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			// If all batch are skiped, update first index key to make txn commit to release lock.
@@ -478,19 +478,28 @@ func (w *backFillIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (ta
 					return err
 				}
 				break
-			} else {
-				if idxRecord.delete {
-					if idxRecord.unique {
-						err = txn.GetMemBuffer().DeleteWithFlags(idxRecord.key, kv.SetNeedLocked)
-					} else {
-						err = txn.GetMemBuffer().Delete(idxRecord.key)
-					}
+			}
+
+			if idxRecord.delete {
+				if idxRecord.unique {
+					err = txn.GetMemBuffer().DeleteWithFlags(idxRecord.key, kv.SetNeedLocked)
 				} else {
-					err = txn.GetMemBuffer().Set(idxRecord.key, idxRecord.vals)
+					err = txn.GetMemBuffer().Delete(idxRecord.key)
 				}
-				if err != nil {
-					return err
+			} else {
+				err = txn.GetMemBuffer().Set(idxRecord.key, idxRecord.vals)
+				// If the merge key is batch end should be deleted in temp index to avoid
+				// re merge by accident.
+				if i == endPos-1 {
+					if idxRecord.unique {
+						err = txn.GetMemBuffer().DeleteWithFlags(w.batchCheckTmpKeys[i], kv.SetNeedLocked)
+					} else {
+						err = txn.GetMemBuffer().Delete(w.batchCheckTmpKeys[i])
+					}
 				}
+			}
+			if err != nil {
+				return err
 			}
 		}
 		return nil

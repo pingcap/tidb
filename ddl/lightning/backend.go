@@ -109,7 +109,7 @@ func GenBackendContextKey(jobID int64) string {
 func adjustImportMemory(cfg *config.Config) {
 	var scale int64
 	// Try agressive resource usage successful.
-	if tryAgressiveMemory(cfg) {
+	if tryAggressiveMemory(cfg) {
 		return
 	}
 
@@ -140,7 +140,7 @@ func adjustImportMemory(cfg *config.Config) {
 }
 
 // tryAgressiveMemory lightning memory parameters according memory root's max limitation
-func tryAgressiveMemory(cfg *config.Config) bool {
+func tryAggressiveMemory(cfg *config.Config) bool {
 	var defaultMemSize int64
 	defaultMemSize = int64(128 * _mb * cfg.TikvImporter.RangeConcurrency)
 	defaultMemSize += int64(cfg.TikvImporter.EngineMemCacheSize)
