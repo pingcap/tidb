@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/opentracing/opentracing-go"
@@ -306,6 +307,7 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 
 // GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
 func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64, error) {
+	mu := sync.Mutex{}
 	regionSplitSize := DefaultMergeRegionSizeBytes
 	regionSplitKeys := DefaultMergeRegionKeyCount
 	type coprocessor struct {
@@ -327,10 +329,12 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 			return e
 		}
 		urs := uint64(rs)
+		mu.Lock()
 		if regionSplitSize == DefaultMergeRegionSizeBytes || urs < regionSplitSize {
 			regionSplitSize = urs
 			regionSplitKeys = c.Cop.RegionSplitKeys
 		}
+		mu.Unlock()
 		return nil
 	})
 	if err != nil {
@@ -351,16 +355,17 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 		httpPrefix = "https://"
 	}
 
-	workPool := utils.NewWorkerPool(32, "stores")
+	workPool := utils.NewWorkerPool(16, "stores")
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, store := range allStores {
 		if store.State != metapb.StoreState_Up {
 			continue
 		}
+		storeReplica := store
 		workPool.ApplyOnErrorGroup(eg, func() error {
 			// we need make sure every available store support backup-stream otherwise we might lose data.
 			// so check every store's config
-			addr, err := handleTiKVAddress(store, httpPrefix)
+			addr, err := handleTiKVAddress(storeReplica, httpPrefix)
 			if err != nil {
 				return err
 			}
