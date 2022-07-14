@@ -696,6 +696,10 @@ const (
 	// TiDBMemoryDebugModeAlarmRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
 	TiDBMemoryDebugModeAlarmRatio = "tidb_memory_debug_mode_alarm_ratio"
 
+	// TiDBDefaultStrMatchSelectivity controls some special cardinality estimation strategy for string match functions (like and regexp).
+	// When set to 0, Selectivity() will try to evaluate those functions with TopN and NULL in the stats to estimate.
+	// When set to (0, 1], Selectivity() will use the value of this variable as the default selectivity of those
+	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 )
 
