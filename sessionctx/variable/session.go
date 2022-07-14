@@ -1166,6 +1166,12 @@ type SessionVars struct {
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
 
+	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
+	MemoryDebugModeMinHeapInUse int64
+	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
+	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
+	MemoryDebugModeAlarmRatio int64
+
 	// EnableSimplifiedShowCreateTable allows output of SHOW CREATE TABLE etc. to be non-compatible with MySQL
 	EnableSimplifiedShowCreateTable bool
 }
@@ -1430,6 +1436,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:    DefIndexLookupSize,
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
+		MinPagingSize:      DefMinPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -2170,6 +2177,9 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// MinPagingSize defines the min size used by the coprocessor paging protocol.
+	MinPagingSize int
 }
 
 const (
