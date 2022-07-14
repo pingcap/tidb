@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 const (
@@ -29,22 +30,19 @@ const (
 )
 
 const (
-	flagRegionInfo = "region-info"
-	flagLeaderInfo = "leader-info"
+	flagDumpRegionInfo = "dump-region-info"
 )
 
 // DefineRestoreEBSMetaFlags defines common flags for the backup command.
 func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
-	command.Flags().String(flagRegionInfo, "regionInfo", "print all region infos")
-	command.Flags().String(flagLeaderInfo, "leader", "pring all region leaders")
+	command.Flags().Bool(flagDumpRegionInfo, false, "dump all regions info")
 }
 
 type RestoreDataConfig struct {
 	Config
-	RegionInfo string `json:"region-info"`
-	DryRun     bool   `json:"dry-run"`
-	LeaderInfo string `json:"leader-info"`
+	DumpRegionInfo bool `json:"region-info"`
+	DryRun         bool `json:"dry-run"`
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -54,12 +52,7 @@ func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.RegionInfo, err = flags.GetString(flagRegionInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	cfg.LeaderInfo, err = flags.GetString(flagLeaderInfo)
+	cfg.DumpRegionInfo, err = flags.GetBool(flagDumpRegionInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -103,9 +96,11 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
 	var finished bool
+	var totalTiKV int
+	var totalRegions int
 	defer func() {
 		if finished {
-			summary.Log("EBS restore success")
+			summary.Log("EBS restore success", zap.Int("total TiKVs", totalTiKV), zap.Int("total regions", totalRegions))
 		} else {
 			summary.Log("EBS restore failed, please check the log for details.")
 		}
@@ -175,12 +170,14 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 			"number of tikvs mismatch")
 	}
 
-	err = restore.RecoverCluster(ctx, resolveTs, allStores, mgr.GetTLSConfig())
+	totalTiKV = numOfStores
+
+	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr.GetTLSConfig(), cfg.DumpRegionInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Info("unmark recovering")
+	log.Info("unmark recovering to pd")
 	if err := mgr.UnmarkRecovering(ctx); err != nil {
 		return errors.Trace(err)
 	}

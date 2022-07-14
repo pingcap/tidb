@@ -25,39 +25,39 @@ import (
 // recover the tikv cluster
 // 1. read all meta data from tikvs
 // 2. Assemble region meta and make recovery plan
-// 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check and move the apply index to the last index.
+// 3. send the recover plan and the wait tikv to apply, in waitapply, all assigned region leader will check and apply index to the last index
 // 4. send the resolved_ts to tikv for deleting data.
-func RecoverCluster(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, tls *tls.Config) error {
+func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Store, tls *tls.Config, dumpRegionInfo bool) (int, error) {
 
 	numOfTiKVs := len(allStores)
-
 	var recovery = NewRecovery(numOfTiKVs, tls)
-	// a work pool to get all metadata
+
 	err := recovery.ReadRegionMeta(ctx, numOfTiKVs, allStores)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
-	recovery.dumpRegionInfo()
+	if dumpRegionInfo {
+		recovery.dumpRegionInfo()
+	}
+
+	totalRegions := recovery.getTotalRegions()
 
 	recovery.makeRecoveryPlan()
 
 	err = recovery.RecoverRegions(ctx, allStores)
 	if err != nil {
-		return errors.Trace(err)
+		return totalRegions, errors.Trace(err)
 	}
 
-	// TODO Sleep is workaround for sync last index
-	time.Sleep(time.Second * 3) // Sleep to wait grpc streams get closed.
+	// TODO Sleep is workaround for sync last index, it will be removed when TiKV part of work been done
+	time.Sleep(time.Second * 3)
 
 	err = recovery.ResolveData(ctx, allStores, resolvedTs)
 	if err != nil {
-		return errors.Trace(err)
+		return totalRegions, errors.Trace(err)
 	}
-
-	log.Debug("region recovery phase completed.")
-
-	return nil
+	return totalRegions, nil
 }
 
 type RecoveryMeta struct {
@@ -130,13 +130,27 @@ func (recovery Recovery) newTiKVRecoveryClient(ctx context.Context, tikvAddr str
 	return client, nil
 }
 
+func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
+	var addr string
+	for _, store := range allStores {
+		if store.GetId() == storeId {
+			addr = store.GetAddress()
+		}
+	}
+
+	if len(addr) == 0 {
+		log.Error("there is no tikv has this Id")
+	}
+	return addr
+}
+
 // read all region meta from tikvs
 func (recovery Recovery) ReadRegionMeta(ctx context.Context, totalTiKVs int, allStores []*metapb.Store) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := utils.NewWorkerPool(uint(totalTiKVs), "Collect Region Meta")
 
-	// TODO: P1 channel must be buffering with proper size
-	metaChan := make(chan RecoveryMeta, 1024000)
+	// TODO: optimize the ErroGroup when TiKV is panic
+	metaChan := make(chan RecoveryMeta, 1024)
 	defer close(metaChan)
 
 	for i := 0; i < totalTiKVs; i++ {
@@ -144,7 +158,7 @@ func (recovery Recovery) ReadRegionMeta(ctx context.Context, totalTiKVs int, all
 		storeId := allStores[i].GetId()
 		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, allStores[i].GetAddress())
 		if err != nil {
-			log.Error("newTiKVRecoveryClient failied", zap.Uint64("storeID", storeId))
+			log.Error("create tikv client failied", zap.Uint64("storeID", storeId))
 			return errors.Trace(err)
 		}
 
@@ -174,24 +188,34 @@ func (recovery Recovery) ReadRegionMeta(ctx context.Context, totalTiKVs int, all
 		})
 	}
 
-	// Wait for all TiKV instances reporting peer info.
-	if err := eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
-
 	for i := 0; i < totalTiKVs; i++ {
 		tikvMeta := <-metaChan
 		recovery.regionMetas[i] = tikvMeta
 		log.Debug("TiKV", zap.Int("recived from tikv", int(tikvMeta.storeId)))
 	}
 
-	return nil
+	return eg.Wait()
+}
+
+func (recovery Recovery) getTotalRegions() int {
+	// Group region peer info by region id.
+	var regions = make(map[uint64][]Regions, 0)
+	for _, v := range recovery.regionMetas {
+		storeId := v.storeId
+		for _, m := range v.recoveryMeta {
+			if regions[m.RegionId] == nil {
+				regions[m.RegionId] = make([]Regions, 0, recovery.instances)
+			}
+			regions[m.RegionId] = append(regions[m.RegionId], Regions{m, storeId})
+		}
+	}
+	return len(regions)
 }
 
 // TODO: function provide for dump server received peer info into a file
 // function shall be enabled by debug enabled
 func (recovery Recovery) dumpRegionInfo() {
-	log.Debug("dump region info into region_info file")
+	log.Debug("dump region info")
 	// Group region peer info by region id.
 	var regions = make(map[uint64][]Regions, 0)
 	for _, v := range recovery.regionMetas {
@@ -219,28 +243,13 @@ func (recovery Recovery) dumpRegionInfo() {
 
 }
 
-// TODO : function provide for dump RecoveryPlan into a file
+// TODO : function provide for dump RecoveryPlan
 func (recovery Recovery) dumpRecoverPlan() {
-	log.Debug("dump recovery plan into leader_info")
+	log.Debug("dump recovery plan")
 	// Group region peer info by region id.
 	for store_id, _ := range recovery.recoveryPlan {
 		log.Debug("TiKV", zap.Uint64("store id", store_id))
-		// TODO
 	}
-}
-
-func getStoreAddress(allStores []*metapb.Store, storeId uint64) string {
-	var addr string
-	for _, store := range allStores {
-		if store.GetId() == storeId {
-			addr = store.GetAddress()
-		}
-	}
-
-	if len(addr) == 0 {
-		log.Error("there is no tikv has this Id")
-	}
-	return addr
 }
 
 // send the recovery plan to recovery region (force leader etc)
@@ -248,22 +257,19 @@ func (recovery Recovery) RecoverRegions(ctx context.Context, allStores []*metapb
 	eg, ectx := errgroup.WithContext(ctx)
 	totalTiKVs := len(recovery.recoveryPlan)
 	workers := utils.NewWorkerPool(uint(totalTiKVs), "Recover Regions")
-	log.Debug("RecoverRegions", zap.Int("total plan", totalTiKVs))
 
 	for storeId, plan := range recovery.recoveryPlan {
-		log.Debug("TiKV", zap.Uint64("storeId", storeId), zap.Int("num of command", len(plan)))
 		storeAddr := getStoreAddress(allStores, storeId)
+		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
+		if err != nil {
+			log.Error("create tikv client failed", zap.Uint64("storeID", storeId))
+			return errors.Trace(err)
+		}
 		cmd := plan
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			tikv, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
+			stream, err := tikvClient.RecoverCmd(ectx)
 			if err != nil {
-				log.Error("newTiKVRecoveryClient failied", zap.Uint64("storeID", storeId))
-				return errors.Trace(err)
-			}
-
-			stream, err := tikv.RecoverCmd(ectx)
-			if err != nil {
-				log.Error("RecoverRegions failied", zap.Uint64("storeID", storeId))
+				log.Error("create recover cmd failed", zap.Uint64("storeID", storeId))
 				return errors.Trace(err)
 			}
 
@@ -277,12 +283,11 @@ func (recovery Recovery) RecoverRegions(ctx context.Context, allStores []*metapb
 
 			reply, err := stream.CloseAndRecv()
 			if err != nil {
-				log.Error("client.RecoveryCmd failed")
+				log.Error("close the stream failed")
 				return errors.Trace(err)
 			}
 
 			log.Debug("send recovery command success", zap.Uint64("storeID", reply.GetStoreId()))
-
 			return nil
 		})
 	}
@@ -295,26 +300,26 @@ func (recovery Recovery) ResolveData(ctx context.Context, allStores []*metapb.St
 
 	eg, ectx := errgroup.WithContext(ctx)
 	totalTiKVs := recovery.instances
-	workers := utils.NewWorkerPool(uint(totalTiKVs), "resolved data from tikv")
+	workers := utils.NewWorkerPool(uint(totalTiKVs), "resolve data from tikv")
 
 	// TODO: what if the resolved data take long time take long time?, it look we need some handling here, at leader some retry may neccessary
 	for _, store := range allStores {
 		storeAddr := getStoreAddress(allStores, store.Id)
-		log.Info("resolve data from TiKV", zap.Uint64("storeId", store.Id), zap.String("ip", storeAddr))
+		tikvClient, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
+		if err != nil {
+			log.Error("create tikv client failed", zap.String("ip", storeAddr))
+			return errors.Trace(err)
+		}
+
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			tikv, err := recovery.newTiKVRecoveryClient(ectx, storeAddr)
-			if err != nil {
-				log.Error("newTiKVRecoveryClient failied", zap.String("ip", storeAddr))
-				return errors.Trace(err)
-			}
 			req := &recovpb.ResolveKvDataRequest{ResolvedTs: resolvedTs}
-			resp, err := tikv.ResolveKvData(ectx, req)
+			resp, err := tikvClient.ResolveKvData(ectx, req)
 			if err != nil {
-				log.Error("ResolvedData failied", zap.Uint64("storeID", store.Id))
+				log.Error("send the resolve kv data failed", zap.Uint64("storeID", store.Id))
 				return errors.Trace(err)
 			}
 
-			log.Debug("resolved data success", zap.Bool("done", resp.Done))
+			log.Debug("resolved kv data", zap.Bool("done", resp.Done))
 			return nil
 		})
 	}
@@ -418,12 +423,10 @@ func (recovery Recovery) makeRecoveryPlan() {
 	//regionsPlan := make(map[uint64][]*recovmetapb.RecoveryCmdRequest, 0)
 	// Generate recover commands.
 	for r, x := range regions {
-		log.Info("region", zap.Uint64("region id", r))
 		if _, ok := validPeer[r]; !ok {
 			// TODO: Generate a tombstone command.
 			// 1, peer is tomebstone
 			// 2, split region in progressing, old one can be a tomebstone
-			log.Info("invalid peer", zap.Uint64("peer id", r))
 			for _, m := range x {
 				plan := &recovpb.RecoverCmdRequest{Tombstone: true, AsLeader: false}
 				recovery.recoveryPlan[m.storeId] = append(recovery.recoveryPlan[m.storeId], plan)
