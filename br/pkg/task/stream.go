@@ -17,7 +17,6 @@ package task
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -394,33 +393,6 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 	})
 
 	return rs, nil
-}
-
-// checkRequirements will check some requirements before stream starts.
-func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
-	type backupStream struct {
-		EnableStreaming bool `json:"enable"`
-	}
-	type config struct {
-		BackupStream backupStream `json:"log-backup"`
-	}
-
-	supportBackupStream := true
-	hasTiKV := false
-	err := s.mgr.GetConfigFromTiKV(ctx, s.httpCli, func(resp *http.Response) error {
-		hasTiKV = true
-		c := &config{}
-		e := json.NewDecoder(resp.Body).Decode(c)
-		if e != nil {
-			return e
-		}
-		supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
-		return nil
-	})
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return hasTiKV && supportBackupStream, err
 }
 
 func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
