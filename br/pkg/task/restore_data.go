@@ -127,22 +127,17 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 
 	var resolveTs uint64
 	var numOfStores int
-	if cfg.DryRun {
-		resolveTs = 46464574745
-		numOfStores = 3
-	} else {
 
-		_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		resolveTs, numOfStores, err = ReadBackupMetaData(ctx, externStorage)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
+	resolveTs, numOfStores, err = ReadBackupMetaData(ctx, externStorage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -172,10 +167,14 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 
 	totalTiKV = numOfStores
 
-	totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr.GetTLSConfig(), cfg.DumpRegionInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	if cfg.DryRun {
+		totalRegions = 1024
+	} else {
+		totalRegions, err = restore.RecoverData(ctx, resolveTs, allStores, mgr.GetTLSConfig(), cfg.DumpRegionInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}	
 
 	log.Info("unmark recovering to pd")
 	if err := mgr.UnmarkRecovering(ctx); err != nil {
