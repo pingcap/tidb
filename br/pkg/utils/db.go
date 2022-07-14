@@ -39,8 +39,8 @@ type DBExecutor interface {
 // CheckLogBackupEnabled checks if LogBackup is enabled in cluster.
 // this mainly used in three places.
 // 1. Resolve locks to scan more locks after safepoint.
-// 2. Add index skipping use lightning to speed up.
-// 3. Telemetry of log backup feature usage statistics.
+// 2. Add index skipping use lightning.
+// 3. Telemetry of log backup feature usage statistics every 6 hours.
 // NOTE: this result shouldn't be cached by caller. because it may change every time in one cluster.
 func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 	enabled, err := IsLogBackupEnabled(ctx.(sqlexec.RestrictedSQLExecutor))

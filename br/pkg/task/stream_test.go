@@ -17,27 +17,16 @@ package task
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
 )
-
-func newMockStreamMgr(pdCli pd.Client, httpCli *http.Client) *streamMgr {
-	pdController := &pdutil.PdController{}
-	pdController.SetPDClient(pdCli)
-	mgr := &conn.Mgr{PdController: pdController}
-	return &streamMgr{mgr: mgr, httpCli: httpCli}
-}
 
 func TestShiftTS(t *testing.T) {
 	var startTS uint64 = 433155751280640000
