@@ -8,6 +8,7 @@ go_library(
         "checksum.go",
         "get_pre_info.go",
         "meta_manager.go",
+        "precheck.go",
         "restore.go",
         "table_restore.go",
         "tidb.go",
