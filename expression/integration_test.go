@@ -6691,6 +6691,7 @@ func TestPrimaryKeyRequiredSysvar(t *testing.T) {
 	tk.MustExec(`DROP TABLE t`)
 
 	tk.MustExec("set @@sql_require_primary_key=true")
+
 	// creating table without primary key should now fail
 	tk.MustGetErrCode(`CREATE TABLE t (
 		name varchar(60),
@@ -6713,6 +6714,21 @@ func TestPrimaryKeyRequiredSysvar(t *testing.T) {
 	tk.MustGetErrMsg(`ALTER TABLE t2
        DROP COLUMN id`, "[ddl:8200]can't drop column id with composite index covered or Primary Key covered now")
 	tk.MustGetErrCode(`ALTER TABLE t2 DROP PRIMARY KEY`, errno.ErrTableWithoutPrimaryKey)
+
+	// this sysvar is ignored in internal sessions
+	tk.Session().GetSessionVars().InRestrictedSQL = true
+	ctx := context.Background()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	sql := `CREATE TABLE t3 (
+		id int(11) NOT NULL,
+		c1 int(11) DEFAULT NULL)`
+	stmts, err := tk.Session().Parse(ctx, sql)
+	require.NoError(t, err)
+	res, err := tk.Session().ExecuteStmt(ctx, stmts[0])
+	require.NoError(t, err)
+	if res != nil {
+		require.NoError(t, res.Close())
+	}
 }
 
 // issue https://github.com/pingcap/tidb/issues/26111
