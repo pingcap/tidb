@@ -197,8 +197,13 @@ func TestCreateTableWithKeyWord(t *testing.T) {
 }
 
 func TestUniqueKeyNullValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test")
 	tk.MustExec("drop table if exists t")
@@ -214,8 +219,12 @@ func TestUniqueKeyNullValue(t *testing.T) {
 }
 
 func TestUniqueKeyNullValueClusterIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("drop database if exists unique_null_val;")
@@ -247,8 +256,13 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 }
 
 func TestIssue2293(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_issue_2293 (a int)")
@@ -276,8 +290,13 @@ func TestIssue6101(t *testing.T) {
 }
 
 func TestIssue19229(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE enumt (type enum('a', 'b') );")
@@ -300,8 +319,13 @@ func TestIssue19229(t *testing.T) {
 }
 
 func TestIndexLength(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table idx_len(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0))")
@@ -320,6 +344,11 @@ func TestIndexLength(t *testing.T) {
 	tk.MustExec("create table idx_len1(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0), index(a), index(b), index(c), index(d), index(f), index(g))")
 
 	tk.MustExec("drop table idx_len;")
+	// in ddl.CreateTable, a Tp of default values will be filled, so the input Stmt is changed.
+	// ddlChecker relies on same Stmt to apply on ddl and SchemaTracker, because Stmt is changed after ddl.CreateTable
+	// and Stmt can't be cloned for its private members, we disable the check and write another separate test in
+	// dm_tracker_test.go
+	ddlChecker.Disable()
 	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));")
 	tk.MustExec("drop table idx_len;")
 	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob);")
@@ -347,8 +376,13 @@ func TestIssue3833(t *testing.T) {
 }
 
 func TestIssue2858And2717(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -366,8 +400,13 @@ func TestIssue2858And2717(t *testing.T) {
 }
 
 func TestIssue4432(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -393,8 +432,13 @@ func TestIssue4432(t *testing.T) {
 }
 
 func TestIssue5092(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -418,6 +462,13 @@ func TestIssue5092(t *testing.T) {
 	// The following two statements are consistent with MariaDB.
 	tk.MustGetErrCode("alter table t_issue_5092 add column if not exists d int, add column d int", errno.ErrDupFieldName)
 	tk.MustGetErrCode("alter table t_issue_5092 add column dd int, add column if not exists dd int", errno.ErrUnsupportedDDLOperation)
+
+	// in ddl.CreateTable, a Tp of default values will be filled, so the input Stmt is changed.
+	// ddlChecker relies on same Stmt to apply on ddl and SchemaTracker, because Stmt is changed after ddl.CreateTable
+	// and Stmt can't be cloned for its private members, we disable the check and write another separate test in
+	// dm_tracker_test.go
+	ddlChecker.Disable()
+
 	tk.MustExec("alter table t_issue_5092 add column if not exists (d int, e int), add column ff text")
 	tk.MustExec("alter table t_issue_5092 add column b2 int after b1, add column c2 int first")
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
@@ -435,6 +486,7 @@ func TestIssue5092(t *testing.T) {
 		"  `g` int(11) DEFAULT NULL,\n" +
 		"  `ff` text DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	ddlChecker.Enable()
 	tk.MustExec("drop table t_issue_5092")
 
 	tk.MustExec("create table t_issue_5092 (a int default 1)")
@@ -663,8 +715,13 @@ func TestTableDDLWithFloatType(t *testing.T) {
 }
 
 func TestTableDDLWithTimeType(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -716,8 +773,13 @@ func TestUpdateMultipleTable(t *testing.T) {
 }
 
 func TestNullGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -736,8 +798,13 @@ func TestNullGeneratedColumn(t *testing.T) {
 }
 
 func TestDependedGeneratedColumnPrior2GeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -764,6 +831,11 @@ func TestDependedGeneratedColumnPrior2GeneratedColumn(t *testing.T) {
 func TestChangingTableCharset(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("USE test")
@@ -829,6 +901,8 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("alter table t convert to charset utf8mb4 collate utf8mb4_general_ci;")
 	checkCharset(charset.CharsetUTF8MB4, "utf8mb4_general_ci")
 
+	ddlChecker.Disable()
+
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
@@ -878,6 +952,9 @@ func TestChangingTableCharset(t *testing.T) {
 	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	tk.MustExec("drop table t")
+
+	ddlChecker.Enable()
+
 	tk.MustExec("create table t (a blob) character set utf8;")
 	tk.MustExec("alter table t charset=utf8mb4 collate=utf8mb4_bin;")
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
@@ -954,8 +1031,13 @@ func TestModifyColumnOption(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -971,8 +1053,13 @@ func TestIndexOnMultipleGeneratedColumn(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn1(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -988,8 +1075,13 @@ func TestIndexOnMultipleGeneratedColumn1(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn2(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -1005,8 +1097,13 @@ func TestIndexOnMultipleGeneratedColumn2(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn3(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -1022,8 +1119,13 @@ func TestIndexOnMultipleGeneratedColumn3(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn4(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -1039,8 +1141,13 @@ func TestIndexOnMultipleGeneratedColumn4(t *testing.T) {
 }
 
 func TestIndexOnMultipleGeneratedColumn5(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -1121,6 +1228,11 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 func TestZeroFillCreateTable(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists abc;")
@@ -1146,8 +1258,13 @@ func TestZeroFillCreateTable(t *testing.T) {
 }
 
 func TestBitDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_bit (c1 bit(10) default 250, c2 int);")
@@ -1178,6 +1295,13 @@ func TestBitDefaultValue(t *testing.T) {
     field_1 bit default 1,
     field_2 tinyint null default null
 	);`)
+
+	// in ddl.CreateTable, a Tp of default values will be filled, so the input Stmt is changed.
+	// ddlChecker relies on same Stmt to apply on ddl and SchemaTracker, because Stmt is changed after ddl.CreateTable
+	// and Stmt can't be cloned for its private members, we disable the check and write another separate test in
+	// dm_tracker_test.go
+	ddlChecker.Disable()
+
 	tk.MustExec(`create table testalltypes2 (
     field_1 bit null default null,
     field_2 tinyint null default null,
@@ -1358,8 +1482,13 @@ func TestAddIndexAfterAddColumn(t *testing.T) {
 }
 
 func TestResolveCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists resolve_charset")
@@ -1807,6 +1936,7 @@ func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 }
 
 func TestAlterAlgorithm(t *testing.T) {
+	// TODO: lance test WIP
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
