@@ -277,9 +277,9 @@ func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
 	ctx, exists := dc.jobCtx.jobCtxMap[job.ID]
 	if !exists {
 		ctx = NewJobContext()
+		ctx.setDDLLabelForDiagnosis(job)
 		dc.jobCtx.jobCtxMap[job.ID] = ctx
 	}
-	ctx.setDDLLabelForDiagnosis(job)
 }
 
 func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(job *model.Job) tikvrpc.ResourceGroupTagger {
