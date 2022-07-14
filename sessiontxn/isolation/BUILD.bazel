@@ -44,6 +44,7 @@ go_test(
         "repeatable_read_test.go",
         "serializable_test.go",
     ],
+    flaky = True,
     deps = [
         ":isolation",
         "//config",
