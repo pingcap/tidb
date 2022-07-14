@@ -51,10 +51,10 @@ import (
 const (
 	// A token needs a lifetime to avoid brute force attack.
 	tokenLifetime = time.Minute
-	// Reload the certificate periodically because it may be rotated.
-	loadCertInterval = 10 * time.Minute
+	// LoadCertInterval is the interval of reloading the certificate. The certificate should be rotated periodically.
+	LoadCertInterval = 10 * time.Minute
 	// After a certificate is replaced, it's still valid for oldCertValidTime.
-	// oldCertValidTime must be a little longer than loadCertInterval, because the previous server may
+	// oldCertValidTime must be a little longer than LoadCertInterval, because the previous server may
 	// sign with the old cert but the new server checks with the new cert.
 	// - server A loads the old cert at 00:00:00.
 	// - the cert is rotated at 00:00:01 on all servers.
@@ -224,7 +224,7 @@ func (sc *signingCert) loadCert() error {
 	newCerts = append(newCerts, &certInfo{
 		cert:       cert,
 		privKey:    tlsCert.PrivateKey,
-		expireTime: now.Add(loadCertInterval + oldCertValidTime),
+		expireTime: now.Add(LoadCertInterval + oldCertValidTime),
 	})
 	for i := 0; i < len(sc.certs); i++ {
 		// Discard the certs that are already expired.
