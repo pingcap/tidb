@@ -150,7 +150,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
-			err = e.setDataFromSessionVar(sctx)
+			e.rows, err = infoschema.GetDataFromSessionVariables(sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
@@ -1303,6 +1303,9 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
 			req.AppendString(12, e.runningJobs[i].Query)
+			for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
+				req.AppendString(12, e.runningJobs[i].Query)
+			}
 		}
 		e.cursor += num
 		count += num
@@ -1318,6 +1321,11 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, job := range e.cacheJobs {
 			e.appendJobToChunk(req, job, checker)
 			req.AppendString(12, job.Query)
+			if job.Type == model.ActionMultiSchemaChange {
+				for range job.MultiSchemaInfo.SubJobs {
+					req.AppendString(12, job.Query)
+				}
+			}
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -1939,24 +1947,6 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 		e.curTable++
 	}
 	return rows, nil
-}
-
-func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
-	var err error
-	sessionVars := ctx.GetSessionVars()
-	sysVars := variable.GetSysVars()
-	rows := make([][]types.Datum, 0, len(sysVars))
-	for _, v := range sysVars {
-		var value string
-		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
-		if err != nil {
-			return err
-		}
-		row := types.MakeDatums(v.Name, value)
-		rows = append(rows, row)
-	}
-	e.rows = rows
-	return nil
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go

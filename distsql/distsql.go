@@ -113,16 +113,17 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
 	return &selectResult{
-		label:      "dag",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        sctx,
-		feedback:   fb,
-		sqlType:    label,
-		memTracker: kvReq.MemTracker,
-		storeType:  kvReq.StoreType,
-		paging:     kvReq.Paging,
+		label:              "dag",
+		resp:               resp,
+		rowLen:             len(fieldTypes),
+		fieldTypes:         fieldTypes,
+		ctx:                sctx,
+		feedback:           fb,
+		sqlType:            label,
+		memTracker:         kvReq.MemTracker,
+		storeType:          kvReq.StoreType,
+		paging:             kvReq.Paging,
+		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }
 
