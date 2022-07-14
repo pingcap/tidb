@@ -60,6 +60,7 @@ func generateTelemetryData(sctx sessionctx.Context, trackingID string) telemetry
 func postReportTelemetryData() {
 	postReportTxnUsage()
 	postReportCTEUsage()
+	postReportMultiSchemaChangeUsage()
 	postReportSlowQueryStats()
 	postReportNonTransactionalCounter()
 }

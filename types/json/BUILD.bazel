@@ -15,8 +15,10 @@ go_library(
         "//parser/terror",
         "//util/dbterror",
         "//util/hack",
+        "//util/kvcache",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
     ],
 )
 
