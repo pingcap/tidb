@@ -17,12 +17,22 @@ package telemetry_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestTxnUsageInfo(t *testing.T) {
@@ -278,4 +288,91 @@ func TestGlobalKillUsageInfo(t *testing.T) {
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.False(t, usage.GlobalKill)
+}
+
+type tiflashContext struct {
+	store   kv.Storage
+	dom     *domain.Domain
+	tiflash *infosync.MockTiFlash
+	cluster *unistore.Cluster
+}
+
+func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
+	s := &tiflashContext{}
+	var err error
+
+	ddl.PollTiFlashInterval = 1000 * time.Millisecond
+	ddl.PullTiFlashPdTick.Store(60)
+	s.tiflash = infosync.NewMockTiFlash()
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < 2 {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+			s.cluster = mockCluster
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+
+	require.NoError(t, err)
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+	s.dom, err = session.BootstrapSession(s.store)
+	infosync.SetMockTiFlash(s.tiflash)
+	require.NoError(t, err)
+	s.dom.SetStatsUpdating(true)
+
+	tearDown := func() {
+		s.tiflash.Lock()
+		s.tiflash.StatusServer.Close()
+		s.tiflash.Unlock()
+		s.dom.Close()
+		require.NoError(t, s.store.Close())
+		ddl.PollTiFlashInterval = 2 * time.Second
+	}
+	return s, tearDown
+}
+
+func TestTiFlashModeStatistics(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), usage.TiFlashModeStatistics.FastModeTableCount)
+
+	tk.MustExec(`create table t1(a int);`)
+	tk.MustExec(`alter table t1 set tiflash replica 1;`)
+	tk.MustExec(`alter table t1 set tiflash mode fast;`)
+
+	tk.MustExec(`create table t2(a int);`)
+	tk.MustExec(`alter table t2 set tiflash replica 1;`)
+	tk.MustExec(`alter table t2 set tiflash mode normal;`)
+
+	tk.MustExec(`create table t3(a int);`)
+	tk.MustExec(`alter table t3 set tiflash replica 1;`)
+
+	tk.MustExec(`create table t4(a int);`)
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.TiFlashModeStatistics.FastModeTableCount)
+
+	tk.MustExec("drop table t1;")
+	tk.MustExec(`alter table t2 set tiflash mode fast;`)
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.TiFlashModeStatistics.FastModeTableCount)
 }

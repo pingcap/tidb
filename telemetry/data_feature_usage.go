@@ -47,6 +47,7 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
 }
 
 type placementPolicyUsage struct {
@@ -80,6 +81,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
+
+	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
 
 	return &usage, nil
 }
@@ -278,4 +281,24 @@ func postReportNonTransactionalCounter() {
 
 func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
+}
+
+type TiFlashModeStatistics struct {
+	FastModeTableCount uint64 `json:"fast_mode_table_count"`
+}
+
+func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
+	is := GetDomainInfoSchema(ctx)
+	var fast_mode_table_count uint64 = 0
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TiFlashReplica != nil {
+				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
+					fast_mode_table_count += 1
+				}
+			}
+		}
+	}
+
+	return TiFlashModeStatistics{FastModeTableCount: fast_mode_table_count}
 }
