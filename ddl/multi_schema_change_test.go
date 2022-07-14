@@ -891,6 +891,41 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 		Check(testkit.Rows("int"))
 }
 
+func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateDeleteOnly {
+			newTk := testkit.NewTestKit(t, store)
+			rows := newTk.MustQuery("admin show ddl jobs 1").Rows()
+			// 1 history job and 1 running job with 2 subjobs
+			assert.Equal(t, len(rows), 4)
+			assert.Equal(t, rows[1][1], "test")
+			assert.Equal(t, rows[1][2], "t")
+			assert.Equal(t, rows[1][3], "add index /* subjob */")
+			assert.Equal(t, rows[1][4], "delete only")
+			assert.Equal(t, rows[1][len(rows[1])-1], "running")
+
+			assert.Equal(t, rows[2][3], "add index /* subjob */")
+			assert.Equal(t, rows[2][4], "none")
+			assert.Equal(t, rows[2][len(rows[2])-1], "queueing")
+		}
+	}
+
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 2, 3)")
+
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add index t(a), add index t1(b)")
+	dom.DDL().SetHook(originHook)
+}
+
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()

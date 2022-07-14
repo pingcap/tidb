@@ -1339,9 +1339,11 @@ func getGlobalResolvedTS(
 		return 0, errors.Trace(err)
 	}
 	var globalCheckpointTS uint64 = 0
-	// TODO change the logic after checkpoint v3 implemented
+	// If V3 global-checkpoint advance, the maximum value in storeMap.resolvedTSMap as global-checkpoint-ts.
+	// If v2 global-checkpoint advance, it need the minimal value in storeMap.resolvedTSMap as global-checkpoint-ts.
+	// Because each of store maintains own checkpoint-ts only.
 	for _, resolveTS := range storeMap.resolvedTSMap {
-		if resolveTS < globalCheckpointTS || globalCheckpointTS == 0 {
+		if globalCheckpointTS < resolveTS {
 			globalCheckpointTS = resolveTS
 		}
 	}
