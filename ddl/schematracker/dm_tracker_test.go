@@ -83,10 +83,19 @@ func TestCreateTableLongIndex(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func execAlter(t *testing.T, tracker SchemaTracker, sql string) {
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = tracker.AlterTable(ctx, sctx, stmt.(*ast.AlterTableStmt))
+	require.NoError(t, err)
+}
+
 func TestAlterPK(t *testing.T) {
 	sql := "create table test.t (c1 int primary key, c2 blob);"
 
-	ctx := context.Background()
 	sctx := mock.NewContext()
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
@@ -102,25 +111,65 @@ func TestAlterPK(t *testing.T) {
 	require.Equal(t, 1, len(tblInfo.Indices))
 
 	sql = "alter table test.t drop primary key;"
-	stmt, err = p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err)
-	err = tracker.AlterTable(ctx, sctx, stmt.(*ast.AlterTableStmt))
-	require.NoError(t, err)
+	execAlter(t, tracker, sql)
 	require.Equal(t, 0, len(tblInfo.Indices))
 
-	sctx2 := mock.NewContext()
-
 	sql = "alter table test.t add primary key(c1);"
-	stmt, err = p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err)
-	err = tracker.AlterTable(ctx, sctx2, stmt.(*ast.AlterTableStmt))
-	require.NoError(t, err)
+	execAlter(t, tracker, sql)
 	require.Equal(t, 1, len(tblInfo.Indices))
 
 	sql = "alter table test.t drop primary key;"
-	stmt, err = p.ParseOneStmt(sql, "", "")
-	require.NoError(t, err)
-	err = tracker.AlterTable(ctx, sctx2, stmt.(*ast.AlterTableStmt))
-	require.NoError(t, err)
+	execAlter(t, tracker, sql)
 	require.Equal(t, 0, len(tblInfo.Indices))
+}
+
+func TestDropColumn(t *testing.T) {
+	sql := "create table test.t(a int, b int auto_increment, c int, key(b))"
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	tracker := NewSchemaTracker(2)
+	tracker.createTestDB()
+	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+
+	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tblInfo.Indices))
+
+	sql = "alter table test.t drop column b"
+	execAlter(t, tracker, sql)
+	require.Equal(t, 0, len(tblInfo.Indices))
+
+	sql = "alter table test.t add index idx_2_col(a, c)"
+	execAlter(t, tracker, sql)
+	require.Equal(t, 1, len(tblInfo.Indices))
+
+	sql = "alter table test.t drop column c"
+	execAlter(t, tracker, sql)
+	require.Equal(t, 1, len(tblInfo.Indices))
+	require.Equal(t, 1, len(tblInfo.Columns))
+}
+
+func TestTempTest(t *testing.T) {
+	sql := "create table test.mc(a int key, b int, c int unique)"
+
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+
+	tracker := NewSchemaTracker(2)
+	tracker.createTestDB()
+	err = tracker.CreateTable(sctx, stmt.(*ast.CreateTableStmt))
+	require.NoError(t, err)
+
+	_, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("mc"))
+	require.NoError(t, err)
+
+	sql = "alter table test.mc modify column a bigint"
+	execAlter(t, tracker, sql)
 }

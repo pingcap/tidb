@@ -232,8 +232,13 @@ func TestUniqueKeyNullValueClusterIndex(t *testing.T) {
 
 // TestModifyColumnAfterAddIndex Issue 5134
 func TestModifyColumnAfterAddIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table city (city VARCHAR(2) KEY);")
@@ -909,8 +914,13 @@ func TestChangingTableCharset(t *testing.T) {
 }
 
 func TestModifyColumnOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -1270,8 +1280,13 @@ func TestCreateTableTooManyIndexes(t *testing.T) {
 }
 
 func TestChangeColumnPosition(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -1571,8 +1586,14 @@ CREATE TABLE t (
 }
 
 func TestAlterColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2761,8 +2782,14 @@ func TestDropColumnWithIndex(t *testing.T) {
 }
 
 func TestDropColumnWithAutoInc(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int auto_increment, c int, key(b))")
@@ -2778,8 +2805,14 @@ func TestDropColumnWithAutoInc(t *testing.T) {
 }
 
 func TestDropColumnWithMultiIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
@@ -2792,8 +2825,14 @@ func TestDropColumnWithMultiIndex(t *testing.T) {
 }
 
 func TestDropColumnsWithMultiIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	d := dom.DDL()
+	ddlChecker := schematracker.NewChecker(d)
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int)")

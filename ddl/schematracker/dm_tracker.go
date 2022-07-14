@@ -685,20 +685,12 @@ func (d SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
-	newColInfo := (*job.Args[0].(**table.Column)).ColumnInfo
-	oldColName := job.Args[1].(model.CIStr)
+	newColInfo := *job.Args[0].(**model.ColumnInfo)
 	updatedAutoRandomBits := job.Args[4].(uint64)
 
 	tblInfo.AutoRandomBits = updatedAutoRandomBits
-	oldCol := table.FindCol(t.Cols(), oldColName.L).ColumnInfo
-
-	changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
 	newColName := model.NewCIStr(ddl.GenChangingColumnUniqueName(tblInfo, oldCol))
-	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
-		job.State = model.JobStateCancelled
-		msg := "this column has primary key flag"
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	}
 
 	changingCol := newColInfo.Clone()
 	changingCol.Name = newColName
@@ -711,6 +703,7 @@ func (d SchemaTracker) handleModifyColumn(
 		return errors.Trace(err)
 	}
 
+	// TODO: can I directly replace the ColumnInfo and IndexInfo?
 	ddl.InitAndAddColumnToTable(tblInfo, changingCol)
 	indexesToChange := ddl.FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 	changingIndexInfo := make([]*model.IndexInfo, 0, len(indexesToChange))
@@ -733,7 +726,7 @@ func (d SchemaTracker) handleModifyColumn(
 		}
 	}
 
-	err = ddl.AdjustTableInfoAfterModifyColumnWithData(tblInfo, changingColPos, oldCol, changingCol, newColName, changingIndexInfo)
+	err = ddl.AdjustTableInfoAfterModifyColumnWithData(tblInfo, spec.Position, oldCol, changingCol, newColInfo.Name, changingIndexInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -448,6 +449,12 @@ func TestModifyColumn(t *testing.T) {
 	s, clean := createFailDBSuite(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, s.store)
+
+	dom := domain.GetDomain(tk.Session())
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 
@@ -456,7 +463,7 @@ func TestModifyColumn(t *testing.T) {
 	_, err := tk.Exec("alter table t change column c cc mediumint")
 	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 	tk.MustExec("alter table t change column b bb mediumint first")
-	dom := domain.GetDomain(tk.Session())
+
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
