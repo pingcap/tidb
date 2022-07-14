@@ -20,11 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var foobarPwdHash, _ = hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
+var foobarPwdSHA2Hash, _ = hex.DecodeString("24412430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 
 func TestCheckShaPasswordGood(t *testing.T) {
 	pwd := "foobar"
-	r, err := CheckShaPassword(foobarPwdHash, pwd)
+	r, err := CheckShaPassword(foobarPwdSHA2Hash, pwd)
 	require.NoError(t, err)
 	require.True(t, r)
 }
@@ -44,7 +44,7 @@ func TestCheckShaPasswordShort(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCheckShaPasswordDigetTypeIncompatible(t *testing.T) {
+func TestCheckShaPasswordDigestTypeIncompatible(t *testing.T) {
 	pwd := "not_foobar"
 	pwhash, _ := hex.DecodeString("24422430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	_, err := CheckShaPassword(pwhash, pwd)
@@ -76,7 +76,7 @@ func TestNewSha2Password(t *testing.T) {
 
 func BenchmarkShaPassword(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		m, err := CheckShaPassword(foobarPwdHash, "foobar")
+		m, err := CheckShaPassword(foobarPwdSHA2Hash, "foobar")
 		require.Nil(b, err)
 		require.True(b, m)
 	}

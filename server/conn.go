@@ -730,7 +730,10 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 			return err
 		}
 	case mysql.AuthSM3Password:
-		// TODO
+		resp.Auth, err = cc.authSM3(ctx)
+		if err != nil {
+			return err
+		}
 	case mysql.AuthNativePassword:
 	case mysql.AuthSocket:
 	default:
@@ -801,6 +804,37 @@ func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {
 	data, err := cc.readPacket()
 	if err != nil {
 		logutil.Logger(ctx).Error("authSha packet read failed", zap.Error(err))
+		return nil, err
+	}
+	return bytes.Trim(data, "\x00"), nil
+}
+
+// authSM3 implements the sm3_password specific part of the protocol.
+func (cc *clientConn) authSM3(ctx context.Context) ([]byte, error) {
+
+	const (
+		SM3Command       = 1
+		RequestRsaPubKey = 2 // Not supported yet, only TLS is supported as secure channel.
+		FastAuthOk       = 3
+		FastAuthFail     = 4
+	)
+
+	// Currently we always send a "FastAuthFail" as the cached part of the protocol isn't implemented yet.
+	// This triggers the client to send the full response.
+	err := cc.writePacket([]byte{0, 0, 0, 0, SM3Command, FastAuthFail})
+	if err != nil {
+		logutil.Logger(ctx).Error("authSM3 packet write failed", zap.Error(err))
+		return nil, err
+	}
+	err = cc.flush(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Error("authSM3 packet flush failed", zap.Error(err))
+		return nil, err
+	}
+
+	data, err := cc.readPacket()
+	if err != nil {
+		logutil.Logger(ctx).Error("authSM3 packet read failed", zap.Error(err))
 		return nil, err
 	}
 	return bytes.Trim(data, "\x00"), nil
