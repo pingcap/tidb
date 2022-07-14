@@ -415,6 +415,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
 		return nil
 	}
+
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:
