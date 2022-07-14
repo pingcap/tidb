@@ -829,13 +829,13 @@ func TestPrefetchPointKeys(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
-	require.Equal(t, 1, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	require.Equal(t, 2, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	err = cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err = tk.Session().Txn(false)
 	require.NoError(t, err)
 	require.True(t, txn.Valid())
-	require.Equal(t, 5, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
+	require.Equal(t, 6, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }
