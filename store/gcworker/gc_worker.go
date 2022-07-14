@@ -1780,7 +1780,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
-	w.logBackupEnabled = utils.IsLogBackupEnabled(se.(sqlexec.RestrictedSQLExecutor))
+	w.logBackupEnabled = utils.CheckLogBackupEnabled(se)
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)

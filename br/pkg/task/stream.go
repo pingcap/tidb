@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -497,7 +498,12 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	supportStream, err := streamMgr.checkRequirements(ctx)
+	se, err := g.CreateSession(streamMgr.mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	supportStream, err := utils.IsLogBackupEnabled(execCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}

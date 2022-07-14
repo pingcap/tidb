@@ -285,5 +285,5 @@ func getGlobalKillUsageInfo() bool {
 }
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
-	return utils.IsLogBackupEnabled(ctx.(sqlexec.RestrictedSQLExecutor))
+	return utils.CheckLogBackupEnabled(ctx)
 }

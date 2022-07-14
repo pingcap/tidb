@@ -68,7 +68,9 @@ func TestIsLogBackupEnabled(t *testing.T) {
 	row := chunk.MutRowFromValues("tikv", " 127.0.0.1:20161", "log-backup.enable", "false").ToRow()
 	rows = append(rows, row)
 	s := &mockRestrictedSQLExecutor{rows: rows, fields: fields}
-	require.False(t, utils.IsLogBackupEnabled(s))
+	enabled, err := utils.IsLogBackupEnabled(s)
+	require.NoError(t, err)
+	require.False(t, enabled)
 
 	// case 2: one of tikvs enabled log-backup expected false
 	// tikv | 127.0.0.1:20161 | log-backup.enable | false |
@@ -79,7 +81,9 @@ func TestIsLogBackupEnabled(t *testing.T) {
 	row = chunk.MutRowFromValues("tikv", " 127.0.0.1:20162", "log-backup.enable", "true").ToRow()
 	rows = append(rows, row)
 	s = &mockRestrictedSQLExecutor{rows: rows, fields: fields}
-	require.False(t, utils.IsLogBackupEnabled(s))
+	enabled, err = utils.IsLogBackupEnabled(s)
+	require.NoError(t, err)
+	require.False(t, enabled)
 
 	// case 3: all of tikvs enabled log-backup expected true
 	// tikv | 127.0.0.1:20161 | log-backup.enable | true  |
@@ -93,9 +97,13 @@ func TestIsLogBackupEnabled(t *testing.T) {
 	row = chunk.MutRowFromValues("tikv", " 127.0.0.1:20163", "log-backup.enable", "true").ToRow()
 	rows = append(rows, row)
 	s = &mockRestrictedSQLExecutor{rows: rows, fields: fields}
-	require.True(t, utils.IsLogBackupEnabled(s))
+	enabled, err = utils.IsLogBackupEnabled(s)
+	require.NoError(t, err)
+	require.True(t, enabled)
 
 	// case 4: met error and expected true
 	s = &mockRestrictedSQLExecutor{errHappen: true}
-	require.True(t, utils.IsLogBackupEnabled(s))
+	enabled, err = utils.IsLogBackupEnabled(s)
+	require.Error(t, err)
+	require.False(t, enabled)
 }

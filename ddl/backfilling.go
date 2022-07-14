@@ -614,7 +614,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	// 	return errors.Trace(err)
 	// }
 	// defer w.sessPool.put(ctx)
-	// if !utils.IsLogBackupEnabled(ctx.(sqlexec.RestrictedSQLExecutor)) {
+	// if !utils.CheckLogBackupEnabled(ctx) {
 	// 	// fallback
 	// 	return nil
 	// }

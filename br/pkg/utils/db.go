@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -35,37 +36,48 @@ type DBExecutor interface {
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 }
 
-// IsLogBackupEnabled checks if LogBackup is enabled in cluster.
+// CheckLogBackupEnabled checks if LogBackup is enabled in cluster.
 // this mainly used in three places.
 // 1. Resolve locks to scan more locks after safepoint.
 // 2. Add index skipping use lightning to speed up.
 // 3. Telemetry of log backup feature usage statistics.
 // NOTE: this result shouldn't be cached by caller. because it may change every time in one cluster.
-func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) bool {
-	valStr := "show config where name = 'log-backup.enable'"
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
-	rows, fields, errSQL := ctx.ExecRestrictedSQL(internalCtx, nil, valStr)
-	if errSQL != nil {
+func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
+	enabled, err := IsLogBackupEnabled(ctx.(sqlexec.RestrictedSQLExecutor))
+	if err != nil {
 		// if failed by any reason. we can simply return true this time.
 		// for GC worker it will scan more locks in one tick.
 		// for Add index it will skip using lightning this time.
 		// for Telemetry it will get a false positive usage count.
 		return true
 	}
+	return enabled
+}
+
+// IsLogBackupEnabled is used for br to check whether tikv has enabled log backup.
+// we use `sqlexec.RestrictedSQLExecutor` as parameter because it's easy to mock.
+// it should return error.
+func IsLogBackupEnabled(ctx sqlexec.RestrictedSQLExecutor) (bool, error) {
+	valStr := "show config where name = 'log-backup.enable'"
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	rows, fields, errSQL := ctx.ExecRestrictedSQL(internalCtx, nil, valStr)
+	if errSQL != nil {
+		return false, errSQL
+	}
 	if len(rows) == 0 {
 		// no rows mean not support log backup.
-		return false
+		return false, nil
 	}
 	for _, row := range rows {
 		d := row.GetDatum(3, &fields[3].Column.FieldType)
 		value, errField := d.ToString()
 		if errField != nil {
-			// met error return true.
-			return true
+			return false, errField
 		}
 		if strings.ToLower(value) == "false" {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
+
 }
