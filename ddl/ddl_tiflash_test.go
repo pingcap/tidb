@@ -419,7 +419,7 @@ func TestSetTiFlashModeUnsupported(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]ALTER table tiflash mode for tables without tiflash replica is currently unsupported")
+	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]ALTER table tiflash mode for tables without tiflash replica is unsupported")
 }
 
 // Truncate partition shall not block.
