@@ -4942,6 +4942,12 @@ func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, 
 		return fmt.Errorf("unsupported TiFlash mode %s", mode)
 	}
 
+	// ban set tiflash mode when tiflash replica is nil
+	tbReplicaInfo := tb.Meta().TiFlashReplica
+	if tbReplicaInfo == nil {
+		return errors.Trace(dbterror.ErrUnsupportedAlterTiFlashModeForTableWithoutTiFlashReplica)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
