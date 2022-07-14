@@ -565,6 +565,121 @@ func CETraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 	sc.OptimizerCETrace = append(sc.OptimizerCETrace, &CERecord)
 }
 
+func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID int64) (isIndex bool, idx int64) {
+	// try to find available stats in column stats
+	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) {
+		return false, uniqueID
+	}
+	// try to find available stats in single column index stats (except for prefix index)
+	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
+		if len(cols) == 1 && cols[0] == uniqueID {
+			idxStats, ok := coll.Indices[idxStatsIdx]
+			if ok &&
+				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
+				!idxStats.IsInvalid(coll.Pseudo) {
+				return true, idxStatsIdx
+			}
+		}
+	}
+	return false, -1
+}
+
+// GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN and NULL.
+// The data represented by the Histogram would use the defaultSelectivity parameter as the selectivity.
+// Currently, this method can only handle expressions involving a single column.
+func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
+	col *expression.Column,
+	defaultSelectivity float64,
+	filters []expression.Expression) (ok bool, selectivity float64, err error) {
+	// 1. Make sure this column is not a "new collation" string column so that we're able to restore values from the stats.
+	tp := col.RetType
+	if types.IsString(tp.GetType()) && !collate.IsBinCollation(tp.GetCollate()) {
+		return false, 0, nil
+	}
+	// 2. Get the available stats, make sure it's a ver2 stats and get the needed data structure from it.
+	isIndex, i := coll.findAvailableStatsForCol(sctx, col.UniqueID)
+	if i < 0 {
+		return false, 0, nil
+	}
+	var statsVer, nullCnt int64
+	var histTotalCnt, totalCnt float64
+	var topnTotalCnt uint64
+	var hist *Histogram
+	var topn *TopN
+	if isIndex {
+		stats := coll.Indices[i]
+		statsVer = stats.StatsVer
+		hist = &stats.Histogram
+		nullCnt = hist.NullCount
+		topn = stats.TopN
+	} else {
+		stats := coll.Columns[i]
+		statsVer = stats.StatsVer
+		hist = &stats.Histogram
+		nullCnt = hist.NullCount
+		topn = stats.TopN
+	}
+	if statsVer != Version2 {
+		return false, 0, nil
+	}
+	topnTotalCnt = topn.TotalCount()
+	histTotalCnt = hist.notNullCount()
+	totalCnt = float64(topnTotalCnt) + histTotalCnt + float64(nullCnt)
+
+	var topNSel, histSel, nullSel float64
+	originalIndex := col.Index
+	col.Index = 0
+	defer func() {
+		// Restore the original Index to avoid unexpected situation.
+		col.Index = originalIndex
+	}()
+	size := 1
+	if topn != nil {
+		size = len(topn.TopN)
+	}
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, size)
+	selected := make([]bool, 0, size)
+	// 3. Calculate the TopN part selectivity.
+	// This stage is considered the core functionality of this method, errors in this stage would make this entire method fail.
+	var topNSelectedCnt uint64
+	if topn != nil {
+		for _, item := range topn.TopN {
+			_, val, err := codec.DecodeOne(item.Encoded)
+			if err != nil {
+				return false, 0, err
+			}
+			c.AppendDatum(0, &val)
+		}
+		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+		if err != nil {
+			return false, 0, err
+		}
+		for i, isTrue := range selected {
+			if isTrue {
+				topNSelectedCnt += topn.TopN[i].Count
+			}
+		}
+	}
+	topNSel = float64(topNSelectedCnt) / totalCnt
+	// 4. Calculate the Histogram part selectivity.
+	histSel = defaultSelectivity * histTotalCnt / totalCnt
+	// 5. Calculate the NULL part selectivity.
+	// Errors in this staged would be returned, but would not make this entire method fail.
+	c.Reset()
+	c.AppendNull(0)
+	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+	if err != nil || len(selected) != 1 {
+		nullSel = defaultSelectivity * float64(nullCnt) / totalCnt
+	} else if selected[0] {
+		nullSel = float64(nullCnt) / totalCnt
+	} else {
+		nullSel = 0
+	}
+	// 6. Get the final result.
+	res := topNSel + histSel + nullSel
+	return true, res, err
+}
+
 // PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
 func (t *Table) PseudoAvgCountPerValue() float64 {
 	return float64(t.Count) / pseudoEqualRate

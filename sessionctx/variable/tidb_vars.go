@@ -684,6 +684,8 @@ const (
 
 	// TiDBSimplifiedMetrics controls whether to unregister some unused metrics.
 	TiDBSimplifiedMetrics = "tidb_simplified_metrics"
+
+	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 )
 
 // TiDB vars that have only global scope
@@ -949,6 +951,7 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
+	DefTiDBDefaultStrMatchSelectivity              = 0.8
 )
 
 // Process global variables.

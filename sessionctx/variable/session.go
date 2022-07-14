@@ -1165,6 +1165,11 @@ type SessionVars struct {
 
 	// RequestSourceType is the type of inner request.
 	RequestSourceType string
+
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -2671,4 +2676,19 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		return s.seekFactorV2
 	}
 	return s.seekFactor
+}
+
+// EnableEvalTopNEstimationForStrMatch means if we need to evaluate expression with TopN to improve estimation.
+// Currently, it's only for string matching functions (like and regexp).
+func (s *SessionVars) EnableEvalTopNEstimationForStrMatch() bool {
+	return s.DefaultStrMatchSelectivity == 0
+}
+
+// GetStrMatchDefaultSelectivity means the default selectivity for like and regexp.
+// Note that 0 is a special value, which means the default selectivity is 0.1 and TopN assisted estimation is enabled.
+func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == 0 {
+		return 0.1
+	}
+	return s.DefaultStrMatchSelectivity
 }
