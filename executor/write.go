@@ -87,11 +87,11 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionId)
 		if !tableFound {
-			return false, errors.Errorf("exchange partition with table TableByID Failed")
+			return false, errors.Errorf("exchange partition process table by id failed")
 		}
 		p, ok := pt.(table.PartitionedTable)
 		if !ok {
-			return false, errors.Errorf("exchange partition process assert table partition failed.")
+			return false, errors.Errorf("exchange partition process assert table partition failed")
 		}
 		err := p.CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionInfo.ExchangePartitionDefId)
 		if err != nil {
