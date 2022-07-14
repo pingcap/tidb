@@ -221,6 +221,9 @@ const (
 
 	// RequireSecureTransport indicates the secure mode for data transport
 	RequireSecureTransport = "require_secure_transport"
+
+	// TiDBInExpansionLimit is used to control the number of expanded expressions during logical optimization
+	TiDBInExpansionLimit = "tidb_in_expansion_limit"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -960,6 +963,7 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
+	DefTiDBInExpansionLimit                        = 100
 )
 
 // Process global variables.

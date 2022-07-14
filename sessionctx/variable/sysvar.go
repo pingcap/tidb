@@ -318,6 +318,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return string(info), nil
 	}},
+	{Scope: ScopeSession, Name: TiDBInExpansionLimit, Value: strconv.Itoa(DefTiDBInExpansionLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.InExpansionLimit = int(TidbOptInt64(val, DefTiDBInExpansionLimit))
+		return nil
+	}},
 
 	/* The system variables below have INSTANCE scope  */
 	{Scope: ScopeInstance, Name: TiDBLogFileMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, SetGlobal: func(s *SessionVars, val string) error {

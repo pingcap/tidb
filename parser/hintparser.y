@@ -108,6 +108,7 @@ import (
 	hintForceIndex            "FORCE_INDEX"
 	hintStraightJoin          "STRAIGHT_JOIN"
 	hintLeading               "LEADING"
+	hintInExpansion           "IN_EXPANSION"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -585,6 +586,7 @@ NullaryHintName:
 |	"READ_CONSISTENT_REPLICA"
 |	"IGNORE_PLAN_CACHE"
 |	"STRAIGHT_JOIN"
+|	"IN_EXPANSION"
 
 HintQueryType:
 	"OLAP"
@@ -652,6 +654,7 @@ Identifier:
 |	"FORCE_INDEX"
 |	"STRAIGHT_JOIN"
 |	"LEADING"
+|	"IN_EXPANSION"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

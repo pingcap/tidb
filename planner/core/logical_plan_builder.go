@@ -117,6 +117,8 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
+	// HintInExpansion is a hint to enforce expand `IN` expression to `UNION` + `EQ`(s).
+	HintInExpansion = "in_expansion"
 )
 
 const (
@@ -980,6 +982,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 }
 
 func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, error) {
+	if b.TableHints() != nil && b.TableHints().inHints.allowInExpansion {
+		b.optFlag = b.optFlag | flagInExpansion
+	}
 	b.optFlag |= flagPredicatePushDown
 	if b.curClause != havingClause {
 		b.curClause = whereClause
@@ -3517,6 +3522,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		aggHints                                                                        aggHintInfo
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      limitHintInfo
+		inHints                                                                         inHintInfo
 		leadingJoinOrder                                                                []hintTableInfo
 		leadingHintCnt                                                                  int
 	)
@@ -3626,6 +3632,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 			}
 			leadingHintCnt++
+		case HintInExpansion:
+			inHints.allowInExpansion = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -3651,6 +3659,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		indexMergeHintList:        indexMergeHintList,
 		timeRangeHint:             timeRangeHint,
 		limitHints:                limitHints,
+		inHints:                   inHints,
 		leadingJoinOrder:          leadingJoinOrder,
 	})
 }

@@ -4260,6 +4260,16 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[2].Tables[0].TableName.L)
 	require.Equal(t, "t5", hints[2].Tables[1].TableName.L)
 	require.Equal(t, "t6", hints[2].Tables[2].TableName.L)
+
+	// Test IN_EXPANSION
+	stmt, _, err = p.Parse("select /*+ IN_EXPANSION(), in_expansion() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "in_expansion", hints[0].HintName.L)
+	require.Equal(t, "in_expansion", hints[1].HintName.L)
 }
 
 func TestType(t *testing.T) {
