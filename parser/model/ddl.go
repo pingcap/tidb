@@ -96,6 +96,7 @@ const (
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
+	ActionSetTiFlashMode                ActionType = 62
 )
 
 var actionMap = map[ActionType]string{
@@ -156,6 +157,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
+	ActionSetTiFlashMode:                "set tiflash mode",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -252,8 +254,6 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
-	Warnings []*errors.Error
-
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
@@ -552,8 +552,12 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
+	}
+	return ret
 }
 
 func (job *Job) hasDependentSchema(other *Job) (bool, error) {
@@ -653,6 +657,14 @@ func (job *Job) MayNeedReorg() bool {
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
+		}
+		return false
+	case ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			if proxyJob.MayNeedReorg() {
+				return true
+			}
 		}
 		return false
 	default:

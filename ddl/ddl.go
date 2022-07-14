@@ -24,6 +24,7 @@ import (
 	"flag"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -183,6 +184,8 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
+	GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema
 	// DoDDLJob does the DDL job, it's exported for test.
 	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
 }
@@ -754,7 +757,8 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		return errors.Trace(err)
 	}
 
-	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
+	sessVars := ctx.GetSessionVars()
+	sessVars.StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job)
@@ -794,6 +798,27 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		case <-d.ctx.Done():
 			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
+		}
+
+		// If the connection being killed, we need to CANCEL the DDL job.
+		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+			if sessVars.StmtCtx.DDLJobID != 0 {
+				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
+
+				err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+					// errs is the error per job, there is only one submitted
+					// err is the error of the overall task
+					errs, err := CancelJobs(txn, []int64{jobID})
+					if len(errs) > 0 {
+						logutil.BgLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+					}
+					return err
+				})
+				if err != nil {
+					logutil.BgLogger().Warn("Kill command could not cancel DDL job", zap.Error(err))
+					continue
+				}
+			}
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)

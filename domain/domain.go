@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -92,6 +93,7 @@ type Domain struct {
 	indexUsageSyncLease  time.Duration
 	dumpFileGcChecker    *dumpFileGcChecker
 	expiredTimeStamp4PC  types.Time
+	logBackupAdvancer    *streamhelper.AdvancerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -318,7 +320,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
 		return true
 	}
 	return false
@@ -369,6 +371,11 @@ func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
+}
+
+// SetDDL sets DDL to domain, it's only used in tests.
+func (do *Domain) SetDDL(d ddl.DDL) {
+	do.ddl = d
 }
 
 // InfoSyncer gets infoSyncer from domain.
@@ -884,7 +891,30 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
+	err = do.initLogBackup(ctx, pdClient)
+	if err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
+	cfg := config.GetGlobalConfig()
+	if cfg.LogBackup.Enabled {
+		env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+		if err != nil {
+			return err
+		}
+		adv := streamhelper.NewCheckpointAdvancer(env)
+		adv.UpdateConfig(cfg.LogBackup.Advancer)
+		do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+		loop, err := do.logBackupAdvancer.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		do.wg.Run(loop)
+	}
 	return nil
 }
 
