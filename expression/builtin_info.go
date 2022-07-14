@@ -21,11 +21,11 @@ package expression
 import (
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/parser/ast"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
