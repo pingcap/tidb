@@ -104,12 +104,13 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue // nolint:unused
 
-	partialPlans [][]plannercore.PhysicalPlan
-	tblPlans     []plannercore.PhysicalPlan
+	partialPlans        [][]plannercore.PhysicalPlan
+	tblPlans            []plannercore.PhysicalPlan
+	partialNetDataSizes []float64
+	dataAvgRowSize      float64
 
 	handleCols     plannercore.HandleCols
 	stats          *IndexMergeRuntimeStat
-	dataAvgRowSize float64
 
 	// Indicates whether there is correlated column in filter or table/index range.
 	// We need to refresh dagPBs before send DAGReq to storage.
@@ -312,7 +313,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
-					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, getPlansNetDataSize(e.partialPlans[workID])/float64(len(keyRanges))))
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, e.partialNetDataSizes[workID]))
 
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
@@ -392,7 +393,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
-					netDataSize:      getPlansNetDataSize(e.partialPlans[workID]),
+					netDataSize:      e.partialNetDataSizes[workID],
 				}
 
 				worker := &partialTableWorker{
@@ -480,17 +481,6 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 		return e.tblPlans[len(e.tblPlans)-1].ID()
 	}
 	return e.id
-}
-
-// getPlansNetDataSize return the network data size of the DataSourcePhysicalPlan for the flattened plans.
-func getPlansNetDataSize(plans []plannercore.PhysicalPlan) float64 {
-	for _, p := range plans {
-		if plan, ok := p.(plannercore.DataSourcePhysicalPlan); ok {
-			return plan.GetNetDataSize()
-		}
-	}
-	// should not reach here.
-	panic("no data source plan found")
 }
 
 type partialTableWorker struct {

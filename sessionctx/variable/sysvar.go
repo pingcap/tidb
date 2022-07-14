@@ -1429,7 +1429,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAdaptiveClosestReadThreshold, Value: strconv.Itoa(DefAdaptiveClosestReadThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.AdaptiveClosestReadThreshold = TidbOptInt64(val, DefAdaptiveClosestReadThreshold)
+		s.ReplicaClosestReadThreshold = TidbOptInt64(val, DefAdaptiveClosestReadThreshold)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBUsePlanBaselines, Value: BoolToOnOff(DefTiDBUsePlanBaselines), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {

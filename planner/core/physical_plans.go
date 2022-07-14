@@ -370,7 +370,7 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 	return corCols
 }
 
-// GetIndexNetworkCost retrun the network cost of index reader.
+// GetIndexNetworkCost return the network cost of index reader.
 func (p *PhysicalIndexLookUpReader) GetIndexNetworkCost() float64 {
 	return getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
 }
@@ -397,8 +397,8 @@ type PhysicalIndexMergeReader struct {
 	PartitionInfo PartitionInfo
 }
 
-// GetAvgRowSize return the average row size of this plan.
-func (p *PhysicalIndexMergeReader) GetAvgRowSize() float64 {
+// GetAvgTableRowSize return the average row size of table plan.
+func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
 	return getTblStats(p.TablePlans[len(p.TablePlans)-1]).GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
 }
 
@@ -1615,19 +1615,4 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
-}
-
-var (
-	_ DataSourcePhysicalPlan = &PhysicalTableReader{}
-	_ DataSourcePhysicalPlan = &PhysicalIndexReader{}
-	_ DataSourcePhysicalPlan = &PhysicalIndexLookUpReader{}
-	_ DataSourcePhysicalPlan = &PhysicalIndexMergeReader{}
-)
-
-// DataSourcePhysicalPlan is a plan that actually retrieval kv data from store.
-// Currently, there are PhysicalTableReader/PhysicalIndexReader/
-// PhysicalIndexLookUpReader/PhysicalIndexMergeReader.
-type DataSourcePhysicalPlan interface {
-	// GetNetDataSize calculates the estimated total data size fetched from storage.
-	GetNetDataSize() float64
 }

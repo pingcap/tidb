@@ -3682,6 +3682,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
 	partialPlanCount := len(v.PartialPlans)
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
+	partialDataSizes := make([]float64, 0, partialPlanCount)
 	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
 	descs := make([]bool, 0, partialPlanCount)
 	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
@@ -3714,6 +3715,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		partialReqs = append(partialReqs, tempReq)
 		isCorColInPartialFilters = append(isCorColInPartialFilters, b.corColInDistPlan(v.PartialPlans[i]))
 		isCorColInPartialAccess = append(isCorColInPartialAccess, b.corColInAccess(v.PartialPlans[i][0]))
+		partialDataSizes = append(partialDataSizes, v.GetPartialReaderNetDataSize(v.PartialPlans[i][0]))
 	}
 	tableReq, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	isCorColInTableFilter := b.corColInDistPlan(v.TablePlans)
@@ -3740,9 +3742,10 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		descs:                    descs,
 		tableRequest:             tableReq,
 		columns:                  ts.Columns,
-		dataAvgRowSize:           v.GetAvgRowSize(),
 		partialPlans:             v.PartialPlans,
 		tblPlans:                 v.TablePlans,
+		partialNetDataSizes:      partialDataSizes,
+		dataAvgRowSize:           v.GetAvgTableRowSize(),
 		dataReaderBuilder:        readerBuilder,
 		feedbacks:                feedbacks,
 		paging:                   paging,
@@ -3934,7 +3937,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		usedPartitions[p.GetPhysicalID()] = p
 	}
 	var kvRanges []kv.KeyRange
-	count := 0
+	needLookupRows := 0
 	if v.IsCommonHandle {
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			locateKey := make([]types.Datum, e.Schema().Len())
@@ -3962,7 +3965,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					return nil, err
 				}
 				kvRanges = append(kvRanges, tmp...)
-				count += len(contents)
+				needLookupRows += len(contents)
 			}
 		} else {
 			kvRanges = make([]kv.KeyRange, 0, len(usedPartitions)*len(lookUpContents))
@@ -3973,13 +3976,13 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				}
 				kvRanges = append(tmp, kvRanges...)
 			}
-			count += len(lookUpContents)
+			needLookupRows += len(lookUpContents)
 		}
 		// The key ranges should be ordered.
 		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 			return bytes.Compare(i.StartKey, j.StartKey) < 0
 		})
-		e.updateRowsCount(float64(count))
+		e.updateRowsCount(float64(needLookupRows))
 		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
 
@@ -4003,21 +4006,21 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			handle := kv.IntHandle(content.keys[0].GetInt64())
 			tmp := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
 			kvRanges = append(kvRanges, tmp...)
-			count++
+			needLookupRows++
 		}
 	} else {
 		for _, p := range usedPartitionList {
 			tmp := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
 			kvRanges = append(kvRanges, tmp...)
 		}
-		count = len(handles)
+		needLookupRows = len(handles)
 	}
 
 	// The key ranges should be ordered.
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
-	e.updateRowsCount(float64(count))
+	e.updateRowsCount(float64(needLookupRows))
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
 
@@ -4083,8 +4086,8 @@ func newClosestReadAdjuster(ctx sessionctx.Context, req *kv.Request, netDataSize
 	if req.ReplicaRead != kv.ReplicaReadClosestAdaptive {
 		return nil
 	}
-	return func(req *kv.Request, count int) bool {
-		if int64(netDataSize/float64(count)) >= ctx.GetSessionVars().AdaptiveClosestReadThreshold {
+	return func(req *kv.Request, copTaskCount int) bool {
+		if int64(netDataSize/float64(copTaskCount)) >= ctx.GetSessionVars().ReplicaClosestReadThreshold {
 			req.MatchStoreLabels = append(req.MatchStoreLabels, &metapb.StoreLabel{
 				Key:   placement.DCLabelKey,
 				Value: config.GetTxnScopeFromConfig(),
@@ -4762,7 +4765,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 
 func newReplicaReadAdjuster(ctx sessionctx.Context, avgRowSize float64) txnkv.ReplicaReadAdjuster {
 	return func(count int) (tikv.StoreSelectorOption, clientkv.ReplicaReadType) {
-		if int64(avgRowSize*float64(count)) >= ctx.GetSessionVars().AdaptiveClosestReadThreshold {
+		if int64(avgRowSize*float64(count)) >= ctx.GetSessionVars().ReplicaClosestReadThreshold {
 			return tikv.WithMatchLabels([]*metapb.StoreLabel{
 				{
 					Key:   placement.DCLabelKey,

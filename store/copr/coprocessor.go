@@ -104,7 +104,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 			reqType = "hit"
 		}
 	}
-	tidbmetrics.DistSQLCoprClosestReadHitCounter.WithLabelValues(reqType).Inc()
+	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -785,12 +785,15 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
 	copResp := resp.Resp.(*coprocessor.Response)
+
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
-	tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
+	if copResp != nil {
+		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
+	}
 
 	if worker.req.Paging {
 		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
@@ -811,12 +814,11 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.TiKVBackoffer().GetTypes()), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
-
+	detailV2 := resp.GetExecDetailsV2()
+	detail := resp.GetExecDetails()
 	var timeDetail *kvrpcpb.TimeDetail
-	detailV2 := resp.ExecDetailsV2
-	detail := resp.ExecDetails
 	if detailV2 != nil && detailV2.TimeDetail != nil {
-		timeDetail = resp.ExecDetailsV2.TimeDetail
+		timeDetail = detailV2.TimeDetail
 	} else if detail != nil && detail.TimeDetail != nil {
 		timeDetail = detail.TimeDetail
 	}

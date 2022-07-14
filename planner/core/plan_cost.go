@@ -253,13 +253,6 @@ func (p *PhysicalIndexLookUpReader) estDoubleReadCost(tbl *model.TableInfo, cost
 	return (numDoubleReadTasks * seekFactor) / concurrency
 }
 
-// GetNetDataSize calculates the total size of the plan in network data transfer.
-func (p *PhysicalIndexLookUpReader) GetNetDataSize() float64 {
-	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-	return rowSize*p.indexPlan.StatsCount() + tblRowSize*p.tablePlan.StatsCount()
-}
-
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexReader) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
@@ -411,27 +404,10 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType, costF
 	return p.planCost, nil
 }
 
-// GetNetDataSize calculates the estimated total data size fetched from storage.
-func (p *PhysicalIndexMergeReader) GetNetDataSize() float64 {
-	netCost := 0.0
-	if tblScan := p.tablePlan; tblScan != nil {
-		tblStats := getTblStats(tblScan)
-		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
-		netCost += tblScan.StatsCount() * rowSize
-	}
-	for _, partialScan := range p.partialPlans {
-		var isIdxScan bool
-		for p := partialScan; ; p = p.Children()[0] {
-			_, isIdxScan = p.(*PhysicalIndexScan)
-			if len(p.Children()) == 0 {
-				break
-			}
-		}
-		tblStats := getTblStats(partialScan)
-		rowSize := tblStats.GetAvgRowSize(p.ctx, partialScan.Schema().Columns, isIdxScan, false)
-		netCost += partialScan.StatsCount() * rowSize
-	}
-	return netCost
+// GetPartialReaderNetDataSize returns the estimated total response data size of a partial read.
+func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan PhysicalPlan) float64 {
+	_, isIdxScan := plan.(*PhysicalIndexScan)
+	return plan.StatsCount() * getTblStats(plan).GetAvgRowSize(p.ctx, plan.Schema().Columns, isIdxScan, false)
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.

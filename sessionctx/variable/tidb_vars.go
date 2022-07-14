@@ -165,8 +165,10 @@ const (
 	// TiDBReplicaRead is used for reading data from replicas, followers for example.
 	TiDBReplicaRead = "tidb_replica_read"
 
-	// TiDBAdaptiveClosestReadThreshold is used to determinate whether a scan request should
-	// adaptively read from local follower.
+	// TiDBAdaptiveClosestReadThreshold is for reading data from closest replicas(with same 'zone' label).
+	// TiKV client should send read request to the closest replica(leader/follower) if the estimated response
+	// size exceeds this threshold; otherwise, this request should be sent to leader.
+	// This variable only take effect when `tidb_replica_read` is 'closest-adaptive'.
 	TiDBAdaptiveClosestReadThreshold = "tidb_adaptive_closest_read_threshold"
 
 	// TiDBAllowRemoveAutoInc indicates whether a user can drop the auto_increment column attribute or not.

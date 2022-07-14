@@ -496,11 +496,11 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	}
 
 	checkMetrics := func(q string, hit, miss int) {
-		beforeHit := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("hit"))
-		beforeMiss := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("miss"))
+		beforeHit := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("hit"))
+		beforeMiss := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("miss"))
 		tk.MustQuery(q)
-		afterHit := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("hit"))
-		afterMiss := readCounter(metrics.DistSQLCoprClosestReadHitCounter.WithLabelValues("miss"))
+		afterHit := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("hit"))
+		afterMiss := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("miss"))
 		require.Equal(t, hit, int(afterHit-beforeHit), "exec query '%s' check hit failed", q)
 		require.Equal(t, miss, int(afterMiss-beforeMiss), "exec query '%s' check miss failed", q)
 	}
@@ -549,9 +549,9 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	// index merge reader
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int, v bigint, s1 varchar(8), s2 varchar(8), key `idx_v_s1`(`s1`, `v`), key `idx_s2`(`s2`));")
-	tk.MustExec("insert into t values (1, 1,  'tests101', 'tests201'), (2, 2, 'tests102', 'tests202'), (3, 3, 'tests103', 'tests203');")
-	// TODO: why after analyze table, the query hint does not take effect.
-	//tk.MustExec("analyze table t;")
+	tk.MustExec("insert into t values (1, 1,  '11111111', '11111111'), (2, 2, '22222222', '22222222'), (3, 3, '33333333', '33333333');")
+	tk.MustExec("analyze table t;")
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
-	checkMetrics("select/* +USE_INDEX_MERGE(t) */  * from t where (s1 < 'tests102' and v < 2) or s2 = 'tests203';", 2, 2)
+	// 2 IndexScan with cost 19/56, 2 TableReader with cost 24/48.
+	checkMetrics("select/* +USE_INDEX_MERGE(t) */ * from t use index(`idx_v_s1`) use index(idx_s2) where (s1 <= '23' and v > 0) or s2 = '33333333';", 2, 2)
 }
