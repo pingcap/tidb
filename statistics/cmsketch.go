@@ -169,6 +169,9 @@ func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount u
 // data are not tracked because size of CMSketch.topN take little influence
 // We ignore the size of other metadata in CMSketch.
 func (c *CMSketch) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
 	sum = int64(c.depth * c.width * 4)
 	return
 }
@@ -775,6 +778,8 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 						if types.IsTypeTime(hists[0].Tp.GetType()) {
 							// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
+						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
+							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
 						} else {
 							_, d, err = codec.DecodeOne(val.Encoded)
 						}

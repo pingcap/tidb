@@ -27,6 +27,9 @@ import (
 )
 
 func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
+	if len(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo.SubJobs) == 0 {
+		return nil
+	}
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -223,6 +226,27 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 				}
 			}
 		}
+	case model.ActionRenameIndex:
+		from := job.Args[0].(model.CIStr)
+		to := job.Args[1].(model.CIStr)
+		info.AddIndexes = append(info.AddIndexes, to)
+		info.DropIndexes = append(info.DropIndexes, from)
+	case model.ActionModifyColumn:
+		newCol := *job.Args[0].(**model.ColumnInfo)
+		oldColName := job.Args[1].(model.CIStr)
+		pos := job.Args[2].(*ast.ColumnPosition)
+		if newCol.Name.L != oldColName.L {
+			info.AddColumns = append(info.AddColumns, newCol.Name)
+			info.DropColumns = append(info.DropColumns, oldColName)
+		} else {
+			info.ModifyColumns = append(info.ModifyColumns, newCol.Name)
+		}
+		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
+			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
+		}
+	case model.ActionSetDefaultValue:
+		col := job.Args[0].(*table.Column)
+		info.ModifyColumns = append(info.ModifyColumns, col.Name)
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
