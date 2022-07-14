@@ -168,8 +168,6 @@ go_test(
         "tiflash_replica_test.go",
     ],
     embed = [":ddl"],
-    flaky = True,
-    shard_count = 50,
     deps = [
         "//config",
         "//ddl/placement",
