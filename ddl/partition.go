@@ -1660,27 +1660,19 @@ func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *m
 		return nil
 	}
 	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
-		return nil
+		return dbterror.ErrTablesDifferentMetadata
 	}
 
 	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
 	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
-
 	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
 		return nil
 	}
 	if ntPlacementPolicyInfo == nil || ptPlacementPolicyInfo == nil {
-		return nil
+		return dbterror.ErrTablesDifferentMetadata
 	}
-
-	ptSetting, ntSetting := ntPlacementPolicyInfo.PlacementSettings, ptPlacementPolicyInfo.PlacementSettings
-
-	if ptSetting.PrimaryRegion != ntSetting.PrimaryRegion || ptSetting.Regions != ntSetting.Regions ||
-		ptSetting.Learners != ntSetting.Learners || ptSetting.Followers != ntSetting.Followers || ptSetting.Voters != ntSetting.Voters ||
-		ptSetting.Schedule != ntSetting.Schedule || ptSetting.Constraints != ntSetting.Constraints ||
-		ptSetting.LeaderConstraints != ntSetting.LeaderConstraints || ptSetting.LearnerConstraints != ntSetting.LearnerConstraints ||
-		ptSetting.FollowerConstraints != ntSetting.FollowerConstraints || ptSetting.VoterConstraints != ntSetting.VoterConstraints {
-		return nil
+	if ntPlacementPolicyInfo.Name.L != ptPlacementPolicyInfo.Name.L {
+		return dbterror.ErrTablesDifferentMetadata
 	}
 
 	return nil
