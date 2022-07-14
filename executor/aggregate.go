@@ -565,6 +565,13 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 
 	for _, item := range groupByItems {
 		tp := item.GetType()
+
+		if item.GetType().GetType() == mysql.TypeEnum {
+			newTp := *tp
+			newTp.AddFlag(mysql.EnumSetAsIntFlag)
+			tp = &newTp
+		}
+
 		buf, err := expression.GetColumn(tp.EvalType(), numRows)
 		if err != nil {
 			return nil, err
@@ -578,12 +585,6 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		if item.GetType().GetType() == mysql.TypeNewDecimal {
 			newTp := *tp
 			newTp.SetFlen(0)
-			tp = &newTp
-		}
-
-		if item.GetType().GetType() == mysql.TypeEnum {
-			newTp := *tp
-			newTp.AddFlag(mysql.EnumSetAsIntFlag)
 			tp = &newTp
 		}
 
