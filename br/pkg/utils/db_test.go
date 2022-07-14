@@ -101,7 +101,7 @@ func TestIsLogBackupEnabled(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, enabled)
 
-	// case 4: met error and expected true
+	// case 4: met error and expected false.
 	s = &mockRestrictedSQLExecutor{errHappen: true}
 	enabled, err = utils.IsLogBackupEnabled(s)
 	require.Error(t, err)
