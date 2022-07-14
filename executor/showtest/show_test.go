@@ -50,12 +50,12 @@ func validateShowCreateTable(tk *testkit.TestKit, t *testing.T, tableName string
 	}
 
 	// Check that the output from SHOW CREATE TABLE can create the same table
-	_, createTable, ok := strings.Cut(output, "CREATE TABLE ")
+	_, createTable, ok := strings.Cut(output, "CREATE ")
 	if !ok {
 		return
 	}
 	tk.MustExec("drop table " + tableName)
-	tk.MustExec("CREATE TABLE " + createTable)
+	tk.MustExec("CREATE " + createTable)
 	res = tk.MustQuery("show create table " + tableName)
 	res.Check(testkit.Rows(output))
 
@@ -318,7 +318,7 @@ func TestShowCreateTable(t *testing.T) {
 	// Fix issue #15175, show create table sequence_name.
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq")
-	validateShowCreateTable(tk, t, "seq", true,
+	validateShowCreateTable(tk, t, "seq", false,
 		"seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB")
 
 	// Test for issue #15633, 'binary' collation should be ignored in the result of 'show create table'.
@@ -1450,7 +1450,7 @@ func TestAutoRandomBase(t *testing.T) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100 auto_id_cache 5000")
-	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
+	validateShowCreateTable(tk, t, "t", true,
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1458,10 +1458,10 @@ func TestAutoRandomBase(t *testing.T) {
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_id_cache] AUTO_ID_CACHE=5000 */ /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
-	))
+	)
 
 	tk.MustExec("insert into t(`a`) values (1000)")
-	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
+	validateShowCreateTable(tk, t, "t", false,
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1469,11 +1469,11 @@ func TestAutoRandomBase(t *testing.T) {
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_id_cache] AUTO_ID_CACHE=5000 */ /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
-	))
+	)
 
 	tk.MustQuery("select @@tidb_enable_simplified_show_create_table").Check(testkit.Rows("0"))
 	tk.MustExec("set tidb_enable_simplified_show_create_table = on")
-	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
+	validateShowCreateTable(tk, t, "t", true,
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL AUTO_RANDOM(5),\n"+
@@ -1481,7 +1481,7 @@ func TestAutoRandomBase(t *testing.T) {
 			"  PRIMARY KEY (`a`) CLUSTERED,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 AUTO_ID_CACHE=5000 AUTO_RANDOM_BASE=6001",
-	))
+	)
 }
 
 func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
@@ -1513,24 +1513,25 @@ func TestShowEscape(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists `t``abl\"e`")
 	tk.MustExec("create table `t``abl\"e`(`c``olum\"n` int(11) primary key)")
-	tk.MustQuery("show create table `t``abl\"e`").Check(testkit.RowsWithSep("|",
+	//tk.MustQuery("show create table `t``abl\"e`").Check(testkit.RowsWithSep("|",
+	validateShowCreateTable(tk, t, "`t``abl\"e`", true,
 		""+
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`c``olum\"n`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+	)
 
 	// ANSI_QUOTES will change the SHOW output
 	tk.MustExec("set @old_sql_mode=@@sql_mode")
 	tk.MustExec("set sql_mode=ansi_quotes")
-	tk.MustQuery("show create table \"t`abl\"\"e\"").Check(testkit.RowsWithSep("|",
+	validateShowCreateTable(tk, t, "\"t`abl\"\"e\"", true,
 		""+
 			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (\"c`olum\"\"n\") /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
+	)
 
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")
 	tk.MustExec("set sql_mode=@old_sql_mode")
@@ -1623,57 +1624,57 @@ func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(2), b varchar(2))")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` int DEFAULT NULL,\n" +
-		"  `b` varchar(2) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	validateShowCreateTable(tk, t, "t", true, "t CREATE TABLE `t` (\n"+
+		"  `a` int DEFAULT NULL,\n"+
+		"  `b` varchar(2) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(10), b bigint)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` bigint DEFAULT NULL,\n" +
-		"  `b` bigint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	validateShowCreateTable(tk, t, "t", true, "t CREATE TABLE `t` (\n"+
+		"  `a` bigint DEFAULT NULL,\n"+
+		"  `b` bigint DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(5), b tinyint(2), c tinyint)")
 	// Here it will occur 2 warnings.
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
 		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` tinyint DEFAULT NULL,\n" +
-		"  `b` tinyint DEFAULT NULL,\n" +
-		"  `c` tinyint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	validateShowCreateTable(tk, t, "t", true, "t CREATE TABLE `t` (\n"+
+		"  `a` tinyint DEFAULT NULL,\n"+
+		"  `b` tinyint DEFAULT NULL,\n"+
+		"  `c` tinyint DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a smallint(5), b smallint)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` smallint DEFAULT NULL,\n" +
-		"  `b` smallint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	validateShowCreateTable(tk, t, "t", true, "t CREATE TABLE `t` (\n"+
+		"  `a` smallint DEFAULT NULL,\n"+
+		"  `b` smallint DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a mediumint(5), b mediumint)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` mediumint DEFAULT NULL,\n" +
-		"  `b` mediumint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	validateShowCreateTable(tk, t, "t", true, "t CREATE TABLE `t` (\n"+
+		"  `a` mediumint DEFAULT NULL,\n"+
+		"  `b` mediumint DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int1(1), b int2(2), c int3, d int4, e int8)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
 		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` tinyint DEFAULT NULL,\n" +
-		"  `b` smallint DEFAULT NULL,\n" +
-		"  `c` mediumint DEFAULT NULL,\n" +
-		"  `d` int DEFAULT NULL,\n" +
-		"  `e` bigint DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	validateShowCreateTable(tk, t, "t", true, "t CREATE TABLE `t` (\n"+
+		"  `a` tinyint DEFAULT NULL,\n"+
+		"  `b` smallint DEFAULT NULL,\n"+
+		"  `c` mediumint DEFAULT NULL,\n"+
+		"  `d` int DEFAULT NULL,\n"+
+		"  `e` bigint DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 }
 
 func TestShowVar(t *testing.T) {
@@ -1786,16 +1787,16 @@ func TestShowTemporaryTable(t *testing.T) {
 	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
 	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
 	// For issue https://github.com/pingcap/tidb/issues/24752
-	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+	validateShowCreateTable(tk, t, "t1", true, "t1 CREATE GLOBAL TEMPORARY TABLE `t1` (\n"+
+		"  `id` int(11) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS")
 	// No panic, fix issue https://github.com/pingcap/tidb/issues/24788
 	expect := "CREATE GLOBAL TEMPORARY TABLE `t3` (\n" +
 		"  `i` int(11) NOT NULL,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
-	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 " + expect))
+	validateShowCreateTable(tk, t, "t3", true, "t3 "+expect)
 
 	// Verify that the `show create table` result can be used to build the table.
 	createTable := strings.ReplaceAll(expect, "t3", "t4")
@@ -1815,7 +1816,7 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
-	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
+	validateShowCreateTable(tk, t, "t5", true, "t5 "+expect)
 
 	tk.MustExec("create temporary table t6 (i int primary key, j int)")
 	expect = "CREATE TEMPORARY TABLE `t6` (\n" +
@@ -1823,7 +1824,7 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 " + expect))
+	validateShowCreateTable(tk, t, "t6", true, "t6 "+expect)
 	tk.MustExec("create temporary table t7 (i int primary key auto_increment, j int)")
 	defer func() {
 		tk.MustExec("commit;")
@@ -1838,6 +1839,8 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
+	// Not to be enabled until https://github.com/pingcap/tidb/issues/36224 is fixed
+	//validateShowCreateTable(tk, t, "t7", true, "t7 "+expect)
 }
 
 func TestShowCachedTable(t *testing.T) {
@@ -1847,18 +1850,20 @@ func TestShowCachedTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("alter table t1 cache")
-	tk.MustQuery("show create table t1").Check(
-		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
-			"  `id` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */"))
+	// cached tables cannot be dropped, also cannot be recreated, but needs ALTER CACHE
+	// so validateShowCreateTable(tk, t, "t1", true, ...) cannot be used
+	validateShowCreateTable(tk, t, "t1", false,
+		"t1 CREATE TABLE `t1` (\n"+
+			"  `id` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /* CACHED ON */")
 	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
 		testkit.Rows("cached=on"))
 
 	tk.MustExec("alter table t1 nocache")
-	tk.MustQuery("show create table t1").Check(
-		testkit.Rows("t1 CREATE TABLE `t1` (\n" +
-			"  `id` int(11) DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	validateShowCreateTable(tk, t, "t1", true,
+		"t1 CREATE TABLE `t1` (\n"+
+			"  `id` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
 		testkit.Rows(""))
 }
