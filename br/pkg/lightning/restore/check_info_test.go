@@ -407,7 +407,13 @@ func TestCheckCSVHeader(t *testing.T) {
 		}
 
 		rc.dbMetas = dbMetas
-		err := rc.checkCSVHeader(WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos))
+		rc.precheckItemBuilder = NewPrecheckItemBuilder(
+			cfg,
+			dbMetas,
+			preInfoGetter,
+			nil,
+		)
+		err = rc.checkCSVHeader(WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos))
 		require.NoError(t, err)
 		if ca.level != passed {
 			require.Equal(t, 1, rc.checkTemplate.FailedCount(ca.level))
@@ -453,12 +459,19 @@ func TestCheckTableEmpty(t *testing.T) {
 		dbMetas:          dbMetas,
 		targetInfoGetter: targetInfoGetter,
 	}
+	theCheckBuilder := NewPrecheckItemBuilder(
+		cfg,
+		dbMetas,
+		preInfoGetter,
+		nil,
+	)
 
 	rc := &Controller{
-		cfg:           cfg,
-		dbMetas:       dbMetas,
-		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
-		preInfoGetter: preInfoGetter,
+		cfg:                 cfg,
+		dbMetas:             dbMetas,
+		checkpointsDB:       checkpoints.NewNullCheckpointsDB(),
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
 	ctx := context.Background()
@@ -557,6 +570,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	err = rc.checkpointsDB.Initialize(ctx, cfg, dbInfos)
 	require.NoError(t, err)
+	rc.precheckItemBuilder.checkpointsDB = rc.checkpointsDB
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
 	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
@@ -602,11 +616,18 @@ func TestLocalResource(t *testing.T) {
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,
 	}
+	theCheckBuilder := NewPrecheckItemBuilder(
+		cfg,
+		nil,
+		preInfoGetter,
+		nil,
+	)
 	rc := &Controller{
-		cfg:           cfg,
-		store:         mockStore,
-		ioWorkers:     ioWorkers,
-		preInfoGetter: preInfoGetter,
+		cfg:                 cfg,
+		store:               mockStore,
+		ioWorkers:           ioWorkers,
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
 	estimatedSizeResult := new(EstimateSourceDataSizeResult)

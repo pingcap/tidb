@@ -9,6 +9,7 @@ go_library(
         "get_pre_info.go",
         "meta_manager.go",
         "precheck.go",
+        "precheck_impl.go",
         "restore.go",
         "table_restore.go",
         "tidb.go",

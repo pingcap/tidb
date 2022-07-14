@@ -1123,12 +1123,14 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
 		}
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil)
 		rc := &Controller{
-			cfg:           cfg,
-			tls:           tls,
-			store:         mockStore,
-			checkTemplate: template,
-			preInfoGetter: preInfoGetter,
+			cfg:                 cfg,
+			tls:                 tls,
+			store:               mockStore,
+			checkTemplate:       template,
+			preInfoGetter:       preInfoGetter,
+			precheckItemBuilder: theCheckBuilder,
 		}
 		var sourceSize int64
 		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
@@ -1264,18 +1266,21 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			cfg: cfg,
 			tls: tls,
 		}
+		dbMetas := []*mydump.MDDatabaseMeta{}
 		preInfoGetter := &PreRestoreInfoGetterImpl{
 			cfg:              cfg,
 			targetInfoGetter: targetInfoGetter,
-			dbMetas:          []*mydump.MDDatabaseMeta{},
+			dbMetas:          dbMetas,
 		}
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB())
 		rc := &Controller{
-			cfg:           cfg,
-			tls:           tls,
-			taskMgr:       mockTaskMetaMgr{},
-			checkTemplate: template,
-			preInfoGetter: preInfoGetter,
-			dbInfos:       make(map[string]*checkpoints.TidbDBInfo),
+			cfg:                 cfg,
+			tls:                 tls,
+			taskMgr:             mockTaskMetaMgr{},
+			checkTemplate:       template,
+			preInfoGetter:       preInfoGetter,
+			dbInfos:             make(map[string]*checkpoints.TidbDBInfo),
+			precheckItemBuilder: theCheckBuilder,
 		}
 
 		ctx := WithPreInfoGetterTableStructuresCache(context.Background(), rc.dbInfos)
@@ -1361,11 +1366,13 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil)
 		rc := &Controller{
-			cfg:           cfg,
-			checkTemplate: template,
-			store:         mockStore,
-			dbMetas:       ca.dbMetas,
+			cfg:                 cfg,
+			checkTemplate:       template,
+			store:               mockStore,
+			dbMetas:             ca.dbMetas,
+			precheckItemBuilder: theCheckBuilder,
 		}
 		rc.HasLargeCSV(ctx)
 		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
@@ -1414,15 +1421,17 @@ func (s *tableRestoreSuite) TestEstimate() {
 		targetInfoGetter: mockTarget,
 	}
 	preInfoGetter.Init()
+	theCheckBuilder := NewPrecheckItemBuilder(s.cfg, dbMetas, preInfoGetter, nil)
 	rc := &Controller{
-		cfg:           s.cfg,
-		checkTemplate: template,
-		store:         s.store,
-		backend:       importer,
-		dbMetas:       dbMetas,
-		dbInfos:       dbInfos,
-		ioWorkers:     ioWorkers,
-		preInfoGetter: preInfoGetter,
+		cfg:                 s.cfg,
+		checkTemplate:       template,
+		store:               s.store,
+		backend:             importer,
+		dbMetas:             dbMetas,
+		dbInfos:             dbInfos,
+		ioWorkers:           ioWorkers,
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 	ctx = WithPreInfoGetterTableStructuresCache(ctx, dbInfos)
 	source, _, _, err := rc.estimateSourceData(ctx)
@@ -1839,7 +1848,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			srcStorage: mockStore,
 			ioWorkers:  ioWorkers,
 		}
-		ci := NewSchemaCheckItem(cfg, preInfoGetter, nil).(*schemaCheckItem)
+		ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
 		msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, ca.dbInfos), ca.tableMeta)
 		require.NoError(s.T(), err)
 		require.Len(s.T(), msgs, ca.MsgNum)
@@ -1909,7 +1918,7 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 		srcStorage: mockStore,
 		ioWorkers:  ioWorkers,
 	}
-	ci := NewSchemaCheckItem(cfg, preInfoGetter, nil).(*schemaCheckItem)
+	ci := NewSchemaCheckItem(cfg, preInfoGetter, nil, nil).(*schemaCheckItem)
 	msgs, err := ci.SchemaIsValid(WithPreInfoGetterTableStructuresCache(ctx, dbInfos), &mydump.MDTableMeta{
 		DB:   "db1",
 		Name: "gbk_table",

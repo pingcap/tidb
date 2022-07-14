@@ -224,7 +224,8 @@ type Controller struct {
 	compactState   atomic.Int32
 	status         *LightningStatus
 
-	preInfoGetter PreRestoreInfoGetter
+	preInfoGetter       PreRestoreInfoGetter
+	precheckItemBuilder *PrecheckItemBuilder
 }
 
 type LightningStatus struct {
@@ -385,6 +386,10 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
+	theCheckBuilder := NewPrecheckItemBuilder(
+		cfg, p.DBMetas, preInfoGetter, cpdb,
+	)
+
 	rc := &Controller{
 		taskCtx:       ctx,
 		cfg:           cfg,
@@ -413,7 +418,8 @@ func NewRestoreControllerWithPauser(
 		status:         p.Status,
 		taskMgr:        nil,
 
-		preInfoGetter: preInfoGetter,
+		preInfoGetter:       preInfoGetter,
+		precheckItemBuilder: theCheckBuilder,
 	}
 
 	return rc, nil
@@ -1967,7 +1973,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	}
 
 	if rc.cfg.App.CheckRequirements {
-		rc.ClusterIsAvailable(ctx)
+		if err := rc.ClusterIsAvailable(ctx); err != nil {
+			return errors.Trace(err)
+		}
 
 		if rc.ownStore {
 			if err := rc.StoragePermission(ctx); err != nil {
@@ -2068,11 +2076,17 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 		result *CheckResult
 	)
 	if rc.cfg.App.CheckRequirements {
-		rc.HasLargeCSV(ctx)
+		if err := rc.HasLargeCSV(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	if rc.cfg.Checkpoint.Enable {
-		result, err = NewCheckpointCheckItem(rc.cfg, rc.preInfoGetter, rc.dbMetas, rc.checkpointsDB).Check(ctx)
+		theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckCheckpoints)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		result, err = theChecker.Check(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2080,11 +2094,11 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 	}
 
 	if rc.cfg.App.CheckRequirements && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
-		checkSchemaCtx := ctx
-		if rc.checkpointsDB != nil {
-			checkSchemaCtx = WithPrecheckKey(ctx, checkpointDBKey, rc.checkpointsDB)
+		theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckSourceSchemaValid)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		result, err = NewSchemaCheckItem(rc.cfg, rc.preInfoGetter, rc.dbMetas).Check(checkSchemaCtx)
+		result, err = theChecker.Check(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
