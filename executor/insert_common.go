@@ -651,7 +651,11 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if !tableFound {
 			return nil, errors.Errorf("exchange partition with table TableByID Failed")
 		}
-		err := pt.(table.PartitionedTable).CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefId)
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return nil, errors.Errorf("exchange partition process assert table partition failed.")
+		}
+		err := p.CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefId)
 		if err != nil {
 			return nil, err
 		}
