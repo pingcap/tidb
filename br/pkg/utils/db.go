@@ -5,11 +5,12 @@ package utils
 import (
 	"context"
 	"database/sql"
-	"strings"
-
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
+	"strings"
 )
 
 var (
@@ -49,6 +50,7 @@ func CheckLogBackupEnabled(ctx sessionctx.Context) bool {
 		// for GC worker it will scan more locks in one tick.
 		// for Add index it will skip using lightning this time.
 		// for Telemetry it will get a false positive usage count.
+		log.Warn("[backup] check log backup config failed, ignore it", zap.Error(err))
 		return true
 	}
 	return enabled
