@@ -197,7 +197,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
 	if req.Paging {
-		chanSize = 128
+		chanSize = 18
 	}
 
 	var tasks []*copTask
