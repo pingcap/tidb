@@ -68,9 +68,13 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job)
-				ver, err = w.runDDLJob(d, t, proxyJob)
-				sub.FromProxyJob(proxyJob)
-				return ver, err
+				ver, err = w.runDDLJob(d, t, &proxyJob)
+				err = handleRollbackException(err, proxyJob.Error)
+				if err != nil {
+					return ver, err
+				}
+				sub.FromProxyJob(&proxyJob)
+				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
 			job.State = model.JobStateRollbackDone
@@ -87,8 +91,8 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				continue
 			}
 			proxyJob := sub.ToProxyJob(job)
-			ver, err = w.runDDLJob(d, t, proxyJob)
-			sub.FromProxyJob(proxyJob)
+			ver, err = w.runDDLJob(d, t, &proxyJob)
+			sub.FromProxyJob(&proxyJob)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
 		}
@@ -107,8 +111,8 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 			subJobs[i] = *sub
 			proxyJob := sub.ToProxyJob(job)
-			ver, err = w.runDDLJob(d, t, proxyJob)
-			sub.FromProxyJob(proxyJob)
+			ver, err = w.runDDLJob(d, t, &proxyJob)
+			sub.FromProxyJob(&proxyJob)
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
@@ -129,8 +133,8 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			continue
 		}
 		proxyJob := sub.ToProxyJob(job)
-		ver, err = w.runDDLJob(d, t, proxyJob)
-		sub.FromProxyJob(proxyJob)
+		ver, err = w.runDDLJob(d, t, &proxyJob)
+		sub.FromProxyJob(&proxyJob)
 		return ver, err
 	}
 	job.State = model.JobStateDone
@@ -152,6 +156,22 @@ func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror
 			sub.State = model.JobStateCancelled
 		}
 	}
+}
+
+func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
+	if runJobErr != nil {
+		// The physical errors are not recoverable during rolling back.
+		// We keep retrying it.
+		return runJobErr
+	}
+	if proxyJobErr != nil {
+		if proxyJobErr.Equal(dbterror.ErrCancelledDDLJob) {
+			// A cancelled DDL error is normal during rolling back.
+			return nil
+		}
+		return proxyJobErr
+	}
+	return nil
 }
 
 func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
@@ -179,6 +199,39 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		info.AddColumns = append(info.AddColumns, col.Name)
 		for colName := range col.Dependences {
 			info.RelativeColumns = append(info.RelativeColumns, model.CIStr{L: colName, O: colName})
+		}
+		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
+			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
+		}
+	case model.ActionDropColumn:
+		colName := job.Args[0].(model.CIStr)
+		info.DropColumns = append(info.DropColumns, colName)
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
+		indexName := job.Args[0].(model.CIStr)
+		info.DropIndexes = append(info.DropIndexes, indexName)
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		indexName := job.Args[1].(model.CIStr)
+		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
+		info.AddIndexes = append(info.AddIndexes, indexName)
+		for _, indexPartSpecification := range indexPartSpecifications {
+			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
+		}
+		if hiddenCols, ok := job.Args[4].([]*model.ColumnInfo); ok {
+			for _, c := range hiddenCols {
+				for depColName := range c.Dependences {
+					info.RelativeColumns = append(info.RelativeColumns, model.NewCIStr(depColName))
+				}
+			}
+		}
+	case model.ActionModifyColumn:
+		newCol := *job.Args[0].(**model.ColumnInfo)
+		oldColName := job.Args[1].(model.CIStr)
+		pos := job.Args[2].(*ast.ColumnPosition)
+		if newCol.Name.L != oldColName.L {
+			info.AddColumns = append(info.AddColumns, newCol.Name)
+			info.DropColumns = append(info.DropColumns, oldColName)
+		} else {
+			info.ModifyColumns = append(info.ModifyColumns, newCol.Name)
 		}
 		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)

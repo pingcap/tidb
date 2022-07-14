@@ -17,8 +17,11 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
@@ -450,4 +453,45 @@ func TestIssue35296(t *testing.T) {
 	require.NotRegexp(t, "^time:0s", rows[3][5])
 	require.NotRegexp(t, "^time:0s", rows[4][5])
 	require.NotRegexp(t, "^time:0s", rows[5][5])
+}
+
+func TestIssue35911(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int, index ia(a));")
+	tk.MustExec("insert into t1 value (1,1), (2,2), (3,3), (4,4), (5,5), (6,6);")
+	tk.MustExec("insert into t2 value (1,1), (2,2), (3,3), (4,4), (5,5), (6,6);")
+	tk.MustExec("set @@tidb_executor_concurrency = 5;")
+
+	// case 1 of #35911
+	tk.MustExec("set @@tidb_enable_parallel_apply = 0;")
+	rows := tk.MustQuery("explain analyze select * from t1 where exists (select tt1.* from (select * from t2 where a = t1.b) as tt1 join (select * from t2 where a = t1.b) as tt2 on tt1.b = tt2.b);").Rows()
+
+	extractTime, err := regexp.Compile("^time:(.*?),")
+	require.NoError(t, err)
+	timeStr1 := extractTime.FindStringSubmatch(rows[4][5].(string))[1]
+	time1, err := time.ParseDuration(timeStr1)
+	require.NoError(t, err)
+	timeStr2 := extractTime.FindStringSubmatch(rows[5][5].(string))[1]
+	time2, err := time.ParseDuration(timeStr2)
+	require.NoError(t, err)
+	// The duration of IndexLookUp should be longer than its build side child
+	require.LessOrEqual(t, time2, time1)
+
+	// case 2 of #35911
+	tk.MustExec("set @@tidb_enable_parallel_apply = 1;")
+	rows = tk.MustQuery("explain analyze select * from t1 where exists (select tt1.* from (select * from t2 where a = t1.b) as tt1 join (select * from t2 where a = t1.b) as tt2 on tt1.b = tt2.b);").Rows()
+
+	extractConcurrency, err := regexp.Compile(`table_task: [{].*concurrency: (\d+)[}]`)
+	require.NoError(t, err)
+	concurrencyStr := extractConcurrency.FindStringSubmatch(rows[4][5].(string))[1]
+	concurrency, err := strconv.ParseInt(concurrencyStr, 10, 64)
+	require.NoError(t, err)
+	// To be consistent with other operators, we should not aggregate the concurrency in the runtime stats.
+	require.EqualValues(t, 5, concurrency)
 }

@@ -53,8 +53,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mathutil"
 	pd "github.com/tikv/pd/client"
@@ -431,7 +433,6 @@ outside:
 			break outside
 		default:
 			logger.Error("run failed")
-			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			break outside // ps : not continue
 		}
 	}
@@ -726,6 +727,20 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// For local backend, we need DBInfo.ID to operate the global autoid allocator.
+	if rc.isLocalBackend() {
+		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		dbIDs := make(map[string]int64)
+		for _, db := range dbs {
+			dbIDs[db.Name.L] = db.ID
+		}
+		for _, dbInfo := range dbInfos {
+			dbInfo.ID = dbIDs[strings.ToLower(dbInfo.Name)]
+		}
+	}
 	rc.dbInfos = dbInfos
 
 	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
@@ -916,7 +931,6 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 
 	switch {
 	case err == nil:
-		break
 	case utils.MessageIsRetryableStorageError(err.Error()), common.IsContextCanceledError(err):
 		// recoverable error, should not be recorded in checkpoint
 		// which will prevent lightning from automatically recovering
@@ -1252,7 +1266,9 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 		}
 }
 
-var checksumManagerKey struct{}
+type checksumManagerKeyType struct{}
+
+var checksumManagerKey checksumManagerKeyType
 
 const (
 	pauseGCTTLForDupeRes      = time.Hour
@@ -1380,13 +1396,17 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	switchBack := false
 	cleanup := false
 	postProgress := func() error { return nil }
-	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
-		var restoreFn pdutil.UndoFunc
+	var kvStore tidbkv.Storage
+
+	if rc.isLocalBackend() {
+		var (
+			restoreFn pdutil.UndoFunc
+			err       error
+		)
 
 		if !rc.taskMgr.CanPauseSchedulerByKeyRange() {
 			logTask.Info("removing PD leader&region schedulers")
 
-			var err error
 			restoreFn, err = rc.taskMgr.CheckAndPausePdSchedulers(ctx)
 			if err != nil {
 				return errors.Trace(err)
@@ -1416,6 +1436,20 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				rc.taskMgr.Close()
 			}
 		}
+
+		// Disable GC because TiDB enables GC already.
+		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
+			fmt.Sprintf("tikv://%s?disableGC=true", rc.cfg.TiDB.PdAddr),
+			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		manager, err := newChecksumManager(ctx, rc, kvStore)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 	}
 
 	type task struct {
@@ -1460,28 +1494,28 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(err))
 			}
 		}
+		if kvStore != nil {
+			if err := kvStore.Close(); err != nil {
+				logTask.Warn("failed to close kv store", zap.Error(err))
+			}
+		}
 	}()
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
 	defer close(taskCh)
 
-	manager, err := newChecksumManager(ctx, rc)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ctx2 := context.WithValue(ctx, &checksumManagerKey, manager)
 	for i := 0; i < rc.cfg.App.IndexConcurrency; i++ {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
-				needPostProcess, err := task.tr.restoreTable(ctx2, rc, task.cp)
+				needPostProcess, err := task.tr.restoreTable(ctx, rc, task.cp)
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
-				if m, ok := metric.FromContext(ctx2); ok {
+				if m, ok := metric.FromContext(ctx); ok {
 					m.RecordTableCount(metric.TableStateCompleted, err)
 				}
 				restoreErr.Set(err)
@@ -1511,7 +1545,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), log.FromContext(ctx))
+			tr, err := NewTableRestore(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, log.FromContext(ctx))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1549,7 +1583,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	// if context is done, should return directly
 	select {
 	case <-ctx.Done():
-		err = restoreErr.Get()
+		err := restoreErr.Get()
 		if err == nil {
 			err = ctx.Err()
 		}
@@ -1568,7 +1602,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				for task := range postProcessTaskChan {
 					metaMgr := rc.metaMgrBuilder.TableMetaMgr(task.tr)
 					// force all the remain post-process tasks to be executed
-					_, err2 := task.tr.postProcess(ctx2, rc, task.cp, true, metaMgr)
+					_, err2 := task.tr.postProcess(ctx, rc, task.cp, true, metaMgr)
 					restoreErr.Set(err2)
 				}
 			}()
@@ -1610,9 +1644,6 @@ func (tr *TableRestore) restoreTable(
 			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
-		}
-		if rowIDMax > tr.curMaxRowID {
-			tr.curMaxRowID = rowIDMax
 		}
 		db, _ := rc.tidbGlue.GetDB()
 		versionStr, err := version.FetchVersion(ctx, db)
@@ -2056,16 +2087,9 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 }
 
 type chunkRestore struct {
-	parser           mydump.Parser
-	index            int
-	chunk            *checkpoints.ChunkCheckpoint
-	originalRowIDMax int64
-	curRowIDBase     int64
-	curRowIDMax      int64
-	tableRestore     *TableRestore
-
-	rowCount       int
-	curAccmRowSize uint64 // has a maximum of 18446744.07370955 TB
+	parser mydump.Parser
+	index  int
+	chunk  *checkpoints.ChunkCheckpoint
 }
 
 func newChunkRestore(
@@ -2076,7 +2100,6 @@ func newChunkRestore(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tableInfo *checkpoints.TidbTableInfo,
-	tableRestore *TableRestore,
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 
@@ -2123,16 +2146,14 @@ func newChunkRestore(
 	}
 
 	return &chunkRestore{
-		parser:           parser,
-		index:            index,
-		chunk:            chunk,
-		originalRowIDMax: chunk.Chunk.RowIDMax,
-		tableRestore:     tableRestore,
+		parser: parser,
+		index:  index,
+		chunk:  chunk,
 	}, nil
 }
 
 func (cr *chunkRestore) close() {
-	cr.parser.Close()
+	_ = cr.parser.Close()
 }
 
 func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
@@ -2180,52 +2201,13 @@ type deliverResult struct {
 	err      error
 }
 
-func (cr *chunkRestore) adjustRowID(rowID int64, rc *Controller) (int64, error) {
-	if rowID <= cr.originalRowIDMax {
-		// no need to ajust
-		return rowID, nil
-	}
-	// need to adjust rowID
-	// rowID should be within [curRowIDBase, curRowIDMax]
-	if cr.curRowIDBase == 0 || cr.curRowIDBase > cr.curRowIDMax {
-		logger := cr.tableRestore.logger.With(
-			zap.String("tableName", cr.tableRestore.tableName),
-			zap.Int("fileIndex", cr.index),
-			zap.Stringer("path", &cr.chunk.Key),
-			zap.String("task", "re-allocate rowID"),
-		)
-		logger.Info("start re-allocating")
-		// 1. curRowIDBase == 0 -> no previous re-allocation
-		// 2. curRowIDBase > curRowIDMax -> run out of allocated IDs
-		pos, _ := cr.parser.Pos()
-		leftFileSize := cr.chunk.Chunk.EndOffset - pos
-		avgRowSize := cr.curAccmRowSize / uint64(cr.rowCount)
-		newRowIDCount := leftFileSize/int64(avgRowSize) + 1 // plus the current row
-		newBase, newMax, err := cr.tableRestore.allocateRowIDs(newRowIDCount, rc)
-		if err != nil {
-			logger.Error("fail to re-allocate rowIDs", zap.Error(err))
-			return 0, err
-		}
-		cr.curRowIDBase = newBase
-		cr.curRowIDMax = newMax
-	}
-	rowID = cr.curRowIDBase
-	cr.curRowIDBase++
-	return rowID, nil
-}
-
-func (cr *chunkRestore) updateRowStats(rowSize int) {
-	cr.curAccmRowSize += uint64(rowSize)
-	cr.rowCount++
-}
-
 //nolint:nakedret // TODO: refactor
 func (cr *chunkRestore) deliverLoop(
 	ctx context.Context,
 	kvsCh <-chan []deliveredKVs,
 	t *TableRestore,
 	engineID int32,
-	dataWriter, indexWriter *backend.LocalEngineWriter,
+	dataEngine, indexEngine *backend.LocalEngineWriter,
 	rc *Controller,
 ) (deliverTotalDur time.Duration, err error) {
 	deliverLogger := t.logger.With(
@@ -2249,6 +2231,7 @@ func (cr *chunkRestore) deliverLoop(
 		startOffset := cr.chunk.Chunk.Offset
 		currOffset := startOffset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
+
 	populate:
 		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
 			select {
@@ -2283,7 +2266,7 @@ func (cr *chunkRestore) deliverLoop(
 			for !rc.diskQuotaLock.TryRLock() {
 				// try to update chunk checkpoint, this can help save checkpoint after importing when disk-quota is triggered
 				if !dataSynced {
-					dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataWriter, indexWriter)
+					dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
 				}
 				time.Sleep(time.Millisecond)
 			}
@@ -2292,14 +2275,14 @@ func (cr *chunkRestore) deliverLoop(
 			// Write KVs into the engine
 			start := time.Now()
 
-			if err = dataWriter.WriteRows(ctx, columns, dataKVs); err != nil {
+			if err = dataEngine.WriteRows(ctx, columns, dataKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to data engine failed", log.ShortError(err))
 				}
 
 				return errors.Trace(err)
 			}
-			if err = indexWriter.WriteRows(ctx, columns, indexKVs); err != nil {
+			if err = indexEngine.WriteRows(ctx, columns, indexKVs); err != nil {
 				if !common.IsContextCanceledError(err) {
 					deliverLogger.Error("write to index engine failed", log.ShortError(err))
 				}
@@ -2341,7 +2324,7 @@ func (cr *chunkRestore) deliverLoop(
 
 		if currOffset > lastOffset || dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
-			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataWriter, indexWriter)
+			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
 		}
 		failpoint.Inject("SlowDownWriteRows", func() {
 			deliverLogger.Warn("Slowed down write rows")
@@ -2512,11 +2495,6 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
-			if lastRow.RowID, err = cr.adjustRowID(lastRow.RowID, rc); err != nil {
-				return
-			}
-			cr.updateRowStats(lastRow.Length)
-			rowID = lastRow.RowID
 			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)
 
@@ -2579,7 +2557,7 @@ func (cr *chunkRestore) restore(
 	ctx context.Context,
 	t *TableRestore,
 	engineID int32,
-	dataWriter, indexWriter *backend.LocalEngineWriter,
+	dataEngine, indexEngine *backend.LocalEngineWriter,
 	rc *Controller,
 ) error {
 	// Create the encoder.
@@ -2600,7 +2578,7 @@ func (cr *chunkRestore) restore(
 
 	go func() {
 		defer close(deliverCompleteCh)
-		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataWriter, indexWriter, rc)
+		dur, err := cr.deliverLoop(ctx, kvsCh, t, engineID, dataEngine, indexEngine, rc)
 		select {
 		case <-ctx.Done():
 		case deliverCompleteCh <- deliverResult{dur, err}:

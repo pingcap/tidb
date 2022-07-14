@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -79,6 +79,7 @@ type TableReaderExecutor struct {
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
+	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	// columns are only required by union scan and virtual column.
@@ -332,6 +333,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
+			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -370,6 +372,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -400,6 +403,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -418,9 +422,9 @@ func buildVirtualColumnIndex(schema *expression.Schema, columns []*model.ColumnI
 			virtualColumnIndex = append(virtualColumnIndex, i)
 		}
 	}
-	sort.Slice(virtualColumnIndex, func(i, j int) bool {
-		return plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[i]].ID).Offset <
-			plannercore.FindColumnInfoByID(columns, schema.Columns[virtualColumnIndex[j]].ID).Offset
+	slices.SortFunc(virtualColumnIndex, func(i, j int) bool {
+		return plannercore.FindColumnInfoByID(columns, schema.Columns[i].ID).Offset <
+			plannercore.FindColumnInfoByID(columns, schema.Columns[j].ID).Offset
 	})
 	return virtualColumnIndex
 }

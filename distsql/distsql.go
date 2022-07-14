@@ -113,16 +113,17 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
 	return &selectResult{
-		label:      "dag",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        sctx,
-		feedback:   fb,
-		sqlType:    label,
-		memTracker: kvReq.MemTracker,
-		storeType:  kvReq.StoreType,
-		paging:     kvReq.Paging,
+		label:              "dag",
+		resp:               resp,
+		rowLen:             len(fieldTypes),
+		fieldTypes:         fieldTypes,
+		ctx:                sctx,
+		feedback:           fb,
+		sqlType:            label,
+		memTracker:         kvReq.MemTracker,
+		storeType:          kvReq.StoreType,
+		paging:             kvReq.Paging,
+		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }
 
@@ -154,6 +155,8 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
+	kvReq.RequestSource.RequestSourceInternal = true
+	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")

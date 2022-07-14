@@ -36,8 +36,7 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"net/http"
-
+	"net/http" //nolint:goimports
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -718,6 +717,7 @@ func killConn(conn *clientConn) {
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
+
 	if cancelFunc != nil {
 		cancelFunc()
 	}

@@ -807,7 +807,7 @@ func evaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 		for i, arg := range x.GetArgs() {
 			args[i] = evaluateExprWithNull(ctx, schema, arg)
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
+		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
 			return x
@@ -1043,7 +1043,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return true
 		}
 	case
-		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift,
 		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
@@ -1059,7 +1059,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad, ast.Regexp,
-		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond:
+		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
+		ast.TimeToSec:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_InDuration,
 			tipb.ScalarFuncSig_CoalesceDuration,
@@ -1069,7 +1070,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return false
 		}
 		return true
-	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex, ast.Space:
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex, ast.Reverse, ast.Space:
 		switch function.Function.PbCode() {
 		case
 			tipb.ScalarFuncSig_LeftUTF8,
@@ -1078,6 +1079,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_Substring2ArgsUTF8,
 			tipb.ScalarFuncSig_Substring3ArgsUTF8,
 			tipb.ScalarFuncSig_SubstringIndex,
+			tipb.ScalarFuncSig_ReverseUTF8,
+			tipb.ScalarFuncSig_Reverse,
 			tipb.ScalarFuncSig_Space:
 			return true
 		}

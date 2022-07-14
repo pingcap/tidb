@@ -10,11 +10,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/soheilhy/cmux"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/soheilhy/cmux"
 )
 
 var cmuxReadTimeout = 10 * time.Second
