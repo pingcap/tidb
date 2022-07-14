@@ -232,7 +232,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.TxnScope:
 		txn.SetScope(val.(string))
 	case kv.IsStalenessReadOnly:
-		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+		txn.KVTxn.GetSnapshot().SetIsStalenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
