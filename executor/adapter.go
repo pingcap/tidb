@@ -470,7 +470,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
-	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
+	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		return result, err
 	}
 
@@ -929,7 +929,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	succ := err == nil
 	if a.Plan != nil {
-		// When it comes here, the Plan should have been set, but we set it again in case we missed some code paths.
+		// If this statement has a Plan, the StmtCtx.plan should have been set when it comes here,
+		// but we set it again in case we missed some code paths.
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.

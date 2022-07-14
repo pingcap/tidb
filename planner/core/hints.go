@@ -59,7 +59,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 }
 
 // GenHintsFromPhysicalPlan generates hints from physical plan.
-// Deprecated: Use FlattenPhysicalPlan() and GenHintsFromFlatPlan() is preferred.
+// Deprecated: FlattenPhysicalPlan() + GenHintsFromFlatPlan() is preferred.
 func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
 	var hints []*ast.TableOptimizerHint
 	switch pp := p.(type) {
