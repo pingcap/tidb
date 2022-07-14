@@ -1958,7 +1958,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
-			logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err), zap.String("SQL", stmtNode.Text()))
+			if !variable.ErrUnknownSystemVar.Equal(err) {
+				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
+					zap.String("SQL", stmtNode.Text()))
+			}
 		}
 		return nil, err
 	}
@@ -2309,6 +2312,7 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 
 	stmt.Text = prepared.Stmt.Text()
 	stmtCtx.OriginalSQL = stmt.Text
+	stmtCtx.SetPlan(execPlan)
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
 	logGeneralQuery(stmt, s, false)
@@ -2800,6 +2804,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	dom.DumpFileGcCheckerLoop()
+	dom.LoadSigningCertLoop()
 
 	if raw, ok := store.(kv.EtcdBackend); ok {
 		err = raw.StartGCWorker()

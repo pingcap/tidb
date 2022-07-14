@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/util/paging"
 	"go.uber.org/atomic"
 )
 
@@ -363,6 +364,9 @@ const (
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
 
+	// TiDBMinPagingSize is used to control the min paging size in the coprocessor paging protocol.
+	TiDBMinPagingSize = "tidb_min_paging_size"
+
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -430,9 +434,6 @@ const (
 	// TiDBDDLReorgPriority defines the operations' priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
-
-	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
-	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
 
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
@@ -753,6 +754,10 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
+	TiDBAuthSigningCert = "tidb_auth_signing_cert"
+	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
+	TiDBAuthSigningKey = "tidb_auth_signing_key"
 )
 
 // TiDB intentional limits
@@ -818,6 +823,7 @@ const (
 	DefBatchCommit                                 = false
 	DefCurretTS                                    = 0
 	DefInitChunkSize                               = 32
+	DefMinPagingSize                               = int(paging.MinPagingSize)
 	DefMaxChunkSize                                = 1024
 	DefDMLBatchSize                                = 0
 	DefMaxPreparedStmtCount                        = -1
@@ -849,7 +855,6 @@ const (
 	DefTiDBDDLReorgBatchSize                       = 256
 	DefTiDBDDLErrorCountLimit                      = 512
 	DefTiDBMaxDeltaSchemaCount                     = 1024
-	DefTiDBChangeMultiSchema                       = false
 	DefTiDBPointGetCache                           = false
 	DefTiDBPlacementMode                           = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated          = false
@@ -987,7 +992,6 @@ var (
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
 	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
-	EnableChangeMultiSchema               = atomic.NewBool(DefTiDBChangeMultiSchema)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)
