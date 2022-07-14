@@ -671,7 +671,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, size)
 	selected := make([]bool, 0, size)
 	// 3. Calculate the TopN part selectivity.
-	// This stage is considered the core functionality of this method, errors in this stage would make this entire method fail.
+	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
 	var topNSelectedCnt uint64
 	if topn != nil {
 		for _, item := range topn.TopN {

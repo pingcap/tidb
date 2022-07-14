@@ -434,7 +434,7 @@ OUTER:
 	}
 
 	strMatchSFCoverCnt := 0
-	// Try to use TopN to evaluation to estimate the selectivity.
+	// Try to evaluate the expressions with TopN to estimate the selectivity.
 	// Currently, it's only for `like` and `regexp`.
 	if ctx.GetSessionVars().EnableEvalTopNEstimationForStrMatch() {
 		for i, scalarCond := range notCoveredStrMatch {
