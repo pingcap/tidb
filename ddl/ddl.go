@@ -267,8 +267,8 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(job *model.Job) {
 	if !exists {
 		ctx = NewJobContext()
 		dc.jobCtx.jobCtxMap[job.ID] = ctx
-		ctx.setDDLLabelForTopSQL(job)
 	}
+	ctx.setDDLLabelForTopSQL(job)
 }
 
 func (dc *ddlCtx) setDDLSourceForDiagnosis(job *model.Job) {
