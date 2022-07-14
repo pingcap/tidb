@@ -534,6 +534,19 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		" PARTITION `pMid` VALUES IN (9) COMMENT 'another comment',\n"+
 		" PARTITION `pMax` VALUES IN (10,11,12))",
 	))
+	tk.MustQuery("select @@tidb_enable_simplified_show_create_table").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_simplified_show_create_table = on")
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` int(11) DEFAULT NULL,\n"+
+		"  `b` varchar(255) DEFAULT NULL\n"+
+		") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PLACEMENT POLICY=`x`\n"+
+		"PARTITION BY LIST (`a`)\n"+
+		"(PARTITION `pLow` VALUES IN (1,2,3,5,8) COMMENT 'a comment' PLACEMENT POLICY=`x`,\n"+
+		" PARTITION `pMid` VALUES IN (9) COMMENT 'another comment',\n"+
+		" PARTITION `pMax` VALUES IN (10,11,12))",
+	))
+	tk.MustExec("set tidb_enable_simplified_show_create_table = off")
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec("create table t(a int, b varchar(255))" +
@@ -1337,6 +1350,15 @@ func TestAutoIdCache(t *testing.T) {
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
 	))
+	tk.MustQuery("select @@tidb_enable_simplified_show_create_table").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_simplified_show_create_table = on")
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`a`) CLUSTERED\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_ID_CACHE=5",
+	))
 }
 
 func TestShowCreateStmtIgnoreLocalTemporaryTables(t *testing.T) {
@@ -1383,7 +1405,7 @@ func TestAutoRandomBase(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
+	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100 auto_id_cache 5000")
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
@@ -1391,7 +1413,7 @@ func TestAutoRandomBase(t *testing.T) {
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_id_cache] AUTO_ID_CACHE=5000 */ /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
 	))
 
 	tk.MustExec("insert into t(`a`) values (1000)")
@@ -1402,7 +1424,19 @@ func TestAutoRandomBase(t *testing.T) {
 			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n"+
 			"  UNIQUE KEY `b` (`b`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_id_cache] AUTO_ID_CACHE=5000 */ /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
+	))
+
+	tk.MustQuery("select @@tidb_enable_simplified_show_create_table").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_enable_simplified_show_create_table = on")
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` bigint(20) NOT NULL AUTO_RANDOM(5),\n"+
+			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`) CLUSTERED,\n"+
+			"  UNIQUE KEY `b` (`b`)\n"+
+			") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 AUTO_ID_CACHE=5000 AUTO_RANDOM_BASE=6001",
 	))
 }
 
