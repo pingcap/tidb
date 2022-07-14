@@ -645,13 +645,13 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	}
 	tbl := e.Table.Meta()
 	// Handle exchange partition
-	if tbl.ExchangePartitionFlag {
+	if tbl.ExchangePartitionInfo.ExchangePartitionFlag {
 		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		pt, tableFound := is.TableByID(tbl.ExchangePartitionId)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionId)
 		if !tableFound {
 			return nil, errors.Errorf("exchange partition with table TableByID Failed")
 		}
-		err := pt.(table.PartitionedTable).CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionDefId)
+		err := pt.(table.PartitionedTable).CheckForExchangePartition(e.ctx, pt.Meta().Partition, row, tbl.ExchangePartitionInfo.ExchangePartitionDefId)
 		if err != nil {
 			return nil, err
 		}

@@ -83,13 +83,13 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// Handle exchange partition
 	tbl := t.Meta()
-	if tbl.ExchangePartitionFlag {
+	if tbl.ExchangePartitionInfo.ExchangePartitionFlag {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		pt, tableFound := is.TableByID(tbl.ExchangePartitionId)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionId)
 		if !tableFound {
 			return false, errors.Errorf("exchange partition with table TableByID Failed")
 		}
-		err := pt.(table.PartitionedTable).CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionDefId)
+		err := pt.(table.PartitionedTable).CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionInfo.ExchangePartitionDefId)
 		if err != nil {
 			return false, err
 		}

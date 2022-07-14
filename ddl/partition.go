@@ -1389,7 +1389,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	if !nt.ExchangePartitionFlag {
+	if !nt.ExchangePartitionInfo.ExchangePartitionFlag {
 		if withValidation {
 			err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 			if err != nil {
@@ -1397,9 +1397,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(err)
 			}
 		}
-		nt.ExchangePartitionFlag = true
-		nt.ExchangePartitionId = ptID
-		nt.ExchangePartitionDefId = defID
+		nt.ExchangePartitionInfo.ExchangePartitionFlag = true
+		nt.ExchangePartitionInfo.ExchangePartitionId = ptID
+		nt.ExchangePartitionInfo.ExchangePartitionDefId = defID
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
 
@@ -1545,7 +1545,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
-	nt.ExchangePartitionFlag = false
+	nt.ExchangePartitionInfo.ExchangePartitionFlag = false
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
 		return ver, errors.Trace(err)
