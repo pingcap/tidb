@@ -109,16 +109,14 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
-	js, err := json.MarshalIndent(data, "", " ")
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	// write response
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
-	_, err = w.Write(js)
-	terror.Log(errors.Trace(err))
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", " ")
+	if err := encoder.Encode(data); err != nil {
+		terror.Log(errors.Trace(err))
+		writeError(w, err)
+	}
 }
 
 type tikvHandlerTool struct {
