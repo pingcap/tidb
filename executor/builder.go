@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -988,7 +989,52 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		if len(v.Statement.(*ast.AlterTableStmt).Specs) > 1 && b.Ti != nil {
 			b.Ti.UseMultiSchemaChange = true
 		}
+	case *ast.CreateTableStmt:
+		stmt := v.Statement.(*ast.CreateTableStmt)
+		if stmt != nil && stmt.Partition != nil {
+			if strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
+				break
+			}
+
+			s := stmt.Partition
+			b.Ti.PartitionTelemetry.UseTablePartitionMaxPartition = int64(s.Num)
+			b.Ti.PartitionTelemetry.UseTablePartition = true
+			switch s.Tp {
+			case model.PartitionTypeRange:
+				if s.Sub == nil {
+					if s.ColumnNames == nil {
+						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
+					}
+					if len(s.ColumnNames) == 1 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
+					}
+					if len(s.ColumnNames) > 1 {
+						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
+					}
+				}
+			case model.PartitionTypeHash:
+				if !s.Linear && s.Sub == nil {
+					b.Ti.PartitionTelemetry.UseTablePartitionHash = true
+				}
+			case model.PartitionTypeList:
+				enable := b.ctx.GetSessionVars().EnableListTablePartition
+				if s.Sub == nil && enable {
+					if s.ColumnNames == nil {
+						b.Ti.PartitionTelemetry.UseTablePartitionList = true
+					}
+					if len(s.ColumnNames) == 1 {
+						b.Ti.PartitionTelemetry.UseTablePartitionList = true
+					}
+					if len(s.ColumnNames) > 1 {
+						b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
+					}
+				}
+
+			}
+		}
 	}
+
 	e := &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,

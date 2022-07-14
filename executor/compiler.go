@@ -99,7 +99,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
+		Ti:            &TelemetryInfo{PartitionTelemetry: &PartitionTelemetryInfo{}},
 	}, nil
 }
 

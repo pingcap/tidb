@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -34,6 +35,55 @@ var (
 			Subsystem: "telemetry",
 			Name:      "multi_schema_change_usage",
 			Help:      "Counter of usage of multi-schema change",
+		})
+	TelemetryTablePartitionCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_usage",
+			Help:      "Counter of usage of table partition",
+		})
+	TelemetryTablePartitionListCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_list_usage",
+			Help:      "Counter of usage of table partition list",
+		})
+	TelemetryTablePartitionRangeCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_usage",
+			Help:      "Counter of usage of table partition range",
+		})
+	TelemetryTablePartitionHashCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_hash_usage",
+			Help:      "Counter of usage of table partition hash",
+		})
+	TelemetryTablePartitionRangeColumnsCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_range_columns_usage",
+			Help:      "Counter of usage of table partition range columns",
+		})
+	TelemetryTablePartitionListColumnsCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_list_columns_usage",
+			Help:      "Counter of usage of table list columns partition list columns",
+		})
+	TelemetryTablePartitionMaxPartition = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "table_partition_max_partition_usage",
+			Help:      "Counter of usage of table partition max partition",
 		})
 )
 
@@ -91,6 +141,56 @@ func (c MultiSchemaChangeUsageCounter) Sub(rhs MultiSchemaChangeUsageCounter) Mu
 func GetMultiSchemaCounter() MultiSchemaChangeUsageCounter {
 	return MultiSchemaChangeUsageCounter{
 		MultiSchemaChangeUsed: readCounter(TelemetryMultiSchemaChangeCnt),
+	}
+}
+
+// TablePartitionUsageCounter records the usages of table partition.
+type TablePartitionUsageCounter struct {
+	TablePartitionUsed             int64 `json:"table_partition_used"`
+	TablePartitionListUsed         int64 `json:"table_partition_list_used"`
+	TablePartitionRangeUsed        int64 `json:"table_partition_range_used"`
+	TablePartitionHashUsed         int64 `json:"table_partition_hash_used"`
+	TablePartitionRangeColumnsUsed int64 `json:"table_partition_range_columns_used"`
+	TablePartitionListColumnsUsed  int64 `json:"table_partition_list_columns_used"`
+	TablePartitionMaxPartitionUsed int64 `json:"table_partition_max_partition_used"`
+}
+
+// Cal returns the difference of two counters.
+func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePartitionUsageCounter {
+	return TablePartitionUsageCounter{
+		TablePartitionUsed:             c.TablePartitionUsed - rhs.TablePartitionUsed,
+		TablePartitionListUsed:         c.TablePartitionListUsed - rhs.TablePartitionListUsed,
+		TablePartitionRangeUsed:        c.TablePartitionRangeUsed - rhs.TablePartitionRangeUsed,
+		TablePartitionHashUsed:         c.TablePartitionHashUsed - rhs.TablePartitionHashUsed,
+		TablePartitionRangeColumnsUsed: c.TablePartitionRangeColumnsUsed - rhs.TablePartitionRangeColumnsUsed,
+		TablePartitionListColumnsUsed:  c.TablePartitionListColumnsUsed - rhs.TablePartitionListColumnsUsed,
+		TablePartitionMaxPartitionUsed: mathutil.Max(c.TablePartitionMaxPartitionUsed-rhs.TablePartitionMaxPartitionUsed, rhs.TablePartitionMaxPartitionUsed),
+	}
+}
+
+// ResetTablePartitionCounter gets the TxnCommitCounter.
+func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUsageCounter {
+	return TablePartitionUsageCounter{
+		TablePartitionUsed:             readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListUsed:         readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeUsed:        readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashUsed:         readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsUsed: readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionListColumnsUsed:  readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionUsed: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartition)-pre.TablePartitionMaxPartitionUsed, pre.TablePartitionMaxPartitionUsed),
+	}
+}
+
+// GetTablePartitionCounter gets the TxnCommitCounter.
+func GetTablePartitionCounter() TablePartitionUsageCounter {
+	return TablePartitionUsageCounter{
+		TablePartitionUsed:             readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListUsed:         readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeUsed:        readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashUsed:         readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsUsed: readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionListColumnsUsed:  readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionUsed: readCounter(TelemetryTablePartitionMaxPartition),
 	}
 }
 

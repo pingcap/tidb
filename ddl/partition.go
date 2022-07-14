@@ -415,10 +415,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
 		return nil
 	}
-
-	// telemetry for partition table.
-	// partition table total number and different type of partition table number.
-
 	var enable bool
 	switch s.Tp {
 	case model.PartitionTypeRange:

@@ -47,6 +47,7 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
 }
 
 type placementPolicyUsage struct {
@@ -72,6 +73,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.CTE = getCTEUsageInfo()
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
+
+	usage.TablePartition = getTablePartitionUsageInfo()
 
 	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
 
@@ -205,6 +208,7 @@ var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialTablePartitionCounter m.TablePartitionUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -255,6 +259,16 @@ func postReportMultiSchemaChangeUsage() {
 func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	curr := m.GetMultiSchemaCounter()
 	diff := curr.Sub(initialMultiSchemaChangeCounter)
+	return &diff
+}
+
+func postReportTablePartitionUsage() {
+	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
+}
+
+func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
+	curr := m.GetTablePartitionCounter()
+	diff := curr.Cal(initialTablePartitionCounter)
 	return &diff
 }
 
