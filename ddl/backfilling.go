@@ -609,6 +609,16 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	}()
 	jc := w.jobContext(job)
 
+	// ctx, err := w.sessPool.get()
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// defer w.sessPool.put(ctx)
+	// if !utils.IsLogBackupEnabled(ctx.(sqlexec.RestrictedSQLExecutor)) {
+	// 	// fallback
+	// 	return nil
+	// }
+
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
 		if err != nil {
