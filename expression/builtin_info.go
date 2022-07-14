@@ -21,6 +21,7 @@ package expression
 import (
 	"context"
 	"encoding/json"
+	"github.com/pingcap/tidb/parser/ast"
 	"strings"
 	"time"
 
@@ -938,8 +939,12 @@ func (c *tidbDecodePlanFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBDecodePlanSig{bf}
-	return sig, nil
+	if c.funcName == ast.TiDBDecodePlan {
+		return &builtinTiDBDecodePlanSig{bf}, nil
+	} else if c.funcName == ast.TiDBDecodeBinaryPlan {
+		return &builtinTiDBDecodeBinaryPlanSig{bf}, nil
+	}
+	return nil, errors.New("unknown decode plan function")
 }
 
 type builtinTiDBDecodePlanSig struct {
@@ -960,6 +965,29 @@ func (b *builtinTiDBDecodePlanSig) evalString(row chunk.Row) (string, bool, erro
 	planTree, err := plancodec.DecodePlan(planString)
 	if err != nil {
 		return planString, false, nil
+	}
+	return planTree, false, nil
+}
+
+type builtinTiDBDecodeBinaryPlanSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBDecodeBinaryPlanSig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodeBinaryPlanSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBDecodeBinaryPlanSig) evalString(row chunk.Row) (string, bool, error) {
+	planString, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	planTree, err := plancodec.DecodeBinaryPlan(planString)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		return "", false, nil
 	}
 	return planTree, false, nil
 }
