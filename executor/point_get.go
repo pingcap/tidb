@@ -240,6 +240,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 
+			// lockNonExistIdxKey indicates the key will be locked regardless of its existence.
+			lockNonExistIdxKey := !e.ctx.GetSessionVars().IsPessimisticReadConsistency()
+			// Non-exist keys are also locked if the isolation level is not read consistency,
+			// lock it before read here, then it's able to read from pessimistic lock cache.
+			if lockNonExistIdxKey {
+				err = e.lockKeyIfNeeded(ctx, e.idxKey)
+				if err != nil {
+					return err
+				}
+			}
+
 			e.handleVal, err = e.get(ctx, e.idxKey)
 			if err != nil {
 				if !kv.ErrNotExist.Equal(err) {
@@ -247,12 +258,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 			}
 
-			// try lock the index key if isolation level is not read consistency
 			// also lock key if read consistency read a value
-			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
-				err = e.lockKeyIfNeeded(ctx, e.idxKey)
-				if err != nil {
-					return err
+			// TODO: pessimistic lock support lock-if-exist.
+			if lockNonExistIdxKey || len(e.handleVal) > 0 {
+				if !lockNonExistIdxKey {
+					err = e.lockKeyIfNeeded(ctx, e.idxKey)
+					if err != nil {
+						return err
+					}
 				}
 				// Change the unique index LOCK into PUT record.
 				if e.lock && len(e.handleVal) > 0 {
@@ -380,7 +393,7 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 			return err
 		}
 		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
-			seVars.TxnCtx.SetPessimisticLockCache(kv.Key(k), v)
+			seVars.TxnCtx.SetPessimisticLockCache(k, v)
 		})
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
