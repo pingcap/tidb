@@ -208,12 +208,24 @@ type StatementContext struct {
 	// BindSQL used to construct the key for plan cache. It records the binding used by the stmt.
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
-	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized        string
-	planDigest            *parser.Digest
-	encodedPlan           string
-	planHint              string
-	planHintSet           bool
+
+	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
+	// We cache the values here to avoid calculating them multiple times.
+	// Note:
+	//   Avoid accessing these fields directly, use their Setter/Getter methods instead.
+	//   Other fields should be the zero value or be consistent with the plan field.
+	// TODO: more clearly distinguish between the value is empty and the value has not been set
+	planNormalized string
+	planDigest     *parser.Digest
+	encodedPlan    string
+	planHint       string
+	planHintSet    bool
+	// To avoid cycle import, we use interface{} for the following two fields.
+	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
+	flatPlan interface{}
+	// plan should be a plannercore.Plan if it's not nil
+	plan interface{}
+
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -272,10 +284,10 @@ type StatementContext struct {
 	StatsLoad struct {
 		// Timeout to wait for sync-load
 		Timeout time.Duration
-		// NeededColumns stores the columns whose stats are needed for planner.
-		NeededColumns []model.TableColumnID
+		// NeededItems stores the columns/indices whose stats are needed for planner.
+		NeededItems []model.TableItemID
 		// ResultCh to receive stats loading results
-		ResultCh chan model.TableColumnID
+		ResultCh chan model.TableItemID
 		// Fallback indicates if the planner uses full-loaded stats or fallback all to pseudo/simple.
 		Fallback bool
 		// LoadStartTime is to record the load start time to calculate latency
@@ -377,6 +389,26 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
+}
+
+// GetPlan gets the plan field of stmtctx
+func (sc *StatementContext) GetPlan() interface{} {
+	return sc.plan
+}
+
+// SetPlan sets the plan field of stmtctx
+func (sc *StatementContext) SetPlan(plan interface{}) {
+	sc.plan = plan
+}
+
+// GetFlatPlan gets the flatPlan field of stmtctx
+func (sc *StatementContext) GetFlatPlan() interface{} {
+	return sc.flatPlan
+}
+
+// SetFlatPlan sets the flatPlan field of stmtctx
+func (sc *StatementContext) SetFlatPlan(flat interface{}) {
+	sc.flatPlan = flat
 }
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
