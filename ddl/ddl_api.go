@@ -1799,7 +1799,7 @@ func BuildTableInfo(
 	}
 	tblColumns := make([]*table.Column, 0, len(cols))
 	for _, v := range cols {
-		v.ID = allocateColumnID(tbInfo)
+		v.ID = AllocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
 		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
@@ -1811,7 +1811,7 @@ func BuildTableInfo(
 		}
 		for _, hiddenCol := range hiddenCols {
 			hiddenCol.State = model.StatePublic
-			hiddenCol.ID = allocateColumnID(tbInfo)
+			hiddenCol.ID = AllocateColumnID(tbInfo)
 			hiddenCol.Offset = len(tbInfo.Columns)
 			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
 			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))

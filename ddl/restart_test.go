@@ -277,7 +277,7 @@ func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 		}
 
 		col.FieldType = *types.NewFieldType(mysql.TypeLong)
-		col.ID = allocateColumnID(tblInfo)
+		col.ID = AllocateColumnID(tblInfo)
 		cols[i] = col
 	}
 	tblInfo.Columns = cols

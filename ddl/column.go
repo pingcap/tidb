@@ -54,7 +54,7 @@ import (
 // InitAndAddColumnToTable initializes the ColumnInfo in-place and adds it to the table.
 func InitAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) *model.ColumnInfo {
 	cols := tblInfo.Columns
-	colInfo.ID = allocateColumnID(tblInfo)
+	colInfo.ID = AllocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
 	// To support add column asynchronous, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
@@ -569,8 +569,8 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			if !info.IsTemp {
 				// We create a temp index for each normal index.
 				tmpIdx := info.IndexInfo.Clone()
-				tmpIdxName := GenChangingIndexUniqueName(tblInfo, info.IndexInfo)
-				SetIdxIDName(tmpIdx, newIdxID, model.NewCIStr(tmpIdxName))
+				tmpIdxName := genChangingIndexUniqueName(tblInfo, info.IndexInfo)
+				setIdxIDName(tmpIdx, newIdxID, model.NewCIStr(tmpIdxName))
 				SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
 				tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
 			} else {
@@ -578,7 +578,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				// We can overwrite it to reduce reorg cost, because it will be dropped eventually.
 				tmpIdx := info.IndexInfo
 				oldTempIdxID := tmpIdx.ID
-				SetIdxIDName(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
+				setIdxIDName(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
 				SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
 				modifyInfo.removedIdxs = append(modifyInfo.removedIdxs, oldTempIdxID)
 			}
@@ -595,13 +595,12 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, changingCol, oldCol, modifyInfo.newCol.Name, modifyInfo.pos, modifyInfo.removedIdxs)
 }
 
-// SetIdxIDName sets index id and name.
-func SetIdxIDName(idxInfo *model.IndexInfo, newID int64, newName model.CIStr) {
+func setIdxIDName(idxInfo *model.IndexInfo, newID int64, newName model.CIStr) {
 	idxInfo.ID = newID
 	idxInfo.Name = newName
 }
 
-// SetIdxColNameOffset sets index column name offset from changing ColumnInfo.
+// SetIdxColNameOffset sets index column name and offset from changing ColumnInfo.
 func SetIdxColNameOffset(idxCol *model.IndexColumn, changingCol *model.ColumnInfo) {
 	idxCol.Name = changingCol.Name
 	idxCol.Offset = changingCol.Offset
@@ -1590,7 +1589,8 @@ func GetColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKI
 	return nil
 }
 
-func allocateColumnID(tblInfo *model.TableInfo) int64 {
+// AllocateColumnID allocates next column ID from TableInfo.
+func AllocateColumnID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxColumnID++
 	return tblInfo.MaxColumnID
 }
@@ -1756,8 +1756,7 @@ func GenChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnI
 	return fmt.Sprintf("%s_%d", newColumnNamePrefix, suffix)
 }
 
-// GenChangingIndexUniqueName generates a new unique name for changing index.
-func GenChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
+func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
 	suffix := 0
 	newIndexNamePrefix := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
 	newIndexLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)

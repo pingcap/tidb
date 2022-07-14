@@ -690,48 +690,31 @@ func (d SchemaTracker) handleModifyColumn(
 
 	tblInfo.AutoRandomBits = updatedAutoRandomBits
 	oldCol := table.FindCol(t.Cols(), originalColName.L).ColumnInfo
-	newColName := model.NewCIStr(ddl.GenChangingColumnUniqueName(tblInfo, oldCol))
 
-	changingCol := newColInfo.Clone()
-	changingCol.Name = newColName
-	changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx, changingCol, oldCol)
+	originDefVal, err := ddl.GetOriginDefaultValueForModifyColumn(sctx, newColInfo, oldCol)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = changingCol.SetOriginDefaultValue(originDefVal); err != nil {
+	if err = newColInfo.SetOriginDefaultValue(originDefVal); err != nil {
 		return errors.Trace(err)
 	}
 
-	// TODO: can I directly replace the ColumnInfo and IndexInfo?
-	ddl.InitAndAddColumnToTable(tblInfo, changingCol)
+	// replace old column and its related index column in-place.
+	newColInfo.ID = ddl.AllocateColumnID(tblInfo)
+	newColInfo.Offset = oldCol.Offset
+	tblInfo.Columns[oldCol.Offset] = newColInfo
 	indexesToChange := ddl.FindRelatedIndexesToChange(tblInfo, oldCol.Name)
-	changingIndexInfo := make([]*model.IndexInfo, 0, len(indexesToChange))
 	for _, info := range indexesToChange {
-		newIdxID := ddl.AllocateIndexID(tblInfo)
-		if !info.IsTemp {
-			// We create a temp index for each normal index.
-			tmpIdx := info.IndexInfo.Clone()
-			tmpIdxName := ddl.GenChangingIndexUniqueName(tblInfo, info.IndexInfo)
-			ddl.SetIdxIDName(tmpIdx, newIdxID, model.NewCIStr(tmpIdxName))
-			ddl.SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
-			changingIndexInfo = append(changingIndexInfo, tmpIdx)
-			tblInfo.Indices = append(tblInfo.Indices, tmpIdx)
-		} else {
-			// The index is a temp index created by previous modify column job(s).
-			// We can overwrite it to reduce reorg cost, because it will be dropped eventually.
-			tmpIdx := info.IndexInfo
-			ddl.SetIdxIDName(tmpIdx, newIdxID, tmpIdx.Name /* unchanged */)
-			ddl.SetIdxColNameOffset(tmpIdx.Columns[info.Offset], changingCol)
-		}
+		ddl.SetIdxColNameOffset(info.IndexInfo.Columns[info.Offset], newColInfo)
 	}
 
-	err = ddl.AdjustTableInfoAfterModifyColumnWithData(tblInfo, spec.Position, oldCol, changingCol, newColInfo.Name, changingIndexInfo)
+	destOffset, err := ddl.LocateOffsetToMove(newColInfo.Offset, spec.Position, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tblInfo.MoveColumnInfo(newColInfo.Offset, destOffset)
 
-	ddl.UpdateChangingObjState(changingCol, changingIndexInfo, model.StatePublic)
+	newColInfo.State = model.StatePublic
 	return nil
 }
 
