@@ -62,11 +62,6 @@ func (p *basePhysicalPlan) GetPlanCost(taskType property.TaskType, costFlag uint
 	return p.planCost, nil
 }
 
-// GetNetworkCost calculates the cost of the plan in network data transfer.
-func (p *basePhysicalPlan) GetNetworkCost() float64 {
-	return 0.0
-}
-
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
@@ -258,8 +253,8 @@ func (p *PhysicalIndexLookUpReader) estDoubleReadCost(tbl *model.TableInfo, cost
 	return (numDoubleReadTasks * seekFactor) / concurrency
 }
 
-// GetNetworkCost calculates the cost of the plan in network data transfer.
-func (p *PhysicalIndexLookUpReader) GetNetworkCost() float64 {
+// GetNetDataSize calculates the total size of the plan in network data transfer.
+func (p *PhysicalIndexLookUpReader) GetNetDataSize() float64 {
 	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 	return rowSize*p.indexPlan.StatsCount() + tblRowSize*p.tablePlan.StatsCount()
@@ -289,8 +284,8 @@ func (p *PhysicalIndexReader) GetPlanCost(taskType property.TaskType, costFlag u
 	return p.planCost, nil
 }
 
-// GetNetworkCost calculates the cost of the plan in network data transfer.
-func (p *PhysicalIndexReader) GetNetworkCost() float64 {
+// GetNetDataSize calculates the cost of the plan in network data transfer.
+func (p *PhysicalIndexReader) GetNetDataSize() float64 {
 	tblStats := getTblStats(p.indexPlan)
 	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	return p.indexPlan.StatsCount() * rowSize
@@ -364,8 +359,8 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 	return p.planCost, nil
 }
 
-// GetNetworkCost calculates the cost of the plan in network data transfer.
-func (p *PhysicalTableReader) GetNetworkCost() float64 {
+// GetNetDataSize calculates the estimated total data size fetched from storage.
+func (p *PhysicalTableReader) GetNetDataSize() float64 {
 	rowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 	return p.tablePlan.StatsCount() * rowSize
 }
@@ -416,8 +411,8 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType, costF
 	return p.planCost, nil
 }
 
-// GetNetworkCost calculates the cost of the plan in network data transfer.
-func (p *PhysicalIndexMergeReader) GetNetworkCost() float64 {
+// GetNetDataSize calculates the estimated total data size fetched from storage.
+func (p *PhysicalIndexMergeReader) GetNetDataSize() float64 {
 	netCost := 0.0
 	if tblScan := p.tablePlan; tblScan != nil {
 		tblStats := getTblStats(tblScan)
@@ -1198,18 +1193,6 @@ func (p *BatchPointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uin
 	return p.planCost, nil
 }
 
-// GetNetworkCost calculates the cost of the plan in network data transfer.
-func (p *BatchPointGetPlan) GetNetworkCost() float64 {
-	cols := p.accessCols
-	if cols == nil {
-		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
-	}
-	if p.IndexInfo == nil {
-		return float64(len(p.Handles)) * p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
-	}
-	return float64(len(p.IndexValues)) * p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
-}
-
 // GetAvgRowSize return the average row size.
 func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
 	cols := p.accessCols
@@ -1250,11 +1233,6 @@ func (p *PointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uint64) 
 	p.planCost = p.GetCost()
 	p.planCostInit = true
 	return p.planCost, nil
-}
-
-// GetNetworkCost calculates the cost of the plan in network data transfer.
-func (p *PointGetPlan) GetNetworkCost() float64 {
-	return p.GetAvgRowSize()
 }
 
 // GetAvgRowSize return the average row size.

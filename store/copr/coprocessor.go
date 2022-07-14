@@ -98,9 +98,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
 	reqType := "null"
-	if req.ClosestReplicaReadChecker != nil {
+	if req.ClosestReplicaReadAdjuster != nil {
 		reqType = "miss"
-		if req.ClosestReplicaReadChecker(req, len(tasks)) {
+		if req.ClosestReplicaReadAdjuster(req, len(tasks)) {
 			reqType = "hit"
 		}
 	}

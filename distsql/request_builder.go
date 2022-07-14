@@ -368,9 +368,9 @@ func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 	return builder
 }
 
-// SetClosestReplicaReadChecker sets request ClosestReadChecker
-func (builder *RequestBuilder) SetClosestReplicaReadChecker(chkFn kv.ClosestReadChecker) *RequestBuilder {
-	builder.ClosestReplicaReadChecker = chkFn
+// SetClosestReplicaReadAdjuster sets request CoprRequestAdjuster
+func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprRequestAdjuster) *RequestBuilder {
+	builder.ClosestReplicaReadAdjuster = chkFn
 	return builder
 }
 

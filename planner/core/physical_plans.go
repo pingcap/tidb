@@ -1616,3 +1616,18 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
 }
+
+var (
+	_ DataSourcePhysicalPlan = &PhysicalTableReader{}
+	_ DataSourcePhysicalPlan = &PhysicalIndexReader{}
+	_ DataSourcePhysicalPlan = &PhysicalIndexLookUpReader{}
+	_ DataSourcePhysicalPlan = &PhysicalIndexMergeReader{}
+)
+
+// DataSourcePhysicalPlan is a plan that actually retrieval kv data from store.
+// Currently, there are PhysicalTableReader/PhysicalIndexReader/
+// PhysicalIndexLookUpReader/PhysicalIndexMergeReader.
+type DataSourcePhysicalPlan interface {
+	// GetNetDataSize calculates the estimated total data size fetched from storage.
+	GetNetDataSize() float64
+}

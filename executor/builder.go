@@ -3126,7 +3126,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
-		netCost:          v.GetNetworkCost(),
+		netDataSize:      v.GetNetDataSize(),
 		avgRowSize:       v.GetAvgRowSize(),
 		table:            tbl,
 		keepOrder:        ts.KeepOrder,
@@ -3413,7 +3413,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
-		netCost:          v.GetNetworkCost(),
+		netDataSize:      v.GetNetDataSize(),
 		physicalTableID:  physicalTableID,
 		table:            tbl,
 		index:            is.Index,
@@ -3591,7 +3591,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
-		indexNetCost:      v.GetIndexNetworkCost(),
+		idxNetDataSize:    v.GetIndexNetworkCost(),
 		avgRowSize:        v.GetDataAvgRowSize(),
 	}
 
@@ -4077,19 +4077,21 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Rang
 	return ret, nil
 }
 
-func newClosestReadChecker(ctx sessionctx.Context, req *kv.Request, netCost float64) kv.ClosestReadChecker {
+// newClosestReadAdjuster let the request be sent to closest replica(within the same zone)
+// if response size exceeds certain threshold.
+func newClosestReadAdjuster(ctx sessionctx.Context, req *kv.Request, netDataSize float64) kv.CoprRequestAdjuster {
 	if req.ReplicaRead != kv.ReplicaReadClosestAdaptive {
 		return nil
 	}
 	return func(req *kv.Request, count int) bool {
-		if int64(netCost/float64(count)) >= ctx.GetSessionVars().AdaptiveClosestReadThreshold {
+		if int64(netDataSize/float64(count)) >= ctx.GetSessionVars().AdaptiveClosestReadThreshold {
 			req.MatchStoreLabels = append(req.MatchStoreLabels, &metapb.StoreLabel{
 				Key:   placement.DCLabelKey,
 				Value: config.GetTxnScopeFromConfig(),
 			})
 			return true
 		}
-		// reset to read from leader when the network cost is low.
+		// reset to read from leader when the data size is small.
 		req.ReplicaRead = kv.ReplicaReadLeader
 		return false
 	}
@@ -4110,7 +4112,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
-		SetClosestReplicaReadChecker(newClosestReadChecker(e.ctx, &reqBuilderWithRange.Request, e.netCost)).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilderWithRange.Request, e.netDataSize)).
 		SetPaging(e.paging).
 		Build()
 	if err != nil {

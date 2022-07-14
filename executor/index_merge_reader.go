@@ -312,7 +312,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetMemTracker(e.memTracker).
 					SetPaging(e.paging).
 					SetFromInfoSchema(e.ctx.GetInfoSchema()).
-					SetClosestReplicaReadChecker(newClosestReadChecker(e.ctx, &builder.Request, e.partialPlans[workID][0].GetNetworkCost()/float64(len(keyRanges))))
+					SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &builder.Request, getPlansNetDataSize(e.partialPlans[workID])/float64(len(keyRanges))))
 
 				for parTblIdx, keyRange := range keyRanges {
 					// check if this executor is closed
@@ -392,7 +392,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:            e.partialPlans[workID],
 					ranges:           e.ranges[workID],
-					netCost:          e.partialPlans[workID][0].GetNetworkCost(),
+					netDataSize:      getPlansNetDataSize(e.partialPlans[workID]),
 				}
 
 				worker := &partialTableWorker{
@@ -480,6 +480,17 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 		return e.tblPlans[len(e.tblPlans)-1].ID()
 	}
 	return e.id
+}
+
+// getPlansNetDataSize return the network data size of the DataSourcePhysicalPlan for the flattened plans.
+func getPlansNetDataSize(plans []plannercore.PhysicalPlan) float64 {
+	for _, p := range plans {
+		if plan, ok := p.(plannercore.DataSourcePhysicalPlan); ok {
+			return plan.GetNetDataSize()
+		}
+	}
+	// should not reach here.
+	panic("no data source plan found")
 }
 
 type partialTableWorker struct {
@@ -615,7 +626,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:            e.tblPlans,
 		avgRowSize:       e.dataAvgRowSize,
-		netCost:          e.dataAvgRowSize * float64(len(handles)),
+		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
 	if e.isCorColInTableFilter {
 		if tableReaderExec.dagPB.Executors, err = constructDistExec(e.ctx, e.tblPlans); err != nil {
