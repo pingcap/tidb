@@ -936,6 +936,57 @@ func TestAggregationHints(t *testing.T) {
 	}
 }
 
+func TestSemiJoinRewriteHints(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+
+	sessionVars := tk.Session().GetSessionVars()
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+
+	var input []string
+	var output []struct {
+		SQL     string
+		Plan    []string
+		Warning string
+	}
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.GetTestCases(t, &input, &output)
+	ctx := context.Background()
+	p := parser.New()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	for i, test := range input {
+		comment := fmt.Sprintf("case: %v sql: %v", i, test)
+		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		stmt, err := p.ParseOneStmt(test, "", "")
+		require.NoError(t, err, comment)
+
+		_, _, err = planner.Optimize(ctx, tk.Session(), stmt, is)
+		require.NoError(t, err)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+
+		testdata.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief'" + test).Rows())
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		tk.MustQuery("explain format = 'brief'" + test).Check(testkit.Rows(output[i].Plan...))
+		if output[i].Warning == "" {
+			require.Len(t, warnings, 0)
+		} else {
+			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
+			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
+		}
+	}
+}
+
 func TestExplainJoinHints(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
