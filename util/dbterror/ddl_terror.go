@@ -391,7 +391,4 @@ var (
 
 	// ErrColumnInChange indicates there is modification on the column in parallel.
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
-
-	// ErrUnsupportedAlterTiFlashModeForTableWithoutTiFlashReplica returns when set tiflash mode on table whose tiflash_replica is null
-	ErrUnsupportedAlterTiFlashModeForTableWithoutTiFlashReplica = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table tiflash mode for tables without tiflash replica is currently unsupported", nil))
 )
