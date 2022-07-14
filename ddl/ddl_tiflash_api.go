@@ -297,7 +297,7 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplica
 					Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
 					HighPriority:   false,
 					IsPartition:    true,
-					Ready:          tblInfo.TiFlashReplica.Ready,
+					Ready:          tblInfo.TiFlashReplica.IsPartitionReady(p.ID),
 				})
 		}
 		// partitions that in adding mid-state
@@ -309,7 +309,7 @@ func GetTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplica
 				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
 				HighPriority:   true,
 				IsPartition:    true,
-				Ready:          tblInfo.TiFlashReplica.Ready,
+				Ready:          tblInfo.TiFlashReplica.IsPartitionReady(p.ID),
 			})
 		}
 	} else {
@@ -340,7 +340,7 @@ func GetTiFlashReplicaMapInfo(tblInfo *model.TableInfo, tableMap *map[int64]TiFl
 				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
 				HighPriority:   false,
 				IsPartition:    true,
-				Ready:          tblInfo.TiFlashReplica.Ready,
+				Ready:          tblInfo.TiFlashReplica.IsPartitionReady(p.ID),
 			}
 		}
 		// partitions that in adding mid-state
@@ -352,7 +352,7 @@ func GetTiFlashReplicaMapInfo(tblInfo *model.TableInfo, tableMap *map[int64]TiFl
 				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
 				HighPriority:   true,
 				IsPartition:    true,
-				Ready:          tblInfo.TiFlashReplica.Ready,
+				Ready:          tblInfo.TiFlashReplica.IsPartitionReady(p.ID),
 			}
 		}
 	} else {
@@ -681,32 +681,30 @@ func getInvalidTableTiflash(pollTiFlashContext *TiFlashManagementContext) (map[i
 
 		sort.Slice(peerIDs, func(i, j int) bool { return peerIDs[i] < peerIDs[j] })
 
-		j := 0
-		for i := 1; i < length; i++ {
-			if peerIDs[i] != peerIDs[j] {
-				j++
-				if j < i {
-					peerIDs[i], peerIDs[j] = peerIDs[j], peerIDs[i]
-				}
+		unique := make([]int64, 0)
+		temp := make(map[int64]bool, len(peerIDs))
+		for _, peerID := range peerIDs {
+			if temp[peerID] == false {
+				temp[peerID] = true
+				unique = append(unique, peerID)
 			}
 		}
-
-		return peerIDs[:j+1]
+		return unique
 	}
 
-	var invaildRegions helper.RegionsInfo
+	var invalidRegions helper.RegionsInfo
 
-	if err := infosync.GetTiFlashPDInvalidRegionsInfo(context.Background(), &invaildRegions); err != nil {
+	if err := infosync.GetTiFlashPDInvalidRegionsInfo(context.Background(), &invalidRegions); err != nil {
 		return invalidTableIDs, errors.Trace(err)
 	}
 
 	// There are no down-peer/pending-peer
-	if invaildRegions.Count == 0 {
+	if invalidRegions.Count == 0 {
 		return invalidTableIDs, nil
 	}
 
 	invalidTableWithPeerIDs := make(map[int64][]int64)
-	for _, invaildRegion := range invaildRegions.Regions {
+	for _, invaildRegion := range invalidRegions.Regions {
 		for _, downPeer := range invaildRegion.DownPeers {
 			if isTiflashPeer(tiflashStoreIDs, downPeer.Peer.ID) {
 				invalidTableID := helper.GetTiFlashTableIDFromEndKey(invaildRegion.EndKey)

@@ -600,8 +600,10 @@ func (t TiFlashMode) String() string {
 
 // TiFlashReplicaInfo means the flash replica info.
 type TiFlashReplicaInfo struct {
-	Count                 uint64
-	LocationLabels        []string
+	Count          uint64
+	LocationLabels []string
+	// `Ready` will affect the result returned by dataForTableTiFlashReplica.
+	// It will be updated if all of tiflash peers are pending|down peer.
 	Ready                 bool
 	ReadyPartitionIDs     []int64
 	Available             bool
