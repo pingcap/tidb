@@ -289,30 +289,32 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
 func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
-	if curTask.invalid() {
+	curCost, curInvalid, err := getTaskPlanCost(curTask)
+	if err != nil {
+		return false, err
+	}
+	bestCost, bestInvalid, err := getTaskPlanCost(bestTask)
+	if err != nil {
+		return false, err
+	}
+	if curInvalid {
 		return false, nil
 	}
-	if bestTask.invalid() {
+	if bestInvalid {
 		return true, nil
 	}
-	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
-		curCost, err := getTaskPlanCost(curTask)
-		if err != nil {
-			return false, err
-		}
-		bestCost, err := getTaskPlanCost(bestTask)
-		if err != nil {
-			return false, err
-		}
-		return curCost < bestCost, nil
-	}
-	return curTask.cost() < bestTask.cost(), nil
+	return curCost < bestCost, nil
 }
 
-func getTaskPlanCost(t task) (float64, error) {
+func getTaskPlanCost(t task) (float64, bool, error) {
 	if t.invalid() {
-		return math.MaxFloat64, nil
+		return math.MaxFloat64, true, nil
 	}
+	if !t.plan().SCtx().GetSessionVars().EnableNewCostInterface {
+		return t.cost(), false, nil
+	}
+
+	// use the new cost interface
 	var taskType property.TaskType
 	switch t.(type) {
 	case *rootTask:
@@ -322,9 +324,10 @@ func getTaskPlanCost(t task) (float64, error) {
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
-		return 0, errors.New("unknown task type")
+		return 0, false, errors.New("unknown task type")
 	}
-	return t.plan().GetPlanCost(taskType, 0)
+	cost, err := t.plan().GetPlanCost(taskType, 0)
+	return cost, false, err
 }
 
 type physicalOptimizeOp struct {
