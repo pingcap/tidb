@@ -16,5 +16,46 @@
       "show stats_topn",
       "show stats_buckets"
     ]
+  },
+  {
+    "name": "TestDefaultSelectivityForStrMatch",
+    "cases": [
+      "set @@tidb_default_string_match_selectivity = 0.8",
+      "explain select * from t where a + 10 > 100",
+      "explain select * from t where b like '%test%'",
+      "explain select * from t where b not like '%test%'",
+      "explain select * from t where b regexp '.*test.*'",
+      "explain select * from t where b not regexp '.*test.*'",
+      "explain select * from t where b like '%test%' and a + 10 > 100",
+      "explain select * from t where b not like '%test%' and a + 10 > 100",
+      "explain select * from t where b like '%test%' or a + 10 > 100",
+      "set @@tidb_default_string_match_selectivity = 0.9",
+      "explain select * from t where a + 10 > 100",
+      "explain select * from t where b like '%test%'",
+      "explain select * from t where b not like '%test%'",
+      "explain select * from t where b regexp '.*test.*'",
+      "explain select * from t where b not regexp '.*test.*'",
+      "explain select * from t where b like '%test%' and a + 10 > 100",
+      "explain select * from t where b not like '%test%' and a + 10 > 100",
+      "explain select * from t where b like '%test%' or a + 10 > 100",
+      "set @@tidb_default_string_match_selectivity = 0.1",
+      "explain select * from t where a + 10 > 100",
+      "explain select * from t where b like '%test%'",
+      "explain select * from t where b not like '%test%'",
+      "explain select * from t where b regexp '.*test.*'",
+      "explain select * from t where b not regexp '.*test.*'",
+      "explain select * from t where b like '%test%' and a + 10 > 100",
+      "explain select * from t where b not like '%test%' and a + 10 > 100",
+      "explain select * from t where b like '%test%' or a + 10 > 100",
+      "set @@tidb_default_string_match_selectivity = 0",
+      "explain select * from t where a + 10 > 100",
+      "explain select * from t where b like '%test%'",
+      "explain select * from t where b not like '%test%'",
+      "explain select * from t where b regexp '.*test.*'",
+      "explain select * from t where b not regexp '.*test.*'",
+      "explain select * from t where b like '%test%' and a + 10 > 100",
+      "explain select * from t where b not like '%test%' and a + 10 > 100",
+      "explain select * from t where b like '%test%' or a + 10 > 100"
+    ]
   }
 ]

@@ -688,6 +688,18 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	return expr, not
 }
 
+func GetExprInsideIsTruth(expr Expression) Expression {
+	if f, ok := expr.(*ScalarFunction); ok {
+		switch f.FuncName.L {
+		case ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+			return GetExprInsideIsTruth(f.GetArgs()[0])
+		default:
+			return expr
+		}
+	}
+	return expr
+}
+
 // PushDownNot pushes the `not` function down to the expression's arguments.
 func PushDownNot(ctx sessionctx.Context, expr Expression) Expression {
 	newExpr, _ := pushNotAcrossExpr(ctx, expr, false)

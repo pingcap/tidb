@@ -619,14 +619,30 @@ func (coll *HistColl) findAvailableStatsForCol(sctx sessionctx.Context, uniqueID
 // The data represented by the Histogram would use the defaultSelectivity parameter as the selectivity.
 // Currently, this method can only handle expressions involving a single column.
 func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
-	col *expression.Column,
 	defaultSelectivity float64,
 	filters []expression.Expression) (ok bool, selectivity float64, err error) {
-	// 1. Make sure this column is not a "new collation" string column so that we're able to restore values from the stats.
+	// 1. Make sure the expressions
+	//   (1) are safe to be evaluated here,
+	//   (2) involve only one column,
+	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
+	for _, filter := range filters {
+		if expression.IsMutableEffectsExpr(filter) {
+			return false, 0, nil
+		}
+	}
+	if expression.ContainCorrelatedColumn(filters) {
+		return false, 0, nil
+	}
+	cols := expression.ExtractColumnsFromExpressions(nil, filters, nil)
+	if len(cols) != 1 {
+		return false, 0, nil
+	}
+	col := cols[0]
 	tp := col.RetType
 	if types.IsString(tp.GetType()) && !collate.IsBinCollation(tp.GetCollate()) {
 		return false, 0, nil
 	}
+
 	// 2. Get the available stats, make sure it's a ver2 stats and get the needed data structure from it.
 	isIndex, i := coll.findAvailableStatsForCol(sctx, col.UniqueID)
 	if i < 0 {
@@ -650,6 +666,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 		nullCnt = hist.NullCount
 		topn = stats.TopN
 	}
+	// Only in stats ver2, we can assume that: TopN + Histogram + NULL == All data
 	if statsVer != Version2 {
 		return false, 0, nil
 	}
@@ -658,6 +675,8 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	totalCnt = float64(topnTotalCnt) + histTotalCnt + float64(nullCnt)
 
 	var topNSel, histSel, nullSel float64
+
+	// Prepare for evaluation.
 	originalIndex := col.Index
 	col.Index = 0
 	defer func() {
@@ -670,6 +689,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	}
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, size)
 	selected := make([]bool, 0, size)
+
 	// 3. Calculate the TopN part selectivity.
 	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
 	var topNSelectedCnt uint64
@@ -692,8 +712,10 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 		}
 	}
 	topNSel = float64(topNSelectedCnt) / totalCnt
+
 	// 4. Calculate the Histogram part selectivity.
 	histSel = defaultSelectivity * histTotalCnt / totalCnt
+
 	// 5. Calculate the NULL part selectivity.
 	// Errors in this staged would be returned, but would not make this entire method fail.
 	c.Reset()
@@ -706,6 +728,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	} else {
 		nullSel = 0
 	}
+
 	// 6. Get the final result.
 	res := topNSel + histSel + nullSel
 	return true, res, err

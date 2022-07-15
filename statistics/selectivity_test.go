@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"runtime/pprof"
 	"testing"
 	"time"
@@ -892,4 +893,40 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 	usedSets = statistics.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
+}
+
+func TestDefaultSelectivityForStrMatch(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b varchar(100))")
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		ok, err := regexp.MatchString("^explain", tt)
+		require.NoError(t, err)
+		if !ok {
+			testKit.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
 }
