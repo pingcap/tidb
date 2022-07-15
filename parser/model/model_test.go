@@ -378,6 +378,7 @@ func TestJobCodec(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	job10.RawArgs, err = json.Marshal(job10.Args)
+	require.NoError(t, err)
 
 	job11 := &Job{
 		ID:         12,
