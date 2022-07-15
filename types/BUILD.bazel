@@ -52,6 +52,7 @@ go_library(
 
 go_test(
     name = "types_test",
+    timeout = "short",
     srcs = [
         "benchmark_test.go",
         "binary_literal_test.go",

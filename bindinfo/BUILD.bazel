@@ -20,6 +20,7 @@ go_library(
         "//parser/mysql",
         "//parser/terror",
         "//sessionctx",
+        "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//types",

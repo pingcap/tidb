@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -73,11 +74,12 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
-type readReqType uint8
+// ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
+type ReadReqType uint8
 
 const (
 	// Cop means read from storage by cop request.
-	Cop readReqType = iota
+	Cop ReadReqType = iota
 	// BatchCop means read from storage by BatchCop request, only used for TiFlash
 	BatchCop
 	// MPP means read from storage by MPP request, only used for TiFlash
@@ -85,7 +87,7 @@ const (
 )
 
 // Name returns the name of read request type.
-func (r readReqType) Name() string {
+func (r ReadReqType) Name() string {
 	switch r {
 	case BatchCop:
 		return "batchCop"
@@ -110,7 +112,7 @@ type PhysicalTableReader struct {
 
 	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
 	// BatchCop and MPP, currently, the latter two are only used in TiFlash
-	ReadReqType readReqType
+	ReadReqType ReadReqType
 
 	IsCommonHandle bool
 
@@ -221,6 +223,30 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
+}
+
+func (p *PhysicalTableReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalTableReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.tablePlan != nil {
+		candidate := &tracing.CandidatePlanTrace{
+			PlanTrace: &tracing.PlanTrace{
+				ID:          p.tablePlan.ID(),
+				TP:          p.tablePlan.TP(),
+				Cost:        p.tablePlan.Cost(),
+				ExplainInfo: p.tablePlan.ExplainInfo(),
+			},
+		}
+		op.tracer.AppendCandidate(candidate)
+		p.tablePlan.appendChildCandidate(op)
+	}
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -427,7 +453,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableColumnID]expression.Expression
+	GenExprs map[model.TableItemID]expression.Expression
 
 	isPartition bool
 	Desc        bool
@@ -1547,11 +1573,6 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// AccessObject implements physicalScan interface.
-func (p *PhysicalCTE) AccessObject(normalized bool) string {
-	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
-}
-
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
@@ -1559,7 +1580,7 @@ func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalCTE) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainID overrides the ExplainID.

@@ -114,6 +114,11 @@ func (g Glue) GetVersion() string {
 	return g.tikvGlue.GetVersion()
 }
 
+// GetSessionCtx implements glue.Glue
+func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
+	return gs.se
+}
+
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return gs.ExecuteInternal(ctx, sql)
@@ -130,6 +135,7 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 	// At least call `next` once for triggering theirs side effect.
 	// (Maybe we'd better drain all returned rows?)
 	if rs != nil {
+		//nolint: errcheck
 		defer rs.Close()
 		c := rs.NewChunk(nil)
 		if err := rs.Next(ctx, c); err != nil {

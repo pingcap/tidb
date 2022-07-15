@@ -536,13 +536,8 @@ func TestIsNoop(t *testing.T) {
 	require.True(t, sv.IsNoop)
 }
 
-func TestInstanceScopedVars(t *testing.T) {
-	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
-	// Eventually these should be changed to use getters so that the switch
-	// statement in GetSessionOnlySysVars can be removed.
-
+func TestSessionGetterFuncs(t *testing.T) {
 	vars := NewSessionVars()
-
 	val, err := GetSessionOrGlobalSystemVar(vars, TiDBCurrentTS)
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d", vars.TxnCtx.StartTS), val)
@@ -557,7 +552,22 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(info), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBGeneralLog)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInBinding)
+	require.NoError(t, err)
+	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
+	require.NoError(t, err)
+	require.Equal(t, vars.TxnScope.GetVarValue(), val)
+}
+
+func TestInstanceScopedVars(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBGeneralLog)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(ProcessGeneralLog.Load()), val)
 
@@ -610,21 +620,19 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
-	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(vars.PrevFoundInPlanCache), val)
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInBinding)
-	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(vars.PrevFoundInBinding), val)
-
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
 	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBConfig)
 	require.NoError(t, err)
-	require.Equal(t, vars.TxnScope.GetVarValue(), val)
+	expected, err = config.GetJSONConfig()
+	require.NoError(t, err)
+	require.Equal(t, expected, val)
+
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBLogFileMaxDays)
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprint(GlobalLogMaxDays.Load()), val)
 }
 
 // TestDefaultValuesAreSettable that sysvars defaults are logically valid. i.e.
@@ -645,6 +653,14 @@ func TestDefaultValuesAreSettable(t *testing.T) {
 			require.Equal(t, val, sv.Value)
 			require.NoError(t, err)
 		}
+	}
+}
+
+// TestSysVarNameIsLowerCase tests that no new sysvars are added with uppercase characters.
+// In MySQL variables are always lowercase, and can be set in a case-insensitive way.
+func TestSysVarNameIsLowerCase(t *testing.T) {
+	for _, sv := range GetSysVars() {
+		require.Equal(t, strings.ToLower(sv.Name), sv.Name, "sysvar name contains uppercase characters")
 	}
 }
 
@@ -684,33 +700,30 @@ func TestSettersandGetters(t *testing.T) {
 func TestSkipInitIsUsed(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		if sv.skipInit {
+			// skipInit only ever applied to session scope, so if anyone is setting it on
+			// a variable without session, that doesn't make sense.
+			require.True(t, sv.HasSessionScope(), fmt.Sprintf("skipInit has no effect on a variable without session scope: %s", sv.Name))
+			// Since SetSession is the "init function" there is no init function to skip.
+			require.NotNil(t, sv.SetSession, fmt.Sprintf("skipInit has no effect on variables without an init (setsession) func: %s", sv.Name))
+			// Skipinit has no use on noop funcs, since noop funcs always skipinit.
+			require.False(t, sv.IsNoop, fmt.Sprintf("skipInit has no effect on noop variables: %s", sv.Name))
+
 			// Many of these variables might allow skipInit to be removed,
 			// they need to be checked first. The purpose of this test is to make
 			// sure we don't introduce any new variables with skipInit, which seems
 			// to be a problem.
 			switch sv.Name {
-			case Timestamp,
-				WarningCount,
-				ErrorCount,
-				LastInsertID,
-				Identity,
-				TiDBTxnScope,
+			case TiDBTxnScope,
 				TiDBSnapshot,
 				TiDBOptDistinctAggPushDown,
 				TiDBOptWriteRowID,
-				TiDBChecksumTableConcurrency,
 				TiDBBatchInsert,
 				TiDBBatchDelete,
 				TiDBBatchCommit,
-				TiDBCurrentTS,
-				TiDBLastTxnInfo,
-				TiDBLastQueryInfo,
 				TiDBEnableChunkRPC,
 				TxnIsolationOneShot,
 				TiDBOptimizerSelectivityLevel,
 				TiDBOptimizerEnableOuterJoinReorder,
-				TiDBLogFileMaxDays,
-				TiDBConfig,
 				TiDBDDLReorgPriority,
 				TiDBSlowQueryFile,
 				TiDBWaitSplitRegionFinish,
@@ -719,40 +732,17 @@ func TestSkipInitIsUsed(t *testing.T) {
 				TiDBAllowRemoveAutoInc,
 				TiDBMetricSchemaStep,
 				TiDBMetricSchemaRangeDuration,
-				TiDBFoundInPlanCache,
-				TiDBFoundInBinding,
 				RandSeed1,
 				RandSeed2,
-				TiDBLastDDLInfo,
-				TiDBGeneralLog,
-				TiDBSlowLogThreshold,
-				TiDBRecordPlanInSlowLog,
-				TiDBEnableSlowLog,
-				TiDBCheckMb4ValueInUTF8,
-				TiDBPProfSQLCPU,
-				TiDBDDLSlowOprThreshold,
-				TiDBForcePriority,
-				TiDBMemoryUsageAlarmRatio,
-				TiDBEnableCollectExecutionInfo,
-				TiDBPersistAnalyzeOptions,
-				TiDBEnableColumnTracking,
-				TiDBStatsLoadPseudoTimeout,
-				SQLLogBin,
-				ForeignKeyChecks,
 				CollationDatabase,
-				CharacterSetClient,
-				CharacterSetResults,
 				CollationConnection,
 				CharsetDatabase,
-				GroupConcatMaxLen,
 				CharacterSetConnection,
 				CharacterSetServer,
-				TiDBBuildStatsConcurrency,
 				TiDBOptTiFlashConcurrencyFactor,
 				TiDBOptSeekFactor,
 				TiDBOptJoinReorderThreshold,
-				TiDBStatsLoadSyncWait,
-				CharacterSetFilesystem:
+				TiDBStatsLoadSyncWait:
 				continue
 			}
 			require.Equal(t, false, sv.skipInit, fmt.Sprintf("skipInit should not be set on new system variables. variable %s is in violation", sv.Name))
@@ -1068,4 +1058,14 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	// expected to set to min value
 	require.Equal(t, val, fmt.Sprintf("%d", expected))
 	require.NoError(t, err)
+}
+
+func TestDefaultMemoryDebugModeValue(t *testing.T) {
+	vars := NewSessionVars()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeMinHeapInUse)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
+	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeAlarmRatio)
+	require.NoError(t, err)
+	require.Equal(t, val, "0")
 }

@@ -269,6 +269,17 @@ func TestGetOracleTime(t *testing.T) {
 	timeEqual(t, t2, t1.Add(time.Second*10), time.Millisecond*10)
 }
 
+func TestGetLowResolveTS(t *testing.T) {
+	s, clean := createGCWorkerSuite(t)
+	defer clean()
+
+	lowResolveTS, err := s.gcWorker.getTryResolveLocksTS()
+	require.NoError(t, err)
+
+	lowResolveTime := oracle.GetTimeFromTS(lowResolveTS)
+	timeEqual(t, time.Now(), lowResolveTime.Add(gcTryResolveLocksIntervalFromNow), time.Millisecond*10)
+}
+
 func TestMinStartTS(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
@@ -915,7 +926,8 @@ func TestResolveLockRangeInfine(t *testing.T) {
 		require.NoError(t, failpoint.Disable("tikvclient/invalidCacheAndRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"))
 	}()
-	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, []byte{0}, []byte{1})
+
+	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, 3, []byte{0}, []byte{1})
 	require.Error(t, err)
 }
 
@@ -928,31 +940,92 @@ func TestResolveLockRangeMeetRegionCacheMiss(t *testing.T) {
 		scanCntRef    = &scanCnt
 		resolveCnt    int
 		resolveCntRef = &resolveCnt
+
+		scanLockCnt                   int
+		resolveBeforeSafepointLockCnt int
+		resolveAfterSafepointLockCnt  int
+		safepointTS                   uint64 = 434245550444904450
+		lowResolveTS                  uint64 = 434245550449098752
 	)
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
-		*scanCntRef++
-		return []*txnlock.Lock{
-			{
-				Key: []byte{1},
-			},
-			{
-				Key: []byte{1},
-			},
-		}
+
+	allLocks := []*txnlock.Lock{
+		{
+			Key: []byte{1},
+			// TxnID < safepointTS
+			TxnID: 434245550444904449,
+			TTL:   5,
+		},
+		{
+			Key: []byte{2},
+			// safepointTS < TxnID < lowResolveTS , TxnID + TTL < lowResolveTS
+			TxnID: 434245550445166592,
+			TTL:   10,
+		},
+		{
+			Key: []byte{3},
+			// safepointTS < TxnID < lowResolveTS , TxnID + TTL > lowResolveTS
+			TxnID: 434245550445166593,
+			TTL:   20,
+		},
+		{
+			Key: []byte{4},
+			// TxnID > lowResolveTS
+			TxnID: 434245550449099752,
+			TTL:   20,
+		},
 	}
-	s.gcWorker.testingKnobs.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
+		*scanCntRef++
+
+		locks := make([]*txnlock.Lock, 0)
+		for _, l := range allLocks {
+			if l.TxnID <= maxVersion {
+				locks = append(locks, l)
+				scanLockCnt++
+			}
+		}
+		return locks
+	}
+	s.gcWorker.testingKnobs.batchResolveLocks = func(
+		locks []*txnlock.Lock,
+		regionID tikv.RegionVerID,
+		safepoint uint64,
+	) (ok bool, err error) {
 		*resolveCntRef++
 		if *resolveCntRef == 1 {
 			s.gcWorker.tikvStore.GetRegionCache().InvalidateCachedRegion(regionID)
 			// mock the region cache miss error
 			return false, nil
 		}
+
+		resolveBeforeSafepointLockCnt = len(locks)
+		for _, l := range locks {
+			require.True(t, l.TxnID <= safepoint)
+		}
 		return true, nil
 	}
-	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, []byte{0}, []byte{10})
+
+	s.gcWorker.testingKnobs.resolveLocks = func(
+		locks []*txnlock.Lock,
+		lowResolutionTS uint64,
+	) (int64, error) {
+		for _, l := range locks {
+			expiredTS := oracle.ComposeTS(oracle.ExtractPhysical(l.TxnID)+int64(l.TTL), oracle.ExtractLogical(l.TxnID))
+			if expiredTS <= lowResolutionTS {
+				resolveAfterSafepointLockCnt++
+			}
+		}
+		return 0, nil
+	}
+
+	_, err := s.gcWorker.resolveLocksForRange(gcContext(), safepointTS, lowResolveTS, []byte{0}, []byte{10})
 	require.NoError(t, err)
 	require.Equal(t, 2, resolveCnt)
 	require.Equal(t, 1, scanCnt)
+	require.Equal(t, 3, scanLockCnt)
+	require.Equal(t, 1, resolveBeforeSafepointLockCnt)
+	require.Equal(t, 1, resolveAfterSafepointLockCnt)
 }
 
 func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
@@ -978,7 +1051,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
 
 	// init a, b lock in region1 and o, p locks in region2
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
 		if regionID == s.initRegion.regionID {
 			return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
 		}
@@ -988,7 +1061,11 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		return []*txnlock.Lock{}
 	}
 
-	s.gcWorker.testingKnobs.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+	s.gcWorker.testingKnobs.batchResolveLocks = func(
+		locks []*txnlock.Lock,
+		regionID tikv.RegionVerID,
+		safepoint uint64,
+	) (ok bool, err error) {
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
@@ -1001,7 +1078,7 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 				[]*metapb.Region{regionMeta})
 			require.NoError(t, err)
 			// also let region1 contains all 4 locks
-			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
+			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64, maxVersion uint64) []*txnlock.Lock {
 				if regionID == s.initRegion.regionID {
 					locks := []*txnlock.Lock{
 						{Key: []byte("a")},
@@ -1024,8 +1101,14 @@ func TestResolveLockRangeMeetRegionEnlargeCausedByRegionMerge(t *testing.T) {
 		}
 		return true, nil
 	}
+	s.gcWorker.testingKnobs.resolveLocks = func(
+		locks []*txnlock.Lock,
+		lowResolutionTS uint64,
+	) (int64, error) {
+		return 0, nil
+	}
 
-	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, []byte(""), []byte("z"))
+	_, err := s.gcWorker.resolveLocksForRange(gcContext(), 1, 3, []byte(""), []byte("z"))
 	require.NoError(t, err)
 	require.Len(t, resolvedLock, 4)
 	expects := [][]byte{[]byte("a"), []byte("b"), []byte("o"), []byte("p")}
@@ -1737,6 +1820,8 @@ func TestGCLabelRules(t *testing.T) {
 func TestGCWithPendingTxn(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
+	// set to false gc worker won't resolve locks after safepoint.
+	s.gcWorker.logBackupEnabled = false
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1783,6 +1868,79 @@ func TestGCWithPendingTxn(t *testing.T) {
 	require.NoError(t, err)
 
 	err = txn.Commit(ctx)
+	require.NoError(t, err)
+}
+
+func TestGCWithPendingTxn2(t *testing.T) {
+	s, clean := createGCWorkerSuite(t)
+	// only when log backup enabled will scan locks after safepoint.
+	s.gcWorker.logBackupEnabled = true
+	defer clean()
+
+	ctx := gcContext()
+	gcSafePointCacheInterval = 0
+	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	require.NoError(t, err)
+
+	now, err := s.oracle.GetTimestamp(ctx, &oracle.Option{})
+	require.NoError(t, err)
+
+	// Prepare to run gc with txn's startTS as the safepoint ts.
+	spkv := s.tikvStore.GetSafePointKV()
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
+	require.NoError(t, err)
+	s.mustSetTiDBServiceSafePoint(t, now, now)
+	veryLong := gcDefaultLifeTime * 100
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong))
+	require.NoError(t, err)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	require.NoError(t, err)
+
+	// lock the key1
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	txn, err := s.store.Begin(tikv.WithStartTS(now))
+	require.NoError(t, err)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+
+	err = txn.Set(k1, v1)
+	require.NoError(t, err)
+	err = txn.LockKeys(ctx, lockCtx, k1)
+	require.NoError(t, err)
+
+	// lock the key2
+	k2 := []byte("tk2")
+	v2 := []byte("v2")
+	startTS := oracle.ComposeTS(oracle.ExtractPhysical(now)+10000, oracle.ExtractLogical(now))
+	txn2, err := s.store.Begin(tikv.WithStartTS(startTS))
+	require.NoError(t, err)
+	txn2.SetOption(kv.Pessimistic, true)
+	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.StartTS(), WaitStartTime: time.Now()}
+
+	err = txn2.Set(k2, v2)
+	require.NoError(t, err)
+	err = txn2.LockKeys(ctx, lockCtx, k2)
+	require.NoError(t, err)
+
+	// Trigger the tick let the gc job start.
+	s.oracle.AddOffset(time.Minute * 5)
+	err = s.gcWorker.leaderTick(ctx)
+	require.NoError(t, err)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	require.NoError(t, err)
+
+	err = txn.Commit(ctx)
+	require.Error(t, err)
+	err = txn2.Commit(ctx)
 	require.NoError(t, err)
 }
 

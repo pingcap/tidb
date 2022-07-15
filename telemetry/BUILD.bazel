@@ -39,6 +39,7 @@ go_library(
         "@com_github_shirou_gopsutil_v3//host",
         "@com_github_tikv_client_go_v2//metrics",
         "@io_etcd_go_etcd_client_v3//:client",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
@@ -46,6 +47,7 @@ go_library(
 
 go_test(
     name = "telemetry_test",
+    timeout = "short",
     srcs = [
         "data_cluster_hardware_test.go",
         "data_feature_usage_test.go",
