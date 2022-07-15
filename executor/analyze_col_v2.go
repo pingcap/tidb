@@ -610,6 +610,10 @@ func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *
 		panic("failpoint triggered")
 	})
 	colLen := len(e.colsInfo)
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer e.memTracker.Consume(bufferedMemSize)
+	defer e.memTracker.Release(bufferedReleaseSize)
 workLoop:
 	for {
 		select {
@@ -629,10 +633,6 @@ workLoop:
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
-				bufferedMemSize := int64(0)
-				bufferedReleaseSize := int64(0)
-				defer e.memTracker.Consume(bufferedMemSize)
-				defer e.memTracker.Release(bufferedReleaseSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
 				// When it's new collation data, we need to use its collate key instead of original value because only
@@ -655,12 +655,12 @@ workLoop:
 						deltaSize := int64(cap(val.GetBytes()))
 						collectorMemSize += deltaSize
 						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-						e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
 						Ordinal: j,
 					})
+					// tmp memory usage
 					deltaSize := val.MemUsage() + 4
 					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
@@ -683,10 +683,6 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
-				bufferedMemSize := int64(0)
-				bufferedReleaseSize := int64(0)
-				defer e.memTracker.Consume(bufferedMemSize)
-				defer e.memTracker.Release(bufferedReleaseSize)
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
@@ -717,6 +713,7 @@ workLoop:
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value: types.NewBytesDatum(b),
 					})
+					// tmp memory usage
 					deltaSize := sampleItems[len(sampleItems)-1].Value.MemUsage()
 					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)

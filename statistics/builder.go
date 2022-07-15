@@ -170,6 +170,7 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		upper := hg.GetUpper(bucketIdx)
 		if memTracker != nil {
+			// tmp memory usage
 			deltaSize := upper.MemUsage()
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
@@ -251,6 +252,7 @@ func BuildHistAndTopN(
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
 			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx, nil, datum)
 			if memTracker != nil {
+				// tmp memory usage
 				deltaSize := int64(cap(encoded))
 				memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 				memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
