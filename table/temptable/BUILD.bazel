@@ -30,6 +30,7 @@ go_library(
 
 go_test(
     name = "temptable_test",
+    timeout = "short",
     srcs = [
         "ddl_test.go",
         "interceptor_test.go",
