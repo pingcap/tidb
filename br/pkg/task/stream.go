@@ -38,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
@@ -70,6 +72,7 @@ var (
 	StreamStatus   = "log status"
 	StreamTruncate = "log truncate"
 	StreamMetadata = "log metadata"
+	StreamCtl      = "log ctl"
 
 	skipSummaryCommandList = map[string]struct{}{
 		StreamStatus:   {},
@@ -90,6 +93,7 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamStatus:   RunStreamStatus,
 	StreamTruncate: RunStreamTruncate,
 	StreamMetadata: RunStreamMetadata,
+	StreamCtl:      RunStreamAdvancer,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -111,6 +115,9 @@ type StreamConfig struct {
 
 	// Spec for the command `status`.
 	JSONOutput bool `json:"json-output" toml:"json-output"`
+
+	// Spec for the command `advancer`.
+	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
 }
 
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
@@ -499,7 +506,7 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// It supports single stream log task currently.
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
@@ -526,7 +533,7 @@ func RunStreamStart(
 		return errors.Annotate(berrors.ErrInvalidArgument, "nothing need to observe")
 	}
 
-	ti := stream.TaskInfo{
+	ti := streamhelper.TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
 			Storage:     streamMgr.bc.GetStorageBackend(),
 			StartTs:     cfg.StartTS,
@@ -601,7 +608,7 @@ func RunStreamStop(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, err := cli.GetTask(ctx, cfg.TaskName)
 	if err != nil {
@@ -651,7 +658,7 @@ func RunStreamPause(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -669,7 +676,7 @@ func RunStreamPause(
 		utils.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      cfg.SafePointTTL,
-			BackupTS: globalCheckPointTS,
+			BackupTS: globalCheckPointTS - 1,
 		},
 	); err != nil {
 		return errors.Trace(err)
@@ -709,7 +716,7 @@ func RunStreamResume(
 	}
 	defer streamMgr.close()
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	cli := streamhelper.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
 	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
@@ -754,6 +761,31 @@ func RunStreamResume(
 	return nil
 }
 
+func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+	ctx, cancel := context.WithCancel(c)
+	defer cancel()
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, false)
+	if err != nil {
+		return err
+	}
+
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return err
+	}
+	env := streamhelper.CliEnv(mgr.StoreManager, etcdCLI)
+	advancer := streamhelper.NewCheckpointAdvancer(env)
+	advancer.UpdateConfig(cfg.AdvancerCfg)
+	daemon := streamhelper.NewAdvancerDaemon(advancer, streamhelper.OwnerManagerForLogBackup(ctx, etcdCLI))
+	loop, err := daemon.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	loop()
+	return nil
+}
+
 func checkConfigForStatus(cfg *StreamConfig) error {
 	if len(cfg.PD) == 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
@@ -771,7 +803,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	if err != nil {
 		return nil, err
 	}
-	cli := stream.NewMetaDataClient(etcdCLI)
+	cli := streamhelper.NewMetaDataClient(etcdCLI)
 	var printer stream.TaskPrinter
 	if !cfg.JSONOutput {
 		printer = stream.PrintTaskByTable(console)
@@ -866,10 +898,17 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 	readMetaDone()
 
-	fileCount := 0
-	shiftUntilTS := ShiftTS(cfg.Until)
+	var (
+		fileCount    uint64 = 0
+		kvCount      int64  = 0
+		totalSize    uint64 = 0
+		shiftUntilTS        = metas.CalculateShiftTS(cfg.Until)
+	)
+
 	metas.IterateFilesFullyBefore(shiftUntilTS, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		fileCount++
+		totalSize += d.Length
+		kvCount += d.NumberOfEntries
 		return
 	})
 	console.Printf("We are going to remove %s files, until %s.\n",
@@ -882,6 +921,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	removed := metas.RemoveDataBefore(shiftUntilTS)
 
+	// remove metadata
 	removeMetaDone := console.StartTask("Removing metadata... ")
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
@@ -889,7 +929,10 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 	removeMetaDone()
-	clearDataFileDone := console.StartTask("Clearing data files... ")
+
+	// remove log
+	clearDataFileDone := console.StartTask(
+		fmt.Sprintf("Clearing data files done. kv-count = %v, total-size = %v", kvCount, totalSize))
 	worker := utils.NewWorkerPool(128, "delete files")
 	wg := new(sync.WaitGroup)
 	for _, f := range removed {
@@ -916,16 +959,6 @@ func RunStreamRestore(
 	cmdName string,
 	cfg *RestoreConfig,
 ) (err error) {
-	startTime := time.Now()
-	defer func() {
-		dur := time.Since(startTime)
-		if err != nil {
-			summary.Log(cmdName+" failed summary", zap.Error(err))
-		} else {
-			summary.Log(cmdName+" success summary", zap.Duration("total-take", dur),
-				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS))
-		}
-	}()
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -990,7 +1023,23 @@ func restoreStream(
 	g glue.Glue,
 	cfg *RestoreConfig,
 	logMinTS, logMaxTS uint64,
-) error {
+) (err error) {
+	var (
+		totalKVCount uint64
+		totalSize    uint64
+		mu           sync.Mutex
+		startTime    = time.Now()
+	)
+	defer func() {
+		if err != nil {
+			summary.Log("restore log failed summary", zap.Error(err))
+		} else {
+			summary.Log("restore log success summary", zap.Duration("total-take", time.Since(startTime)),
+				zap.Uint64("restore-from", cfg.StartTS), zap.Uint64("restore-to", cfg.RestoreTS),
+				zap.Uint64("total-kv-count", totalKVCount), zap.Uint64("total-size", totalSize))
+		}
+	}()
+
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -1020,7 +1069,6 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, ShiftTS(cfg.StartTS))
 	client.SetCurrentTS(currentTS)
 
 	restoreSchedulers, err := restorePreWork(ctx, client, mgr, false)
@@ -1041,6 +1089,12 @@ func restoreStream(
 		return nil
 	}
 
+	shiftStartTS, exist := restore.CalculateShiftTS(metas, cfg.StartTS, cfg.RestoreTS)
+	if !exist {
+		shiftStartTS = cfg.StartTS
+	}
+	client.SetRestoreRangeTS(cfg.StartTS, cfg.RestoreTS, shiftStartTS)
+
 	// read data file by given ts.
 	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas)
 	if err != nil {
@@ -1059,9 +1113,16 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	updateStats := func(kvCount uint64, size uint64) {
+		mu.Lock()
+		defer mu.Unlock()
+		totalKVCount += kvCount
+		totalSize += size
+	}
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, p.Inc)
+		client.RunGCRowsLoader(ctx)
+		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1075,7 +1136,7 @@ func restoreStream(
 
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
+		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, updateStats, p.Inc)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -1088,6 +1149,11 @@ func restoreStream(
 	if err = client.SaveSchemas(ctx, schemasReplace, logMinTS, cfg.RestoreTS); err != nil {
 		return errors.Trace(err)
 	}
+
+	if err = client.InsertGCRows(ctx); err != nil {
+		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
+	}
+
 	return nil
 }
 
@@ -1251,9 +1317,11 @@ func getGlobalResolvedTS(
 		return 0, errors.Trace(err)
 	}
 	var globalCheckpointTS uint64 = 0
-	// TODO change the logic after checkpoint v3 implemented
+	// If V3 global-checkpoint advance, the maximum value in storeMap.resolvedTSMap as global-checkpoint-ts.
+	// If v2 global-checkpoint advance, it need the minimal value in storeMap.resolvedTSMap as global-checkpoint-ts.
+	// Because each of store maintains own checkpoint-ts only.
 	for _, resolveTS := range storeMap.resolvedTSMap {
-		if resolveTS < globalCheckpointTS || globalCheckpointTS == 0 {
+		if globalCheckpointTS < resolveTS {
 			globalCheckpointTS = resolveTS
 		}
 	}
