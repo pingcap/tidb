@@ -30,7 +30,7 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.4
-	github.com/google/btree v1.0.1
+	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20211122183932-1daafda22083
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/mux v1.8.0
@@ -107,6 +107,7 @@ require (
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
 	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
+	github.com/mgechev/revive v1.2.1
 	github.com/nishanths/predeclared v0.2.2
 	github.com/tdakkota/asciicheck v0.1.1
 	honnef.co/go/tools v0.3.1
@@ -114,10 +115,13 @@ require (
 
 require (
 	cloud.google.com/go/compute v1.5.0 // indirect
+	github.com/chavacava/garif v0.0.0-20220316182200-5cad0b5181d4 // indirect
+	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/googleapis/gax-go/v2 v2.2.0 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/kisielk/gotool v1.0.0 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
+	github.com/olekukonko/tablewriter v0.0.5 // indirect
 	github.com/rogpeppe/go-internal v1.6.1 // indirect
 	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519 // indirect
 	google.golang.org/genproto v0.0.0-20220324131243-acbaeb5b85eb // indirect
