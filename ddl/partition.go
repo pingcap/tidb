@@ -1388,18 +1388,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
-	if !nt.ExchangePartitionInfo.ExchangePartitionFlag {
-		if withValidation {
-			err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
+	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
+		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+			ExchangePartitionFlag:  true,
+			ExchangePartitionId:    ptID,
+			ExchangePartitionDefId: defID,
 		}
-		nt.ExchangePartitionInfo.ExchangePartitionFlag = true
-		nt.ExchangePartitionInfo.ExchangePartitionId = ptID
-		nt.ExchangePartitionInfo.ExchangePartitionDefId = defID
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
 
@@ -1628,8 +1622,6 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	case model.PartitionTypeList:
 		if len(pi.Columns) == 0 {
 			sql, paramList = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
-		} else if len(pi.Columns) == 1 {
-			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		} else {
 			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		}

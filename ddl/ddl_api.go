@@ -1792,11 +1792,10 @@ func BuildTableInfo(
 	collate string,
 ) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
-		Name:                  tableName,
-		Version:               model.CurrLatestTableInfoVersion,
-		Charset:               charset,
-		Collate:               collate,
-		ExchangePartitionInfo: &model.ExchangePartitionInfo{},
+		Name:    tableName,
+		Version: model.CurrLatestTableInfoVersion,
+		Charset: charset,
+		Collate: collate,
 	}
 	tblColumns := make([]*table.Column, 0, len(cols))
 	for _, v := range cols {
