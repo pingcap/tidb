@@ -146,51 +146,51 @@ func GetMultiSchemaCounter() MultiSchemaChangeUsageCounter {
 
 // TablePartitionUsageCounter records the usages of table partition.
 type TablePartitionUsageCounter struct {
-	TablePartitionUsed             int64 `json:"table_partition_used"`
-	TablePartitionListUsed         int64 `json:"table_partition_list_used"`
-	TablePartitionRangeUsed        int64 `json:"table_partition_range_used"`
-	TablePartitionHashUsed         int64 `json:"table_partition_hash_used"`
-	TablePartitionRangeColumnsUsed int64 `json:"table_partition_range_columns_used"`
-	TablePartitionListColumnsUsed  int64 `json:"table_partition_list_columns_used"`
-	TablePartitionMaxPartitionsNum int64 `json:"table_partition_max_partitions_num"`
+	TablePartitionCnt              int64 `json:"table_partition_cnt"`
+	TablePartitionListCnt          int64 `json:"table_partition_list_cnt"`
+	TablePartitionRangeCnt         int64 `json:"table_partition_range_cnt"`
+	TablePartitionHashCnt          int64 `json:"table_partition_hash_cnt"`
+	TablePartitionRangeColumnsCnt  int64 `json:"table_partition_range_columns_cnt"`
+	TablePartitionListColumnsCnt   int64 `json:"table_partition_list_columns_cnt"`
+	TablePartitionMaxPartitionsCnt int64 `json:"table_partition_max_partitions_cnt"`
 }
 
 // Cal returns the difference of two counters.
 func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePartitionUsageCounter {
 	return TablePartitionUsageCounter{
-		TablePartitionUsed:             c.TablePartitionUsed - rhs.TablePartitionUsed,
-		TablePartitionListUsed:         c.TablePartitionListUsed - rhs.TablePartitionListUsed,
-		TablePartitionRangeUsed:        c.TablePartitionRangeUsed - rhs.TablePartitionRangeUsed,
-		TablePartitionHashUsed:         c.TablePartitionHashUsed - rhs.TablePartitionHashUsed,
-		TablePartitionRangeColumnsUsed: c.TablePartitionRangeColumnsUsed - rhs.TablePartitionRangeColumnsUsed,
-		TablePartitionListColumnsUsed:  c.TablePartitionListColumnsUsed - rhs.TablePartitionListColumnsUsed,
-		TablePartitionMaxPartitionsNum: mathutil.Max(c.TablePartitionMaxPartitionsNum-rhs.TablePartitionMaxPartitionsNum, rhs.TablePartitionMaxPartitionsNum),
+		TablePartitionCnt:              c.TablePartitionCnt - rhs.TablePartitionCnt,
+		TablePartitionListCnt:          c.TablePartitionListCnt - rhs.TablePartitionListCnt,
+		TablePartitionRangeCnt:         c.TablePartitionRangeCnt - rhs.TablePartitionRangeCnt,
+		TablePartitionHashCnt:          c.TablePartitionHashCnt - rhs.TablePartitionHashCnt,
+		TablePartitionRangeColumnsCnt:  c.TablePartitionRangeColumnsCnt - rhs.TablePartitionRangeColumnsCnt,
+		TablePartitionListColumnsCnt:   c.TablePartitionListColumnsCnt - rhs.TablePartitionListColumnsCnt,
+		TablePartitionMaxPartitionsCnt: mathutil.Max(c.TablePartitionMaxPartitionsCnt-rhs.TablePartitionMaxPartitionsCnt, rhs.TablePartitionMaxPartitionsCnt),
 	}
 }
 
 // ResetTablePartitionCounter gets the TxnCommitCounter.
 func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUsageCounter {
 	return TablePartitionUsageCounter{
-		TablePartitionUsed:             readCounter(TelemetryTablePartitionCnt),
-		TablePartitionListUsed:         readCounter(TelemetryTablePartitionListCnt),
-		TablePartitionRangeUsed:        readCounter(TelemetryTablePartitionRangeCnt),
-		TablePartitionHashUsed:         readCounter(TelemetryTablePartitionHashCnt),
-		TablePartitionRangeColumnsUsed: readCounter(TelemetryTablePartitionRangeColumnsCnt),
-		TablePartitionListColumnsUsed:  readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionsNum: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsNum, pre.TablePartitionMaxPartitionsNum),
+		TablePartitionCnt:              readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:          readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:         readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:          readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:  readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionListColumnsCnt:   readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsCnt, pre.TablePartitionMaxPartitionsCnt),
 	}
 }
 
 // GetTablePartitionCounter gets the TxnCommitCounter.
 func GetTablePartitionCounter() TablePartitionUsageCounter {
 	return TablePartitionUsageCounter{
-		TablePartitionUsed:             readCounter(TelemetryTablePartitionCnt),
-		TablePartitionListUsed:         readCounter(TelemetryTablePartitionListCnt),
-		TablePartitionRangeUsed:        readCounter(TelemetryTablePartitionRangeCnt),
-		TablePartitionHashUsed:         readCounter(TelemetryTablePartitionHashCnt),
-		TablePartitionRangeColumnsUsed: readCounter(TelemetryTablePartitionRangeColumnsCnt),
-		TablePartitionListColumnsUsed:  readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionsNum: readCounter(TelemetryTablePartitionMaxPartitionsCnt),
+		TablePartitionCnt:              readCounter(TelemetryTablePartitionCnt),
+		TablePartitionListCnt:          readCounter(TelemetryTablePartitionListCnt),
+		TablePartitionRangeCnt:         readCounter(TelemetryTablePartitionRangeCnt),
+		TablePartitionHashCnt:          readCounter(TelemetryTablePartitionHashCnt),
+		TablePartitionRangeColumnsCnt:  readCounter(TelemetryTablePartitionRangeColumnsCnt),
+		TablePartitionListColumnsCnt:   readCounter(TelemetryTablePartitionListColumnsCnt),
+		TablePartitionMaxPartitionsCnt: readCounter(TelemetryTablePartitionMaxPartitionsCnt),
 	}
 }
 

@@ -3364,7 +3364,7 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 			telemetryTablePartitionHashUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
-			telemetryTablePartitionRangeUsage.Inc()
+			telemetryTablePartitionRangeColumnsUsage.Inc()
 		}
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
 			telemetryTablePartitionListColumnsUsage.Inc()

@@ -996,17 +996,12 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 			}
 
 			s := stmt.Partition
-
 			if b.Ti.PartitionTelemetry == nil {
 				b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
 			}
-			if s.Num > 0 {
-				b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = int64(s.Num)
-			} else {
-				b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = int64(len(s.Definitions))
-			}
-
+			b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(s.Num, uint64(len(s.Definitions)))
 			b.Ti.PartitionTelemetry.UseTablePartition = true
+
 			switch s.Tp {
 			case model.PartitionTypeRange:
 				if s.Sub == nil {
