@@ -344,6 +344,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	}
 	a.OutputNames = names
 	a.Plan = p
+	a.Ctx.GetSessionVars().StmtCtx.SetPlan(p)
 	return a.InfoSchema.SchemaMetaVersion(), nil
 }
 
@@ -859,6 +860,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		a.OutputNames = executorExec.outputNames
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
+		a.Ctx.GetSessionVars().StmtCtx.SetPlan(executorExec.plan)
 		if executorExec.lowerPriority {
 			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
@@ -938,6 +940,11 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(execDetail.ScanDetail.ProcessedKeys)
 	}
 	succ := err == nil
+	if a.Plan != nil {
+		// If this statement has a Plan, the StmtCtx.plan should have been set when it comes here,
+		// but we set it again in case we missed some code paths.
+		sessVars.StmtCtx.SetPlan(a.Plan)
+	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -985,6 +992,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
@@ -996,15 +1004,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		return
 	}
 	sql := FormatSQL(a.GetTextToLog())
-	_, digest := sessVars.StmtCtx.SQLDigest()
+	_, digest := stmtCtx.SQLDigest()
 
 	var indexNames string
-	if len(sessVars.StmtCtx.IndexNames) > 0 {
+	if len(stmtCtx.IndexNames) > 0 {
 		// remove duplicate index.
 		idxMap := make(map[string]struct{})
 		buf := bytes.NewBuffer(make([]byte, 0, 4))
 		buf.WriteByte('[')
-		for _, idx := range sessVars.StmtCtx.IndexNames {
+		for _, idx := range stmtCtx.IndexNames {
 			_, ok := idxMap[idx]
 			if ok {
 				continue
@@ -1018,6 +1026,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		buf.WriteByte(']')
 		indexNames = buf.String()
 	}
+	flat := getFlatPlan(stmtCtx)
 	var stmtDetail execdetails.StmtExecDetails
 	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -1028,12 +1037,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
-	execDetail := sessVars.StmtCtx.GetExecDetails()
-	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
-	statsInfos := plannercore.GetStatsInfo(a.Plan)
-	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
-	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	_, planDigest := getPlanDigest(sessVars.StmtCtx, a.Plan)
+	execDetail := stmtCtx.GetExecDetails()
+	copTaskInfo := stmtCtx.CopTasksDetails()
+	statsInfos := plannercore.GetStatsInfoFromFlatPlan(flat)
+	memMax := stmtCtx.MemTracker.MaxConsumed()
+	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	_, planDigest := getPlanDigest(stmtCtx)
+
+	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1050,7 +1062,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		MemMax:            memMax,
 		DiskMax:           diskMax,
 		Succ:              succ,
-		Plan:              getPlanTree(a.Ctx, a.Plan),
+		Plan:              getPlanTree(stmtCtx),
 		PlanDigest:        planDigest.String(),
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
@@ -1061,10 +1073,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PDTotal:           time.Duration(atomic.LoadInt64(&tikvExecDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&tikvExecDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
-		ResultRows:        GetResultRowsCount(a.Ctx, a.Plan),
+		ResultRows:        resultRows,
 		ExecRetryCount:    a.retryCount,
 		IsExplicitTxn:     sessVars.TxnCtx.IsExplicit,
-		IsWriteCacheTable: sessVars.StmtCtx.WaitLockLeaseTime > 0,
+		IsWriteCacheTable: stmtCtx.WaitLockLeaseTime > 0,
 	}
 	if a.retryCount > 0 {
 		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1092,15 +1104,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 			userString = sessVars.User.String()
 		}
 		var tableIDs string
-		if len(sessVars.StmtCtx.TableIDs) > 0 {
-			tableIDs = strings.Replace(fmt.Sprintf("%v", sessVars.StmtCtx.TableIDs), " ", ",", -1)
+		if len(stmtCtx.TableIDs) > 0 {
+			tableIDs = strings.Replace(fmt.Sprintf("%v", stmtCtx.TableIDs), " ", ",", -1)
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:        sql.String(),
 			Digest:     digest.String(),
 			Start:      sessVars.StartTime,
 			Duration:   costTime,
-			Detail:     sessVars.StmtCtx.GetExecDetails(),
+			Detail:     stmtCtx.GetExecDetails(),
 			Succ:       succ,
 			ConnID:     sessVars.ConnectionID,
 			TxnTS:      txnTS,
@@ -1114,8 +1126,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 }
 
 // GetResultRowsCount gets the count of the statement result rows.
-func GetResultRowsCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
-	runtimeStatsColl := sctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p plannercore.Plan) int64 {
+	runtimeStatsColl := stmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
 		return 0
 	}
@@ -1127,13 +1139,33 @@ func GetResultRowsCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
 	return rootStats.GetActRows()
 }
 
+// getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
+// then stores it in stmtCtx.flatPlan.
+func getFlatPlan(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPlan {
+	pp := stmtCtx.GetPlan()
+	if pp == nil {
+		return nil
+	}
+	if flat := stmtCtx.GetFlatPlan(); flat != nil {
+		f := flat.(*plannercore.FlatPhysicalPlan)
+		return f
+	}
+	p := pp.(plannercore.Plan)
+	flat := plannercore.FlattenPhysicalPlan(p, false)
+	if flat != nil {
+		stmtCtx.SetFlatPlan(flat)
+		return flat
+	}
+	return nil
+}
+
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
+func getPlanTree(stmtCtx *stmtctx.StatementContext) string {
 	cfg := config.GetGlobalConfig()
 	if atomic.LoadUint32(&cfg.Instance.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	planTree, _ := getEncodedPlan(sctx, p, false)
+	planTree, _ := getEncodedPlan(stmtCtx, false)
 	if len(planTree) == 0 {
 		return planTree
 	}
@@ -1141,31 +1173,33 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sc *stmtctx.StatementContext, p plannercore.Plan) (string, *parser.Digest) {
-	normalized, planDigest := sc.GetPlanDigest()
+func getPlanDigest(stmtCtx *stmtctx.StatementContext) (string, *parser.Digest) {
+	normalized, planDigest := stmtCtx.GetPlanDigest()
 	if len(normalized) > 0 && planDigest != nil {
 		return normalized, planDigest
 	}
-	normalized, planDigest = plannercore.NormalizePlan(p)
-	sc.SetPlanDigest(normalized, planDigest)
+	flat := getFlatPlan(stmtCtx)
+	normalized, planDigest = plannercore.NormalizeFlatPlan(flat)
+	stmtCtx.SetPlanDigest(normalized, planDigest)
 	return normalized, planDigest
 }
 
 // getEncodedPlan gets the encoded plan, and generates the hint string if indicated.
-func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (encodedPlan, hintStr string) {
+func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPlan, hintStr string) {
 	var hintSet bool
-	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
-	hintStr, hintSet = sctx.GetSessionVars().StmtCtx.GetPlanHint()
+	encodedPlan = stmtCtx.GetEncodedPlan()
+	hintStr, hintSet = stmtCtx.GetPlanHint()
 	if len(encodedPlan) > 0 && (!genHint || hintSet) {
 		return
 	}
+	flat := getFlatPlan(stmtCtx)
 	if len(encodedPlan) == 0 {
-		encodedPlan = plannercore.EncodePlan(p)
-		sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
+		encodedPlan = plannercore.EncodeFlatPlan(flat)
+		stmtCtx.SetEncodedPlan(encodedPlan)
 	}
 	if genHint {
-		hints := plannercore.GenHintsFromPhysicalPlan(p)
-		for _, tableHint := range sctx.GetSessionVars().StmtCtx.OriginalTableHints {
+		hints := plannercore.GenHintsFromFlatPlan(flat)
+		for _, tableHint := range stmtCtx.OriginalTableHints {
 			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
@@ -1177,7 +1211,7 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (
 		}
 
 		hintStr = hint.RestoreOptimizerHints(hints)
-		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
+		stmtCtx.SetPlanHint(hintStr)
 	}
 	return
 }
@@ -1221,7 +1255,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	// No need to encode every time, so encode lazily.
 	planGenerator := func() (string, string) {
-		return getEncodedPlan(a.Ctx, a.Plan, !sessVars.InRestrictedSQL)
+		return getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
@@ -1230,11 +1264,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			_, planDigest := getPlanDigest(stmtCtx, a.Plan)
+			_, planDigest := getPlanDigest(stmtCtx)
 			return planDigest.String()
 		}
 	} else {
-		_, tmp := getPlanDigest(stmtCtx, a.Plan)
+		_, tmp := getPlanDigest(stmtCtx)
 		planDigest = tmp.String()
 	}
 
@@ -1262,6 +1296,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		execDetail.BackoffTime += stmtCtx.WaitLockLeaseTime
 		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
+
+	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
+
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:     sql,
@@ -1290,7 +1327,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
-		ResultRows:      GetResultRowsCount(a.Ctx, a.Plan),
+		ResultRows:      resultRows,
 		TiKVExecDetails: tikvExecDetail,
 		Prepared:        a.isPreparedStmt,
 	}
@@ -1318,7 +1355,7 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	vars := a.Ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	normalizedSQL, sqlDigest := sc.SQLDigest()
-	normalizedPlan, planDigest := getPlanDigest(sc, a.Plan)
+	normalizedPlan, planDigest := getPlanDigest(sc)
 	var sqlDigestByte, planDigestByte []byte
 	if sqlDigest != nil {
 		sqlDigestByte = sqlDigest.Bytes()

@@ -30,7 +30,7 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.4
-	github.com/google/btree v1.0.1
+	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20211122183932-1daafda22083
 	github.com/google/uuid v1.1.2
 	github.com/gorilla/mux v1.8.0
@@ -62,7 +62,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.1-0.20220627063500-947d923945fd
+	github.com/tikv/client-go/v2 v2.0.1-0.20220711061028-1c198aab9585
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -107,15 +107,19 @@ require (
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
 	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
+	github.com/mgechev/revive v1.2.1
 	github.com/nishanths/predeclared v0.2.2
 	github.com/tdakkota/asciicheck v0.1.1
 	honnef.co/go/tools v0.3.1
 )
 
 require (
+	github.com/chavacava/garif v0.0.0-20220316182200-5cad0b5181d4 // indirect
+	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/kisielk/gotool v1.0.0 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
+	github.com/olekukonko/tablewriter v0.0.5 // indirect
 )
 
 require (

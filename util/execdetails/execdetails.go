@@ -80,6 +80,8 @@ const (
 	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
 	GetCommitTSTimeStr = "Get_commit_ts_time"
+	// GetLatestTsTimeStr means the time of getting latest ts in async commit and 1pc.
+	GetLatestTsTimeStr = "Get_latest_ts_time"
 	// CommitBackoffTimeStr means the time of commit backoff.
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
@@ -142,6 +144,9 @@ func (d ExecDetails) String() string {
 		}
 		if commitDetails.GetCommitTsTime > 0 {
 			parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64))
+		}
+		if commitDetails.GetLatestTsTime > 0 {
+			parts = append(parts, GetLatestTsTimeStr+": "+strconv.FormatFloat(commitDetails.GetLatestTsTime.Seconds(), 'f', -1, 64))
 		}
 		commitDetails.Mu.Lock()
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
@@ -304,7 +309,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *basicCopRuntimeStats) Tp() int {
+func (*basicCopRuntimeStats) Tp() int {
 	return TpBasicCopRunTimeStats
 }
 
@@ -478,7 +483,7 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *BasicRuntimeStats) Tp() int {
+func (*BasicRuntimeStats) Tp() int {
 	return TpBasicRuntimeStats
 }
 
@@ -744,7 +749,7 @@ type RuntimeStatsWithConcurrencyInfo struct {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *RuntimeStatsWithConcurrencyInfo) Tp() int {
+func (*RuntimeStatsWithConcurrencyInfo) Tp() int {
 	return TpRuntimeStatsWithConcurrencyInfo
 }
 
@@ -786,8 +791,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
-}
+func (*RuntimeStatsWithConcurrencyInfo) Merge(RuntimeStats) {}
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
@@ -797,7 +801,7 @@ type RuntimeStatsWithCommit struct {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *RuntimeStatsWithCommit) Tp() int {
+func (*RuntimeStatsWithCommit) Tp() int {
 	return TpRuntimeStatsWithCommit
 }
 
@@ -963,7 +967,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
+func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 	if len(backoffTypes) == 0 {
 		return ""
 	}
