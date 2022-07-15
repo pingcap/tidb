@@ -924,7 +924,6 @@ func wrapInVersionComment(ctx sessionctx.Context, buf *bytes.Buffer, version, s 
 	if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 		buf.WriteString(" */")
 	}
-	return
 }
 
 func wrapInFeatureComment(ctx sessionctx.Context, buf *bytes.Buffer, featureString, s string) {
@@ -938,7 +937,6 @@ func wrapInFeatureComment(ctx sessionctx.Context, buf *bytes.Buffer, featureStri
 	if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
 		buf.WriteString(" */")
 	}
-	return
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
