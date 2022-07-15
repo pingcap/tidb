@@ -179,7 +179,7 @@ func (ds *pubSubDataSink) sendTopSQLRecords(ctx context.Context, records []tipb.
 		if err = ds.stream.Send(r); err != nil {
 			return
 		}
-		sentCount += 1
+		sentCount++
 
 		select {
 		case <-ctx.Done():
@@ -216,7 +216,7 @@ func (ds *pubSubDataSink) sendSQLMeta(ctx context.Context, sqlMetas []tipb.SQLMe
 		if err = ds.stream.Send(r); err != nil {
 			return
 		}
-		sentCount += 1
+		sentCount++
 
 		select {
 		case <-ctx.Done():
@@ -253,7 +253,7 @@ func (ds *pubSubDataSink) sendPlanMeta(ctx context.Context, planMetas []tipb.Pla
 		if err = ds.stream.Send(r); err != nil {
 			return
 		}
-		sentCount += 1
+		sentCount++
 
 		select {
 		case <-ctx.Done():
