@@ -41,49 +41,49 @@ var (
 			Namespace: "tidb",
 			Subsystem: "telemetry",
 			Name:      "table_partition_usage",
-			Help:      "Counter of usage of table partition",
+			Help:      "Counter of CREATE TABLE which includes of table partitioning",
 		})
 	TelemetryTablePartitionListCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
 			Name:      "table_partition_list_usage",
-			Help:      "Counter of usage of table partition list",
+			Help:      "Counter of CREATE TABLE which includes LIST partitioning",
 		})
 	TelemetryTablePartitionRangeCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
 			Name:      "table_partition_range_usage",
-			Help:      "Counter of usage of table partition range",
+			Help:      "Counter of CREATE TABLE which includes RANGE partitioning",
 		})
 	TelemetryTablePartitionHashCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
 			Name:      "table_partition_hash_usage",
-			Help:      "Counter of usage of table partition hash",
+			Help:      "Counter of CREATE TABLE which includes HASH partitioning",
 		})
 	TelemetryTablePartitionRangeColumnsCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
 			Name:      "table_partition_range_columns_usage",
-			Help:      "Counter of usage of table partition range columns",
+			Help:      "Counter of CREATE TABLE which includes RANGE COLUMNS partitioning",
 		})
 	TelemetryTablePartitionListColumnsCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
 			Name:      "table_partition_list_columns_usage",
-			Help:      "Counter of usage of table list columns partition list columns",
+			Help:      "Counter of CREATE TABLE which includes LIST COLUMNS partitioning",
 		})
-	TelemetryTablePartitionMaxPartition = prometheus.NewCounter(
+	TelemetryTablePartitionMaxPartitionsCnt = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "telemetry",
 			Name:      "table_partition_max_partition_usage",
-			Help:      "Counter of usage of table partition max partition",
+			Help:      "Counter of partitions created by CREATE TABLE statements",
 		})
 )
 
@@ -152,7 +152,7 @@ type TablePartitionUsageCounter struct {
 	TablePartitionHashUsed         int64 `json:"table_partition_hash_used"`
 	TablePartitionRangeColumnsUsed int64 `json:"table_partition_range_columns_used"`
 	TablePartitionListColumnsUsed  int64 `json:"table_partition_list_columns_used"`
-	TablePartitionMaxPartitionUsed int64 `json:"table_partition_max_partition_used"`
+	TablePartitionMaxPartitionsNum int64 `json:"table_partition_max_partitions_num"`
 }
 
 // Cal returns the difference of two counters.
@@ -164,7 +164,7 @@ func (c TablePartitionUsageCounter) Cal(rhs TablePartitionUsageCounter) TablePar
 		TablePartitionHashUsed:         c.TablePartitionHashUsed - rhs.TablePartitionHashUsed,
 		TablePartitionRangeColumnsUsed: c.TablePartitionRangeColumnsUsed - rhs.TablePartitionRangeColumnsUsed,
 		TablePartitionListColumnsUsed:  c.TablePartitionListColumnsUsed - rhs.TablePartitionListColumnsUsed,
-		TablePartitionMaxPartitionUsed: mathutil.Max(c.TablePartitionMaxPartitionUsed-rhs.TablePartitionMaxPartitionUsed, rhs.TablePartitionMaxPartitionUsed),
+		TablePartitionMaxPartitionsNum: mathutil.Max(c.TablePartitionMaxPartitionsNum-rhs.TablePartitionMaxPartitionsNum, rhs.TablePartitionMaxPartitionsNum),
 	}
 }
 
@@ -177,7 +177,7 @@ func ResetTablePartitionCounter(pre TablePartitionUsageCounter) TablePartitionUs
 		TablePartitionHashUsed:         readCounter(TelemetryTablePartitionHashCnt),
 		TablePartitionRangeColumnsUsed: readCounter(TelemetryTablePartitionRangeColumnsCnt),
 		TablePartitionListColumnsUsed:  readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionUsed: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartition)-pre.TablePartitionMaxPartitionUsed, pre.TablePartitionMaxPartitionUsed),
+		TablePartitionMaxPartitionsNum: mathutil.Max(readCounter(TelemetryTablePartitionMaxPartitionsCnt)-pre.TablePartitionMaxPartitionsNum, pre.TablePartitionMaxPartitionsNum),
 	}
 }
 
@@ -190,7 +190,7 @@ func GetTablePartitionCounter() TablePartitionUsageCounter {
 		TablePartitionHashUsed:         readCounter(TelemetryTablePartitionHashCnt),
 		TablePartitionRangeColumnsUsed: readCounter(TelemetryTablePartitionRangeColumnsCnt),
 		TablePartitionListColumnsUsed:  readCounter(TelemetryTablePartitionListColumnsCnt),
-		TablePartitionMaxPartitionUsed: readCounter(TelemetryTablePartitionMaxPartition),
+		TablePartitionMaxPartitionsNum: readCounter(TelemetryTablePartitionMaxPartitionsCnt),
 	}
 }
 

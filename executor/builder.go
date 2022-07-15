@@ -996,7 +996,16 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 			}
 
 			s := stmt.Partition
-			b.Ti.PartitionTelemetry.UseTablePartitionMaxPartition = int64(s.Num)
+
+			if b.Ti.PartitionTelemetry == nil {
+				b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
+			}
+			if s.Num > 0 {
+				b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = int64(s.Num)
+			} else {
+				b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = int64(len(s.Definitions))
+			}
+
 			b.Ti.PartitionTelemetry.UseTablePartition = true
 			switch s.Tp {
 			case model.PartitionTypeRange:
@@ -1014,14 +1023,10 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 			case model.PartitionTypeList:
 				enable := b.ctx.GetSessionVars().EnableListTablePartition
 				if s.Sub == nil && enable {
-					if s.ColumnNames == nil {
-						b.Ti.PartitionTelemetry.UseTablePartitionList = true
-					}
-					if len(s.ColumnNames) == 1 {
-						b.Ti.PartitionTelemetry.UseTablePartitionList = true
-					}
-					if len(s.ColumnNames) > 1 {
+					if len(s.ColumnNames) > 0 {
 						b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
+					} else {
+						b.Ti.PartitionTelemetry.UseTablePartitionList = true
 					}
 				}
 

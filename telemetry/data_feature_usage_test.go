@@ -172,16 +172,16 @@ func TestTablePartition(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionUsed)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListUsed)
-	require.Equal(t, int64(0), usage.TablePartition.TablePartitionMaxPartitionUsed)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionMaxPartitionsNum)
 
 	tk.MustExec("drop table if exists pt")
-	tk.MustExec("create table pt (a int,b int) partition by hash(a) partitions 4;")
+	tk.MustExec("create table pt (a int,b int) partition by hash(a) partitions 4")
 
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionUsed)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionHashUsed)
-	require.Equal(t, int64(4), usage.TablePartition.TablePartitionMaxPartitionUsed)
+	require.Equal(t, int64(4), usage.TablePartition.TablePartitionMaxPartitionsNum)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListUsed)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeUsed)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsUsed)
@@ -194,12 +194,12 @@ func TestTablePartition(t *testing.T) {
 		"partition p1 values less than (6), " +
 		"partition p2 values less than (9)," +
 		"partition p3 values less than (12)," +
-		"partition p4 values less than (15));")
+		"partition p4 values less than (15))")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionUsed)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionHashUsed)
-	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionUsed)
+	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionsNum)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListUsed)
 	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeUsed)
 	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsUsed)

@@ -339,7 +339,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		StmtNode:    execStmt,
 		Ctx:         sctx,
 		OutputNames: names,
-		Ti:          &TelemetryInfo{PartitionTelemetry: &PartitionTelemetryInfo{}},
+		Ti:          &TelemetryInfo{},
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

@@ -129,7 +129,7 @@ var (
 	telemetryTablePartitionHashUsage         = metrics.TelemetryTablePartitionHashCnt
 	telemetryTablePartitionRangeColumnsUsage = metrics.TelemetryTablePartitionRangeColumnsCnt
 	telemetryTablePartitionListColumnsUsage  = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionUsage = metrics.TelemetryTablePartitionMaxPartition
+	telemetryTablePartitionMaxPartitionUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -2311,7 +2311,7 @@ func (s *session) cachedPointPlanExec(ctx context.Context,
 		Ctx:         s,
 		OutputNames: execPlan.OutputNames(),
 		PsStmt:      prepareStmt,
-		Ti:          &executor.TelemetryInfo{PartitionTelemetry: &executor.PartitionTelemetryInfo{}},
+		Ti:          &executor.TelemetryInfo{},
 	}
 	compileDuration := time.Since(s.sessionVars.StartTime)
 	sessionExecuteCompileDurationGeneral.Observe(compileDuration.Seconds())
@@ -3347,24 +3347,26 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		telemetryMultiSchemaChangeUsage.Inc()
 	}
 
-	if ti.PartitionTelemetry.UseTablePartition {
-		telemetryTablePartitionUsage.Inc()
-		telemetryTablePartitionMaxPartitionUsage.Add(float64(ti.PartitionTelemetry.UseTablePartitionMaxPartition))
-	}
-	if ti.PartitionTelemetry.UseTablePartitionList {
-		telemetryTablePartitionListUsage.Inc()
-	}
-	if ti.PartitionTelemetry.UseTablePartitionRange {
-		telemetryTablePartitionRangeUsage.Inc()
-	}
-	if ti.PartitionTelemetry.UseTablePartitionHash {
-		telemetryTablePartitionHashUsage.Inc()
-	}
-	if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
-		telemetryTablePartitionRangeUsage.Inc()
-	}
-	if ti.PartitionTelemetry.UseTablePartitionListColumns {
-		telemetryTablePartitionListColumnsUsage.Inc()
+	if ti.PartitionTelemetry != nil {
+		if ti.PartitionTelemetry.UseTablePartition {
+			telemetryTablePartitionUsage.Inc()
+			telemetryTablePartitionMaxPartitionUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
+		}
+		if ti.PartitionTelemetry.UseTablePartitionList {
+			telemetryTablePartitionListUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRange {
+			telemetryTablePartitionRangeUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionHash {
+			telemetryTablePartitionHashUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
+			telemetryTablePartitionRangeUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionListColumns {
+			telemetryTablePartitionListColumnsUsage.Inc()
+		}
 	}
 }
 
