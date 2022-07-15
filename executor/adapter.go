@@ -705,7 +705,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			}
 			continue
 		}
-		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
+		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock(is)
 		if err1 != nil {
 			return err1
 		}
@@ -811,7 +812,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 type pessimisticTxn interface {
 	kv.Transaction
 	// KeysNeedToLock returns the keys need to be locked.
-	KeysNeedToLock() ([]kv.Key, error)
+	KeysNeedToLock(is infoschema.InfoSchema) ([]kv.Key, error)
 }
 
 // buildExecutor build an executor from plan, prepared statement may need additional procedure.
