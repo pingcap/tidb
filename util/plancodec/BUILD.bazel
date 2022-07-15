@@ -18,6 +18,7 @@ go_library(
 
 go_test(
     name = "plancodec_test",
+    timeout = "short",
     srcs = [
         "codec_test.go",
         "id_test.go",

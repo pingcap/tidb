@@ -16,6 +16,7 @@ go_library(
 
 go_test(
     name = "cteutil_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "storage_test.go",
