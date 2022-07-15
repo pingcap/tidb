@@ -4924,14 +4924,14 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 func checkTiFlashSupportable(schema *model.DBInfo, tb table.Table) error {
-	// Ban setting tiflash mode for tables in system database.
+	// Ban alter tiflash related actions for tables in system database.
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysTable)
 	} else if tb.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set on tiflash")
 	}
 
-	// Ban setting tiflash mode for tables which has charset not supported by TiFlash
+	// Ban alter tiflash related actions for tables which has charset not supported by TiFlash
 	for _, col := range tb.Cols() {
 		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
 		if !ok {
