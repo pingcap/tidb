@@ -448,7 +448,12 @@ type tidbGlueSession struct {
 	info     *brieTaskInfo
 }
 
-// BootstrapSession implements glue.Glue
+// GetSessionCtx implements glue.Glue
+func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
+	return gs.se
+}
+
+// GetDomain implements glue.Glue
 func (gs *tidbGlueSession) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domain.GetDomain(gs.se), nil
 }

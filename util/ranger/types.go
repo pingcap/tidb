@@ -46,7 +46,7 @@ func (rs Ranges) Range() []*Range {
 }
 
 // Rebuild rebuilds this range.
-func (rs Ranges) Rebuild() error {
+func (Ranges) Rebuild() error {
 	return nil
 }
 

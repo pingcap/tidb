@@ -22,7 +22,7 @@ type generalCICollator struct {
 }
 
 // Compare implements Collator interface.
-func (gc *generalCICollator) Compare(a, b string) int {
+func (*generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 	r1, r2 := rune(0), rune(0)
@@ -45,7 +45,7 @@ func (gc *generalCICollator) Key(str string) []byte {
 }
 
 // KeyWithoutTrimRightSpace implements Collator interface.
-func (gc *generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
+func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str))
 	i := 0
 	r := rune(0)
@@ -58,7 +58,7 @@ func (gc *generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 }
 
 // Pattern implements Collator interface.
-func (gc *generalCICollator) Pattern() WildcardPattern {
+func (*generalCICollator) Pattern() WildcardPattern {
 	return &ciPattern{}
 }
 

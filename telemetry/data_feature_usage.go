@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
@@ -48,6 +49,7 @@ type featureUsage struct {
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
 	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
+	LogBackup             bool                             `json:"logBackup"`
 }
 
 type placementPolicyUsage struct {
@@ -83,6 +85,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.GlobalKill = getGlobalKillUsageInfo()
 
 	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
+  
+	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -283,6 +287,7 @@ func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
 }
 
+
 // TiFlashModeStatistics records the usage info of Fast Mode
 type TiFlashModeStatistics struct {
 	FastModeTableCount   int64 `json:"fast_mode_table_count"`
@@ -306,4 +311,8 @@ func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
 	}
 
 	return TiFlashModeStatistics{FastModeTableCount: fastModeTableCount, NormalModeTableCount: normalModeTableCount}
+}
+
+func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
+	return utils.CheckLogBackupEnabled(ctx)
 }

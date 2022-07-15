@@ -105,6 +105,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 			// do not ignore these errors if in prepared plan building for safety
 			return nil, errors.Trace(err)
 		}
+		//revive:disable:empty-block
 		if tp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
@@ -134,6 +135,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 		} else {
 			return point, errors.Trace(err)
 		}
+		//revive:enable:empty-block
 	}
 	valCmpCasted, err := point.value.Compare(sc, &casted, collate.GetCollator(tp.GetCollate()))
 	if err != nil {
