@@ -47,11 +47,13 @@ const (
 	DefaultMergeRegionKeyCount uint64 = 960000
 )
 
-type CmdType int
+type VersionCheckerType int
 
 const (
-	NormalCmd CmdType = iota
-	StreamCmd
+	// default version checker
+	NormalVersionChecker VersionCheckerType = iota
+	// version checker for PiTR
+	StreamVersionChecker
 )
 
 // Mgr manages connections to a TiDB cluster.
@@ -184,7 +186,7 @@ func NewMgr(
 	storeBehavior StoreBehavior,
 	checkRequirements bool,
 	needDomain bool,
-	cmdType CmdType,
+	cmdType VersionCheckerType,
 ) (*Mgr, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("conn.NewMgr", opentracing.ChildOf(span.Context()))
