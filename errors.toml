@@ -566,6 +566,11 @@ error = '''
 Failed to read auto-random value from storage engine
 '''
 
+["ddl:0"]
+error = '''
+TiFlash mode will take effect after at least one TiFlash replica is set for the table
+'''
+
 ["ddl:1025"]
 error = '''
 Error on rename of '%-.210s' to '%-.210s' (errno: %d - %s)
@@ -1103,7 +1108,7 @@ error = '''
 
 ["ddl:8200"]
 error = '''
-alter tiflash related actions for tables in system database is unsupported
+Unsupported shard_row_id_bits for table with primary key as row id
 '''
 
 ["ddl:8201"]
