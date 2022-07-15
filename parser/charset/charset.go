@@ -160,7 +160,7 @@ func GetCharsetInfo(cs string) (*Charset, error) {
 }
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
-func GetCharsetInfoByID(coID int) (defaultCharset string, defaultCollationName string, err error) {
+func GetCharsetInfoByID(coID int) (charsetStr string, collateStr string, err error) {
 	if coID == mysql.DefaultCollationID {
 		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
 	}
