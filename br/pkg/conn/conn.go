@@ -186,7 +186,7 @@ func NewMgr(
 	storeBehavior StoreBehavior,
 	checkRequirements bool,
 	needDomain bool,
-	cmdType VersionCheckerType,
+	versionCheckerType VersionCheckerType,
 ) (*Mgr, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("conn.NewMgr", opentracing.ChildOf(span.Context()))
@@ -203,13 +203,13 @@ func NewMgr(
 	}
 	if checkRequirements {
 		var checker version.VerChecker
-		switch cmdType {
-		case NormalCmd:
+		switch versionCheckerType {
+		case NormalVersionChecker:
 			checker = version.CheckVersionForBR
-		case StreamCmd:
+		case StreamVersionChecker:
 			checker = version.CheckVersionForBRPiTR
 		default:
-			return nil, errors.Errorf("unknown command type, comman code is %d", cmdType)
+			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
 		}
 		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), checker)
 		if err != nil {
