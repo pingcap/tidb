@@ -393,5 +393,11 @@ var (
 	ErrColumnInChange = ClassDDL.NewStd(mysql.ErrColumnInChange)
 
 	// ErrUnsupportedAlterTiFlashModeForTableWithoutTiFlashReplica returns when set tiflash mode on table whose tiflash_replica is null
-	ErrUnsupportedAlterTiFlashModeForTableWithoutTiFlashReplica = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table tiflash mode for tables without tiflash replica is unsupported", nil))
+	ErrAlterTiFlashModeForTableWithoutTiFlashReplica = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Warning: you are altering tiflash mode for the table whose tiflash replica count is zero. The tiflash mode will finally take effect when you set tiflash replica!", nil))
+
+	// ErrUnsupportedAlterTiFlashModeForSysTable means we don't support the alter tiflash mode for system table.
+	ErrUnsupportedAlterTiFlashModeForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER tiflash mode for tables in system database is unsupported", nil))
+
+	// ErrAlterTiFlashModeForUnsupportedCharsetTable is used when alter tiflash mode with unsupported charset.
+	ErrAlterTiFlashModeForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER tiflash mode for table contain %s charset"), nil))
 )

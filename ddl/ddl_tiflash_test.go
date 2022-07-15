@@ -408,9 +408,17 @@ func TestSetTiFlashModeAvailable(t *testing.T) {
 	tiflashmode = tb.Meta().TiFlashMode
 	require.NotNil(t, tiflashmode)
 	require.Equal(t, tiflashmode, model.TiFlashModeNormal)
+
+	// check the warning when set tiflash mode on the table whose tiflash replica is nil
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash mode fast")
+	tk.MustQuery("show warnings").Check(
+		testkit.Rows("Note 8200 Warning: you are altering tiflash mode for the table whose tiflash replica count is zero. The tiflash mode will finally take effect when you set tiflash replica!"))
 }
 
-// set TiFlash mode shall fail when tiflash replica is nil
+// check for the condition that unsupport set tiflash mode
 func TestSetTiFlashModeUnsupported(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
@@ -418,8 +426,11 @@ func TestSetTiFlashModeUnsupported(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]ALTER table tiflash mode for tables without tiflash replica is unsupported")
+	tk.MustExec("create temporary table ddltiflash(z int)")
+	// unsupport for temporary table
+	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table")
+	// unsupport for system table
+	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]ALTER tiflash mode for tables in system database is unsupported")
 }
 
 // Truncate partition shall not block.

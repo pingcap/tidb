@@ -4942,10 +4942,25 @@ func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, 
 		return fmt.Errorf("unsupported TiFlash mode %s", mode)
 	}
 
-	// ban set tiflash mode when tiflash replica is nil
+	// Ban setting tiflash mode for tables in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(dbterror.ErrUnsupportedAlterTiFlashModeForSysTable)
+	} else if tb.Meta().TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash mode")
+	}
+
+	// Ban setting tiflash mode for tables which has charset not supported by TiFlash
+	for _, col := range tb.Cols() {
+		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
+		if !ok {
+			return dbterror.ErrAlterTiFlashModeForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
+		}
+	}
+
+	// Prompt warning when tiflash replica is nil or tiflash replica count is 0
 	tbReplicaInfo := tb.Meta().TiFlashReplica
-	if tbReplicaInfo == nil {
-		return errors.Trace(dbterror.ErrUnsupportedAlterTiFlashModeForTableWithoutTiFlashReplica)
+	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
+		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)
 	}
 
 	job := &model.Job{
