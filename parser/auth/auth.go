@@ -20,7 +20,9 @@ import (
 )
 
 const (
+	// UserNameMaxLength is the max length of username.
 	UserNameMaxLength = 32
+	// HostNameMaxLength is the max length of host name.
 	HostNameMaxLength = 255
 )
 
@@ -69,11 +71,13 @@ func (user *UserIdentity) LoginString() string {
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 
+// RoleIdentity represents a role name.
 type RoleIdentity struct {
 	Username string
 	Hostname string
 }
 
+// Restore implements Node interface.
 func (role *RoleIdentity) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteName(role.Username)
 	if role.Hostname != "" {

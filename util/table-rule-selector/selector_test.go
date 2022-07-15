@@ -196,7 +196,6 @@ func testReplace(t *testing.T, s Selector) {
 		require.NoError(t, err)
 		err = s.Insert(schema, "", replacedRule, Insert)
 		require.Error(t, err)
-
 	}
 
 	schemas, tables := s.AllRules()
