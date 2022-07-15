@@ -656,12 +656,13 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		for reachEnd := false; !reachEnd; {
 			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
 			groupKeysLen := len(groupKeys)
-			w.groupKeys = make([][]byte, groupKeysLen)
+			memSize := getGroupKeyMemUsage(w.groupKeys)
+			w.groupKeys = w.groupKeys[:0]
 			for i := 0; i < groupKeysLen; i++ {
-				w.groupKeys[i] = []byte(groupKeys[i])
+				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
 			}
 			failpoint.Inject("ConsumeRandomPanic", nil)
-			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys))
+			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
 			allMemDelta := int64(0)
 			for i, groupKey := range groupKeys {
