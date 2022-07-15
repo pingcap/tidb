@@ -285,28 +285,25 @@ func getGlobalKillUsageInfo() bool {
 
 // TiFlashModeStatistics records the usage info of Fast Mode
 type TiFlashModeStatistics struct {
-	// fast mode table / (fast mode table + normal mode table) , these tables must have tiflash replica
-	FastModeTableProportion float64 `json:"fast_mode_table_proportion"`
+	FastModeTableCount   int64 `json:"fast_mode_table_count"`
+	NormalModeTableCount int64 `json:"normal_mode_table_count"`
 }
 
 func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
 	is := GetDomainInfoSchema(ctx)
 	var fastModeTableCount int64 = 0
-	var allModeTableWithTiflashReplicaCount int64 = 0
+	var normalModeTableCount int64 = 0
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
 			if tbInfo.Meta().TiFlashReplica != nil {
-				allModeTableWithTiflashReplicaCount += 1
 				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
 					fastModeTableCount += 1
+				} else {
+					normalModeTableCount += 1
 				}
 			}
 		}
 	}
 
-	if allModeTableWithTiflashReplicaCount == 0 {
-		return TiFlashModeStatistics{FastModeTableProportion: float64(0)}
-	}
-
-	return TiFlashModeStatistics{FastModeTableProportion: float64(fastModeTableCount) / float64(allModeTableWithTiflashReplicaCount)}
+	return TiFlashModeStatistics{FastModeTableCount: fastModeTableCount, NormalModeTableCount: normalModeTableCount}
 }

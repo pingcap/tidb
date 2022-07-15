@@ -350,7 +350,8 @@ func TestTiFlashModeStatistics(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, float64(0), usage.TiFlashModeStatistics.FastModeTableProportion)
+	require.Equal(t, int64(0), usage.TiFlashModeStatistics.FastModeTableCount)
+	require.Equal(t, int64(0), usage.TiFlashModeStatistics.NormalModeTableCount)
 
 	tk.MustExec(`create table t1(a int);`)
 	tk.MustExec(`alter table t1 set tiflash replica 1;`)
@@ -367,12 +368,14 @@ func TestTiFlashModeStatistics(t *testing.T) {
 
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, float64(1)/float64(3), usage.TiFlashModeStatistics.FastModeTableProportion)
+	require.Equal(t, int64(1), usage.TiFlashModeStatistics.FastModeTableCount)
+	require.Equal(t, int64(2), usage.TiFlashModeStatistics.NormalModeTableCount)
 
 	tk.MustExec("drop table t1;")
 	tk.MustExec(`alter table t2 set tiflash mode fast;`)
 
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, float64(0.5), usage.TiFlashModeStatistics.FastModeTableProportion)
+	require.Equal(t, int64(1), usage.TiFlashModeStatistics.FastModeTableCount)
+	require.Equal(t, int64(1), usage.TiFlashModeStatistics.NormalModeTableCount)
 }
