@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -187,8 +186,7 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" {
-				msg := fmt.Sprintf("sem enabled: %v", sem.IsEnabled())
-				require.Equal(t, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported", err.Error(), msg)
+				require.Equal(t, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported", err.Error())
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
 			}
