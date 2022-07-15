@@ -195,6 +195,7 @@ type TelemetryInfo struct {
 	PartitionTelemetry   *PartitionTelemetryInfo
 }
 
+// PartitionTelemetryInfo records table partition telemetry information during execution.
 type PartitionTelemetryInfo struct {
 	UseTablePartition             bool
 	UseTablePartitionList         bool

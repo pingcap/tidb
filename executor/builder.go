@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/cteutil"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -993,7 +992,6 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		stmt := v.Statement.(*ast.CreateTableStmt)
 		if stmt != nil && stmt.Partition != nil {
 			if strings.EqualFold(b.ctx.GetSessionVars().EnableTablePartition, "OFF") {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
 				break
 			}
 
@@ -1003,14 +1001,10 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 			switch s.Tp {
 			case model.PartitionTypeRange:
 				if s.Sub == nil {
-					if s.ColumnNames == nil {
-						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
-					}
-					if len(s.ColumnNames) == 1 {
-						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
-					}
-					if len(s.ColumnNames) > 1 {
+					if len(s.ColumnNames) > 0 {
 						b.Ti.PartitionTelemetry.UseTablePartitionRangeColumns = true
+					} else {
+						b.Ti.PartitionTelemetry.UseTablePartitionRange = true
 					}
 				}
 			case model.PartitionTypeHash:

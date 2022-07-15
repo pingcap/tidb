@@ -66,6 +66,7 @@ func postReportTelemetryData() {
 	postReportNonTransactionalCounter()
 }
 
+// PostReportTelemetryDataForTest is for test.
 func PostReportTelemetryDataForTest() {
 	postReportTablePartitionUsage()
 }
