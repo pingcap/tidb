@@ -627,7 +627,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	opt := defaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PlanTrace)}
+		tracer := &tracing.PhysicalOptimizeTracer{Candidates: make(map[int]*tracing.CandidatePlanTrace)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			if err == nil {

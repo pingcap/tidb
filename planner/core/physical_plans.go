@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -222,6 +223,30 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
+}
+
+func (p *PhysicalTableReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalTableReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.tablePlan != nil {
+		candidate := &tracing.CandidatePlanTrace{
+			PlanTrace: &tracing.PlanTrace{
+				ID:          p.tablePlan.ID(),
+				TP:          p.tablePlan.TP(),
+				Cost:        p.tablePlan.Cost(),
+				ExplainInfo: p.tablePlan.ExplainInfo(),
+			},
+		}
+		op.tracer.AppendCandidate(candidate)
+		p.tablePlan.appendChildCandidate(op)
+	}
 }
 
 // PhysicalIndexReader is the index reader in tidb.
