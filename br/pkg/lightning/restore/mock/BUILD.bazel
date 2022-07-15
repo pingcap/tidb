@@ -12,6 +12,7 @@ go_library(
         "//store/pdtypes",
         "//util/filter",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
     ],
 )
 
