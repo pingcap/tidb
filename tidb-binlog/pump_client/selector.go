@@ -132,7 +132,7 @@ func (r *RangeSelector) SetPumps(pumps []*PumpStatus) {
 }
 
 // Select implement PumpSelector.Select.
-func (r *RangeSelector) Select(binlog *pb.Binlog) *PumpStatus {
+func (r *RangeSelector) Select(binlog *pb.Binlog, _ int) *PumpStatus {
 	// TODO: use status' label to match suitable pump.
 	selectorLock.Lock()
 	defer selectorLock.Unlock()
