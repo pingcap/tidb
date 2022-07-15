@@ -1076,6 +1076,7 @@ func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
 	tk.MustExec("alter table t add index idx2(a), alter index idx visible;")
 	tk.MustQuery("select * from t use index (idx, idx2);").Check(testkit.Rows( /* no rows */ ))
 	tk.MustGetErrCode("alter table t drop column b, alter index idx invisible;", errno.ErrKeyDoesNotExist)
+	tk.MustQuery("select a, b from t;").Check(testkit.Rows( /* no rows */ ))
 }
 
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {

@@ -500,6 +500,7 @@ REBUILD:
 		}
 		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, isBinProtocol, binVarTypes, txtVarTypes, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
@@ -564,6 +565,7 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		prepared.CachedPlan = p
 		prepared.CachedNames = names
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
+		sctx.GetSessionVars().StmtCtx.SetPlan(p)
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 	}
 	return err
@@ -1251,7 +1253,8 @@ func (e *Explain) RenderResult() error {
 			e.prepareDotInfo(physicalPlan)
 		}
 	case types.ExplainFormatHint:
-		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
+		flat := FlattenPhysicalPlan(e.TargetPlan, false)
+		hints := GenHintsFromFlatPlan(flat)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
 	default:
