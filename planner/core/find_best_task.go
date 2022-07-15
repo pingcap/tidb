@@ -1401,6 +1401,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			Columns:         ds.Columns,
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
+			DBName:          ds.DBName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
@@ -1917,7 +1918,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			ColumnNames:    ds.names,
 		}
 		ts.cost = cost
-		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats)
+		mppTask = ts.addPushedDownSelectionToMppTask(mppTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		return mppTask, nil
 	}
 	copTask := &copTask{
@@ -2079,6 +2080,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := BatchPointGetPlan{
 		ctx:              ds.ctx,
+		dbName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),

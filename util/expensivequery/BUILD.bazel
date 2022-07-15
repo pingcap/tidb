@@ -17,6 +17,7 @@ go_library(
         "//util/logutil",
         "//util/memory",
         "@com_github_pingcap_log//:log",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
@@ -24,6 +25,7 @@ go_library(
 
 go_test(
     name = "expensivequery_test",
+    timeout = "short",
     srcs = ["expensivequerey_test.go"],
     embed = [":expensivequery"],
     deps = [

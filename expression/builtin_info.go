@@ -21,7 +21,6 @@ package expression
 import (
 	"context"
 	"encoding/json"
-	"sort"
 	"strings"
 	"time"
 
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -234,7 +234,7 @@ func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNull bo
 	for _, r := range data.ActiveRoles {
 		sortedRes = append(sortedRes, r.String())
 	}
-	sort.Strings(sortedRes)
+	slices.Sort(sortedRes)
 	for i, r := range sortedRes {
 		res += r
 		if i != len(data.ActiveRoles)-1 {

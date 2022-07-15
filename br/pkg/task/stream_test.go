@@ -25,12 +25,11 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -230,7 +229,7 @@ type fakeResolvedInfo struct {
 }
 
 func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo) error {
-	backupMetaDir := filepath.Join(tempDir, restore.GetStreamBackupMetaPrefix())
+	backupMetaDir := filepath.Join(tempDir, stream.GetStreamBackupMetaPrefix())
 	s, err := storage.NewLocalStorage(backupMetaDir)
 	if err != nil {
 		return errors.Trace(err)
@@ -278,7 +277,7 @@ func TestGetGlobalResolvedTS(t *testing.T) {
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
 	require.Nil(t, err)
-	require.Equal(t, uint64(100), globalResolvedTS)
+	require.Equal(t, uint64(101), globalResolvedTS)
 }
 
 func TestGetGlobalResolvedTS2(t *testing.T) {
@@ -310,5 +309,5 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
 	require.Nil(t, err)
-	require.Equal(t, uint64(98), globalResolvedTS)
+	require.Equal(t, uint64(99), globalResolvedTS)
 }

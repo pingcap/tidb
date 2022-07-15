@@ -17,13 +17,13 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/metrics"
 	atomicutil "go.uber.org/atomic"
+	"golang.org/x/exp/slices"
 )
 
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
@@ -418,6 +418,20 @@ func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 	return nil
 }
 
+// SearchTrackerConsumedMoreThanNBytes searches the specific tracker that consumes more than NBytes.
+func (t *Tracker) SearchTrackerConsumedMoreThanNBytes(limit int64) (res []*Tracker) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, childSlice := range t.mu.children {
+		for _, tracker := range childSlice {
+			if tracker.BytesConsumed() > limit {
+				res = append(res, tracker)
+			}
+		}
+	}
+	return
+}
+
 // String returns the string representation of this Tracker tree.
 func (t *Tracker) String() string {
 	buffer := bytes.NewBufferString("\n")
@@ -438,7 +452,7 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	for label := range t.mu.children {
 		labels = append(labels, label)
 	}
-	sort.Ints(labels)
+	slices.Sort(labels)
 	for _, label := range labels {
 		children := t.mu.children[label]
 		for _, child := range children {

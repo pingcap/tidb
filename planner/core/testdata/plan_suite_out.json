@@ -3309,5 +3309,86 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestSemiJoinRewriteHints",
+    "Cases": [
+      {
+        "SQL": "select /*+ SEMI_JOIN_REWRITE() */ * from t",
+        "Plan": [
+          "TableReader 10000.00 root  data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+      },
+      {
+        "SQL": "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
+        "Plan": [
+          "HashJoin 7992.00 root  inner join, equal:[eq(test.t.c, test.t.c)], other cond:gt(test.t.a, Column#9)",
+          "├─Selection(Build) 6393.60 root  not(isnull(Column#9))",
+          "│ └─HashAgg 7992.00 root  group by:test.t.c, funcs:min(Column#10)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
+          "│   └─TableReader 7992.00 root  data:HashAgg",
+          "│     └─HashAgg 7992.00 cop[tikv]  group by:test.t.c, funcs:min(test.t.b)->Column#10",
+          "│       └─Selection 9990.00 cop[tikv]  not(isnull(test.t.c))",
+          "│         └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9980.01 root  data:Selection",
+          "  └─Selection 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.c))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": "[planner:1815]The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."
+      },
+      {
+        "SQL": "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a=t.a)",
+        "Plan": [
+          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashAgg(Build) 7992.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": ""
+      },
+      {
+        "SQL": "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ t.b from t t1 where t1.a=t.a)",
+        "Plan": [
+          "HashJoin 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashAgg(Build) 7992.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": ""
+      },
+      {
+        "SQL": "select exists(select /*+ SEMI_JOIN_REWRITE() */ * from t t1 where t1.a=t.a) from t",
+        "Plan": [
+          "HashJoin 10000.00 root  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": "[planner:1815]SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."
+      },
+      {
+        "SQL": "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a > t.a)",
+        "Plan": [
+          "HashJoin 7992.00 root  CARTESIAN semi join, other cond:gt(test.t.a, test.t.a)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": "[planner:1815]SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions."
+      }
+    ]
   }
 ]

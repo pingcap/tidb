@@ -56,6 +56,7 @@ func TestSetTableFlashReplica(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(2), tbl.Meta().TiFlashReplica.Count)
 	require.Equal(t, "a,b", strings.Join(tbl.Meta().TiFlashReplica.LocationLabels, ","))
+	require.Equal(t, model.TiFlashModeNormal, tbl.Meta().TiFlashMode) // check the default tiflash mode
 
 	tk.MustExec("alter table t_flash set tiflash replica 0")
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
@@ -367,7 +368,8 @@ func TestTruncateTable2(t *testing.T) {
 	tablePrefix := tablecodec.EncodeTablePrefix(oldTblID)
 	hasOldTableData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
-		err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 			it, err1 := txn.Iter(tablePrefix, nil)
 			if err1 != nil {
 				return err1

@@ -34,7 +34,7 @@ func main() {
 	cwd := os.Args[0]
 	cwd = cwd[:len(cwd)-len("tools/bin/xprog")]
 
-	testBinaryPath := os.Args[1]
+	testBinaryPath := filepath.Clean(os.Args[1])
 	dir, _ := filepath.Split(testBinaryPath)
 
 	// Extract the package info from /tmp/go-build2662369829/b1382/importcfg.link
@@ -51,7 +51,7 @@ func main() {
 	_, file := filepath.Split(pkg)
 
 	// The path of the destination file looks like $CWD/util/topsql/topsql.test.bin
-	newName := filepath.Join(cwd, pkg, file+".test.bin")
+	newName := filepath.Clean(filepath.Join(cwd, pkg, file+".test.bin"))
 
 	if err1 := os.Rename(testBinaryPath, newName); err1 != nil {
 		// Rename fail, handle error like "invalid cross-device linkcd tools/check"
@@ -64,10 +64,11 @@ func main() {
 
 func getPackageInfo(dir string) string {
 	// Read the /tmp/go-build2662369829/b1382/importcfg.link file to get the package information
-	f, err := os.Open(filepath.Join(dir, "importcfg.link"))
+	f, err := os.Open(filepath.Join(filepath.Clean(dir), "importcfg.link"))
 	if err != nil {
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	r := bufio.NewReader(f)
@@ -83,6 +84,9 @@ func getPackageInfo(dir string) string {
 }
 
 func MoveFile(sourcePath, destPath string) error {
+	filepath.Clean(sourcePath)
+	filepath.Clean(destPath)
+
 	inputFile, err := os.Open(sourcePath)
 	if err != nil {
 		return fmt.Errorf("Couldn't open source file: %s", err)

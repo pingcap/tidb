@@ -31,6 +31,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -355,6 +356,8 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
+	// TxnScope is the scope of the txn
+	TxnScope string
 	// ReadReplicaScope is the scope of the read replica.
 	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
@@ -365,6 +368,10 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+	// MinPagingSize is used when Paging is true.
+	MinPagingSize uint64
+	// RequestSource indicates whether the request is an internal request.
+	RequestSource util.RequestSource
 }
 
 // PartitionIDAndRanges used by PartitionTableScan in tiflash.

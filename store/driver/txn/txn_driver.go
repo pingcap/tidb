@@ -232,7 +232,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.TxnScope:
 		txn.SetScope(val.(string))
 	case kv.IsStalenessReadOnly:
-		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+		txn.KVTxn.GetSnapshot().SetIsStalenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
@@ -251,6 +251,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetAssertionLevel(val.(kvrpcpb.AssertionLevel))
 	case kv.TableToColumnMaps:
 		txn.columnMapsCache = val
+	case kv.RequestSourceInternal:
+		txn.KVTxn.SetRequestSourceInternal(val.(bool))
+	case kv.RequestSourceType:
+		txn.KVTxn.SetRequestSourceType(val.(string))
 	}
 }
 
@@ -262,6 +266,8 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 		return txn.KVTxn.GetScope()
 	case kv.TableToColumnMaps:
 		return txn.columnMapsCache
+	case kv.RequestSourceType:
+		return txn.RequestSourceType
 	default:
 		return nil
 	}
