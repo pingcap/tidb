@@ -15,6 +15,7 @@ go_library(
 
 go_test(
     name = "stringutil_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "string_util_test.go",

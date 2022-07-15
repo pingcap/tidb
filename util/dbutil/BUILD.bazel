@@ -39,6 +39,7 @@ go_library(
 
 go_test(
     name = "dbutil_test",
+    timeout = "short",
     srcs = [
         "common_test.go",
         "index_test.go",

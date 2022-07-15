@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "mathutil_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "math_test.go",

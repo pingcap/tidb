@@ -36,6 +36,7 @@ go_library(
 
 go_test(
     name = "isolation_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "optimistic_test.go",
@@ -43,6 +44,7 @@ go_test(
         "repeatable_read_test.go",
         "serializable_test.go",
     ],
+    flaky = True,
     deps = [
         ":isolation",
         "//config",
