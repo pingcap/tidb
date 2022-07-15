@@ -2140,6 +2140,14 @@ def go_deps():
         version = "v3.3.0",
     )
     go_repository(
+        name = "com_github_mgechev_dots",
+        build_file_proto_mode = "disable",
+        importpath = "github.com/mgechev/dots",
+        sum = "h1:zpIH83+oKzcpryru8ceC6BxnoG8TBrhgAvRg8obzup0=",
+        version = "v0.0.0-20210922191527-e955255bf517",
+    )
+
+    go_repository(
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable",
         importpath = "github.com/mgechev/revive",
@@ -3004,8 +3012,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:VAyYcN1Nw7RupQszUYqOkueEVapWSxKFU7uBaYY5Dv8=",
-        version = "v2.0.1-0.20220627063500-947d923945fd",
+        sum = "h1:RpH/obpgyNKkXV4Wt8PqSdcUTnqWyExPcla+qdTVgi0=",
+        version = "v2.0.1-0.20220711061028-1c198aab9585",
     )
     go_repository(
         name = "com_github_tikv_pd_client",

@@ -41,9 +41,12 @@ import (
 )
 
 const (
-	MIXCHARS             = 32
-	SALT_LENGTH          = 20
-	ITERATION_MULTIPLIER = 1000
+	// MIXCHARS is the number of characters to use in the mix
+	MIXCHARS = 32
+	// SALT_LENGTH is the length of the salt
+	SALT_LENGTH = 20 //nolint: revive
+	// ITERATION_MULTIPLIER is the number of iterations to use
+	ITERATION_MULTIPLIER = 1000 //nolint: revive
 )
 
 func b64From24bit(b []byte, n int, buf *bytes.Buffer) {
@@ -177,7 +180,7 @@ func sha256crypt(plaintext string, salt []byte, iterations int) string {
 	return buf.String()
 }
 
-// CheckShaPassword checks if a MySQL style caching_sha2 authentication string matches a password
+// CheckShaPassword is to checks if a MySQL style caching_sha2 authentication string matches a password
 func CheckShaPassword(pwhash []byte, password string) (bool, error) {
 	pwhashParts := bytes.Split(pwhash, []byte("$"))
 	if len(pwhashParts) != 4 {
@@ -201,6 +204,7 @@ func CheckShaPassword(pwhash []byte, password string) (bool, error) {
 	return bytes.Equal(pwhash, []byte(newHash)), nil
 }
 
+// NewSha2Password creates a new MySQL style caching_sha2 password hash
 func NewSha2Password(pwd string) string {
 	salt := make([]byte, SALT_LENGTH)
 	rand.Read(salt)

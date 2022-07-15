@@ -183,7 +183,7 @@ func TestCertExpire(t *testing.T) {
 	err = ValidateSessionToken(tokenBytes, "test_user")
 	require.NoError(t, err)
 	// the old cert expires and the original token is invalid
-	timeOffset := uint64(loadCertInterval)
+	timeOffset := uint64(LoadCertInterval)
 	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	ReloadSigningCert()
 	timeOffset += uint64(oldCertValidTime + time.Minute)
@@ -197,7 +197,7 @@ func TestCertExpire(t *testing.T) {
 	require.NoError(t, err)
 	// the cert is rotated but is still valid
 	createRSACert(t, certPath2, keyPath2)
-	timeOffset += uint64(loadCertInterval)
+	timeOffset += uint64(LoadCertInterval)
 	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
 	ReloadSigningCert()
 	err = ValidateSessionToken(tokenBytes, "test_user")
@@ -238,8 +238,9 @@ func TestLoadAndReadConcurrently(t *testing.T) {
 	}
 	// the reader
 	for i := 0; i < 3; i++ {
+		id := i
 		wg.Run(func() {
-			username := fmt.Sprintf("test_user_%d", i)
+			username := fmt.Sprintf("test_user_%d", id)
 			for time.Now().Before(deadline) {
 				_, tokenBytes := createNewToken(t, username)
 				time.Sleep(10 * time.Millisecond)

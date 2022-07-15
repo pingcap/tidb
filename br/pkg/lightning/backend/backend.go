@@ -125,41 +125,8 @@ type CheckCtx struct {
 	DBMetas []*mydump.MDDatabaseMeta
 }
 
-// AbstractBackend is the abstract interface behind Backend.
-// Implementations of this interface must be goroutine safe: you can share an
-// instance and execute any method anywhere.
-type AbstractBackend interface {
-	// Close the connection to the backend.
-	Close()
-
-	// MakeEmptyRows creates an empty collection of encoded rows.
-	MakeEmptyRows() kv.Rows
-
-	// RetryImportDelay returns the duration to sleep when retrying an import
-	RetryImportDelay() time.Duration
-
-	// ShouldPostProcess returns whether KV-specific post-processing should be
-	// performed for this backend. Post-processing includes checksum and analyze.
-	ShouldPostProcess() bool
-
-	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
-
-	OpenEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
-
-	CloseEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
-
-	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
-	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
-	// It's safe to reset or cleanup this engine.
-	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
-
-	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
-
-	// CheckRequirements performs the check whether the backend satisfies the
-	// version requirements
-	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
-
+// TargetInfoGetter defines the interfaces to get target information.
+type TargetInfoGetter interface {
 	// FetchRemoteTableModels obtains the models of all tables given the schema
 	// name. The returned table info does not need to be precise if the encoder,
 	// is not requiring them, but must at least fill in the following fields for
@@ -173,6 +140,45 @@ type AbstractBackend interface {
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+
+	// CheckRequirements performs the check whether the backend satisfies the version requirements
+	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
+}
+
+// EncodingBuilder consists of operations to handle encoding backend row data formats from source.
+type EncodingBuilder interface {
+	// NewEncoder creates an encoder of a TiDB table.
+	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
+	// MakeEmptyRows creates an empty collection of encoded rows.
+	MakeEmptyRows() kv.Rows
+}
+
+// AbstractBackend is the abstract interface behind Backend.
+// Implementations of this interface must be goroutine safe: you can share an
+// instance and execute any method anywhere.
+type AbstractBackend interface {
+	EncodingBuilder
+	TargetInfoGetter
+	// Close the connection to the backend.
+	Close()
+
+	// RetryImportDelay returns the duration to sleep when retrying an import
+	RetryImportDelay() time.Duration
+
+	// ShouldPostProcess returns whether KV-specific post-processing should be
+	// performed for this backend. Post-processing includes checksum and analyze.
+	ShouldPostProcess() bool
+
+	OpenEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
+
+	CloseEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
+
+	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
+	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
+	// It's safe to reset or cleanup this engine.
+	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
+
+	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	// FlushEngine ensures all KV pairs written to an open engine has been
 	// synchronized, such that kill-9'ing Lightning afterwards and resuming from

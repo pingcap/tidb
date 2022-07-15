@@ -2355,11 +2355,10 @@ func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.Name)
 	} else {
 		str, ok := mysql.Priv2Str[n.Priv]
-		if ok {
-			ctx.WriteKeyWord(str)
-		} else {
+		if !ok {
 			return errors.New("Undefined privilege type")
 		}
+		ctx.WriteKeyWord(str)
 	}
 	if n.Cols != nil {
 		ctx.WritePlain(" (")

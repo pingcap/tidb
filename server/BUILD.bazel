@@ -154,6 +154,7 @@ go_test(
         "//metrics",
         "//parser",
         "//parser/ast",
+        "//parser/auth",
         "//parser/charset",
         "//parser/model",
         "//parser/mysql",

@@ -182,5 +182,4 @@ func (p *PumpStatus) IsUsable() bool {
 // ShouldBeUsable returns true if pump should be usable
 func (p *PumpStatus) ShouldBeUsable() bool {
 	return p.Status.State == node.Online
-
 }

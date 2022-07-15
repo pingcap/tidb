@@ -42,7 +42,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// Protocol Features
+// AuthSwitchRequest is a protocol feature.
 const AuthSwitchRequest byte = 0xfe
 
 // Server information.
@@ -168,6 +168,7 @@ const (
 	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
 	AuthSM3Password         = "sm3_password"          // #nosec G101
 	AuthSocket              = "auth_socket"
+	AuthTiDBSessionToken    = "tidb_session_token"
 )
 
 // MySQL database and tables.
@@ -231,6 +232,7 @@ const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
+// SHAPWDHashLen is the length of sha256_password's hash.
 const SHAPWDHashLen = 70
 const SM3PWDHashLen = 64
 
