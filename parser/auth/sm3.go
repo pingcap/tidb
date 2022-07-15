@@ -200,13 +200,6 @@ func SM3(data []byte) []byte {
 	return h.Sum(nil)
 }
 
-func SM3String(pwd string) string {
-	var h sm3
-	h.Reset()
-	h.Write([]byte(pwd))
-	return string(h.Sum(nil))
-}
-
 func sm3crypt(plaintext string, salt []byte, iterations int) string {
 	// Numbers in the comments refer to the description of the algorithm on https://www.akkadia.org/drepper/SHA-crypt.txt
 
@@ -351,6 +344,7 @@ func CheckSM3Password(pwhash []byte, password string) (bool, error) {
 	return bytes.Equal(pwhash, []byte(newHash)), nil
 }
 
+// NewSM3Password creates a new SM3 password hash
 func NewSM3Password(pwd string) string {
 	salt := make([]byte, SALT_LENGTH)
 	rand.Read(salt)
