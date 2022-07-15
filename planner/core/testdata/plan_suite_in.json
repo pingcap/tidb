@@ -783,5 +783,16 @@
       "select * from employee e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.deptid = e2.d",
       "select * from (select deptid+1 d, count(empid) a from employee group by d) e1 join (select deptid+1 d, count(empid) a from employee group by d) e2 on e1.d = e2.d"
     ]
+  },
+  {
+    "name": "TestSemiJoinRewriteHints",
+    "cases": [
+      "select /*+ SEMI_JOIN_REWRITE() */ * from t",
+      "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
+      "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a=t.a)",
+      "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ t.b from t t1 where t1.a=t.a)",
+      "select exists(select /*+ SEMI_JOIN_REWRITE() */ * from t t1 where t1.a=t.a) from t",
+      "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a > t.a)"
+    ]
   }
 ]

@@ -266,6 +266,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
 	if sv.EnablePaging {
 		builder.SetPaging(true)
+		builder.Request.MinPagingSize = uint64(sv.MinPagingSize)
 	}
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType

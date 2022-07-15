@@ -1535,6 +1535,34 @@
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
+        "Plan": [
+          "HashJoin 10000.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashAgg(Build) 8000.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "│ └─HashJoin 12500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "│   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│   │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)",
+        "Plan": [
+          "HashJoin 10000.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─HashAgg(Build) 8000.00 root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+          "│ └─HashJoin 12500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "│   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│   │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -3006,6 +3034,40 @@
       },
       {
         "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 6.40 root  data:ExchangeSender",
+          "  └─ExchangeSender 6.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 6.40 mpp[tiflash]  semi join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)], other cond:gt(test.d1_t.value, test.fact_t.col1)",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k)), not(isnull(test.d1_t.value))",
+          "      │     └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.col1)), not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from d1_t where d1_k = fact_t.d1_k)",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#12",
+          "└─TableReader 8.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 8.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin 8.00 mpp[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d1_t.d1_k)]",
+          "      ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection 2.00 mpp[tiflash]  test.d1_t.d1_k",
+          "      │     └─HashAgg 2.00 mpp[tiflash]  group by:test.d1_t.d1_k, funcs:firstrow(test.d1_t.d1_k)->test.d1_t.d1_k",
+          "      │       └─ExchangeReceiver 2.00 mpp[tiflash]  ",
+          "      │         └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d1_t.d1_k, collate: binary]",
+          "      │           └─Selection 2.00 mpp[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │             └─TableFullScan 2.00 mpp[tiflash] table:d1_t keep order:false",
+          "      └─Selection(Probe) 8.00 mpp[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan 8.00 mpp[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from fact_t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
         "Plan": [
           "StreamAgg 1.00 root  funcs:count(1)->Column#12",
           "└─TableReader 6.40 root  data:ExchangeSender",
@@ -5952,7 +6014,7 @@
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
           "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "        └─Selection(Probe) 0.80 mpp[tiflash]  not(isnull(test.t.id))",
           "          └─TableFullScan 0.80 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
@@ -5968,7 +6030,7 @@
           "        │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
           "        │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "        └─Selection(Probe) 0.80 mpp[tiflash]  not(isnull(test.t.id))",
           "          └─TableFullScan 0.80 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       },
@@ -5985,7 +6047,7 @@
           "          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
           "          │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
           "          │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "          └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "          └─Selection(Probe) 16.00 mpp[tiflash]  not(isnull(test.t.id))",
           "            └─TableFullScan 16.02 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
       }
