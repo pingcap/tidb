@@ -49,15 +49,15 @@ var (
 		Buckets:   prometheus.ExponentialBuckets(1, 2.0, 12),
 	}, []string{"type"})
 	RegionCheckpointRequest = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace:   "tidb",
-		Subsystem:   "log_backup",
-		Name:        "region_request",
-		Help:        "The failure / success stat requesting region checkpoints.",
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "region_request",
+		Help:      "The failure / success stat requesting region checkpoints.",
 	}, []string{"result"})
 	RegionCheckpointFailure = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace:   "tidb",
-		Subsystem:   "log_backup",
-		Name:        "region_request_failure",
-		Help:        "The failure reasons of requesting region checkpoints.",
+		Namespace: "tidb",
+		Subsystem: "log_backup",
+		Name:      "region_request_failure",
+		Help:      "The failure reasons of requesting region checkpoints.",
 	}, []string{"reason"})
 )

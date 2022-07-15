@@ -99,17 +99,15 @@ func (rst *RangesSharesTS) Zap() zapcore.ObjectMarshaler {
 		}
 
 		oe.AddUint64("checkpoint", rst.TS)
-		oe.AddArray("items", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
-			ae.AppendObject(zapcore.ObjectMarshalerFunc(func(oe1 zapcore.ObjectEncoder) error {
+		return oe.AddArray("items", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+			return ae.AppendObject(zapcore.ObjectMarshalerFunc(func(oe1 zapcore.ObjectEncoder) error {
 				for _, rng := range rngs {
 					oe1.AddString("start-key", redact.String(hex.EncodeToString(rng.StartKey)))
 					oe1.AddString("end-key", redact.String(hex.EncodeToString(rng.EndKey)))
 				}
 				return nil
 			}))
-			return nil
 		}))
-		return nil
 	})
 }
 
