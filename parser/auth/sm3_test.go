@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var foobarPwdSM3Hash, _ = hex.DecodeString("24412430303524031a69251c34295c4b35167c7f1e5a7b63091349536c72627066426a635061762e556e6c63533159414d7762317261324a5a3047756b4244664177434e3043")
+var foobarPwdSM3Hash, _ = hex.DecodeString("24422430303524031a69251c34295c4b35167c7f1e5a7b63091349536c72627066426a635061762e556e6c63533159414d7762317261324a5a3047756b4244664177434e3043")
 
 func TestCheckSM3PasswordGood(t *testing.T) {
 	pwd := "foobar"
@@ -31,7 +31,7 @@ func TestCheckSM3PasswordGood(t *testing.T) {
 
 func TestCheckSM3PasswordBad(t *testing.T) {
 	pwd := "not_foobar"
-	pwhash, _ := hex.DecodeString("24412430303524031a69251c34295c4b35167c7f1e5a7b63091349536c72627066426a635061762e556e6c63533159414d7762317261324a5a3047756b4244664177434e3043")
+	pwhash, _ := hex.DecodeString("24422430303524031a69251c34295c4b35167c7f1e5a7b63091349536c72627066426a635061762e556e6c63533159414d7762317261324a5a3047756b4244664177434e3043")
 	r, err := CheckSM3Password(pwhash, pwd)
 	require.NoError(t, err)
 	require.False(t, r)
@@ -46,7 +46,7 @@ func TestCheckSM3PasswordShort(t *testing.T) {
 
 func TestCheckSM3PasswordDigestTypeIncompatible(t *testing.T) {
 	pwd := "not_foobar"
-	pwhash, _ := hex.DecodeString("24422430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
+	pwhash, _ := hex.DecodeString("24432430303524031A69251C34295C4B35167C7F1E5A7B63091349503974624D34504B5A424679354856336868686F52485A736E4A733368786E427575516C73446469496537")
 	_, err := CheckSM3Password(pwhash, pwd)
 	require.Error(t, err)
 }

@@ -306,7 +306,7 @@ func sm3crypt(plaintext string, salt []byte, iterations int) string {
 
 	// 22
 	buf := bytes.NewBuffer(make([]byte, 0, 100))
-	buf.Write([]byte{'$', 'A', '$'})
+	buf.Write([]byte{'$', 'B', '$'})
 	rounds := fmt.Sprintf("%03d", iterations/ITERATION_MULTIPLIER)
 	buf.Write([]byte(rounds))
 	buf.Write([]byte{'$'})
@@ -335,7 +335,7 @@ func CheckSM3Password(pwhash []byte, password string) (bool, error) {
 	}
 
 	hashType := string(pwhashParts[1])
-	if hashType != "A" {
+	if hashType != "B" {
 		return false, errors.New("digest type is incompatible")
 	}
 
