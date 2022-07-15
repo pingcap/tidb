@@ -37,6 +37,7 @@ type PrecheckItem interface {
 	// Check checks whether it meet some prerequisites for importing
 	// If the check is skipped, the returned `CheckResult` is nil
 	Check(ctx context.Context) (*CheckResult, error)
+	GetCheckItemID() CheckItemID
 }
 
 type precheckContextKey string

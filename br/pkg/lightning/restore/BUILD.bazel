@@ -88,6 +88,7 @@ go_test(
         "get_pre_info_test.go",
         "meta_manager_test.go",
         "precheck_impl_test.go",
+        "precheck_test.go",
         "restore_schema_test.go",
         "restore_test.go",
         "table_restore_test.go",

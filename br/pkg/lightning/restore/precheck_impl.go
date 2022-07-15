@@ -40,6 +40,10 @@ func NewClusterRestoureCheckItem(preInfoGetter PreRestoreInfoGetter) PrecheckIte
 	}
 }
 
+func (ci *clusterResourceCheckItem) GetCheckItemID() CheckItemID {
+	return CheckTargetClusterSize
+}
+
 func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (uint64, error) {
 	storeInfo, err := ci.preInfoGetter.GetStorageInfo(ctx)
 	if err != nil {
@@ -62,7 +66,7 @@ func (ci *clusterResourceCheckItem) getReplicaCount(ctx context.Context) (uint64
 
 func (ci *clusterResourceCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckTargetClusterSize,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "Cluster resources are rich for this import task",
@@ -151,9 +155,13 @@ func NewClusterVersionCheckItem(preInfoGetter PreRestoreInfoGetter, dbMetas []*m
 	}
 }
 
+func (ci *clusterVersionCheckItem) GetCheckItemID() CheckItemID {
+	return CheckTargetClusterVersion
+}
+
 func (ci *clusterVersionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckTargetClusterVersion,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "Cluster version check passed",
@@ -179,9 +187,13 @@ func NewEmptyRegionCheckItem(preInfoGetter PreRestoreInfoGetter, dbMetas []*mydu
 	}
 }
 
+func (ci *emptyRegionCheckItem) GetCheckItemID() CheckItemID {
+	return CheckTargetClusterEmptyRegion
+}
+
 func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckTargetClusterEmptyRegion,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "Cluster doesn't have too many empty regions",
@@ -269,9 +281,13 @@ func NewRegionDistributionCheckItem(preInfoGetter PreRestoreInfoGetter, dbMetas 
 	}
 }
 
+func (ci *regionDistributionCheckItem) GetCheckItemID() CheckItemID {
+	return CheckTargetClusterRegionDist
+}
+
 func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckTargetClusterRegionDist,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "Cluster region distribution is balanced",
@@ -340,9 +356,13 @@ func NewStoragePermissionCheckItem(cfg *config.Config) PrecheckItem {
 	}
 }
 
+func (ci *storagePermissionCheckItem) GetCheckItemID() CheckItemID {
+	return CheckSourcePermission
+}
+
 func (ci *storagePermissionCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckSourcePermission,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "Lightning has the correct storage permission",
@@ -377,9 +397,13 @@ func NewLargeFileCheckItem(cfg *config.Config, dbMetas []*mydump.MDDatabaseMeta)
 	}
 }
 
+func (ci *largeFileCheckItem) GetCheckItemID() CheckItemID {
+	return CheckLargeDataFile
+}
+
 func (ci *largeFileCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckLargeDataFile,
+		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
 		Passed:   true,
 		Message:  "Source csv files size is proper",
@@ -412,9 +436,13 @@ func NewLocalDiskPlacementCheckItem(cfg *config.Config) PrecheckItem {
 	}
 }
 
+func (ci *localDiskPlacementCheckItem) GetCheckItemID() CheckItemID {
+	return CheckLocalDiskPlacement
+}
+
 func (ci *localDiskPlacementCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckLocalDiskPlacement,
+		Item:     ci.GetCheckItemID(),
 		Severity: Warn,
 		Passed:   true,
 		Message:  "local source dir and temp-kv dir are in different disks",
@@ -444,9 +472,13 @@ func NewLocalTempKVDirCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfo
 	}
 }
 
+func (ci *localTempKVDirCheckItem) GetCheckItemID() CheckItemID {
+	return CheckLocalTempKVDir
+}
+
 func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckLocalTempKVDir,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 	}
 	storageSize, err := common.GetStorageSize(ci.cfg.TikvImporter.SortedKVDir)
@@ -501,12 +533,16 @@ func NewCheckpointCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGett
 	}
 }
 
+func (ci *checkpointCheckItem) GetCheckItemID() CheckItemID {
+	return CheckCheckpoints
+}
+
 func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	if !ci.cfg.Checkpoint.Enable || ci.checkpointsDB == nil {
 		return nil, nil
 	}
 	theResult := &CheckResult{
-		Item:     CheckCheckpoints,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "the checkpoints are valid",
@@ -638,9 +674,13 @@ func NewSchemaCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGetter, 
 	}
 }
 
+func (ci *schemaCheckItem) GetCheckItemID() CheckItemID {
+	return CheckSourceSchemaValid
+}
+
 func (ci *schemaCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckSourceSchemaValid,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "table schemas are valid",
@@ -808,6 +848,10 @@ func NewCSVHeaderCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGette
 	}
 }
 
+func (ci *csvHeaderCheckItem) GetCheckItemID() CheckItemID {
+	return CheckCSVHeader
+}
+
 // checkCSVHeader try to check whether the csv header config is consistent with the source csv files by:
 // 1. pick one table with two CSV files and a unique/primary key
 // 2. read the first row of those two CSV files
@@ -820,7 +864,7 @@ func (ci *csvHeaderCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 		return nil, nil
 	}
 	theResult := &CheckResult{
-		Item:     CheckCSVHeader,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "the config [mydumper.csv.header] is set to false, and CSV header lines are really not detected in the data files",
@@ -1020,9 +1064,13 @@ func NewTableEmptyCheckItem(cfg *config.Config, preInfoGetter PreRestoreInfoGett
 	}
 }
 
+func (ci *tableEmptyCheckItem) GetCheckItemID() CheckItemID {
+	return CheckTargetTableEmpty
+}
+
 func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 	theResult := &CheckResult{
-		Item:     CheckTargetTableEmpty,
+		Item:     ci.GetCheckItemID(),
 		Severity: Critical,
 		Passed:   true,
 		Message:  "all importing tables on the target are empty",
