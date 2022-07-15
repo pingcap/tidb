@@ -526,6 +526,7 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	partitionDef := "PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (3), PARTITION p3 VALUES LESS THAN MAXVALUE);"
 
 	// test TableReader with partition
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16)) " + partitionDef)
 	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003'), (4, '00000044', '0000000000000004');")
@@ -536,7 +537,6 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	checkMetrics("select s from t where id >= 2 and id < 4;", 0, 2)
 
 	// index reader
-	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int, s varchar(8), p varchar(8), key `idx_s_p`(`s`, `p`));")
 	tk.MustExec("insert into t values (1, 'test1000', '11111111'), (2, 'test2000', '11111111');")
@@ -570,10 +570,11 @@ func TestAdaptiveClosestRead(t *testing.T) {
 
 	// index merge reader
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id int, v bigint, s1 varchar(8), s2 varchar(8), key `idx_v_s1`(`s1`, `v`), key `idx_s2`(`s2`));")
-	tk.MustExec("insert into t values (1, 1,  '11111111', '11111111'), (2, 2, '22222222', '22222222'), (3, 3, '33333333', '33333333');")
+	// use int field to avoid the planer estimation with big random fluctuation.
+	tk.MustExec("create table t (id int, v bigint not null, s1 int not null, s2 int not null, key `idx_v_s1`(`s1`, `v`), key `idx_s2`(`s2`));")
+	tk.MustExec("insert into t values (1, 1,  1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
 	tk.MustExec("analyze table t;")
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
 	// 2 IndexScan with cost 19/56, 2 TableReader with cost 24/48.
-	checkMetrics("select/* +USE_INDEX_MERGE(t) */ * from t use index(`idx_v_s1`) use index(idx_s2) where (s1 <= '23' and v > 0) or s2 = '33333333';", 2, 2)
+	checkMetrics("select/* +USE_INDEX_MERGE(t) */ id from t use index(`idx_v_s1`) use index(idx_s2) where (s1 < 3 and v > 0) or s2 = 3;", 2, 2)
 }
