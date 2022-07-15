@@ -23,13 +23,13 @@ var _ Registry = noopRegistry{}
 
 type noopRegistry struct{}
 
-func (noopRegistry) Register(collector prometheus.Collector) error {
+func (noopRegistry) Register(_ prometheus.Collector) error {
 	return nil
 }
 
-func (noopRegistry) MustRegister(collector ...prometheus.Collector) {}
+func (noopRegistry) MustRegister(_ ...prometheus.Collector) {}
 
-func (noopRegistry) Unregister(collector prometheus.Collector) bool {
+func (noopRegistry) Unregister(_ prometheus.Collector) bool {
 	return true
 }
 
