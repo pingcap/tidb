@@ -342,8 +342,9 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
+
 	if util.IsMemOrSysDB(dbInfo.Name.L) {
-		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysTable)
+		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
 	total := len(dbInfo.Tables)
@@ -4894,7 +4895,7 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
-	err = checkTiFlashSupportable(schema, tb)
+	err = isTableTiFlashSupported(schema, tb)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4923,15 +4924,16 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
-func checkTiFlashSupportable(schema *model.DBInfo, tb table.Table) error {
-	// Ban alter tiflash related actions for tables in system database.
+func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
+
+	// Memory tables and system tables are not supported by TiFlash
 	if util.IsMemOrSysDB(schema.Name.L) {
-		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysTable)
+		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	} else if tb.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set on tiflash")
 	}
 
-	// Ban alter tiflash related actions for tables which has charset not supported by TiFlash
+	// Tables that has charset are not supported by TiFlash
 	for _, col := range tb.Cols() {
 		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
 		if !ok {
@@ -4952,12 +4954,13 @@ func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, 
 		return fmt.Errorf("unsupported TiFlash mode %s", mode)
 	}
 
-	err = checkTiFlashSupportable(schema, tb)
+	err = isTableTiFlashSupported(schema, tb)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// Prompt warning when tiflash replica is nil or tiflash replica count is 0
+	// Prompt warning when there is no TiFlash replica, as TiFlash mode will
+	// only take effect when executing in TiFlash.
 	tbReplicaInfo := tb.Meta().TiFlashReplica
 	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
 		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)

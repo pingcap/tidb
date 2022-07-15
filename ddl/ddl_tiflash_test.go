@@ -415,7 +415,7 @@ func TestSetTiFlashModeAvailable(t *testing.T) {
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("alter table ddltiflash set tiflash mode fast")
 	tk.MustQuery("show warnings").Check(
-		testkit.Rows("Note 8200 Warning: you are altering tiflash mode for the table whose tiflash replica count is zero. The tiflash mode will finally take effect when you set tiflash replica!"))
+		testkit.Rows("Note 0 TiFlash mode will take effect after at least one TiFlash replica is set for the table"))
 }
 
 // check for the condition that unsupport set tiflash mode
@@ -430,7 +430,7 @@ func TestSetTiFlashModeUnsupported(t *testing.T) {
 	// unsupport for temporary table
 	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table")
 	// unsupport for system table
-	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]alter tiflash related actions for tables in system database is unsupported")
+	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table")
 }
 
 // Truncate partition shall not block.
