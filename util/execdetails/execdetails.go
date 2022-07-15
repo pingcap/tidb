@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,6 +80,8 @@ const (
 	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
 	GetCommitTSTimeStr = "Get_commit_ts_time"
+	// GetLatestTsTimeStr means the time of getting latest ts in async commit and 1pc.
+	GetLatestTsTimeStr = "Get_latest_ts_time"
 	// CommitBackoffTimeStr means the time of commit backoff.
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
@@ -144,6 +145,9 @@ func (d ExecDetails) String() string {
 		if commitDetails.GetCommitTsTime > 0 {
 			parts = append(parts, GetCommitTSTimeStr+": "+strconv.FormatFloat(commitDetails.GetCommitTsTime.Seconds(), 'f', -1, 64))
 		}
+		if commitDetails.GetLatestTsTime > 0 {
+			parts = append(parts, GetLatestTsTimeStr+": "+strconv.FormatFloat(commitDetails.GetLatestTsTime.Seconds(), 'f', -1, 64))
+		}
 		commitDetails.Mu.Lock()
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
 		if commitBackoffTime > 0 {
@@ -153,7 +157,7 @@ func (d ExecDetails) String() string {
 			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
 		}
 		commitDetails.Mu.Unlock()
-		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
 		if resolveLockTime > 0 {
 			parts = append(parts, ResolveLockTimeStr+": "+strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64))
 		}
@@ -245,7 +249,7 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
 		}
 		commitDetails.Mu.Unlock()
-		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
 		if resolveLockTime > 0 {
 			fields = append(fields, zap.String("resolve_lock_time", fmt.Sprintf("%v", strconv.FormatFloat(time.Duration(resolveLockTime).Seconds(), 'f', -1, 64)+"s")))
 		}
@@ -346,28 +350,33 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	return totalRows
 }
 
+// MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
+func (crs *CopRuntimeStats) MergeBasicStats() (procTimes []time.Duration, totalTime time.Duration, totalTasks, totalLoops, totalThreads int32) {
+	procTimes = make([]time.Duration, 0, 32)
+	for _, instanceStats := range crs.stats {
+		for _, stat := range instanceStats {
+			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
+			totalTime += time.Duration(stat.consume)
+			totalLoops += stat.loop
+			totalThreads += stat.threads
+			totalTasks++
+		}
+	}
+	return
+}
+
 func (crs *CopRuntimeStats) String() string {
 	if len(crs.stats) == 0 {
 		return ""
 	}
 
-	var totalTasks int64
-	var totalIters int32
-	var totalThreads int32
-	procTimes := make([]time.Duration, 0, 32)
-	for _, instanceStats := range crs.stats {
-		for _, stat := range instanceStats {
-			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
-			totalIters += stat.loop
-			totalThreads += stat.threads
-			totalTasks++
-		}
-	}
+	procTimes, totalTime, totalTasks, totalLoops, totalThreads := crs.MergeBasicStats()
+	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
 	isTiFlashCop := crs.storeType == "tiflash"
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalIters))
+		buf.WriteString(fmt.Sprintf("%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(procTimes[0]), totalLoops))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 		} else {
@@ -376,9 +385,9 @@ func (crs *CopRuntimeStats) String() string {
 	} else {
 		n := len(procTimes)
 		slices.Sort(procTimes)
-		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
-			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
-			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
+		buf.WriteString(fmt.Sprintf("%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
+			crs.storeType, FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]), FormatDuration(avgTime),
+			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalLoops, totalTasks))
 		if isTiFlashCop {
 			buf.WriteString(fmt.Sprintf(", threads:%d}", totalThreads))
 		} else {
@@ -493,40 +502,61 @@ func (e *RootRuntimeStats) GetActRows() int64 {
 	return num
 }
 
+// MergeBasicStats merges BasicRuntimeStats in the RootRuntimeStats into single one.
+func (e *RootRuntimeStats) MergeBasicStats() *BasicRuntimeStats {
+	if len(e.basics) == 0 {
+		return nil
+	}
+	basic := e.basics[0].Clone().(*BasicRuntimeStats)
+	for i := 1; i < len(e.basics); i++ {
+		basic.Merge(e.basics[i])
+	}
+	return basic
+}
+
+// MergeGroupStats merges every slice in e.groupRss into single RuntimeStats.
+func (e *RootRuntimeStats) MergeGroupStats() (res []RuntimeStats) {
+	if len(e.groupRss) == 0 {
+		return nil
+	}
+	for _, rss := range e.groupRss {
+		if len(rss) == 0 {
+			continue
+		} else if len(rss) == 1 {
+			res = append(res, rss[0])
+			continue
+		}
+		rs := rss[0].Clone()
+		for i := 1; i < len(rss); i++ {
+			rs.Merge(rss[i])
+		}
+		res = append(res, rs)
+	}
+	return
+}
+
+// MergeStats merges stats in the RootRuntimeStats and return the stats suitable for display directly.
+func (e *RootRuntimeStats) MergeStats() (basic *BasicRuntimeStats, groups []RuntimeStats) {
+	basic = e.MergeBasicStats()
+	groups = e.MergeGroupStats()
+	return
+}
+
 // String implements the RuntimeStats interface.
 func (e *RootRuntimeStats) String() string {
-	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	if len(e.basics) > 0 {
-		if len(e.basics) == 1 {
-			buf.WriteString(e.basics[0].String())
-		} else {
-			basic := e.basics[0].Clone()
-			for i := 1; i < len(e.basics); i++ {
-				basic.Merge(e.basics[i])
-			}
-			buf.WriteString(basic.String())
+	basic, groups := e.MergeStats()
+	strs := make([]string, 0, len(groups)+1)
+	basicStr := basic.String()
+	if len(basicStr) > 0 {
+		strs = append(strs, basic.String())
+	}
+	for _, group := range groups {
+		str := group.String()
+		if len(str) > 0 {
+			strs = append(strs, group.String())
 		}
 	}
-	if len(e.groupRss) > 0 {
-		if buf.Len() > 0 {
-			buf.WriteString(", ")
-		}
-		for i, rss := range e.groupRss {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if len(rss) == 1 {
-				buf.WriteString(rss[0].String())
-				continue
-			}
-			rs := rss[0].Clone()
-			for i := 1; i < len(rss); i++ {
-				rs.Merge(rss[i])
-			}
-			buf.WriteString(rs.String())
-		}
-	}
-	return buf.String()
+	return strings.Join(strs, ", ")
 }
 
 // Record records executor's execution.
@@ -543,6 +573,9 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
+	if e == nil {
+		return ""
+	}
 	var str strings.Builder
 	str.WriteString("time:")
 	str.WriteString(FormatDuration(time.Duration(e.consume)))
@@ -862,9 +895,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString("}")
 		}
 		e.Commit.Mu.Unlock()
-		if e.Commit.ResolveLockTime > 0 {
+		if e.Commit.ResolveLock.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
-			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
+			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLock.ResolveLockTime)))
 		}
 
 		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
@@ -903,9 +936,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(", keys:")
 			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.LockKeys), 10))
 		}
-		if e.LockKeys.ResolveLockTime > 0 {
+		if e.LockKeys.ResolveLock.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock:")
-			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLockTime)))
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLock.ResolveLockTime)))
 		}
 		if e.LockKeys.BackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
@@ -949,7 +982,7 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 		tpMap[tpStr] = struct{}{}
 		tpArray = append(tpArray, tpStr)
 	}
-	sort.Strings(tpArray)
+	slices.Sort(tpArray)
 	return fmt.Sprintf("%v", tpArray)
 }
 

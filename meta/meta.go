@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,6 +136,8 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 
 // NewSnapshotMeta creates a Meta with snapshot.
 func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
+	snapshot.SetOption(kv.RequestSourceInternal, true)
+	snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 	return &Meta{txn: t}
 }
@@ -1014,34 +1015,9 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// GetAllHistoryDDLJobs gets all history DDL jobs.
-func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
-	pairs, err := m.txn.HGetAll(mDDLJobHistoryKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jobs, err := decodeJob(pairs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// sort job.
-	sorter := &jobsSorter{jobs: jobs}
-	sort.Sort(sorter)
-	return jobs, nil
-}
-
 // GetHistoryDDLCount the count of all history DDL jobs.
 func (m *Meta) GetHistoryDDLCount() (uint64, error) {
 	return m.txn.HGetLen(mDDLJobHistoryKey)
-}
-
-// GetLastNHistoryDDLJobs gets latest N history ddl jobs.
-func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
-	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return decodeJob(pairs)
 }
 
 // LastJobIterator is the iterator for gets latest history.
@@ -1085,36 +1061,6 @@ func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job
 		}
 	}
 	return jobs, nil
-}
-
-func decodeJob(jobPairs []structure.HashPair) ([]*model.Job, error) {
-	jobs := make([]*model.Job, 0, len(jobPairs))
-	for _, pair := range jobPairs {
-		job := &model.Job{}
-		err := job.Decode(pair.Value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, job)
-	}
-	return jobs, nil
-}
-
-// jobsSorter implements the sort.Interface interface.
-type jobsSorter struct {
-	jobs []*model.Job
-}
-
-func (s *jobsSorter) Swap(i, j int) {
-	s.jobs[i], s.jobs[j] = s.jobs[j], s.jobs[i]
-}
-
-func (s *jobsSorter) Len() int {
-	return len(s.jobs)
-}
-
-func (s *jobsSorter) Less(i, j int) bool {
-	return s.jobs[i].ID < s.jobs[j].ID
 }
 
 // GetBootstrapVersion returns the version of the server which bootstrap the store.
@@ -1221,6 +1167,14 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, phy
 	}
 	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID, element), []byte(strconv.FormatInt(physicalTableID, 10)))
 	return errors.Trace(err)
+}
+
+// ClearAllHistoryJob clears all history jobs. **IT IS VERY DANGEROUS**
+func (m *Meta) ClearAllHistoryJob() error {
+	if err := m.txn.HClear(mDDLJobHistoryKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // RemoveReorgElement removes the element of the reorganization information.

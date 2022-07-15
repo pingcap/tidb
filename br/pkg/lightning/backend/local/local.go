@@ -201,6 +201,139 @@ type Range struct {
 	end   []byte
 }
 
+type encodingBuilder struct {
+	metrics *metric.Metrics
+}
+
+// NewEncodingBuilder creates an KVEncodingBuilder with local backend implementation.
+func NewEncodingBuilder(ctx context.Context) backend.EncodingBuilder {
+	result := new(encodingBuilder)
+	if m, ok := metric.FromContext(ctx); ok {
+		result.metrics = m
+	}
+	return result
+}
+
+// NewEncoder creates a KV encoder.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	return kv.NewTableKVEncoder(tbl, options, b.metrics, log.FromContext(ctx))
+}
+
+// MakeEmptyRows creates an empty KV rows.
+// It implements the `backend.EncodingBuilder` interface.
+func (b *encodingBuilder) MakeEmptyRows() kv.Rows {
+	return kv.MakeRowsFromKvPairs(nil)
+}
+
+type targetInfoGetter struct {
+	tls          *common.TLS
+	targetDBGlue glue.Glue
+	pdAddr       string
+}
+
+// NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
+func NewTargetInfoGetter(tls *common.TLS, g glue.Glue, pdAddr string) backend.TargetInfoGetter {
+	return &targetInfoGetter{
+		tls:          tls,
+		targetDBGlue: g,
+		pdAddr:       pdAddr,
+	}
+}
+
+// FetchRemoteTableModels obtains the models of all tables given the schema name.
+// It implements the `TargetInfoGetter` interface.
+func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	return tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+}
+
+// CheckRequirements performs the check whether the backend satisfies the version requirements.
+// It implements the `TargetInfoGetter` interface.
+func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
+	// TODO: support lightning via SQL
+	db, _ := g.targetDBGlue.GetDB()
+	versionStr, err := version.FetchVersion(ctx, db)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
+		return err
+	}
+	if err := tikv.CheckPDVersion(ctx, g.tls, g.pdAddr, localMinPDVersion, localMaxPDVersion); err != nil {
+		return err
+	}
+	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
+		return err
+	}
+
+	serverInfo := version.ParseServerInfo(versionStr)
+	return checkTiFlashVersion(ctx, g.targetDBGlue, checkCtx, *serverInfo.ServerVersion)
+}
+
+func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
+	return version.CheckTiDBVersion(versionStr, requiredMinVersion, requiredMaxVersion)
+}
+
+var tiFlashReplicaQuery = "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TIFLASH_REPLICA WHERE REPLICA_COUNT > 0;"
+
+type tblName struct {
+	schema string
+	name   string
+}
+
+type tblNames []tblName
+
+func (t tblNames) String() string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, n := range t {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(common.UniqueTable(n.schema, n.name))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+// check TiFlash replicas.
+// local backend doesn't support TiFlash before tidb v4.0.5
+func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
+	if tidbVersion.Compare(tiFlashMinVersion) >= 0 {
+		return nil
+	}
+
+	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
+	if err != nil {
+		return errors.Annotate(err, "fetch tiflash replica info failed")
+	}
+
+	tiFlashTablesMap := make(map[tblName]struct{}, len(res))
+	for _, tblInfo := range res {
+		name := tblName{schema: tblInfo[0], name: tblInfo[1]}
+		tiFlashTablesMap[name] = struct{}{}
+	}
+
+	tiFlashTables := make(tblNames, 0)
+	for _, dbMeta := range checkCtx.DBMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			if len(tblMeta.DataFiles) == 0 {
+				continue
+			}
+			name := tblName{schema: tblMeta.DB, name: tblMeta.Name}
+			if _, ok := tiFlashTablesMap[name]; ok {
+				tiFlashTables = append(tiFlashTables, name)
+			}
+		}
+	}
+
+	if len(tiFlashTables) > 0 {
+		helpInfo := "Please either upgrade TiDB to version >= 4.0.5 or add TiFlash replica after load data."
+		return errors.Errorf("lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: %s. "+helpInfo, tiFlashTables)
+	}
+	return nil
+}
+
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*Engine
 
@@ -236,6 +369,9 @@ type local struct {
 	metrics      *metric.Metrics
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+
+	encBuilder       backend.EncodingBuilder
+	targetInfoGetter backend.TargetInfoGetter
 }
 
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
@@ -344,6 +480,8 @@ func NewLocalBackend(
 		bufferPool:              membuf.NewPool(membuf.WithAllocator(manual.Allocator{})),
 		writeLimiter:            writeLimiter,
 		logger:                  log.FromContext(ctx),
+		encBuilder:              NewEncodingBuilder(ctx),
+		targetInfoGetter:        NewTargetInfoGetter(tls, g, cfg.TiDB.PdAddr),
 	}
 	if m, ok := metric.FromContext(ctx); ok {
 		local.metrics = m
@@ -478,7 +616,7 @@ func (local *local) Close() {
 	local.engines = sync.Map{}
 
 	for _, engine := range allEngines {
-		engine.Close()
+		_ = engine.Close()
 		engine.unlock()
 	}
 
@@ -520,8 +658,7 @@ func (local *local) Close() {
 			local.logger.Warn("remove local db file failed", zap.Error(err))
 		}
 	}
-
-	local.tikvCli.Close()
+	_ = local.tikvCli.Close()
 	local.pdCtl.Close()
 }
 
@@ -763,6 +900,7 @@ func (local *local) WriteToTiKV(
 	regionRange := intersectRange(region.Region, Range{start: start, end: end})
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
 	iter := engine.newKVIter(ctx, opt)
+	//nolint: errcheck
 	defer iter.Close()
 
 	stats := rangeStats{}
@@ -1020,6 +1158,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 
 func (local *local) readAndSplitIntoRange(ctx context.Context, engine *Engine, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
 	iter := engine.newKVIter(ctx, &pebble.IterOptions{})
+	//nolint: errcheck
 	defer iter.Close()
 
 	iterError := func(e string) error {
@@ -1082,6 +1221,7 @@ func (local *local) writeAndIngestByRange(
 	}
 
 	iter := engine.newKVIter(ctxt, ito)
+	//nolint: errcheck
 	defer iter.Close()
 	// Needs seek to first because NewIter returns an iterator that is unpositioned
 	hasKey := iter.First()
@@ -1504,7 +1644,6 @@ func (local *local) ResolveDuplicateRows(ctx context.Context, tbl table.Table, t
 		logger.Warn("[resolve-dupe] skipping resolution due to selected algorithm. this table will become inconsistent!", zap.Stringer("algorithm", algorithm))
 		return nil
 	case config.DupeResAlgRemove:
-		break
 	default:
 		panic(fmt.Sprintf("[resolve-dupe] unknown resolution algorithm %v", algorithm))
 	}
@@ -1651,100 +1790,19 @@ func (local *local) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.CheckCtx) error {
-	// TODO: support lightning via SQL
-	db, _ := local.g.GetDB()
-	versionStr, err := version.FetchVersion(ctx, db)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
-		return err
-	}
-	if err := tikv.CheckPDVersion(ctx, local.tls, local.pdAddr, localMinPDVersion, localMaxPDVersion); err != nil {
-		return err
-	}
-	if err := tikv.CheckTiKVVersion(ctx, local.tls, local.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
-		return err
-	}
-
-	serverInfo := version.ParseServerInfo(versionStr)
-	return checkTiFlashVersion(ctx, local.g, checkCtx, *serverInfo.ServerVersion)
-}
-
-func checkTiDBVersion(_ context.Context, versionStr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
-	return version.CheckTiDBVersion(versionStr, requiredMinVersion, requiredMaxVersion)
-}
-
-var tiFlashReplicaQuery = "SELECT TABLE_SCHEMA, TABLE_NAME FROM information_schema.TIFLASH_REPLICA WHERE REPLICA_COUNT > 0;"
-
-type tblName struct {
-	schema string
-	name   string
-}
-
-type tblNames []tblName
-
-func (t tblNames) String() string {
-	var b strings.Builder
-	b.WriteByte('[')
-	for i, n := range t {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(common.UniqueTable(n.schema, n.name))
-	}
-	b.WriteByte(']')
-	return b.String()
-}
-
-// check TiFlash replicas.
-// local backend doesn't support TiFlash before tidb v4.0.5
-func checkTiFlashVersion(ctx context.Context, g glue.Glue, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
-	if tidbVersion.Compare(tiFlashMinVersion) >= 0 {
-		return nil
-	}
-
-	res, err := g.GetSQLExecutor().QueryStringsWithLog(ctx, tiFlashReplicaQuery, "fetch tiflash replica info", log.FromContext(ctx))
-	if err != nil {
-		return errors.Annotate(err, "fetch tiflash replica info failed")
-	}
-
-	tiFlashTablesMap := make(map[tblName]struct{}, len(res))
-	for _, tblInfo := range res {
-		name := tblName{schema: tblInfo[0], name: tblInfo[1]}
-		tiFlashTablesMap[name] = struct{}{}
-	}
-
-	tiFlashTables := make(tblNames, 0)
-	for _, dbMeta := range checkCtx.DBMetas {
-		for _, tblMeta := range dbMeta.Tables {
-			if len(tblMeta.DataFiles) == 0 {
-				continue
-			}
-			name := tblName{schema: tblMeta.DB, name: tblMeta.Name}
-			if _, ok := tiFlashTablesMap[name]; ok {
-				tiFlashTables = append(tiFlashTables, name)
-			}
-		}
-	}
-
-	if len(tiFlashTables) > 0 {
-		helpInfo := "Please either upgrade TiDB to version >= 4.0.5 or add TiFlash replica after load data."
-		return errors.Errorf("lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: %s. "+helpInfo, tiFlashTables)
-	}
-	return nil
+	return local.targetInfoGetter.CheckRequirements(ctx, checkCtx)
 }
 
 func (local *local) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return tikv.FetchRemoteTableModelsFromTLS(ctx, local.tls, schemaName)
+	return local.targetInfoGetter.FetchRemoteTableModels(ctx, schemaName)
 }
 
 func (local *local) MakeEmptyRows() kv.Rows {
-	return kv.MakeRowsFromKvPairs(nil)
+	return local.encBuilder.MakeEmptyRows()
 }
 
 func (local *local) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return kv.NewTableKVEncoder(tbl, options, local.metrics, log.FromContext(ctx))
+	return local.encBuilder.NewEncoder(ctx, tbl, options)
 }
 
 func engineSSTDir(storeDir string, engineUUID uuid.UUID) string {

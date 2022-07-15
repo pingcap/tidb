@@ -32,6 +32,7 @@ func TestString(t *testing.T) {
 		RequestCount: 1,
 		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime: time.Second,
+			GetLatestTsTime: time.Second,
 			PrewriteTime:    time.Second,
 			CommitTime:      time.Second,
 			LocalLatchTime:  time.Second,
@@ -47,11 +48,13 @@ func TestString(t *testing.T) {
 					"backoff2",
 				},
 			},
-			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
 			WriteSize:         1,
 			PrewriteRegionNum: 1,
 			TxnRetry:          1,
+			ResolveLock: util.ResolveLockDetail{
+				ResolveLockTime: 1000000000, // 10^9 ns = 1s
+			},
 		},
 		ScanDetail: &util.ScanDetail{
 			ProcessedKeys:             10,
@@ -68,7 +71,7 @@ func TestString(t *testing.T) {
 		},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: 1 " +
-		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
+		"Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
 		"Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: 1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100"
 	require.Equal(t, expected, detail.String())
 	detail = &ExecDetails{}
@@ -108,7 +111,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
-	expected := "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
+	expected := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
 		"scan_detail: {total_process_keys: 10, total_process_keys_size: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}"
 	require.Equal(t, expected, cop.String())
 
@@ -118,7 +121,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
 	require.Equal(t, "time:1s, loops:2", copStats[0].String())
-	require.Equal(t, "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, "tikv").String())
+	require.Equal(t, "tikv_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, "tikv").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
 	require.NotNil(t, rootStats)
@@ -129,7 +132,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	cop.scanDetail.RocksdbKeySkippedCount = 0
 	cop.scanDetail.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
-	str := "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, " +
+	str := "tikv_task:{proc max:1s, min:2ns, avg: 500ms, p80:1s, p95:1s, iters:4, tasks:2}, " +
 		"scan_detail: {total_process_keys: 0, total_process_keys_size: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
 
@@ -159,7 +162,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
-	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}", cop.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}", cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
@@ -167,7 +170,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
 	require.Equal(t, "time:1s, loops:2, threads:1", copStats[0].String())
-	expected := "tiflash_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}"
+	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -188,11 +191,13 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 			CommitBackoffTime: int64(time.Second),
 			BackoffTypes:      []string{"backoff1", "backoff2", "backoff1"},
 		},
-		ResolveLockTime:   int64(time.Second),
 		WriteKeys:         3,
 		WriteSize:         66,
 		PrewriteRegionNum: 5,
 		TxnRetry:          2,
+		ResolveLock: util.ResolveLockDetail{
+			ResolveLockTime: int64(time.Second),
+		},
 	}
 	stats := &RuntimeStatsWithCommit{
 		Commit: commitDetail,
@@ -201,11 +206,10 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 
 	lockDetail := &util.LockKeysDetails{
-		TotalTime:       time.Second,
-		RegionNum:       2,
-		LockKeys:        10,
-		ResolveLockTime: int64(time.Second * 2),
-		BackoffTime:     int64(time.Second * 3),
+		TotalTime:   time.Second,
+		RegionNum:   2,
+		LockKeys:    10,
+		BackoffTime: int64(time.Second * 3),
 		Mu: struct {
 			sync.Mutex
 			BackoffTypes []string
@@ -217,6 +221,9 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		LockRPCTime:  int64(time.Second * 5),
 		LockRPCCount: 50,
 		RetryCount:   2,
+		ResolveLock: util.ResolveLockDetail{
+			ResolveLockTime: int64(time.Second * 2),
+		},
 	}
 	stats = &RuntimeStatsWithCommit{
 		LockKeys: lockDetail,

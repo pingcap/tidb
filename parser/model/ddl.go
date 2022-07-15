@@ -67,8 +67,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	ActionAddColumns                    ActionType = 37
-	ActionDropColumns                   ActionType = 38
+	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionModifyTableAutoIdCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -82,7 +82,7 @@ const (
 	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
 
 	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48
+	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
@@ -96,6 +96,7 @@ const (
 	ActionAlterNoCacheTable             ActionType = 59
 	ActionCreateTables                  ActionType = 60
 	ActionMultiSchemaChange             ActionType = 61
+	ActionSetTiFlashMode                ActionType = 62
 )
 
 var actionMap = map[ActionType]string{
@@ -137,8 +138,6 @@ var actionMap = map[ActionType]string{
 	ActionCreateSequence:                "create sequence",
 	ActionAlterSequence:                 "alter sequence",
 	ActionDropSequence:                  "drop sequence",
-	ActionAddColumns:                    "add multi-columns",
-	ActionDropColumns:                   "drop multi-columns",
 	ActionModifyTableAutoIdCache:        "modify auto id cache",
 	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
 	ActionAlterIndexVisibility:          "alter index visibility",
@@ -146,7 +145,6 @@ var actionMap = map[ActionType]string{
 	ActionAddCheckConstraint:            "add check constraint",
 	ActionDropCheckConstraint:           "drop check constraint",
 	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
 	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
@@ -159,6 +157,7 @@ var actionMap = map[ActionType]string{
 	ActionAlterNoCacheTable:             "alter table nocache",
 	ActionAlterTableStatsOptions:        "alter table statistics options",
 	ActionMultiSchemaChange:             "alter table multi-schema change",
+	ActionSetTiFlashMode:                "set tiflash mode",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -202,9 +201,7 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
 	h.SchemaVersion = schemaVer
 	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
-	for i, info := range tblInfos {
-		h.MultipleTableInfos[i] = info
-	}
+	copy(h.MultipleTableInfos, tblInfos)
 }
 
 // Clean cleans history information.
@@ -257,8 +254,6 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
-	Warnings []*errors.Error
-
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
@@ -312,8 +307,8 @@ func (sub *SubJob) IsFinished() bool {
 }
 
 // ToProxyJob converts a sub-job to a proxy job.
-func (sub *SubJob) ToProxyJob(parentJob *Job) *Job {
-	return &Job{
+func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
+	return Job{
 		ID:              parentJob.ID,
 		Type:            sub.Type,
 		SchemaID:        parentJob.SchemaID,
@@ -440,6 +435,28 @@ func (job *Job) MarkNonRevertible() {
 	}
 }
 
+// Clone returns a copy of the job.
+func (job *Job) Clone() *Job {
+	encode, err := job.Encode(true)
+	if err != nil {
+		return nil
+	}
+	var clone Job
+	err = clone.Decode(encode)
+	if err != nil {
+		return nil
+	}
+	if len(job.Args) > 0 {
+		clone.Args = make([]interface{}, len(job.Args))
+		copy(clone.Args, job.Args)
+	}
+	for i, sub := range job.MultiSchemaInfo.SubJobs {
+		clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+		copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+	}
+	return &clone
+}
+
 // TSConvert2Time converts timestamp to time.
 func TSConvert2Time(ts uint64) time.Time {
 	t := int64(ts >> 18) // 18 is for the logical time.
@@ -535,8 +552,12 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
+	}
+	return ret
 }
 
 func (job *Job) hasDependentSchema(other *Job) (bool, error) {
@@ -638,6 +659,14 @@ func (job *Job) MayNeedReorg() bool {
 			return ok && needReorg
 		}
 		return false
+	case ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			if proxyJob.MayNeedReorg() {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -646,7 +675,7 @@ func (job *Job) MayNeedReorg() bool {
 // IsRollbackable checks whether the job can be rollback.
 func (job *Job) IsRollbackable() bool {
 	switch job.Type {
-	case ActionDropIndex, ActionDropPrimaryKey, ActionDropIndexes:
+	case ActionDropIndex, ActionDropPrimaryKey:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
 		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
 		// know the type of index here, we consider all indices except primary index as non-rollbackable.
@@ -662,7 +691,7 @@ func (job *Job) IsRollbackable() bool {
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
-	case ActionDropColumns, ActionRebaseAutoID, ActionShardRowID,
+	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable,
 		ActionModifyTableCharsetAndCollate, ActionTruncateTablePartition,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,

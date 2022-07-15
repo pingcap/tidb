@@ -19,7 +19,6 @@ import (
 	"container/list"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/slices"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -753,7 +753,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		if commitDetails.GetCommitTsTime > ssElement.maxGetCommitTsTime {
 			ssElement.maxGetCommitTsTime = commitDetails.GetCommitTsTime
 		}
-		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
 		ssElement.sumResolveLockTime += resolveLockTime
 		if resolveLockTime > ssElement.maxResolveLockTime {
 			ssElement.maxResolveLockTime = resolveLockTime
@@ -870,8 +870,8 @@ func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	for backoffType, count := range backoffMap {
 		backoffArray = append(backoffArray, backoffStat{backoffType, count})
 	}
-	sort.Slice(backoffArray, func(i, j int) bool {
-		return backoffArray[i].count > backoffArray[j].count
+	slices.SortFunc(backoffArray, func(i, j backoffStat) bool {
+		return i.count > j.count
 	})
 
 	var buffer bytes.Buffer
