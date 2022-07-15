@@ -1903,9 +1903,9 @@
         "SQL": "select * from t where a > 1 order by f",
         "Plan": [
           "IndexLookUp_14 3333.33 136747.00 root  ",
-          "├─Selection_13(Build) 3333.33 0.00 cop[tikv]  gt(test.t.a, 1)",
+          "├─Selection_13(Build) 3333.33 585000.00 cop[tikv]  gt(test.t.a, 1)",
           "│ └─IndexFullScan_11 10000.00 555000.00 cop[tikv] table:t, index:f(f) keep order:true, stats:pseudo",
-          "└─TableRowIDScan_12(Probe) 3333.33 555000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan_12(Probe) 3333.33 370000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
@@ -1916,7 +1916,7 @@
         "Plan": [
           "IndexLookUp_10 3333.33 86674.83 root  ",
           "├─IndexRangeScan_8(Build) 3333.33 185000.00 cop[tikv] table:t, index:f(f) range:(1,+inf], keep order:false, stats:pseudo",
-          "└─TableRowIDScan_9(Probe) 3333.33 185000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan_9(Probe) 3333.33 370000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -1937,8 +1937,8 @@
         "Plan": [
           "IndexLookUp_15 3.33 206.74 root  ",
           "├─IndexRangeScan_12(Build) 10.00 570.00 cop[tikv] table:t, index:g(g) range:[5,5], keep order:false, stats:pseudo",
-          "└─Selection_14(Probe) 3.33 0.00 cop[tikv]  gt(test.t.f, 3)",
-          "  └─TableRowIDScan_13 10.00 570.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─Selection_14(Probe) 3.33 1140.00 cop[tikv]  gt(test.t.f, 3)",
+          "  └─TableRowIDScan_13 10.00 1110.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -1950,7 +1950,7 @@
           "Sort_5 10.00 353.68 root  test.t.f",
           "└─IndexLookUp_13 10.00 230.01 root  ",
           "  ├─IndexRangeScan_11(Build) 10.00 570.00 cop[tikv] table:t, index:g(g) range:[5,5], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_12(Probe) 10.00 570.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  └─TableRowIDScan_12(Probe) 10.00 1110.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -1960,9 +1960,9 @@
         "SQL": "select * from t where d = 3 order by c, e",
         "Plan": [
           "IndexLookUp_15 10.00 57222.78 root  ",
-          "├─Selection_14(Build) 10.00 0.00 cop[tikv]  eq(test.t.d, 3)",
+          "├─Selection_14(Build) 10.00 855000.00 cop[tikv]  eq(test.t.d, 3)",
           "│ └─IndexFullScan_12 10000.00 825000.00 cop[tikv] table:t, index:c_d_e(c, d, e) keep order:true, stats:pseudo",
-          "└─TableRowIDScan_13(Probe) 10.00 825000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan_13(Probe) 10.00 1110.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{test.t.c asc} {test.t.e asc}], TaskTp: rootTask}"
