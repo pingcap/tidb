@@ -2030,10 +2030,6 @@ func doDMLWorks(s Session) {
 			if inTestSuite() || config.CheckTableBeforeDrop {
 				vVal = string(variable.Dynamic)
 			}
-		case variable.TiDBEnableChangeMultiSchema:
-			if inTestSuite() {
-				vVal = variable.On
-			}
 		case variable.TiDBMemOOMAction:
 			if inTestSuite() {
 				vVal = variable.OOMActionLog

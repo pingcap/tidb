@@ -323,20 +323,14 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 }
 
 func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job) {
-	if job.MultiSchemaInfo == nil {
+	if job.MultiSchemaInfo == nil || job.Type != model.ActionMultiSchemaChange {
 		return
 	}
-	if job.Type == model.ActionMultiSchemaChange {
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			if sub.Warning != nil {
-				ctx.GetSessionVars().StmtCtx.AppendNote(sub.Warning)
-			}
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		if sub.Warning != nil {
+			ctx.GetSessionVars().StmtCtx.AppendNote(sub.Warning)
 		}
 	}
-	for _, w := range job.MultiSchemaInfo.Warnings {
-		ctx.GetSessionVars().StmtCtx.AppendNote(w)
-	}
-
 }
 
 // rollingBackMultiSchemaChange updates a multi-schema change job
