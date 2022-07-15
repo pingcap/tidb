@@ -2460,7 +2460,7 @@
         "Plan": [
           "TopN_7 1.00 13.22 root  test.t3.a, offset:0, count:1",
           "└─TableReader_16 1.00 10.22 root  data:TopN_15",
-          "  └─TopN_15 1.00 0.00 cop[tikv]  test.t3.a, offset:0, count:1",
+          "  └─TopN_15 1.00 117.00 cop[tikv]  test.t3.a, offset:0, count:1",
           "    └─TableFullScan_14 3.00 108.00 cop[tikv] table:t3 keep order:false"
         ]
       },
@@ -2469,7 +2469,7 @@
         "Plan": [
           "TopN_7 1.00 13.22 root  test.t3.b, offset:0, count:1",
           "└─TableReader_16 1.00 10.22 root  data:TopN_15",
-          "  └─TopN_15 1.00 0.00 cop[tikv]  test.t3.b, offset:0, count:1",
+          "  └─TopN_15 1.00 117.00 cop[tikv]  test.t3.b, offset:0, count:1",
           "    └─TableFullScan_14 3.00 108.00 cop[tikv] table:t3 keep order:false"
         ]
       },
@@ -2481,7 +2481,7 @@
           "  └─Projection_22 3.00 76.80 mpp[tiflash]  Column#4",
           "    └─HashAgg_8 3.00 57.00 mpp[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
           "      └─ExchangeReceiver_21 3.00 48.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_20 3.00 48.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.a, collate: binary]",
+          "        └─ExchangeSender_20 3.00 45.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.a, collate: binary]",
           "          └─TableFullScan_19 3.00 45.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
@@ -2531,7 +2531,7 @@
           "  └─ExchangeSender_45 3.00 195.38 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashJoin_42 3.00 195.38 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "      ├─ExchangeReceiver_21(Build) 3.00 57.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_20 3.00 57.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender_20 3.00 54.00 mpp[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection_19 3.00 54.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "      │     └─TableFullScan_18 3.00 45.00 mpp[tiflash] table:t1 keep order:false",
           "      └─Selection_23(Probe) 3.00 54.00 mpp[tiflash]  not(isnull(test.t2.a))",
@@ -2549,7 +2549,7 @@
           "    └─ExchangeSender_38 3.00 204.38 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─HashJoin_29 3.00 204.38 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "        ├─ExchangeReceiver_35(Build) 3.00 66.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_34 3.00 66.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender_34 3.00 63.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection_33 3.00 63.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "        │     └─TableFullScan_32 3.00 54.00 mpp[tiflash] table:t1 keep order:false",
           "        └─Selection_37(Probe) 3.00 54.00 mpp[tiflash]  not(isnull(test.t2.a))",
