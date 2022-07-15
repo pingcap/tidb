@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -39,6 +40,7 @@ type Session interface {
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
+	GetSessionCtx() sessionctx.Context
 }
 
 // BatchCreateTableSession is an interface to batch create table parallelly
