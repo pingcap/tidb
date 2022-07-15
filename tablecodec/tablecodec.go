@@ -405,7 +405,7 @@ func DecodeColumnValueWithDatum(data []byte, ft *types.FieldType, loc *time.Loca
 }
 
 // DecodeRowWithMapNew decode a row to datum map.
-func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum, rd *rowcodec.DatumMapDecoder) (map[int64]types.Datum, error) {
+func DecodeRowWithMapNew(rd *rowcodec.DatumMapDecoder, b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
@@ -492,7 +492,7 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	if !rowcodec.IsNewFormat(b) {
 		return DecodeRowWithMap(b, cols, loc, nil)
 	}
-	return DecodeRowWithMapNew(b, cols, loc, nil, nil)
+	return DecodeRowWithMapNew(nil, b, cols, loc, nil)
 }
 
 // DecodeHandleToDatumMap decodes a handle into datum map.

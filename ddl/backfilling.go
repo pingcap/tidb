@@ -536,10 +536,10 @@ func loadDDLReorgVars(w *worker) error {
 
 func pruneDecodeColMap(colMap map[int64]decoder.Column, t table.Table, indexInfo *model.IndexInfo) map[int64]decoder.Column {
 	resultMap := make(map[int64]decoder.Column)
-	virtualGeneratedColumnStack := make([]*model.ColumnInfo, 0)
+	virtualGeneratedColumnQueue := make([]*model.ColumnInfo, 0)
 	for _, idxCol := range indexInfo.Columns {
 		if isVirtualGeneratedColumn(t.Meta().Columns[idxCol.Offset]) {
-			virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, t.Meta().Columns[idxCol.Offset])
+			virtualGeneratedColumnQueue = append(virtualGeneratedColumnQueue, t.Meta().Columns[idxCol.Offset])
 		}
 		resultMap[t.Meta().Columns[idxCol.Offset].ID] = colMap[t.Meta().Columns[idxCol.Offset].ID]
 	}
@@ -552,16 +552,16 @@ func pruneDecodeColMap(colMap map[int64]decoder.Column, t table.Table, indexInfo
 		resultMap[pkCol.ID] = colMap[pkCol.ID]
 	}
 
-	for len(virtualGeneratedColumnStack) > 0 {
-		checkCol := virtualGeneratedColumnStack[0]
+	for len(virtualGeneratedColumnQueue) > 0 {
+		checkCol := virtualGeneratedColumnQueue[0]
 		for dColName := range checkCol.Dependences {
 			col := model.FindColumnInfo(t.Meta().Columns, dColName)
 			if isVirtualGeneratedColumn(col) {
-				virtualGeneratedColumnStack = append(virtualGeneratedColumnStack, col)
+				virtualGeneratedColumnQueue = append(virtualGeneratedColumnQueue, col)
 			}
 			resultMap[col.ID] = colMap[col.ID]
 		}
-		virtualGeneratedColumnStack = virtualGeneratedColumnStack[1:]
+		virtualGeneratedColumnQueue = virtualGeneratedColumnQueue[1:]
 	}
 
 	return resultMap

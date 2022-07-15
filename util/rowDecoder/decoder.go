@@ -126,7 +126,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
-		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row, rd.datumMapDecoder)
+		row, err = tablecodec.DecodeRowWithMapNew(rd.datumMapDecoder, b, rd.colTypes, decodeLoc, row)
 	} else {
 		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	}
@@ -182,7 +182,7 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
-		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row, nil)
+		row, err = tablecodec.DecodeRowWithMapNew(nil, b, rd.colTypes, decodeLoc, row)
 	} else {
 		row, err = tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	}
