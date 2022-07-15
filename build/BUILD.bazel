@@ -133,7 +133,10 @@ nogo(
                "//build/linter/unconvert:unconvert",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
-               "//build:with_nogo": ["//build/linter/errcheck:errcheck"],
+               "//build:with_nogo": [
+                   "//build/linter/errcheck:errcheck",
+                   "//build/linter/revive:revive",
+               ],
                "//conditions:default": [],
            }),
 )

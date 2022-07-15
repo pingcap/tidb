@@ -6623,7 +6623,7 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 		invisible = true
 	}
 
-	skip, err := validateAlterIndexVisibility(indexName, invisible, tb.Meta())
+	skip, err := validateAlterIndexVisibility(ctx, indexName, invisible, tb.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}
