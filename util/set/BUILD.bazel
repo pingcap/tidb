@@ -16,6 +16,7 @@ go_library(
 
 go_test(
     name = "set_test",
+    timeout = "short",
     srcs = [
         "float64_set_test.go",
         "int_set_test.go",
