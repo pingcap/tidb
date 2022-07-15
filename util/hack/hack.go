@@ -33,7 +33,7 @@ func String(b []byte) (s MutableString) {
 	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
 	pstring.Data = pbytes.Data
 	pstring.Len = pbytes.Len
-	return
+	return s
 }
 
 // Slice converts string to slice without copy.
@@ -44,7 +44,7 @@ func Slice(s string) (b []byte) {
 	pbytes.Data = pstring.Data
 	pbytes.Len = pstring.Len
 	pbytes.Cap = pstring.Len
-	return
+	return b
 }
 
 // LoadFactor is the maximum average load of a bucket that triggers growth is 6.5 in Golang Map.

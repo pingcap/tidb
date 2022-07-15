@@ -114,6 +114,11 @@ func (g Glue) GetVersion() string {
 	return g.tikvGlue.GetVersion()
 }
 
+// GetSessionCtx implements glue.Glue
+func (gs *tidbSession) GetSessionCtx() sessionctx.Context {
+	return gs.se
+}
+
 // Execute implements glue.Session.
 func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return gs.ExecuteInternal(ctx, sql)

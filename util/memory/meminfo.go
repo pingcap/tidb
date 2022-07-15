@@ -72,17 +72,17 @@ type memInfoCache struct {
 	updateTime time.Time
 }
 
-func (c *memInfoCache) get() (mem uint64, t time.Time) {
+func (c *memInfoCache) get() (memo uint64, t time.Time) {
 	c.RLock()
 	defer c.RUnlock()
-	mem, t = c.mem, c.updateTime
+	memo, t = c.mem, c.updateTime
 	return
 }
 
-func (c *memInfoCache) set(mem uint64, t time.Time) {
+func (c *memInfoCache) set(memo uint64, t time.Time) {
 	c.Lock()
 	defer c.Unlock()
-	c.mem, c.updateTime = mem, t
+	c.mem, c.updateTime = memo, t
 }
 
 // expiration time is 60s
@@ -97,30 +97,30 @@ var serverMemUsage *memInfoCache
 
 // MemTotalCGroup returns the total amount of RAM on this system in container environment.
 func MemTotalCGroup() (uint64, error) {
-	mem, t := memLimit.get()
+	memo, t := memLimit.get()
 	if time.Since(t) < 60*time.Second {
-		return mem, nil
+		return memo, nil
 	}
-	mem, err := readUint(cGroupMemLimitPath)
+	memo, err := readUint(cGroupMemLimitPath)
 	if err != nil {
-		return mem, err
+		return memo, err
 	}
-	memLimit.set(mem, time.Now())
-	return mem, nil
+	memLimit.set(memo, time.Now())
+	return memo, nil
 }
 
 // MemUsedCGroup returns the total used amount of RAM on this system in container environment.
 func MemUsedCGroup() (uint64, error) {
-	mem, t := memUsage.get()
+	memo, t := memUsage.get()
 	if time.Since(t) < 500*time.Millisecond {
-		return mem, nil
+		return memo, nil
 	}
-	mem, err := readUint(cGroupMemUsagePath)
+	memo, err := readUint(cGroupMemUsagePath)
 	if err != nil {
-		return mem, err
+		return memo, err
 	}
-	memUsage.set(mem, time.Now())
-	return mem, nil
+	memUsage.set(memo, time.Now())
+	return memo, nil
 }
 
 func init() {
