@@ -126,6 +126,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 	defer wg.Wait()
 	count, hists, topns, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 	if err != nil {
+		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
 	cLen := len(e.analyzePB.ColReq.ColumnsInfo)
@@ -388,13 +389,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			return 0, nil, nil, nil, nil, err
 		}
 	}
-	totalSampleCollectorSize := int64(0)
-	for _, sampleCollector := range sampleCollectors {
-		if sampleCollector != nil {
-			totalSampleCollectorSize += sampleCollector.MemSize
-		}
-	}
-	e.memTracker.Consume(-rootRowCollector.Base().MemSize - totalSampleCollectorSize)
 	return
 }
 
