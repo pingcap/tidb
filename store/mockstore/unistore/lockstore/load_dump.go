@@ -27,6 +27,7 @@ import (
 
 // LoadFromFile load a meta from a file.
 func (ls *MemStore) LoadFromFile(fileName string) (meta []byte, err error) {
+	//nolint: gosec
 	f, err := os.Open(fileName)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -64,7 +65,7 @@ func (ls *MemStore) LoadFromFile(fileName string) (meta []byte, err error) {
 
 var endian = binary.LittleEndian
 
-func (ls *MemStore) readItem(reader *bufio.Reader, buf []byte) ([]byte, error) {
+func (*MemStore) readItem(reader *bufio.Reader, buf []byte) ([]byte, error) {
 	lenBuf := make([]byte, 4)
 	_, err := io.ReadFull(reader, lenBuf)
 	if err != nil {
@@ -82,7 +83,7 @@ func (ls *MemStore) readItem(reader *bufio.Reader, buf []byte) ([]byte, error) {
 	return buf, nil
 }
 
-func (ls *MemStore) writeItem(writer *bufio.Writer, data []byte) error {
+func (*MemStore) writeItem(writer *bufio.Writer, data []byte) error {
 	lenBuf := make([]byte, 4)
 	endian.PutUint32(lenBuf, uint32(len(data)))
 	_, err := writer.Write(lenBuf)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -40,7 +41,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddColumn, model.ActionAddColumns, model.ActionModifyColumn:
+	case model.ActionAddColumn, model.ActionModifyColumn:
 		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {
@@ -129,12 +130,12 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 
 	// Generate the new index global-stats
 	globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
-	for idx := range tblInfo.Indices {
-		globalIdxStatsTopN := globalStats.Indices[int64(idx)].TopN
+	for _, idx := range tblInfo.Indices {
+		globalIdxStatsTopN := globalStats.Indices[idx.ID].TopN
 		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
 			globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
 		}
-		globalIdxStats := globalStats.Indices[int64(idx)]
+		globalIdxStats := globalStats.Indices[idx.ID]
 		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
 			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
 		}
@@ -144,7 +145,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
-		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{int64(idx)})
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID})
 		if err != nil {
 			return err
 		}
@@ -191,7 +192,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	}()
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := context.Background()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -234,7 +235,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	ctx := context.TODO()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {

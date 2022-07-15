@@ -17,7 +17,6 @@ package infoschema
 import (
 	"bytes"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/set"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -135,7 +135,7 @@ func GenLabelConditionValues(values set.StringSet) string {
 	for k := range values {
 		vs = append(vs, k)
 	}
-	sort.Strings(vs)
+	slices.Sort(vs)
 	return strings.Join(vs, "|")
 }
 

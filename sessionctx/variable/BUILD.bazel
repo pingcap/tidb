@@ -30,6 +30,8 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
+        "//parser/types",
+        "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
         "//tidb-binlog/pump_client",
         "//types",
@@ -40,6 +42,7 @@ go_library(
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
+        "//util/paging",
         "//util/rowcodec",
         "//util/stmtsummary",
         "//util/stringutil",
@@ -56,12 +59,14 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_twmb_murmur3//:murmur3",
         "@org_golang_x_exp//maps",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
     ],
 )
 
 go_test(
     name = "variable_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "mock_globalaccessor_test.go",

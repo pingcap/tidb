@@ -533,8 +533,12 @@ func (bc *Client) BackupRanges(
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
 ) error {
+	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
-	defer log.Info("Backup Ranges", zap.Duration("take", time.Since(init)))
+
+	defer func() {
+		log.Info("Backup Ranges Completed", zap.Duration("take", time.Since(init)))
+	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.BackupRanges", opentracing.ChildOf(span.Context()))
@@ -578,13 +582,15 @@ func (bc *Client) BackupRange(
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
-		logutil.CL(ctx).Info("backup range finished", zap.Duration("take", elapsed))
+		logutil.CL(ctx).Info("backup range completed",
+			logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
+			zap.Duration("take", elapsed))
 		key := "range start:" + hex.EncodeToString(req.StartKey) + " end:" + hex.EncodeToString(req.EndKey)
 		if err != nil {
 			summary.CollectFailureUnit(key, err)
 		}
 	}()
-	logutil.CL(ctx).Info("backup started",
+	logutil.CL(ctx).Info("backup range started",
 		logutil.Key("startKey", req.StartKey), logutil.Key("endKey", req.EndKey),
 		zap.Uint64("rateLimit", req.RateLimit),
 		zap.Uint32("concurrency", req.Concurrency))
@@ -595,12 +601,13 @@ func (bc *Client) BackupRange(
 		return errors.Trace(err)
 	}
 
+	logutil.CL(ctx).Info("backup push down started")
 	push := newPushDown(bc.mgr, len(allStores))
 	results, err := push.pushBackup(ctx, req, allStores, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.CL(ctx).Info("finish backup push down", zap.Int("small-range-count", results.Len()))
+	logutil.CL(ctx).Info("backup push down completed", zap.Int("small-range-count", results.Len()))
 
 	// Find and backup remaining ranges.
 	// TODO: test fine grained backup.
@@ -617,9 +624,9 @@ func (bc *Client) BackupRange(
 			logutil.Key("endKey", req.EndKey),
 			zap.String("cf", req.Cf))
 	} else {
-		logutil.CL(ctx).Info("time range backed up",
-			zap.Reflect("StartVersion", req.StartVersion),
-			zap.Reflect("EndVersion", req.EndVersion))
+		logutil.CL(ctx).Info("transactional range backup completed",
+			zap.Reflect("StartTS", req.StartVersion),
+			zap.Reflect("EndTS", req.EndVersion))
 	}
 
 	var ascendErr error

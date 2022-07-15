@@ -12,6 +12,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
@@ -50,7 +51,7 @@ const (
 )
 
 var (
-	ScanRegionAttemptTimes = 30
+	ScanRegionAttemptTimes = 60
 )
 
 // RegionSplitter is a executor of region split by rules.
@@ -451,7 +452,9 @@ func PaginateScanRegion(
 			var batch []*RegionInfo
 			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
-				return errors.Trace(err)
+				err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
+					redact.Key(scanStartKey), err.Error())
+				return err
 			}
 			regions = append(regions, batch...)
 			if len(batch) < limit {
@@ -480,17 +483,24 @@ type scanRegionBackoffer struct {
 }
 
 func newScanRegionBackoffer() utils.Backoffer {
+	attempt := ScanRegionAttemptTimes
+	// only use for test.
+	failpoint.Inject("scanRegionBackoffer", func(val failpoint.Value) {
+		if val.(bool) {
+			attempt = 3
+		}
+	})
 	return &scanRegionBackoffer{
-		attempt: ScanRegionAttemptTimes,
+		attempt: attempt,
 	}
 }
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		// 500ms * 30 could be enough for splitting remain regions in the hole.
+		// 1s * 60 could be enough for splitting remain regions in the hole.
 		b.attempt--
-		return 500 * time.Millisecond
+		return time.Second
 	}
 	b.attempt = 0
 	return 0

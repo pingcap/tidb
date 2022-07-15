@@ -30,7 +30,7 @@ type panickingAllocator struct {
 	ty   autoid.AllocatorType
 }
 
-// NewPanickingAllocator creates a PanickingAllocator shared by all allocation types.
+// NewPanickingAllocators creates a PanickingAllocator shared by all allocation types.
 func NewPanickingAllocators(base int64) autoid.Allocators {
 	sharedBase := &base
 	return autoid.NewAllocators(

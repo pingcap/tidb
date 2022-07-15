@@ -21,12 +21,14 @@ go_library(
         "//privilege/privileges",
         "//server",
         "//session",
+        "//session/txninfo",
         "//sessionctx/binloginfo",
         "//sessionctx/variable",
         "//statistics",
         "//store",
         "//store/driver",
         "//store/mockstore",
+        "//store/mockstore/unistore/metrics",
         "//tidb-binlog/pump_client",
         "//util",
         "//util/cpuprofile",
@@ -83,6 +85,7 @@ go_binary(
 
 go_test(
     name = "tidb-server_test",
+    timeout = "short",
     srcs = ["main_test.go"],
     embed = [":tidb-server_lib"],
     deps = [

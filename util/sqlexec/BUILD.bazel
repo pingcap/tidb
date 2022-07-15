@@ -24,6 +24,7 @@ go_library(
 
 go_test(
     name = "sqlexec_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "utils_test.go",
