@@ -697,10 +697,8 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	}
 	execStart := time.Now()
 	w.groupKeys = make([][]byte, len(w.groupSet.StringSet))
-	groupKeysIndex := 0
 	for groupKey := range w.groupSet.StringSet {
-		w.groupKeys[groupKeysIndex] = []byte(groupKey)
-		groupKeysIndex++
+		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys))
