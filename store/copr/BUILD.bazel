@@ -24,6 +24,7 @@ go_library(
         "//store/driver/backoff",
         "//store/driver/error",
         "//store/driver/options",
+        "//util",
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
