@@ -121,15 +121,15 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage                        = metrics.TelemetrySQLCTECnt
-	telemetryMultiSchemaChangeUsage          = metrics.TelemetryMultiSchemaChangeCnt
-	telemetryTablePartitionUsage             = metrics.TelemetryTablePartitionCnt
-	telemetryTablePartitionListUsage         = metrics.TelemetryTablePartitionListCnt
-	telemetryTablePartitionRangeUsage        = metrics.TelemetryTablePartitionRangeCnt
-	telemetryTablePartitionHashUsage         = metrics.TelemetryTablePartitionHashCnt
-	telemetryTablePartitionRangeColumnsUsage = metrics.TelemetryTablePartitionRangeColumnsCnt
-	telemetryTablePartitionListColumnsUsage  = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryCTEUsage                         = metrics.TelemetrySQLCTECnt
+	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryTablePartitionUsage              = metrics.TelemetryTablePartitionCnt
+	telemetryTablePartitionListUsage          = metrics.TelemetryTablePartitionListCnt
+	telemetryTablePartitionRangeUsage         = metrics.TelemetryTablePartitionRangeCnt
+	telemetryTablePartitionHashUsage          = metrics.TelemetryTablePartitionHashCnt
+	telemetryTablePartitionRangeColumnsUsage  = metrics.TelemetryTablePartitionRangeColumnsCnt
+	telemetryTablePartitionListColumnsUsage   = metrics.TelemetryTablePartitionListColumnsCnt
+	telemetryTablePartitionMaxPartitionsUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -3352,7 +3352,7 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	if ti.PartitionTelemetry != nil {
 		if ti.PartitionTelemetry.UseTablePartition {
 			telemetryTablePartitionUsage.Inc()
-			telemetryTablePartitionMaxPartitionUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
+			telemetryTablePartitionMaxPartitionsUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
 		}
 		if ti.PartitionTelemetry.UseTablePartitionList {
 			telemetryTablePartitionListUsage.Inc()
