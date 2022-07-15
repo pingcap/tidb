@@ -1103,7 +1103,7 @@ error = '''
 
 ["ddl:8200"]
 error = '''
-Unsupported shard_row_id_bits for table with primary key as row id
+Warning: you are altering tiflash mode for the table whose tiflash replica count is zero. The tiflash mode will finally take effect when you set tiflash replica!
 '''
 
 ["ddl:8201"]
