@@ -188,7 +188,7 @@ type builder struct {
 func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
-		return r.buildFromColumn(x)
+		return r.buildFromColumn()
 	case *expression.ScalarFunction:
 		return r.buildFromScalarFunc(x, collator)
 	case *expression.Constant:
@@ -220,7 +220,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 	return getFullRange()
 }
 
-func (*builder) buildFromColumn(_ *expression.Column) []*point {
+func (*builder) buildFromColumn() []*point {
 	// column name expression is equivalent to column name is true.
 	startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 	endPoint1 := &point{excl: true}
