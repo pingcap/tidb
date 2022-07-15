@@ -28,8 +28,8 @@ go_test(
         "session_states_test.go",
         "session_token_test.go",
     ],
-    race = "on",
     embed = [":sessionstates"],
+    race = "on",
     deps = [
         "//config",
         "//errno",
