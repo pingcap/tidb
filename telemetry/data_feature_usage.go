@@ -283,6 +283,7 @@ func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
 }
 
+// TiFlashModeStatistics records the usage info of Fast Mode
 type TiFlashModeStatistics struct {
 	// fast mode table / (fast mode table + normal mode table) , these tables must have tiflash replica
 	FastModeTableProportion float64 `json:"fast_mode_table_proportion"`
