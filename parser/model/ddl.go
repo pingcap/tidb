@@ -254,8 +254,6 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
-	Warnings []*errors.Error
-
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
@@ -659,6 +657,14 @@ func (job *Job) MayNeedReorg() bool {
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
+		}
+		return false
+	case ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			if proxyJob.MayNeedReorg() {
+				return true
+			}
 		}
 		return false
 	default:

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -496,12 +497,6 @@ var defaultSysVars = []*SysVar{
 		SetMaxDeltaSchemaCount(TidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableChangeMultiSchema, Value: BoolToOnOff(DefTiDBChangeMultiSchema), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		EnableChangeMultiSchema.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(EnableChangeMultiSchema.Load()), nil
-	}},
 	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Hidden: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		EnablePointGetCache.Store(TiDBOptOn(val))
 		return nil
@@ -818,6 +813,14 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableNoopVariables.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBAuthSigningCert, Value: "", Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+		sessionstates.SetCertPath(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBAuthSigningKey, Value: "", Type: TypeStr, SetGlobal: func(s *SessionVars, val string) error {
+		sessionstates.SetKeyPath(val)
+		return nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */

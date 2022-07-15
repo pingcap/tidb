@@ -58,6 +58,7 @@ const (
 	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagSemiJoinRewrite
 	flagEliminateAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
@@ -78,6 +79,7 @@ var optRuleList = []logicalOptRule{
 	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&semiJoinRewriter{},
 	&aggregationEliminator{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
