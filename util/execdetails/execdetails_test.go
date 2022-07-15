@@ -32,6 +32,7 @@ func TestString(t *testing.T) {
 		RequestCount: 1,
 		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime: time.Second,
+			GetLatestTsTime: time.Second,
 			PrewriteTime:    time.Second,
 			CommitTime:      time.Second,
 			LocalLatchTime:  time.Second,
@@ -70,7 +71,7 @@ func TestString(t *testing.T) {
 		},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: 1 " +
-		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
+		"Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
 		"Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: 1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100"
 	require.Equal(t, expected, detail.String())
 	detail = &ExecDetails{}
