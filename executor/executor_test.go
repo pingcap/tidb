@@ -1576,21 +1576,6 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	}
 }
 
-func TestDropColWithPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
-	tk.MustExec("set global tidb_enable_change_multi_schema = off")
-	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
-	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
-	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
-	tk.MustExec("set global tidb_enable_change_multi_schema = on")
-	tk.MustExec("alter table t drop column c3")
-}
-
 func TestUnsignedFeedback(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -4374,7 +4359,8 @@ func TestGetResultRowsCount(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(plannercore.Plan)
 		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session(), p)
+		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 		require.Equal(t, cnt, ca.row, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
