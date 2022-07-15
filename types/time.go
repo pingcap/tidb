@@ -1693,18 +1693,16 @@ func matchDuration(str string, fsp int) (Duration, bool, error) {
 	charsLen := len(rest)
 
 	hhmmss := [3]int{}
-	var hms [3]int
-	var remain string
-	var day int
-	if day, hms, remain, err = matchDayHHMMSS(rest); err == nil {
+
+	if day, hms, remain, err := matchDayHHMMSS(rest); err == nil {
 		hms[0] += 24 * day
 		rest, hhmmss = remain, hms
-	} else if hms, remain, err = matchHHMMSSDelimited(rest, true); err == nil {
+	} else if hms, remain, err := matchHHMMSSDelimited(rest, true); err == nil {
 		rest, hhmmss = remain, hms
-	} else if hms, remain, err = matchHHMMSSCompact(rest); err != nil {
-		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	} else if hms, remain, err := matchHHMMSSCompact(rest); err == nil {
+		rest, hhmmss = remain, hms
 	} else {
-		rest, hhmmss = remain, hms
+		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
 	rest = parser.Space0(rest)
