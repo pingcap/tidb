@@ -189,11 +189,14 @@ func (tracer *PhysicalOptimizeTracer) buildCandidatesInfo() {
 	if tracer == nil || len(tracer.Candidates) < 1 {
 		return
 	}
+	fID := make(map[int]struct{}, len(tracer.Final))
+	for _, plan := range tracer.Final {
+		fID[plan.ID] = struct{}{}
+	}
+
 	for _, candidate := range tracer.Candidates {
-		for _, plan := range tracer.Final {
-			if candidate.PlanTrace.ID == plan.ID {
-				candidate.PlanTrace.Selected = true
-			}
+		if _, ok := fID[candidate.ID]; ok {
+			candidate.Selected = true
 		}
 	}
 }

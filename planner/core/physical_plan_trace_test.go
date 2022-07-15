@@ -133,50 +133,39 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
+		12: "TableReader",
+		14: "TableReader",
+		13: "TableFullScan",
+		15: "HashJoin",
+		6:  "Projection",
+		11: "TableFullScan",
+		9:  "HashJoin",
 		10: "HashJoin",
-		11: "HashJoin",
-		12: "TableFullScan",
-		13: "TableReader",
-		14: "HashAgg",
-		16: "HashAgg",
-		17: "TableFullScan",
-		18: "Selection",
-		19: "HashAgg",
-		20: "TableReader",
-		21: "TableFullScan",
-		22: "Selection",
-		23: "TableReader",
-		8:  "Projection",
-		9:  "HashAgg",
+		7:  "HashAgg",
+		16: "HashJoin",
+		8:  "StreamAgg",
 	}
 	final := map[int]struct{}{
+		11: {},
 		12: {},
 		13: {},
-		21: {},
-		22: {},
-		23: {},
-		16: {},
-		10: {},
+		14: {},
 		9:  {},
-		8:  {},
+		7:  {},
+		6:  {},
 	}
-	asserted := true
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
 		if !ok || tp != c.TP {
-			asserted = false
-			break
+			t.FailNow()
 		}
 	}
-	require.True(t, asserted)
 	require.Len(t, otrace.Candidates, len(elements))
 	for _, p := range otrace.Final {
 		_, ok := final[p.ID]
 		if !ok {
-			asserted = false
-			break
+			t.FailNow()
 		}
 	}
-	require.True(t, asserted)
 	require.Len(t, otrace.Final, len(final))
 }
