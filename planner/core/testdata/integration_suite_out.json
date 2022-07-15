@@ -2019,7 +2019,7 @@
         "Plan": [
           "IndexLookUp_7 3.00 57.91 root  ",
           "├─IndexRangeScan_5(Build) 3.00 171.00 cop[tikv] table:t, index:idx_b(b) range:(5,+inf], keep order:false",
-          "└─TableRowIDScan_6(Probe) 3.00 171.00 cop[tikv] table:t keep order:false"
+          "└─TableRowIDScan_6(Probe) 3.00 108.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
           "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
