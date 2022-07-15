@@ -109,14 +109,14 @@ func NewCheckpointAdvancer(env Env) *CheckpointAdvancer {
 // you may need to change the config `AdvancingByCache`.
 func (c *CheckpointAdvancer) disableCache() {
 	c.cache = NoOPCheckpointCache{}
-	c.state = fullScan{}
+	c.state = &fullScan{}
 }
 
 // enable the cache.
 // also check `AdvancingByCache` in the config.
 func (c *CheckpointAdvancer) enableCache() {
 	c.cache = NewCheckpoints()
-	c.state = fullScan{}
+	c.state = &fullScan{}
 }
 
 // UpdateConfig updates the config for the advancer.
@@ -152,12 +152,23 @@ func (c *CheckpointAdvancer) Config() config.Config {
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte, collector *clusterCollector) error {
 	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
 	iter := IterateRegion(c.env, start, end)
+	scanRegions := 0
+	loopCnt := 0
 	for !iter.Done() {
 		rs, err := iter.Next(ctx)
 		if err != nil {
 			return err
 		}
 		log.Debug("scan region", zap.Int("len", len(rs)))
+		scanRegions += len(rs)
+		loopCnt++
+		if scanRegions > 16384 || loopCnt > 10 {
+			log.Info("hint: scanning regions takes many turns of loops",
+				zap.Int("loop", loopCnt),
+				zap.Int("regions-meet", scanRegions),
+				zap.Stringer("iter", iter),
+			)
+		}
 		for _, r := range rs {
 			err := collector.collectRegion(r)
 			if err != nil {
@@ -185,6 +196,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 	defer c.recordTimeCost("try advance", zap.Uint64("checkpoint", rst.TS), zap.Int("len", len(rst.Ranges)))()
 	defer func() {
 		if err != nil {
+			log.Warn("failed to advance", logutil.ShortError(err), zap.Object("target", rst.Zap()))
 			c.cache.InsertRanges(rst)
 		}
 	}()
@@ -230,6 +242,14 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 	if len(rsts) == 0 {
 		return 0, nil
 	}
+	samples := rsts
+	if len(rsts) > 3 {
+		samples = rsts[:3]
+	}
+	for _, sample := range samples {
+		log.Info("sample range.", zap.Object("range", sample.Zap()), zap.Int("total-len", len(rsts)))
+	}
+
 	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "regions")
 	eg, cx := errgroup.WithContext(ctx)
 	for _, rst := range rsts {
@@ -242,7 +262,6 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 	if err != nil {
 		return 0, err
 	}
-	log.Info("advancer with cache: new tree", zap.Stringer("cache", c.cache))
 	ts := c.cache.CheckpointTS()
 	return ts, nil
 }
