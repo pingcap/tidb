@@ -54,7 +54,7 @@ var collationsIDMap = make(map[int]*Collation)
 var collationsNameMap = make(map[string]*Collation)
 var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 
-// CharacterSetInfos All the supported charsets should be in the following table.
+// CharacterSetInfos contains all the supported charsets.
 var CharacterSetInfos = map[string]*Charset{
 	CharsetUTF8:    {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
 	CharsetUTF8MB4: {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
