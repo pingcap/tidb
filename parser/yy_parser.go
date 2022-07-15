@@ -72,7 +72,7 @@ func TrimComment(txt string) string {
 
 //revive:disable:exported
 
-//ParserConfig is the parser config.
+// ParserConfig is the parser config.
 type ParserConfig struct {
 	EnableWindowFunction        bool
 	EnableStrictDoubleTypeCheck bool
