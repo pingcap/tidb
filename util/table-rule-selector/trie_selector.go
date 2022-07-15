@@ -265,7 +265,7 @@ func (t *trieSelector) insertTable(schema, table string, rule interface{}, inser
 	return nil
 }
 
-func (t *trieSelector) getRangeItem(pattern string) (*rangeItem, int) {
+func (*trieSelector) getRangeItem(pattern string) (*rangeItem, int) {
 	nextI := -1
 	for i := range pattern {
 		if pattern[i] == rangeClose {

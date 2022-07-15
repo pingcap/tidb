@@ -224,7 +224,7 @@ func (a indexMap) ForEach(f func(key string, value Lattice) error) error {
 	return nil
 }
 
-func (indexMap) CompareWithNil(value Lattice) (int, error) {
+func (indexMap) CompareWithNil(_ Lattice) (int, error) {
 	return -1, nil
 }
 
@@ -232,7 +232,7 @@ func (indexMap) ShouldDeleteIncompatibleJoin() bool {
 	return true
 }
 
-func (indexMap) JoinWithNil(value Lattice) (Lattice, error) {
+func (indexMap) JoinWithNil(_ Lattice) (Lattice, error) {
 	return nil, nil
 }
 

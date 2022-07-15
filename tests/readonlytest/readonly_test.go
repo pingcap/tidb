@@ -64,7 +64,7 @@ func setVariableNoError(t *testing.T, db *sql.DB, variable string, status int) {
 	require.NoError(t, err)
 }
 
-func setVariable(t *testing.T, db *sql.DB, variable string, status int) error {
+func setVariable(_ *testing.T, db *sql.DB, variable string, status int) error {
 	_, err := db.Exec(fmt.Sprintf("set global %s=%d", variable, status))
 	return err
 }
