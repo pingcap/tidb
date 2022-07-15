@@ -506,11 +506,10 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	}
 
 	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16));")
-	// TODO: unistore does not implement region split, this is just a noop.
-	tk.MustExec("split table t by (3);")
 	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003');")
 	tk.MustExec("analyze table t;")
 
+	tk.MustExec("set @@tidb_partition_prune_mode  ='static';")
 	tk.MustExec("set tidb_replica_read = 'closest-adaptive';")
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 25;")
 
@@ -519,10 +518,22 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	checkMetrics("select s from t where id >= 1 and id < 2;", 0, 1)
 	// estimate cost is 37
 	checkMetrics("select * from t where id >= 1 and id < 2;", 1, 0)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 50;")
+	checkMetrics("select * from t where id >= 1 and id < 2;", 0, 1)
 	// estimate cost is 74
 	checkMetrics("select * from t where id >= 1 and id <= 2;", 1, 0)
-	// FIXME: there is only 1 region in unistore, can't test multi region read here.
-	// checkMetrics("select * from t where id >= 2 and id < 4;", counter.WithLabelValues("miss"), 2)
+
+	partitionDef := "PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (3), PARTITION p3 VALUES LESS THAN MAXVALUE);"
+
+	// test TableReader with partition
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16)) " + partitionDef)
+	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003'), (4, '00000044', '0000000000000004');")
+	tk.MustExec("analyze table t;")
+	// estimate cost is 38
+	checkMetrics("select s from t where id >= 1 and id < 3;", 1, 0)
+	// estimate cost is 39 with 2 cop request
+	checkMetrics("select s from t where id >= 2 and id < 4;", 0, 2)
 
 	// index reader
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
@@ -533,6 +544,17 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	// avg row size = 27.91
 	checkMetrics("select p from t where s >= 'test' and s < 'test11'", 0, 1)
 	checkMetrics("select p from t where s >= 'test' and s < 'test22'", 1, 0)
+
+	// index reader with partitions
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (v int, id int, p varchar(8), key `idx_id_p`(`id`, `p`)) " + partitionDef)
+	tk.MustExec("insert into t values (1, 1, '11111111'), (2, 2, '22222222'), (3, 3, '33333333'), (4, 4, '44444444');")
+	tk.MustExec("analyze table t;")
+	// avg row size = 19
+	checkMetrics("select p from t where id >= 1 and id < 3", 1, 0)
+	checkMetrics("select p from t where id >= 2 and id < 4", 0, 2)
+	checkMetrics("select p from t where id >= 1 and id < 4", 1, 1)
 
 	// index lookup reader
 	tk.MustExec("drop table if exists t;")
