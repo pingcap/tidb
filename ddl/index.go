@@ -1565,26 +1565,26 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-// ChangingIndex is used to store the index that need to be changed during modifying column.
-type ChangingIndex struct {
+// changingIndex is used to store the index that need to be changed during modifying column.
+type changingIndex struct {
 	IndexInfo *model.IndexInfo
 	// Column offset in idxInfo.Columns.
 	Offset int
 	// When the modifying column is contained in the index, a temp index is created.
-	// IsTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
-	IsTemp bool
+	// isTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
+	isTemp bool
 }
 
 // FindRelatedIndexesToChange finds the indexes that covering the given column.
 // The normal one will be overridden by the temp one.
-func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []ChangingIndex {
+func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
 	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
 	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
-	var normalIdxInfos, tempIdxInfos []ChangingIndex
+	var normalIdxInfos, tempIdxInfos []changingIndex
 	for _, idxInfo := range tblInfo.Indices {
 		if pos := findIdxCol(idxInfo, colName); pos != -1 {
 			isTemp := isTempIdxInfo(idxInfo, tblInfo)
-			r := ChangingIndex{IndexInfo: idxInfo, Offset: pos, IsTemp: isTemp}
+			r := changingIndex{IndexInfo: idxInfo, Offset: pos, isTemp: isTemp}
 			if isTemp {
 				tempIdxInfos = append(tempIdxInfos, r)
 			} else {

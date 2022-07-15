@@ -872,7 +872,7 @@ func (d SchemaTracker) createPrimaryKey(
 }
 
 // AlterTable implements the DDL interface.
-func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) error {
+func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
 	validSpecs, err := ddl.ResolveAlterTableSpec(sctx, stmt.Specs)
 	if err != nil {
 		return errors.Trace(err)
@@ -886,6 +886,14 @@ func (d SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// atomicity for multi-schema change
+	oldTblInfo := tblInfo.Clone()
+	defer func() {
+		if err != nil {
+			_ = d.PutTable(ident.Schema, oldTblInfo)
+		}
+	}()
 
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool

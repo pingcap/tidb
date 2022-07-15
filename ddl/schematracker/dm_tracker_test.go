@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -393,13 +394,31 @@ func TestAddExpressionIndex(t *testing.T) {
 	checkShowCreateTable(t, tblInfo, expected)
 }
 
-func TestTempTest(t *testing.T) {
-	sql := "create table test.t(\n\ta int,\n\tb varchar(100),\n\tc int)\n\tPARTITION BY RANGE ( a ) (\n\tPARTITION p0 VALUES LESS THAN (6),\n\t\tPARTITION p1 VALUES LESS THAN (11),\n\t\tPARTITION p2 VALUES LESS THAN (16),\n\t\tPARTITION p3 VALUES LESS THAN (21)\n\t);"
+func TestAtomicMultiSchemaChange(t *testing.T) {
+	sql := "create table test.t (a int);"
 
 	tracker := NewSchemaTracker(2)
 	tracker.createTestDB()
 	execCreate(t, tracker, sql)
 
-	sql = "alter table test.t add index idx((a+c));"
+	sql = "alter table test.t add b int, add c int;"
 	execAlter(t, tracker, sql)
+
+	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Len(t, tblInfo.Columns, 3)
+
+	sql = "alter table test.t add d int, add a int;"
+
+	ctx := context.Background()
+	sctx := mock.NewContext()
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = tracker.AlterTable(ctx, sctx, stmt.(*ast.AlterTableStmt))
+	require.True(t, infoschema.ErrColumnExists.Equal(err))
+
+	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Len(t, tblInfo.Columns, 3)
 }

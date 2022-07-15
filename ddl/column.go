@@ -543,7 +543,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	changingCol := modifyInfo.changingCol
 	if changingCol == nil {
-		newColName := model.NewCIStr(GenChangingColumnUniqueName(tblInfo, oldCol))
+		newColName := model.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 			job.State = model.JobStateCancelled
 			msg := "this column has primary key flag"
@@ -566,7 +566,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		indexesToChange := FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 		for _, info := range indexesToChange {
 			newIdxID := AllocateIndexID(tblInfo)
-			if !info.IsTemp {
+			if !info.isTemp {
 				// We create a temp index for each normal index.
 				tmpIdx := info.IndexInfo.Clone()
 				tmpIdxName := genChangingIndexUniqueName(tblInfo, info.IndexInfo)
@@ -620,7 +620,7 @@ func rollbackModifyColumnJobWithData(d *ddlCtx, t *meta.Meta, tblInfo *model.Tab
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.PreventNullInsertFlag)
 	}
 	if modifyInfo.changingCol != nil {
-		// changingCol isn't nil means the job has been in the mid state. These appended changingCol and ChangingIndex should
+		// changingCol isn't nil means the job has been in the mid state. These appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(modifyInfo.changingIdxs)]
@@ -662,7 +662,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// none -> delete only
-		UpdateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
+		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var sctx sessionctx.Context
@@ -702,7 +702,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// delete only -> write only
-		UpdateChangingObjState(changingCol, changingIdxs, model.StateWriteOnly)
+		updateChangingObjState(changingCol, changingIdxs, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -710,7 +710,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		UpdateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
+		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -736,13 +736,13 @@ func (w *worker) doModifyColumnTypeWithData(
 
 		rmIdxIDs = append(getRelatedIndexIDs(tblInfo, oldCol.ID), rmIdxIDs...)
 
-		err = AdjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
+		err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 
-		UpdateChangingObjState(changingCol, changingIdxs, model.StatePublic)
+		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -819,8 +819,7 @@ func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.J
 	return true, ver, nil
 }
 
-// AdjustTableInfoAfterModifyColumnWithData adjusts the TableInfo after modifying the column.
-func AdjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
+func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
 	oldCol, changingCol *model.ColumnInfo, newName model.CIStr, changingIdxs []*model.IndexInfo) (err error) {
 	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
 		// For cases like `modify column b after b`, it should report this error.
@@ -1313,8 +1312,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	return
 }
 
-// UpdateChangingObjState updates the state for ColumnInfo and its related IndexInfo
-func UpdateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
+func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
 	changingCol.State = schemaState
 	for _, idx := range changingIdxs {
 		idx.State = schemaState
@@ -1739,8 +1737,7 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 	return ids
 }
 
-// GenChangingColumnUniqueName generates a new unique name for changing column.
-func GenChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
+func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
 	suffix := 0
 	newColumnNamePrefix := fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O)
 	newColumnLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
