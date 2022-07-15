@@ -49,6 +49,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk, true)
 
@@ -139,6 +140,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk, true)
 
@@ -198,6 +200,7 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 		defer clearScopeSettings()
 
 		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
 		se := tk.Session()
 		tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
 		tk.MustExec("set @@tidb_txn_mode='pessimistic'")
@@ -260,6 +263,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
 	safePoint := "20160102-15:04:05 -0700"
@@ -477,6 +481,7 @@ func TestConflictErrorInInsertInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -506,8 +511,10 @@ func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -544,8 +551,10 @@ func TestConflictErrorInDeleteInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -582,8 +591,10 @@ func TestConflictErrorInUpdateInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -618,8 +629,10 @@ func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
