@@ -278,6 +278,18 @@ func TestDAGPlanTopN(t *testing.T) {
 	}
 }
 
+func assertSameHints(t *testing.T, expected, actual []*ast.TableOptimizerHint) {
+	expectedStr := make([]string, 0, len(expected))
+	actualStr := make([]string, 0, len(actual))
+	for _, h := range expected {
+		expectedStr = append(expectedStr, hint.RestoreTableOptimizerHint(h))
+	}
+	for _, h := range actual {
+		actualStr = append(actualStr, hint.RestoreTableOptimizerHint(h))
+	}
+	require.ElementsMatch(t, expectedStr, actualStr)
+}
+
 func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -312,7 +324,14 @@ func TestDAGPlanBuilderBasePhysicalPlan(t *testing.T) {
 			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), fmt.Sprintf("input: %s", tt))
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), fmt.Sprintf("input: %s", tt))
 	}
 }
 
@@ -852,8 +871,14 @@ func TestJoinHints(t *testing.T) {
 			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
 			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
 		}
+		hints := core.GenHintsFromPhysicalPlan(p)
 
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -911,6 +936,57 @@ func TestAggregationHints(t *testing.T) {
 	}
 }
 
+func TestSemiJoinRewriteHints(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+
+	sessionVars := tk.Session().GetSessionVars()
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+
+	var input []string
+	var output []struct {
+		SQL     string
+		Plan    []string
+		Warning string
+	}
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.GetTestCases(t, &input, &output)
+	ctx := context.Background()
+	p := parser.New()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	for i, test := range input {
+		comment := fmt.Sprintf("case: %v sql: %v", i, test)
+		tk.Session().GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		stmt, err := p.ParseOneStmt(test, "", "")
+		require.NoError(t, err, comment)
+
+		_, _, err = planner.Optimize(ctx, tk.Session(), stmt, is)
+		require.NoError(t, err)
+		warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+
+		testdata.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief'" + test).Rows())
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		tk.MustQuery("explain format = 'brief'" + test).Check(testkit.Rows(output[i].Plan...))
+		if output[i].Warning == "" {
+			require.Len(t, warnings, 0)
+		} else {
+			require.Len(t, warnings, 1, fmt.Sprintf("%v", warnings))
+			require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+			require.Equal(t, output[i].Warning, warnings[0].Err.Error())
+		}
+	}
+}
+
 func TestExplainJoinHints(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -919,10 +995,10 @@ func TestExplainJoinHints(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key(b), key(c))")
 	tk.MustQuery("explain format='hint' select /*+ inl_merge_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_merge_join(@`sel_1` `test`.`t2`), inl_merge_join(`t2`)",
+		"inl_merge_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_merge_join(`t2`)",
 	))
 	tk.MustQuery("explain format='hint' select /*+ inl_hash_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_hash_join(@`sel_1` `test`.`t2`), inl_hash_join(`t2`)",
+		"inl_hash_join(@`sel_1` `test`.`t2`), use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_hash_join(`t2`)",
 	))
 }
 
@@ -1268,7 +1344,14 @@ func TestIndexHint(t *testing.T) {
 		} else {
 			require.Len(t, warnings, 0, comment)
 		}
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -1315,7 +1398,14 @@ func TestIndexMergeHint(t *testing.T) {
 		} else {
 			require.Len(t, warnings, 0, comment)
 		}
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -1351,7 +1441,14 @@ func TestQueryBlockHint(t *testing.T) {
 			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 
@@ -1391,7 +1488,14 @@ func TestInlineProjection(t *testing.T) {
 			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		require.Equal(t, output[i].Plan, core.ToString(p), comment)
-		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), comment)
+		hints := core.GenHintsFromPhysicalPlan(p)
+
+		// test the new genHints code
+		flat := core.FlattenPhysicalPlan(p, false)
+		newHints := core.GenHintsFromFlatPlan(flat)
+		assertSameHints(t, hints, newHints)
+
+		require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 	}
 }
 

@@ -22,6 +22,7 @@ go_library(
 
 go_test(
     name = "schemacmp_test",
+    timeout = "short",
     srcs = [
         "lattice_test.go",
         "table_test.go",

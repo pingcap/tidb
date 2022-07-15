@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -268,4 +269,30 @@ func Redact(field zap.Field) zap.Field {
 		return zap.String(field.Key, "?")
 	}
 	return field
+}
+
+// StringifyRanges wrappes the key range into a stringer.
+type StringifyKeys []kv.KeyRange
+
+func (kr StringifyKeys) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("{")
+	for i, rng := range kr {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString("[")
+		sb.WriteString(redact.Key(rng.StartKey))
+		sb.WriteString(", ")
+		var endKey string
+		if len(rng.EndKey) == 0 {
+			endKey = "inf"
+		} else {
+			endKey = redact.Key(rng.EndKey)
+		}
+		sb.WriteString(redact.String(endKey))
+		sb.WriteString(")")
+	}
+	sb.WriteString("}")
+	return sb.String()
 }
