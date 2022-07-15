@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 )
 
+// Pool is the worker pool.
 type Pool struct {
 	limit   int
 	workers chan *Worker
@@ -28,10 +29,12 @@ type Pool struct {
 	metrics *metric.Metrics
 }
 
+// Worker is the worker struct.
 type Worker struct {
 	ID int64
 }
 
+// NewPool creates a new worker pool.
 func NewPool(ctx context.Context, limit int, name string) *Pool {
 	workers := make(chan *Worker, limit)
 	for i := 0; i < limit; i++ {
@@ -50,6 +53,7 @@ func NewPool(ctx context.Context, limit int, name string) *Pool {
 	}
 }
 
+// Apply gets a worker from the pool.
 func (pool *Pool) Apply() *Worker {
 	start := time.Now()
 	worker := <-pool.workers
@@ -60,6 +64,7 @@ func (pool *Pool) Apply() *Worker {
 	return worker
 }
 
+// Recycle puts a worker back to the pool.
 func (pool *Pool) Recycle(worker *Worker) {
 	if worker == nil {
 		panic("invalid restore worker")
@@ -70,6 +75,7 @@ func (pool *Pool) Recycle(worker *Worker) {
 	}
 }
 
+// HasWorker returns whether the pool has worker.
 func (pool *Pool) HasWorker() bool {
 	return len(pool.workers) > 0
 }
