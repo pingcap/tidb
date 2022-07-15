@@ -170,7 +170,7 @@ func newTable() *table {
 	}
 }
 
-func (t *table) findCol(cols []*column, name string) *column {
+func (*table) findCol(cols []*column, name string) *column {
 	for _, col := range cols {
 		if col.name == name {
 			return col

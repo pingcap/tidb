@@ -183,7 +183,7 @@ func (r *Table) RemoveRule(rule *TableRule) error {
 
 // Route routes schema/table to target schema/table
 // don't support to route schema/table to multiple schema/table
-func (r *Table) Route(schema, table string) (string, string, error) {
+func (r *Table) Route(schema, table string) (targetSchema string, targetTable string, err error) {
 	schemaL, tableL := schema, table
 	if !r.caseSensitive {
 		schemaL, tableL = strings.ToLower(schema), strings.ToLower(table)
@@ -209,10 +209,6 @@ func (r *Table) Route(schema, table string) (string, string, error) {
 		}
 	}
 
-	var (
-		targetSchema string
-		targetTable  string
-	)
 	if len(table) == 0 || len(tableRules) == 0 {
 		if len(schemaRules) > 1 {
 			return "", "", errors.NotSupportedf("`%s`.`%s` matches %d schema route rules which is more than one.\nThe first two rules are %+v, %+v.\nIt's", schema, table, len(schemaRules), schemaRules[0], schemaRules[1])
@@ -241,7 +237,7 @@ func (r *Table) Route(schema, table string) (string, string, error) {
 }
 
 // ExtractVal match value via regexp
-func (t *TableRule) extractVal(s string, ext interface{}) string {
+func (*TableRule) extractVal(s string, ext interface{}) string {
 	var params []string
 	switch e := ext.(type) {
 	case *TableExtractor:

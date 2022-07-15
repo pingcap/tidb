@@ -17,6 +17,7 @@ go_library(
 
 go_test(
     name = "generatedexpr_test",
+    timeout = "short",
     srcs = [
         "gen_expr_test.go",
         "main_test.go",

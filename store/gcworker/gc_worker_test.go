@@ -1820,6 +1820,8 @@ func TestGCLabelRules(t *testing.T) {
 func TestGCWithPendingTxn(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
+	// set to false gc worker won't resolve locks after safepoint.
+	s.gcWorker.logBackupEnabled = false
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1866,11 +1868,13 @@ func TestGCWithPendingTxn(t *testing.T) {
 	require.NoError(t, err)
 
 	err = txn.Commit(ctx)
-	require.Error(t, err)
+	require.NoError(t, err)
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
+	// only when log backup enabled will scan locks after safepoint.
+	s.gcWorker.logBackupEnabled = true
 	defer clean()
 
 	ctx := gcContext()

@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "disjointset_test",
+    timeout = "short",
     srcs = [
         "int_set_test.go",
         "main_test.go",
