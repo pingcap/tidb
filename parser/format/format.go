@@ -336,7 +336,7 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 	fmt.Fprint(ctx.In, keyWord)
 }
 
-// WriteWithSpecialComments writes the `str` into writer.
+// WriteWithSpecialComments writes a string with a special comment wrapped.
 func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() error) error {
 	if !ctx.Flags.HasTiDBSpecialCommentFlag() {
 		return fn()
