@@ -688,6 +688,7 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	return expr, not
 }
 
+// GetExprInsideIsTruth get the expression inside the `istrue_with_null` and `istrue`.
 func GetExprInsideIsTruth(expr Expression) Expression {
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
