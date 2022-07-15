@@ -1103,7 +1103,7 @@ error = '''
 
 ["ddl:8200"]
 error = '''
-Unsupported shard_row_id_bits for table with primary key as row id
+alter tiflash related actions for tables in system database is unsupported
 '''
 
 ["ddl:8201"]

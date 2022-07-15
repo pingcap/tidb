@@ -343,7 +343,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 	if util.IsMemOrSysDB(dbInfo.Name.L) {
-		return errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
+		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysTable)
 	}
 
 	total := len(dbInfo.Tables)
@@ -4893,19 +4893,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Ban setting replica count for tables in system database.
-	if util.IsMemOrSysDB(schema.Name.L) {
-		return errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
-	} else if tb.Meta().TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
-	}
 
-	// Ban setting replica count for tables which has charset not supported by TiFlash
-	for _, col := range tb.Cols() {
-		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
-		if !ok {
-			return dbterror.ErrAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
-		}
+	err = checkTiFlashSupportable(schema, tb)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
@@ -4932,6 +4923,25 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+func checkTiFlashSupportable(schema *model.DBInfo, tb table.Table) error {
+	// Ban setting tiflash mode for tables in system database.
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysTable)
+	} else if tb.Meta().TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set on tiflash")
+	}
+
+	// Ban setting tiflash mode for tables which has charset not supported by TiFlash
+	for _, col := range tb.Cols() {
+		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
+		if !ok {
+			return dbterror.ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
+		}
+	}
+
+	return nil
+}
+
 func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -4942,19 +4952,9 @@ func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, 
 		return fmt.Errorf("unsupported TiFlash mode %s", mode)
 	}
 
-	// Ban setting tiflash mode for tables in system database.
-	if util.IsMemOrSysDB(schema.Name.L) {
-		return errors.Trace(dbterror.ErrUnsupportedAlterTiFlashModeForSysTable)
-	} else if tb.Meta().TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash mode")
-	}
-
-	// Ban setting tiflash mode for tables which has charset not supported by TiFlash
-	for _, col := range tb.Cols() {
-		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
-		if !ok {
-			return dbterror.ErrAlterTiFlashModeForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
-		}
+	err = checkTiFlashSupportable(schema, tb)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// Prompt warning when tiflash replica is nil or tiflash replica count is 0

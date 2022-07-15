@@ -69,8 +69,6 @@ var (
 	ErrUnsupportedAlterTableWithoutValidation = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
 	// ErrUnsupportedAlterTableOption means we don't support the alter table option.
 	ErrUnsupportedAlterTableOption = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
-	// ErrUnsupportedAlterReplicaForSysTable means we don't support the alter replica for system table.
-	ErrUnsupportedAlterReplicaForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
 	// ErrUnsupportedAlterCacheForSysTable means we don't support the alter cache for system table.
 	ErrUnsupportedAlterCacheForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table cache for tables in system database is currently unsupported", nil))
 	// ErrBlobKeyWithoutLength is used when BLOB is used as key but without a length.
@@ -99,10 +97,6 @@ var (
 	ErrFkColumnCannotDrop = ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
 	// ErrFKIncompatibleColumns is used when foreign key column type is incompatible.
 	ErrFKIncompatibleColumns = ClassDDL.NewStd(mysql.ErrFKIncompatibleColumns)
-
-	// ErrAlterReplicaForUnsupportedCharsetTable is used when alter table with unsupported charset.
-	ErrAlterReplicaForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER table replica for table contain %s charset"), nil))
-
 	// ErrOnlyOnRangeListPartition is used when the partition type is range list.
 	ErrOnlyOnRangeListPartition = ClassDDL.NewStd(mysql.ErrOnlyOnRangeListPartition)
 	// ErrWrongKeyColumn is for table column cannot be indexed.
@@ -395,9 +389,9 @@ var (
 	// ErrAlterTiFlashModeForTableWithoutTiFlashReplica returns when set tiflash mode on table whose tiflash_replica is null or tiflash_replica_count = 0
 	ErrAlterTiFlashModeForTableWithoutTiFlashReplica = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Warning: you are altering tiflash mode for the table whose tiflash replica count is zero. The tiflash mode will finally take effect when you set tiflash replica!", nil))
 
-	// ErrUnsupportedAlterTiFlashModeForSysTable means we don't support the alter tiflash mode for system table.
-	ErrUnsupportedAlterTiFlashModeForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER tiflash mode for tables in system database is unsupported", nil))
+	// ErrUnsupportedTiFlashOperationForSysTable means we don't support the alter tiflash related action(e.g. set tiflash mode, set tiflash replica) for system table.
+	ErrUnsupportedTiFlashOperationForSysTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("alter tiflash related actions for tables in system database is unsupported", nil))
 
-	// ErrAlterTiFlashModeForUnsupportedCharsetTable is used when alter tiflash mode with unsupported charset.
-	ErrAlterTiFlashModeForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "ALTER tiflash mode for table contain %s charset"), nil))
+	// ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable is used when alter alter tiflash related action(e.g. set tiflash mode, set tiflash replica) with unsupported charset.
+	ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "alter tiflash related actions for table contain %s charset"), nil))
 )

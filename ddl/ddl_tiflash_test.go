@@ -430,7 +430,7 @@ func TestSetTiFlashModeUnsupported(t *testing.T) {
 	// unsupport for temporary table
 	tk.MustGetErrMsg("alter table ddltiflash set tiflash mode fast", "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table")
 	// unsupport for system table
-	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]ALTER tiflash mode for tables in system database is unsupported")
+	tk.MustGetErrMsg("alter table information_schema.tiflash_replica set tiflash mode fast", "[ddl:8200]alter tiflash related actions for tables in system database is unsupported")
 }
 
 // Truncate partition shall not block.

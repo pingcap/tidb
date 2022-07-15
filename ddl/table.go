@@ -1085,7 +1085,7 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 
 	// Ban setting replica count for tables in system database.
 	if tidb_util.IsMemOrSysDB(job.SchemaName) {
-		return ver, errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
+		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysTable)
 	}
 
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
