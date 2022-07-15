@@ -109,8 +109,8 @@ type IndexMergeReaderExecutor struct {
 	partialNetDataSizes []float64
 	dataAvgRowSize      float64
 
-	handleCols     plannercore.HandleCols
-	stats          *IndexMergeRuntimeStat
+	handleCols plannercore.HandleCols
+	stats      *IndexMergeRuntimeStat
 
 	// Indicates whether there is correlated column in filter or table/index range.
 	// We need to refresh dagPBs before send DAGReq to storage.
