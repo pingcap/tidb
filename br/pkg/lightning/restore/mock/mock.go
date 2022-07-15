@@ -268,7 +268,7 @@ func (t *MockTargetInfo) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.Regi
 		for i := 0; i < storeEmptyRegionCount; i++ {
 			regions[i] = pdtypes.RegionInfo{
 				Peers: []pdtypes.MetaPeer{
-					pdtypes.MetaPeer{
+					{
 						Peer: &metapb.Peer{
 							StoreId: storeID,
 						},
