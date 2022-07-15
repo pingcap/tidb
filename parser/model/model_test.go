@@ -285,6 +285,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{int64(6), int64(3), int64(5), "pt", true},
 	}
 	job3.RawArgs, err = json.Marshal(job3.Args)
+	require.NoError(t, err)
 	isDependent, err = job3.IsDependentOn(job2)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -299,6 +300,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{6, 4, 2, "pt", true},
 	}
 	job4.RawArgs, err = json.Marshal(job4.Args)
+	require.NoError(t, err)
 	isDependent, err = job4.IsDependentOn(job)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -313,6 +315,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{2, 6, 5, "pt", true},
 	}
 	job5.RawArgs, err = json.Marshal(job5.Args)
+	require.NoError(t, err)
 	isDependent, err = job5.IsDependentOn(job4)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -326,6 +329,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{6, 4, 2, "pt", true},
 	}
 	job6.RawArgs, err = json.Marshal(job6.Args)
+	require.NoError(t, err)
 	isDependent, err = job6.IsDependentOn(job5)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -339,6 +343,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{8, 4, 6, "pt", true},
 	}
 	job7.RawArgs, err = json.Marshal(job7.Args)
+	require.NoError(t, err)
 	isDependent, err = job7.IsDependentOn(job6)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -352,6 +357,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{8, 9, 9, "pt", true},
 	}
 	job8.RawArgs, err = json.Marshal(job8.Args)
+	require.NoError(t, err)
 	isDependent, err = job8.IsDependentOn(job7)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -365,6 +371,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{10, 10, 8, "pt", true},
 	}
 	job9.RawArgs, err = json.Marshal(job9.Args)
+	require.NoError(t, err)
 	isDependent, err = job9.IsDependentOn(job8)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -389,6 +396,7 @@ func TestJobCodec(t *testing.T) {
 		Args:       []interface{}{10, 10, 8, "pt", true},
 	}
 	job11.RawArgs, err = json.Marshal(job11.Args)
+	require.NoError(t, err)
 	isDependent, err = job11.IsDependentOn(job10)
 	require.NoError(t, err)
 	require.True(t, isDependent)
@@ -402,6 +410,7 @@ func TestJobCodec(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	job12.RawArgs, err = json.Marshal(job12.Args)
+	require.NoError(t, err)
 	isDependent, err = job11.IsDependentOn(job12)
 	require.NoError(t, err)
 	require.False(t, isDependent)
@@ -414,6 +423,7 @@ func TestJobCodec(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	job13.RawArgs, err = json.Marshal(job13.Args)
+	require.NoError(t, err)
 	isDependent, err = job11.IsDependentOn(job13)
 	require.NoError(t, err)
 	require.True(t, isDependent)
