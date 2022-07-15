@@ -294,10 +294,14 @@ func (d Checker) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *
 	if err != nil {
 		return err
 	}
+
+	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
+	count := sctx.GetSessionVars().StmtCtx.WarningCount()
 	err = d.tracker.AlterTable(ctx, sctx, stmt)
 	if err != nil {
 		panic(err)
 	}
+	sctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
 
 	d.checkTableInfo(sctx, stmt.Table.Schema, stmt.Table.Name)
 	return nil

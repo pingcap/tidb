@@ -142,21 +142,32 @@ func TestDropColumn(t *testing.T) {
 	require.Equal(t, 1, len(tblInfo.Columns))
 }
 
+func TestFullTextIndex(t *testing.T) {
+	sql := "create table test.t (a text, fulltext key (a))"
+
+	tracker := NewSchemaTracker(2)
+	tracker.createTestDB()
+	execCreate(t, tracker, sql)
+}
+
+func checkShowCreateTable(t *testing.T, tblInfo *model.TableInfo, expected string) {
+	sctx := mock.NewContext()
+
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	err := executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
+	require.NoError(t, err)
+	require.Equal(t, expected, result.String())
+}
+
 func TestIndexLength(t *testing.T) {
 	// copy TestIndexLength in db_integration_test.go
 	sql := "create table test.t(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));"
-
-	sctx := mock.NewContext()
 
 	tracker := NewSchemaTracker(2)
 	tracker.createTestDB()
 	execCreate(t, tracker, sql)
 
 	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-
-	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
 	require.NoError(t, err)
 
 	expected := "CREATE TABLE `t` (\n" +
@@ -167,7 +178,7 @@ func TestIndexLength(t *testing.T) {
 		"  KEY `b` (`b`(3072)),\n" +
 		"  KEY `c` (`c`(3072))\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	require.Equal(t, expected, result.String())
+	checkShowCreateTable(t, tblInfo, expected)
 
 	err = tracker.DeleteTable(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -185,17 +196,12 @@ func TestIndexLength(t *testing.T) {
 	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result2)
-	require.NoError(t, err)
-	require.Equal(t, expected, result.String())
+	checkShowCreateTable(t, tblInfo, expected)
 }
 
 func TestIssue5092(t *testing.T) {
 	// copy TestIssue5092 in db_integration_test.go
 	sql := "create table test.t (a int)"
-
-	sctx := mock.NewContext()
 
 	tracker := NewSchemaTracker(2)
 	tracker.createTestDB()
@@ -217,10 +223,6 @@ func TestIssue5092(t *testing.T) {
 	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err = executor.ConstructResultOfShowCreateTable(sctx, tblInfo, autoid.Allocators{}, result)
-	require.NoError(t, err)
-
 	expected := "CREATE TABLE `t` (\n" +
 		"  `c2` int(11) DEFAULT NULL,\n" +
 		"  `h` int(11) DEFAULT NULL,\n" +
@@ -236,7 +238,7 @@ func TestIssue5092(t *testing.T) {
 		"  `g` int(11) DEFAULT NULL,\n" +
 		"  `ff` text DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	require.Equal(t, expected, result.String())
+	checkShowCreateTable(t, tblInfo, expected)
 }
 
 func TestBitDefaultValues(t *testing.T) {
@@ -284,16 +286,120 @@ func TestBitDefaultValues(t *testing.T) {
 	execCreate(t, tracker, sql)
 }
 
-func TestTempTest(t *testing.T) {
-	sql := "create table test.mc(a int key, b int, c int unique)"
+func TestAddExpressionIndex(t *testing.T) {
+	sql := "create table test.t (a int, b real);"
 
 	tracker := NewSchemaTracker(2)
 	tracker.createTestDB()
 	execCreate(t, tracker, sql)
 
-	_, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("mc"))
+	sql = "alter table test.t add index idx((a+b))"
+	execAlter(t, tracker, sql)
+	sql = "alter table test.t add index idx_multi((a+b),(a+1), b);"
+	execAlter(t, tracker, sql)
+
+	tblInfo, err := tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	sql = "alter table test.mc modify column a bigint"
+	expected := "CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` double DEFAULT NULL,\n" +
+		"  KEY `idx` ((`a` + `b`)),\n" +
+		"  KEY `idx_multi` ((`a` + `b`),(`a` + 1),`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	checkShowCreateTable(t, tblInfo, expected)
+
+	sql = "alter table test.t drop index idx;"
+	execAlter(t, tracker, sql)
+	sql = "alter table test.t drop index idx_multi;"
+	execAlter(t, tracker, sql)
+
+	expected = "CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` double DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	checkShowCreateTable(t, tblInfo, expected)
+
+	sql = "create table test.t2 (a varchar(10), b varchar(10));"
+	execCreate(t, tracker, sql)
+	sql = "alter table test.t2 add unique index ei_ab ((concat(a, b)));"
+	execAlter(t, tracker, sql)
+
+	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	expected = "CREATE TABLE `t2` (\n" +
+		"  `a` varchar(10) DEFAULT NULL,\n" +
+		"  `b` varchar(10) DEFAULT NULL,\n" +
+		"  UNIQUE KEY `ei_ab` ((concat(`a`, `b`)))\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	checkShowCreateTable(t, tblInfo, expected)
+
+	sql = "alter table test.t2 alter index ei_ab invisible;"
+	execAlter(t, tracker, sql)
+
+	expected = "CREATE TABLE `t2` (\n" +
+		"  `a` varchar(10) DEFAULT NULL,\n" +
+		"  `b` varchar(10) DEFAULT NULL,\n" +
+		"  UNIQUE KEY `ei_ab` ((concat(`a`, `b`))) /*!80000 INVISIBLE */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	checkShowCreateTable(t, tblInfo, expected)
+
+	sql = "create table test.t3(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)), UNIQUE KEY ((a * 2)));"
+	execCreate(t, tracker, sql)
+
+	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	require.NoError(t, err)
+
+	expected = "CREATE TABLE `t3` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  KEY `expression_index` ((`a` + 1)),\n" +
+		"  KEY `expression_index_2` ((`a` + 2)),\n" +
+		"  KEY `idx` ((`a` + 3)),\n" +
+		"  KEY `expression_index_3` ((`a` + 4)),\n" +
+		"  UNIQUE KEY `expression_index_4` ((`a` * 2))\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	checkShowCreateTable(t, tblInfo, expected)
+
+	sql = `create table test.t4(
+	a int,
+	b varchar(100),
+	c int)
+	PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+	);`
+	execCreate(t, tracker, sql)
+
+	sql = "alter table test.t4 add index idx((a+c));"
+	execAlter(t, tracker, sql)
+
+	tblInfo, err = tracker.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	require.NoError(t, err)
+
+	expected = "CREATE TABLE `t4` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` varchar(100) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  KEY `idx` ((`a` + `c`))\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (6),\n" +
+		" PARTITION `p1` VALUES LESS THAN (11),\n" +
+		" PARTITION `p2` VALUES LESS THAN (16),\n" +
+		" PARTITION `p3` VALUES LESS THAN (21))"
+	checkShowCreateTable(t, tblInfo, expected)
+}
+
+func TestTempTest(t *testing.T) {
+	sql := "create table test.t(\n\ta int,\n\tb varchar(100),\n\tc int)\n\tPARTITION BY RANGE ( a ) (\n\tPARTITION p0 VALUES LESS THAN (6),\n\t\tPARTITION p1 VALUES LESS THAN (11),\n\t\tPARTITION p2 VALUES LESS THAN (16),\n\t\tPARTITION p3 VALUES LESS THAN (21)\n\t);"
+
+	tracker := NewSchemaTracker(2)
+	tracker.createTestDB()
+	execCreate(t, tracker, sql)
+
+	sql = "alter table test.t add index idx((a+c));"
 	execAlter(t, tracker, sql)
 }

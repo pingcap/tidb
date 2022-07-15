@@ -1805,7 +1805,7 @@ func BuildTableInfo(
 	}
 	for _, constr := range constraints {
 		// Build hidden columns if necessary.
-		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
+		hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
 		if err != nil {
 			return nil, err
 		}
@@ -5748,7 +5748,36 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
-func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+func precheckBuildHiddenColumnInfo(
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexName model.CIStr,
+) error {
+	for i, idxPart := range indexPartSpecifications {
+		if idxPart.Expr == nil {
+			continue
+		}
+		name := fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i)
+		if utf8.RuneCountInString(name) > mysql.MaxColumnNameLength {
+			// TODO: Refine the error message.
+			return dbterror.ErrTooLongIdent.GenWithStackByArgs("hidden column")
+		}
+		// TODO: refine the error message.
+		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func buildHiddenColumnInfoWithCheck(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
+	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
+		return nil, err
+	}
+	return BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, tblInfo, existCols)
+}
+
+// BuildHiddenColumnInfo builds hidden column info.
+func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -5763,14 +5792,6 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		}
 		idxPart.Length = types.UnspecifiedLength
 		// The index part is an expression, prepare a hidden column for it.
-		if utf8.RuneCountInString(idxPart.Column.Name.L) > mysql.MaxColumnNameLength {
-			// TODO: Refine the error message.
-			return nil, dbterror.ErrTooLongIdent.GenWithStackByArgs("hidden column")
-		}
-		// TODO: refine the error message.
-		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
-			return nil, errors.Trace(err)
-		}
 
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
@@ -5879,7 +5900,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	tblInfo := t.Meta()
 
 	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+	hiddenCols, err := buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
 	}

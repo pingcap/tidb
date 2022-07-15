@@ -1936,9 +1936,13 @@ func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
 }
 
 func TestAlterAlgorithm(t *testing.T) {
-	// TODO: lance test WIP
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -2049,7 +2053,6 @@ func TestFulltextIndexIgnore(t *testing.T) {
 	require.Len(t, r.Rows(), 0)
 	r = tk.MustQuery("select * from information_schema.statistics where table_schema='test' and table_name='t_ft'")
 	require.Len(t, r.Rows(), 0)
-
 }
 
 func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
@@ -2502,8 +2505,13 @@ func TestInsertIntoGeneratedColumnWithDefaultExpr(t *testing.T) {
 }
 
 func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -2546,8 +2554,13 @@ func TestSqlFunctionsInGeneratedColumns(t *testing.T) {
 }
 
 func TestParserIssue284(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table test.t_parser_issue_284(c1 int not null primary key)")
@@ -2877,8 +2890,7 @@ func TestDropColumnWithCompositeIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	d := dom.DDL()
-	ddlChecker := schematracker.NewChecker(d)
+	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2901,8 +2913,7 @@ func TestDropColumnWithIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	d := dom.DDL()
-	ddlChecker := schematracker.NewChecker(d)
+	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)
 	ddlChecker.CreateTestDB()
 
@@ -2920,8 +2931,7 @@ func TestDropColumnWithAutoInc(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	d := dom.DDL()
-	ddlChecker := schematracker.NewChecker(d)
+	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)
 	ddlChecker.CreateTestDB()
 
@@ -2943,8 +2953,7 @@ func TestDropColumnWithMultiIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	d := dom.DDL()
-	ddlChecker := schematracker.NewChecker(d)
+	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)
 	ddlChecker.CreateTestDB()
 
@@ -2963,8 +2972,7 @@ func TestDropColumnsWithMultiIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	d := dom.DDL()
-	ddlChecker := schematracker.NewChecker(d)
+	ddlChecker := schematracker.NewChecker(dom.DDL())
 	dom.SetDDL(ddlChecker)
 	ddlChecker.CreateTestDB()
 
@@ -2996,8 +3004,13 @@ func TestDropLastVisibleColumnOrColumns(t *testing.T) {
 }
 
 func TestAutoIncrementTableOption(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_auto_inc_table_opt;")
 	tk.MustExec("create database test_auto_inc_table_opt;")
@@ -3126,8 +3139,13 @@ func TestAutoIncrementForce(t *testing.T) {
 }
 
 func TestIssue20490(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table issue20490 (a int);")
@@ -3141,8 +3159,13 @@ func TestIssue20490(t *testing.T) {
 }
 
 func TestIssue20741WithEnumField(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists issue20741")
@@ -3175,8 +3198,13 @@ func TestIssue20741WithSetField(t *testing.T) {
 
 // TestDefaultValueIsLatin1 for issue #18977
 func TestEnumAndSetDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3266,8 +3294,13 @@ func TestDuplicateErrorMessage(t *testing.T) {
 }
 
 func TestIssue22028(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -4039,8 +4072,13 @@ func TestCreateTempTableInTxn(t *testing.T) {
 
 // See https://github.com/pingcap/tidb/issues/29327
 func TestEnumDefaultValue(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")

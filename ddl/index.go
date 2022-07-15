@@ -741,7 +741,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		indexInfo.State = model.StateNone
 		// Set column index flag.
 		DropIndexColumnFlag(tblInfo, indexInfo)
-		removeDependentHiddenColumns(tblInfo, indexInfo)
+		RemoveDependentHiddenColumns(tblInfo, indexInfo)
 		removeIndexInfo(tblInfo, indexInfo)
 
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -772,7 +772,8 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func removeDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+// RemoveDependentHiddenColumns removes hidden columns by the indexInfo.
+func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
 		col := tblInfo.Columns[indexColumn.Offset]

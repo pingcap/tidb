@@ -350,9 +350,15 @@ func (d SchemaTracker) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndex
 }
 
 // createIndex is shared by CreateIndex and AlterTable.
-func (d SchemaTracker) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
-
+func (d SchemaTracker) createIndex(
+	ctx sessionctx.Context,
+	ti ast.Ident,
+	keyType ast.IndexKeyType,
+	indexName model.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification,
+	indexOption *ast.IndexOption,
+	ifNotExists bool,
+) error {
 	unique := keyType == ast.IndexKeyTypeUnique
 	tblInfo, err := d.TableByName(ti.Schema, ti.Name)
 	if err != nil {
@@ -376,11 +382,21 @@ func (d SchemaTracker) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType
 		return dbterror.ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
-	// Skip build hidden column for expression index
+	hiddenCols, err := ddl.BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
+	if err != nil {
+		return err
+	}
+	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
+	copy(finalColumns, tblInfo.Columns)
+	finalColumns = append(finalColumns, hiddenCols...)
+
+	for _, hiddenCol := range hiddenCols {
+		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
 		ctx,
-		tblInfo.Columns,
+		finalColumns,
 		indexName,
 		false,
 		unique,
@@ -390,6 +406,7 @@ func (d SchemaTracker) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType
 		model.StatePublic,
 	)
 	if err != nil {
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(hiddenCols)]
 		return err
 	}
 	indexInfo.ID = ddl.AllocateIndexID(tblInfo)
@@ -444,6 +461,7 @@ func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName
 	}
 	tblInfo.Indices = newIndices
 	ddl.DropIndexColumnFlag(tblInfo, indexInfo)
+	ddl.RemoveDependentHiddenColumns(tblInfo, indexInfo)
 	return nil
 }
 
