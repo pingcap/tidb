@@ -947,6 +947,7 @@ var (
 	execCommitPrewrite     = metrics.ExecPhaseDuration.WithLabelValues("commit:prewrite", "0")
 	execCommitCommit       = metrics.ExecPhaseDuration.WithLabelValues("commit:commit", "0")
 	execCommitWaitCommitTS = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:commit-ts", "0")
+	execCommitWaitLatestTS = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:latest-ts", "0")
 	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:local-latch", "0")
 	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:prewrite-binlog", "0")
 )
@@ -1028,6 +1029,13 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:commit-ts", "1").Observe(d.Seconds())
 			} else {
 				execCommitWaitCommitTS.Observe(d.Seconds())
+			}
+		}
+		if d := commitDetails.GetLatestTsTime; d > 0 {
+			if internal {
+				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:latest-ts", "1").Observe(d.Seconds())
+			} else {
+				execCommitWaitLatestTS.Observe(d.Seconds())
 			}
 		}
 		if d := commitDetails.LocalLatchTime; d > 0 {
