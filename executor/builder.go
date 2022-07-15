@@ -2057,6 +2057,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
+	failpoint.Inject("injectAlterTable", func() {})
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {

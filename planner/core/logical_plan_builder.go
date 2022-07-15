@@ -5179,6 +5179,9 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		}
 
 		for i, col := range tbl.WritableCols() {
+			if i >= len(flags) {
+				continue
+			}
 			if flags[i] < 0 {
 				continue
 			}

@@ -24,11 +24,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -6070,4 +6072,27 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestUpdateStmtWhileSchemaChanged(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t(a,b) values(1,1), (3,3), (7,7)")
+	failpoint.Enable("github.com/pingcap/tidb/executor/injectAlterTable", `pause`)
+	wg := sync.WaitGroup{}
+	go func() {
+		wg.Add(1)
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("update t set a = 2 where b= 1;")
+		wg.Done()
+	}()
+	tk.MustExec("alter table t add column c int")
+	failpoint.Disable("github.com/pingcap/tidb/executor/injectAlterTable")
+	wg.Wait()
+	tk.MustQuery("select a from t where b = 1").Check(testkit.Rows("2"))
 }
