@@ -41,9 +41,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -1531,7 +1529,6 @@ func TestTiDBTrxIDDigest(t *testing.T) {
 	tk.MustExec("update test_tidb_trx set i = i + 1")
 	tk.MustExec("commit")
 	for _, row := range tk.MustQuery("select * from information_schema.TRX_ID_DIGEST;").Rows() {
-		logutil.BgLogger().Info("row", zap.Any("row", row), zap.Any("startTs", startTs))
 		if row[0] == startTs {
 			require.Equal(t, strings.TrimSpace(row[1].(string)), "605c74cdb79a04a6")
 			return
