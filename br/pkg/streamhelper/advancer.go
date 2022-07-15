@@ -152,23 +152,12 @@ func (c *CheckpointAdvancer) Config() config.Config {
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte, collector *clusterCollector) error {
 	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
 	iter := IterateRegion(c.env, start, end)
-	scanRegions := 0
-	loopCnt := 0
 	for !iter.Done() {
 		rs, err := iter.Next(ctx)
 		if err != nil {
 			return err
 		}
 		log.Debug("scan region", zap.Int("len", len(rs)))
-		scanRegions += len(rs)
-		loopCnt++
-		if scanRegions > 16384 || loopCnt > 10 {
-			log.Info("hint: scanning regions takes many turns of loops",
-				zap.Int("loop", loopCnt),
-				zap.Int("regions-meet", scanRegions),
-				zap.Stringer("iter", iter),
-			)
-		}
 		for _, r := range rs {
 			err := collector.collectRegion(r)
 			if err != nil {
