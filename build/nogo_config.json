@@ -248,6 +248,7 @@
       "errno/": "errno code",
       "structure/": "structure code",
       "telemetry/": "telemetry code",
+      "planner": "planner code",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
