@@ -368,6 +368,8 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+	// MinPagingSize is used when Paging is true.
+	MinPagingSize uint64
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 }

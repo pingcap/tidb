@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema
+package schematracker
 
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
@@ -39,17 +40,17 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 	require.Nil(t, got)
 
 	err := is.PutTable(lowerDBName, tableInfo)
-	require.True(t, ErrDatabaseNotExists.Equal(err))
+	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 	err = is.PutTable(dbName, tableInfo)
 	require.NoError(t, err)
 	got2, err := is.TableByName(dbName, tableName)
 	require.NoError(t, err)
 	require.NotNil(t, got2)
 	got2, err = is.TableByName(lowerTableName, tableName)
-	require.True(t, ErrDatabaseNotExists.Equal(err))
+	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 	require.Nil(t, got2)
 	got2, err = is.TableByName(dbName, lowerTableName)
-	require.True(t, ErrTableNotExists.Equal(err))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, got2)
 
 	// compare-insensitive
@@ -94,16 +95,16 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	ok := is.DeleteSchema(dbName2)
 	require.False(t, ok)
 	err = is.PutTable(dbName2, tableInfo1)
-	require.True(t, ErrDatabaseNotExists.Equal(err))
+	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 	err = is.DeleteTable(dbName2, tableName1)
-	require.True(t, ErrDatabaseNotExists.Equal(err))
+	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 
 	is.PutSchema(dbInfo2)
 	err = is.PutTable(dbName2, tableInfo1)
 	require.NoError(t, err)
 
 	err = is.DeleteTable(dbName2, tableName2)
-	require.True(t, ErrTableNotExists.Equal(err))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	err = is.DeleteTable(dbName2, tableName1)
 	require.NoError(t, err)
 
@@ -111,5 +112,5 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	ok = is.DeleteSchema(dbName1)
 	require.True(t, ok)
 	_, err = is.TableByName(dbName1, tableName1)
-	require.True(t, ErrDatabaseNotExists.Equal(err))
+	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 }

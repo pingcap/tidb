@@ -338,6 +338,7 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (obj *S3St
 		}
 
 		qs.Region = region
+		backend.Region = region
 		if region != defaultRegion {
 			awsConfig.WithRegion(region)
 			c = s3.New(ses, awsConfig)
