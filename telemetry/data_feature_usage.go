@@ -49,6 +49,17 @@ type featureUsage struct {
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
 	LogBackup             bool                             `json:"logBackup"`
+	TablePartitionUsage   *partitionTelemetryUsage         `json:"table_partition_usage"`
+}
+
+type partitionTelemetryUsage struct {
+	NumTablePartitions             uint64 `json:"numTablePartitions"`
+	NumTablePartitionList          uint64 `json:"numTablePartitionList"`
+	NumTablePartitionRange         uint64 `json:"numTablePartitionRange"`
+	NumTablePartitionHash          uint64 `json:"numTablePartitionHash"`
+	NumTablePartitionRangeColumns  uint64 `json:"numTablePartitionRangeColumns"`
+	NumTablePartitionListColumns   uint64 `json:"numTablePartitionListColumns"`
+	NumTablePartitionMaxPartitions uint64 `json:"numTablePartitionMaxPartitions"`
 }
 
 type placementPolicyUsage struct {
@@ -122,6 +133,49 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 	}
 
 	usage.PlacementPolicyUsage.NumPlacementPolicies += uint64(len(is.AllPlacementPolicies()))
+
+	getTablePartitionUsage(ctx, usage)
+}
+
+// getTablePartitionUsage is telemetry for table partition.
+func getTablePartitionUsage(ctx sessionctx.Context, usage *featureUsage) {
+	if usage.TablePartitionUsage == nil {
+		usage.TablePartitionUsage = &partitionTelemetryUsage{}
+	}
+	is := GetDomainInfoSchema(ctx)
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			ptInfo := tbInfo.Meta().Partition
+			if ptInfo == nil {
+				continue
+			}
+
+			switch ptInfo.Type {
+			case model.PartitionTypeRange:
+				if len(ptInfo.Columns) > 1 {
+					usage.TablePartitionUsage.NumTablePartitionRangeColumns++
+				} else {
+					usage.TablePartitionUsage.NumTablePartitionRange++
+				}
+			case model.PartitionTypeHash:
+				usage.TablePartitionUsage.NumTablePartitionHash++
+			case model.PartitionTypeList:
+				if len(ptInfo.Columns) > 1 {
+					usage.TablePartitionUsage.NumTablePartitionListColumns++
+				} else {
+					usage.TablePartitionUsage.NumTablePartitionList++
+				}
+			}
+
+			usage.TablePartitionUsage.NumTablePartitions++
+			if ptInfo.Num > usage.TablePartitionUsage.NumTablePartitionMaxPartitions {
+				usage.TablePartitionUsage.NumTablePartitionMaxPartitions = ptInfo.Num
+			}
+			if uint64(len(ptInfo.Definitions)) > usage.TablePartitionUsage.NumTablePartitionMaxPartitions {
+				usage.TablePartitionUsage.NumTablePartitionMaxPartitions = uint64(len(ptInfo.Definitions))
+			}
+		}
+	}
 }
 
 // GetDomainInfoSchema is used by the telemetry package to get the latest schema information

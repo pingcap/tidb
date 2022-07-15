@@ -204,6 +204,63 @@ func TestPlacementPolicies(t *testing.T) {
 	require.Equal(t, uint64(1), usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies)
 }
 
+func TestTablePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitions)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionList)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionRange)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionHash)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionRangeColumns)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionListColumns)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionMaxPartitions)
+
+	tk.MustExec("create table pt (a int,b int) partition by hash(a) partitions 4;")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.TablePartitionUsage.NumTablePartitions)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionList)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionRange)
+	require.Equal(t, uint64(1), usage.TablePartitionUsage.NumTablePartitionHash)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionRangeColumns)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionListColumns)
+	require.Equal(t, uint64(4), usage.TablePartitionUsage.NumTablePartitionMaxPartitions)
+
+	tk.MustExec("create table pt1 (a int,b int) partition by range(a) (" +
+		"partition p0 values less than (3)," +
+		"partition p1 values less than (6), " +
+		"partition p2 values less than (9)," +
+		"partition p3 values less than (12)," +
+		"partition p4 values less than (15));")
+	defer tk.MustExec("drop table if exists pt1")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), usage.TablePartitionUsage.NumTablePartitions)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionList)
+	require.Equal(t, uint64(1), usage.TablePartitionUsage.NumTablePartitionRange)
+	require.Equal(t, uint64(1), usage.TablePartitionUsage.NumTablePartitionHash)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionRangeColumns)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionListColumns)
+	require.Equal(t, uint64(5), usage.TablePartitionUsage.NumTablePartitionMaxPartitions)
+
+	tk.MustExec("drop table if exists pt")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), usage.TablePartitionUsage.NumTablePartitions)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionList)
+	require.Equal(t, uint64(1), usage.TablePartitionUsage.NumTablePartitionRange)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionHash)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionRangeColumns)
+	require.Equal(t, uint64(0), usage.TablePartitionUsage.NumTablePartitionListColumns)
+	require.Equal(t, uint64(5), usage.TablePartitionUsage.NumTablePartitionMaxPartitions)
+}
+
 func TestAutoCapture(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
