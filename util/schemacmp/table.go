@@ -15,13 +15,13 @@
 package schemacmp
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -283,32 +283,20 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 	}
 }
 
-type sortedMapSlice []struct {
+type kvPair struct {
 	key   string
 	value interface{}
 }
 
-func (sl sortedMapSlice) Len() int {
-	return len(sl)
-}
-
-func (sl sortedMapSlice) Less(i, j int) bool {
-	return sl[i].key < sl[j].key
-}
-
-func (sl sortedMapSlice) Swap(i, j int) {
-	sl[i], sl[j] = sl[j], sl[i]
-}
-
-func sortedMap(input map[string]interface{}) sortedMapSlice {
-	res := make(sortedMapSlice, 0, len(input))
+func sortedMap(input map[string]interface{}) []kvPair {
+	res := make([]kvPair, 0, len(input))
 	for key, value := range input {
-		res = append(res, struct {
-			key   string
-			value interface{}
-		}{key: key, value: value})
+		res = append(res, kvPair{key: key, value: value})
 	}
-	sort.Sort(res)
+
+	slices.SortFunc(res, func(a, b kvPair) bool {
+		return a.key < b.key
+	})
 	return res
 }
 
