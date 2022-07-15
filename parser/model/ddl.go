@@ -69,7 +69,7 @@ const (
 	ActionDropSequence                  ActionType = 36
 	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionModifyTableAutoIdCache        ActionType = 39
+	ActionModifyTableAutoIdCache        ActionType = 39 //nolint:revive
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
 	ActionExchangeTablePartition        ActionType = 42
@@ -79,7 +79,7 @@ const (
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
-	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
+	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46 //nolint:revive
 
 	ActionRenameTables                  ActionType = 47
 	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
@@ -231,6 +231,7 @@ type TimeZoneLocation struct {
 	location *time.Location
 }
 
+// GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 	if tz.location != nil {
 		return tz.location, nil
@@ -268,6 +269,7 @@ type MultiSchemaInfo struct {
 	PositionColumns []CIStr `json:"-"`
 }
 
+// NewMultiSchemaInfo new a MultiSchemaInfo.
 func NewMultiSchemaInfo() *MultiSchemaInfo {
 	return &MultiSchemaInfo{
 		SubJobs:    nil,
@@ -275,6 +277,7 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 	}
 }
 
+// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
 	Args        []interface{}   `json:"-"`
@@ -338,6 +341,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 	}
 }
 
+// FromProxyJob converts a proxy job to a sub-job.
 func (sub *SubJob) FromProxyJob(proxyJob *Job) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
@@ -640,10 +644,12 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+// IsQueueing returns whether job is queuing or not.
 func (job *Job) IsQueueing() bool {
 	return job.State == JobStateQueueing
 }
 
+// NotStarted returns true if the job is never run by a worker.
 func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }

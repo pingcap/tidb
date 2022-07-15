@@ -36,6 +36,7 @@ go_library(
         "//parser/terror",
         "//privilege/privileges",
         "//sessionctx",
+        "//sessionctx/sessionstates",
         "//sessionctx/variable",
         "//statistics/handle",
         "//telemetry",

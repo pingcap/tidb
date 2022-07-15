@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
@@ -47,6 +48,7 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	LogBackup             bool                             `json:"logBackup"`
 }
 
 type placementPolicyUsage struct {
@@ -80,6 +82,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
+
+	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -278,4 +282,8 @@ func postReportNonTransactionalCounter() {
 
 func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
+}
+
+func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
+	return utils.CheckLogBackupEnabled(ctx)
 }
