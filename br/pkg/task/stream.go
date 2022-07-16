@@ -17,6 +17,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"strings"
@@ -1264,13 +1265,34 @@ func getLogRange(
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalResolvedTS(ctx, s)
+	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, cfg)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
+}
+
+func getGlobalCheckpointFromStorage(ctx context.Context, cfg *Config) (uint64, error) {
+	var globalCheckPointTS uint64 = 0
+	_, s, err := GetStorage(ctx, cfg.Storage, cfg)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
+	err = s.WalkDir(ctx, &opt, func(path string, size int64) error {
+		buff, err := s.ReadFile(ctx, path)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		ts := binary.LittleEndian.Uint64(buff)
+		globalCheckPointTS = mathutil.Max(ts, globalCheckPointTS)
+		return nil
+	})
+	return globalCheckPointTS, errors.Trace(err)
 }
 
 // getFullBackupTS gets the snapshot-ts of full bakcup
