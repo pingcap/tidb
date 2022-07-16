@@ -2,6 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "brietest_test",
+    timeout = "short",
     srcs = [
         "backup_restore_test.go",
         "binlog_test.go",

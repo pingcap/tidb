@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "storage_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "sys_test.go",

@@ -172,6 +172,7 @@ go_test(
     deps = [
         "//config",
         "//ddl/placement",
+        "//ddl/schematracker",
         "//ddl/testutil",
         "//ddl/util",
         "//domain",
