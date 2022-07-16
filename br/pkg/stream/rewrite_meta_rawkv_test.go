@@ -281,11 +281,11 @@ var (
 			SubJobs: []*model.SubJob{
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{\"O\":\"k1\",\"L\":\"k1\"},false,1,[72,73,74]]`),
+					RawArgs: json.RawMessage(`[{"O":"k1","L":"k1"},false,1,[72,73,74]]`),
 				},
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{\"O\":\"k1\",\"L\":\"k1\"},false,1,[72,73,74]]`),
+					RawArgs: json.RawMessage(`[{"O":"k2","L":"k2"},false,2,[72,73,74]]`),
 				},
 			},
 		},
@@ -298,11 +298,11 @@ var (
 			SubJobs: []*model.SubJob{
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{\"O\":\"k1\",\"L\":\"k1\"},false,1,[72,73,74]]`),
+					RawArgs: json.RawMessage(`[{"O":"k1","L":"k1"},false,1,[]]`),
 				},
 				{
 					Type:    model.ActionDropIndex,
-					RawArgs: json.RawMessage(`[{\"O\":\"k1\",\"L\":\"k1\"},false,1,[72,73,74]]`),
+					RawArgs: json.RawMessage(`[{"O":"k2","L":"k2"},false,2,[]]`),
 				},
 			},
 		},
@@ -545,27 +545,25 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	}
 
 	// drop indexes(multi-schema-change) for table0
-	err = schemaReplace.deleteRange(multiSchemaChangeJob0)
+	err = schemaReplace.tryToGCJob(multiSchemaChangeJob0)
 	require.NoError(t, err)
-	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
-		iargs = <-midr.indexCh
-		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
-		require.True(t, exist)
-		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-		for _, indexID := range iargs.indexIDs {
-			_, exist := mDDLJobALLIndexesIDSet[indexID]
+	for l := 0; l < 2; l++ {
+		for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+			iargs = <-midr.indexCh
+			_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
 			require.True(t, exist)
+			require.Equal(t, len(iargs.indexIDs), 1)
+			require.Equal(t, iargs.indexIDs[0], int64(l+1))
 		}
 	}
 
 	// drop indexes(multi-schema-change) for table1
-	err = schemaReplace.deleteRange(multiSchemaChangeJob1)
+	err = schemaReplace.tryToGCJob(multiSchemaChangeJob1)
 	require.NoError(t, err)
-	iargs = <-midr.indexCh
-	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
-	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
-	for _, indexID := range iargs.indexIDs {
-		_, exist := mDDLJobALLIndexesIDSet[indexID]
-		require.True(t, exist)
+	for l := 0; l < 2; l++ {
+		iargs = <-midr.indexCh
+		require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
+		require.Equal(t, len(iargs.indexIDs), 1)
+		require.Equal(t, iargs.indexIDs[0], int64(l+1))
 	}
 }
