@@ -12,6 +12,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/sessiontxn/staleread",
     visibility = ["//visibility:public"],
     deps = [
+        "//config",
         "//domain",
         "//errno",
         "//expression",
@@ -22,6 +23,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//sessiontxn/internal",
         "//table/temptable",
         "//types",
         "//util/dbterror",
@@ -32,20 +34,28 @@ go_library(
 
 go_test(
     name = "staleread_test",
-    srcs = ["processor_test.go"],
+    srcs = [
+        "main_test.go",
+        "processor_test.go",
+        "provider_test.go",
+    ],
     deps = [
         ":staleread",
         "//domain",
         "//infoschema",
+        "//kv",
         "//parser",
         "//parser/ast",
         "//sessionctx",
+        "//sessiontxn",
         "//table/temptable",
         "//testkit",
         "//testkit/testsetup",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
     ],
 )

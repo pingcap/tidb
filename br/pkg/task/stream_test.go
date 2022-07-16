@@ -17,133 +17,16 @@ package task
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
 )
-
-func newMockStreamMgr(pdCli pd.Client, httpCli *http.Client) *streamMgr {
-	pdController := &pdutil.PdController{}
-	pdController.SetPDClient(pdCli)
-	mgr := &conn.Mgr{PdController: pdController}
-	return &streamMgr{mgr: mgr, httpCli: httpCli}
-}
-
-func TestStreamStartChecks(t *testing.T) {
-	cases := []struct {
-		stores        []*metapb.Store
-		content       []string
-		supportStream bool
-	}{
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tiflash",
-						},
-					},
-				},
-			},
-			content: []string{""},
-			// no tikv detected in this case, so support is false.
-			supportStream: false,
-		},
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-			},
-			content: []string{
-				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
-			},
-			// one tikv detected in this case and `enable-streaming` is true.
-			supportStream: true,
-		},
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-				{
-					Id:    2,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-			},
-			content: []string{
-				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
-				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
-			},
-			// two tikv detected in this case and one of them's `enable-streaming` is false.
-			supportStream: false,
-		},
-	}
-
-	ctx := context.Background()
-	for _, ca := range cases {
-		pdCli := utils.FakePDClient{Stores: ca.stores}
-		require.Equal(t, len(ca.content), len(ca.stores))
-		count := 0
-		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch strings.TrimSpace(r.URL.Path) {
-			case "/config":
-				_, _ = fmt.Fprint(w, ca.content[count])
-			default:
-				http.NotFoundHandler().ServeHTTP(w, r)
-			}
-			count++
-		}))
-
-		for _, s := range ca.stores {
-			s.StatusAddress = mockServer.URL
-		}
-
-		httpCli := mockServer.Client()
-		sMgr := newMockStreamMgr(pdCli, httpCli)
-		support, err := sMgr.checkRequirements(ctx)
-		require.NoError(t, err)
-		require.Equal(t, ca.supportStream, support)
-		mockServer.Close()
-	}
-}
 
 func TestShiftTS(t *testing.T) {
 	var startTS uint64 = 433155751280640000
@@ -229,7 +112,7 @@ type fakeResolvedInfo struct {
 }
 
 func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo) error {
-	backupMetaDir := filepath.Join(tempDir, restore.GetStreamBackupMetaPrefix())
+	backupMetaDir := filepath.Join(tempDir, stream.GetStreamBackupMetaPrefix())
 	s, err := storage.NewLocalStorage(backupMetaDir)
 	if err != nil {
 		return errors.Trace(err)
@@ -277,7 +160,7 @@ func TestGetGlobalResolvedTS(t *testing.T) {
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
 	require.Nil(t, err)
-	require.Equal(t, uint64(100), globalResolvedTS)
+	require.Equal(t, uint64(101), globalResolvedTS)
 }
 
 func TestGetGlobalResolvedTS2(t *testing.T) {
@@ -309,5 +192,5 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 	require.Nil(t, err)
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
 	require.Nil(t, err)
-	require.Equal(t, uint64(98), globalResolvedTS)
+	require.Equal(t, uint64(99), globalResolvedTS)
 }

@@ -19,7 +19,6 @@ import (
 	"container/list"
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
+	"golang.org/x/exp/slices"
 )
 
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
@@ -246,7 +246,6 @@ type StmtExecInfo struct {
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
 func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
-
 	ssbde := newStmtSummaryByDigestEvicted()
 
 	// This initializes the stmtSummaryByDigestMap with "compiled defaults"
@@ -498,7 +497,7 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 }
 
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
-func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
+func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
 	var buffer bytes.Buffer
 	for i, value := range sei.StmtCtx.Tables {
@@ -659,7 +658,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
 	ssElement.execCount++
 	if !sei.Succeed {
-		ssElement.sumErrors += 1
+		ssElement.sumErrors++
 	}
 	ssElement.sumWarnings += int(sei.StmtCtx.WarningCount())
 
@@ -787,7 +786,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		}
 		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
 		for _, backoffType := range commitDetails.Mu.BackoffTypes {
-			ssElement.backoffTypes[backoffType] += 1
+			ssElement.backoffTypes[backoffType]++
 		}
 		commitDetails.Mu.Unlock()
 	}
@@ -795,7 +794,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// plan cache
 	if sei.PlanInCache {
 		ssElement.planInCache = true
-		ssElement.planCacheHits += 1
+		ssElement.planCacheHits++
 	} else {
 		ssElement.planInCache = false
 	}
@@ -870,8 +869,8 @@ func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	for backoffType, count := range backoffMap {
 		backoffArray = append(backoffArray, backoffStat{backoffType, count})
 	}
-	sort.Slice(backoffArray, func(i, j int) bool {
-		return backoffArray[i].count > backoffArray[j].count
+	slices.SortFunc(backoffArray, func(i, j backoffStat) bool {
+		return i.count > j.count
 	})
 
 	var buffer bytes.Buffer

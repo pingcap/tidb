@@ -9,6 +9,7 @@ go_library(
         "//store/mockstore/unistore/config",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_log//:log",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )

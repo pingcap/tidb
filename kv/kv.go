@@ -79,33 +79,33 @@ type Retriever interface {
 type EmptyIterator struct{}
 
 // Valid returns true if the current iterator is valid.
-func (i *EmptyIterator) Valid() bool { return false }
+func (*EmptyIterator) Valid() bool { return false }
 
 // Key returns the current key. Always return nil for this iterator
-func (i *EmptyIterator) Key() Key { return nil }
+func (*EmptyIterator) Key() Key { return nil }
 
 // Value returns the current value. Always return nil for this iterator
-func (i *EmptyIterator) Value() []byte { return nil }
+func (*EmptyIterator) Value() []byte { return nil }
 
 // Next goes the next position. Always return error for this iterator
-func (i *EmptyIterator) Next() error { return errors.New("iterator is invalid") }
+func (*EmptyIterator) Next() error { return errors.New("iterator is invalid") }
 
 // Close closes the iterator.
-func (i *EmptyIterator) Close() {}
+func (*EmptyIterator) Close() {}
 
 // EmptyRetriever is a retriever without any entry
 type EmptyRetriever struct{}
 
 // Get gets the value for key k from kv store. Always return nil for this retriever
-func (r *EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
+func (*EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
 	return nil, ErrNotExist
 }
 
 // Iter creates an Iterator. Always return EmptyIterator for this retriever
-func (r *EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
+func (*EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
 
 // IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
-func (r *EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+func (*EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
 	return &EmptyIterator{}, nil
 }
 
@@ -356,6 +356,8 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
+	// TxnScope is the scope of the txn
+	TxnScope string
 	// ReadReplicaScope is the scope of the read replica.
 	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
@@ -366,6 +368,8 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+	// MinPagingSize is used when Paging is true.
+	MinPagingSize uint64
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 }

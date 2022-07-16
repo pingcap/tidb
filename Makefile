@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt check-parallel unconvert lint tidy testSuite check-static vet errdoc
+check: fmt check-parallel lint tidy testSuite check-static vet errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -412,6 +412,7 @@ dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
 dumpling_bins:
 	@which bin/tidb-server
 	@which bin/minio
+	@which bin/mc
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
 
@@ -440,7 +441,7 @@ bazel_coverage_test: failpoint-enable bazel_ci_prepare
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
-	bazel --output_user_root=/home/jenkins/.tidb/tmp build -k --config=ci //tidb-server/... //br/cmd/... //cmd/...  --//build:with_nogo_flag=true
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build -k --config=ci //tidb-server/... //br/cmd/... //cmd/... //util/... //dumpling/cmd/... //tidb-binlog/... --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin

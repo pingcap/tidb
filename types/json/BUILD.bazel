@@ -18,11 +18,13 @@ go_library(
         "//util/kvcache",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
     ],
 )
 
 go_test(
     name = "json_test",
+    timeout = "short",
     srcs = [
         "binary_functions_test.go",
         "binary_test.go",

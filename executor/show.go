@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -413,7 +414,7 @@ func moveInfoSchemaToFront(dbs []string) {
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	sort.Strings(dbs)
+	slices.Sort(dbs)
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
@@ -518,7 +519,7 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
 	}
-	sort.Strings(tableNames)
+	slices.Sort(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
 			e.appendRow([]interface{}{v, tableTypes[v]})
@@ -2023,8 +2024,19 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
-	// This will be implemented in future PRs.
-	tokenBytes, err := gjson.Marshal("")
+	// session token
+	var token *sessionstates.SessionToken
+	// In testing, user may be nil.
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
+		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
+		}
+		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+			return err
+		}
+	}
+	tokenBytes, err := gjson.Marshal(token)
 	if err != nil {
 		return errors.Trace(err)
 	}

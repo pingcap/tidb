@@ -117,6 +117,8 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
+	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
+	HintSemiJoinRewrite = "semi_join_rewrite"
 )
 
 const (
@@ -3626,6 +3628,12 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 			}
 			leadingHintCnt++
+		case HintSemiJoinRewrite:
+			if !b.checkSemiJoinHint {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause."))
+				continue
+			}
+			b.hasValidSemiJoinHint = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -4866,10 +4874,10 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 }
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) (LogicalPlan, error) {
+func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not, considerRewrite bool) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
 
-	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
+	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not, considerRewrite)
 	if err != nil {
 		return nil, err
 	}
@@ -4905,7 +4913,7 @@ func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	return maxOneRow
 }
 
-func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar bool, not bool) (*LogicalJoin, error) {
+func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onCondition []expression.Expression, asScalar, not, forceRewrite bool) (*LogicalJoin, error) {
 	joinPlan := LogicalJoin{}.Init(b.ctx, b.getSelectOffset())
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
@@ -4958,6 +4966,10 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
 			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
 		}
+	}
+	if forceRewrite {
+		joinPlan.preferJoinType |= preferRewriteSemiJoin
+		b.optFlag |= flagSemiJoinRewrite
 	}
 	return joinPlan, nil
 }
@@ -5179,18 +5191,21 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		}
 
 		for i, col := range tbl.WritableCols() {
-			if flags[i] >= 0 && col.State != model.StatePublic {
+			if flags[i] < 0 {
+				continue
+			}
+
+			if col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
-			if flags[i] >= 0 {
-				update = true
-				if mysql.HasPriKeyFlag(col.GetFlag()) {
-					updatePK = true
-				}
-				for _, partColName := range partitionColumnNames {
-					if col.Name.L == partColName.L {
-						updatePartitionCol = true
-					}
+
+			update = true
+			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				updatePK = true
+			}
+			for _, partColName := range partitionColumnNames {
+				if col.Name.L == partColName.L {
+					updatePartitionCol = true
 				}
 			}
 		}

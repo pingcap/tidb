@@ -414,15 +414,23 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 			failpoint.Return(kv.ErrEntryTooLarge)
 		}
 	})
-	updateRawArgs := true
-	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
-	// so we shouldn't replace RawArgs with the marshaling Args.
-	if meetErr && (job.RawArgs != nil && job.Args == nil) {
+	updateRawArgs := needUpdateRawArgs(job, meetErr)
+	if !updateRawArgs {
 		logutil.Logger(w.logCtx).Info("[ddl] meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
-		updateRawArgs = false
 	}
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
+}
+
+func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
+	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
+	// we shouldn't replace RawArgs with the marshaling Args.
+	if meetErr && job.RawArgs != nil && job.Args == nil {
+		// However, for multi-schema change, the args of the parent job is always nil.
+		// Since Job.Encode() can handle the sub-jobs properly, we can safely update the raw args.
+		return job.MultiSchemaInfo != nil
+	}
+	return true
 }
 
 func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
@@ -450,7 +458,7 @@ func jobNeedGC(job *model.Job) bool {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			return true
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn, model.ActionDropIndexes:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn:
 			return true
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -778,7 +786,7 @@ func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.
 		// When this column is in the "delete only" and "delete reorg" states, the binlog of "drop column" has not been written yet,
 		// but the column has been removed from the binlog of the write operation.
 		// So we add this binlog to enable downstream components to handle DML correctly in this schema state.
-		((job.Type == model.ActionDropColumn) && job.SchemaState == model.StateDeleteOnly) {
+		(job.Type == model.ActionDropColumn && job.SchemaState == model.StateDeleteOnly) {
 		if skipWriteBinlog(job) {
 			return
 		}
@@ -869,7 +877,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
 
-	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
+	if job.Type != model.ActionMultiSchemaChange {
+		logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
+	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = t.StartTS
@@ -933,8 +943,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onCreateIndex(d, t, job, true)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(d, t, job)
-	case model.ActionDropIndexes:
-		ver, err = onDropIndexes(d, t, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(d, t, job)
 	case model.ActionAddForeignKey:
@@ -967,6 +975,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onUnlockTables(d, t, job)
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(d, t, job)
+	case model.ActionSetTiFlashMode:
+		ver, err = w.onSetTiFlashMode(d, t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(d, t, job)
 	case model.ActionCreateSequence:

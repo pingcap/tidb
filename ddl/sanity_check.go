@@ -41,7 +41,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		logutil.BgLogger().Error("query delete range count failed", zap.Error(err))
 		panic(err)
 	}
-	expectedCnt, err := expectedDeleteRangeCnt(job)
+	expectedCnt, err := expectedDeleteRangeCnt(delRangeCntCtx{idxIDs: map[int64]struct{}{}}, job)
 	if err != nil {
 		logutil.BgLogger().Error("decode job's delete range count failed", zap.Error(err))
 		panic(err)
@@ -78,7 +78,11 @@ func queryDeleteRangeCnt(sessPool *sessionPool, jobID int64) (int, error) {
 	return int(cnt), nil
 }
 
-func expectedDeleteRangeCnt(job *model.Job) (int, error) {
+func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
+	if job.State == model.JobStateCancelled {
+		// Cancelled job should not have any delete range.
+		return 0, nil
+	}
 	switch job.Type {
 	case model.ActionDropSchema:
 		var tableIDs []int64
@@ -101,28 +105,26 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		}
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		hasDelRange := job.State == model.JobStateRollbackDone
+		if !hasDelRange {
+			return 0, nil
+		}
 		var indexID int64
+		var ifExists bool
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
+		var ifNotExists bool
 		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
-	case model.ActionDropIndexes:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
-			return 0, errors.Trace(err)
-		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * len(indexIDs), nil
 	case model.ActionDropColumn:
 		var colName model.CIStr
 		var ifExists bool
@@ -140,12 +142,12 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * len(indexIDs), nil
+		return physicalCnt * ctx.deduplicateIdxCnt(indexIDs), nil
 	case model.ActionMultiSchemaChange:
 		totalExpectedCnt := 0
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			p := sub.ToProxyJob(job)
-			cnt, err := expectedDeleteRangeCnt(&p)
+			cnt, err := expectedDeleteRangeCnt(ctx, &p)
 			if err != nil {
 				return 0, err
 			}
@@ -154,6 +156,21 @@ func expectedDeleteRangeCnt(job *model.Job) (int, error) {
 		return totalExpectedCnt, nil
 	}
 	return 0, nil
+}
+
+type delRangeCntCtx struct {
+	idxIDs map[int64]struct{}
+}
+
+func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
+	cnt := 0
+	for _, id := range indexIDs {
+		if _, ok := ctx.idxIDs[id]; !ok {
+			ctx.idxIDs[id] = struct{}{}
+			cnt++
+		}
+	}
+	return cnt
 }
 
 // checkHistoryJobInTest does some sanity check to make sure something is correct after DDL complete.

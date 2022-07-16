@@ -133,7 +133,7 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
-		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
+		stmtTSFuture = funcFuture(p.getTxnStartTS)
 	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
 		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
@@ -143,9 +143,9 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	p.stmtTSFuture = stmtTSFuture
 }
 
-func (p *PessimisticRCTxnContextProvider) getOracleFuture() sessiontxn.FuncFuture {
+func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	future := sessiontxn.NewOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
+	future := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
 	return func() (ts uint64, err error) {
 		if ts, err = future.Wait(); err != nil {
 			return
@@ -219,14 +219,14 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
-	p.prepareStmtTS()
+
+	if !p.isTidbSnapshotEnabled() {
+		p.prepareStmtTS()
+	}
+
 	return nil
 }
 
@@ -258,7 +258,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}
 	return nil
 }
 
-// GetSnapshotWithStmtReadTS get snapshot with read ts
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
 func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
 	if err != nil {
