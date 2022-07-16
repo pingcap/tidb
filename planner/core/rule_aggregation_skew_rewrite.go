@@ -181,7 +181,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.ctx, agg.blockOffset)
 	for _, column := range topAggSchema.Columns {
-		proj.Exprs = append(proj.Exprs, column)
+		proj.Exprs = append(proj.Exprs, column.Clone())
 	}
 
 	// wrap sum() with cast function to keep output data type same
@@ -226,12 +226,12 @@ func (a *skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDes
 	}
 }
 
-func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, proj LogicalPlan, opt *logicalOptimizeOp) {
+func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result LogicalPlan, opt *logicalOptimizeOp) {
 	reason := func() string {
 		return fmt.Sprintf("%v_%v has a distinct agg function", agg.TP(), agg.ID())
 	}
 	action := func() string {
-		return fmt.Sprintf("%v_%v is simplified to a %v_%v", agg.TP(), agg.ID(), proj.TP(), proj.ID())
+		return fmt.Sprintf("%v_%v is rewritten to a %v_%v", agg.TP(), agg.ID(), result.TP(), result.ID())
 	}
 
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
