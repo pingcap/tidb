@@ -85,6 +85,13 @@ var (
 			Name:      "table_partition_max_partition_usage",
 			Help:      "Counter of partitions created by CREATE TABLE statements",
 		})
+	TelemetryAddIndexLightningCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "add_index_lightning_usage",
+			Help:      "Counter of usage of add index lightning",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -216,4 +223,23 @@ func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 // GetSavepointStmtCounter gets the savepoint statement executed counter.
 func GetSavepointStmtCounter() int64 {
 	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
+}
+
+// AddIndexLightning records the usages of Add Index with Lightning solution.
+type AddIndexLightningUsageCounter struct {
+	AddIndexLightningUsed int64 `json:"add_index_lightning_used"`
+}
+
+// Sub returns the difference of two counters.
+func (a AddIndexLightningUsageCounter) Sub(rhs AddIndexLightningUsageCounter) AddIndexLightningUsageCounter {
+	return AddIndexLightningUsageCounter{
+		AddIndexLightningUsed: a.AddIndexLightningUsed - rhs.AddIndexLightningUsed,
+	}
+}
+
+// GetAddIndexLightningCounter gets the add index lightning counts.
+func GetAddIndexLightningCounter() AddIndexLightningUsageCounter {
+	return AddIndexLightningUsageCounter{
+		AddIndexLightningUsed: readCounter(TelemetryAddIndexLightningCnt),
+	}
 }

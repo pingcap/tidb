@@ -53,6 +53,7 @@ type featureUsage struct {
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
 	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
+	AddIndexLightning     *m.AddIndexLightningUsageCounter `json:"AddIndexLightning"`
 }
 
 type placementPolicyUsage struct {
@@ -96,6 +97,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.EnablePaging = getPagingUsageInfo(sctx)
 
 	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
+
+	usage.AddIndexLightning = getAddIndexLightningUsageInfo()
 
 	return &usage, nil
 }
@@ -224,6 +227,7 @@ var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 var initialTablePartitionCounter m.TablePartitionUsageCounter
 var initialSavepointStmtCounter int64
+var initialAddIndexLightningCounter m.AddIndexLightningUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -276,6 +280,10 @@ func getCTEUsageInfo() *m.CTEUsageCounter {
 
 func postReportMultiSchemaChangeUsage() {
 	initialMultiSchemaChangeCounter = m.GetMultiSchemaCounter()
+}
+
+func postReportAddIndexLightingUsage() {
+	initialAddIndexLightningCounter = m.GetAddIndexLightningCounter()
 }
 
 func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
@@ -357,4 +365,10 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 // users set it to false manually.
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
+}
+
+func getAddIndexLightningUsageInfo() *m.AddIndexLightningUsageCounter {
+	curr := m.GetAddIndexLightningCounter()
+	diff := curr.Sub(initialAddIndexLightningCounter)
+	return &diff
 }

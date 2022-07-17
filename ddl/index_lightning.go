@@ -120,7 +120,7 @@ func importIndexDataToStore(ctx context.Context, reorg *reorgInfo, indexID int64
 			return err
 		}
 		// After import local data into TiKV, then the progress set to 85.
-		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(85)
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, reorg.SchemaName, reorg.TableName).Set(85)
 	}
 	return nil
 }
@@ -531,7 +531,7 @@ func (w *worker) updateMergeInfo(t table.PartitionedTable, idxID int64, reorg *r
 
 	reorg.StartKey, reorg.EndKey, reorg.PhysicalTableID = start, end, pid
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta(reorg.StartKey)
+	err = reorg.UpdateReorgMeta(reorg.StartKey, w.sessPool)
 	logutil.BgLogger().Info("[ddl] job update MergeInfo", zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
 		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),

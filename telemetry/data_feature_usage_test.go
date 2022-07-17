@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	lit "github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -391,10 +392,12 @@ func TestTiFlashModeStatistics(t *testing.T) {
 	defer teardown()
 
 	tk := testkit.NewTestKit(t, s.store)
+
 	tk.MustExec("use test")
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
+
 	require.Equal(t, int64(0), usage.TiFlashModeStatistics.FastModeTableCount)
 	require.Equal(t, int64(0), usage.TiFlashModeStatistics.NormalModeTableCount)
 
@@ -473,4 +476,36 @@ func TestTxnSavepointUsageInfo(t *testing.T) {
 	tk.MustExec("savepoint sp1")
 	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 	require.Equal(t, int64(1), txnUsage.SavepointCounter)
+}
+
+func TestAddIndexLightning(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	lit.GlobalEnv.SetMinQuota()
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
+
+	allow := ddl.IsEnableFastReorg()
+	require.Equal(t, false, allow)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tele_t")
+	tk.MustExec("create table tele_t(id int, b int)")
+	tk.MustExec("insert into tele_t values(1,1),(2,2);")
+	tk.MustExec("alter table tele_t add index idx_org(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.AddIndexLightning.AddIndexLightningUsed)
+
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	allow = ddl.IsEnableFastReorg()
+	require.Equal(t, true, allow)
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	// Because we have check once ddl.IsEnableFastReorg() so we get two as result.
+	require.Equal(t, int64(1), usage.AddIndexLightning.AddIndexLightningUsed)
+	tk.MustExec("alter table tele_t add index idx_new(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(2), usage.AddIndexLightning.AddIndexLightningUsed)
 }

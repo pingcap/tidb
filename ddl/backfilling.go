@@ -1190,7 +1190,7 @@ func (w *worker) handleMergeTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	}
 
 	if err != nil {
-		err := reorgInfo.UpdateReorgMeta(nextKey)
+		err := reorgInfo.UpdateReorgMeta(nextKey, w.sessPool)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] merge worker handle batch tasks failed",
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
