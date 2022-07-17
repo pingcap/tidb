@@ -1265,7 +1265,7 @@ func getLogRange(
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, cfg)
+	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -1274,15 +1274,10 @@ func getLogRange(
 	return logMinTS, logMaxTS, nil
 }
 
-func getGlobalCheckpointFromStorage(ctx context.Context, cfg *Config) (uint64, error) {
+func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
 	var globalCheckPointTS uint64 = 0
-	_, s, err := GetStorage(ctx, cfg.Storage, cfg)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
 	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
-	err = s.WalkDir(ctx, &opt, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
 		buff, err := s.ReadFile(ctx, path)
 		if err != nil {
 			return errors.Trace(err)
