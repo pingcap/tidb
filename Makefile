@@ -436,8 +436,8 @@ bazel_test: failpoint-enable bazel_ci_prepare
 
 bazel_coverage_test: failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
-		-- //... -//cmd/... -//tests/... \
-		-//br/pkg/task:task_test
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
