@@ -20,7 +20,7 @@ type gbkChineseCICollator struct {
 }
 
 // Compare implements Collator interface.
-func (g *gbkChineseCICollator) Compare(a, b string) int {
+func (*gbkChineseCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 
@@ -44,7 +44,7 @@ func (g *gbkChineseCICollator) Key(str string) []byte {
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.
-func (g *gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
+func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
 	i := 0
 	r := rune(0)
@@ -60,7 +60,7 @@ func (g *gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 }
 
 // Pattern implements Collator interface.
-func (g *gbkChineseCICollator) Pattern() WildcardPattern {
+func (*gbkChineseCICollator) Pattern() WildcardPattern {
 	return &gbkChineseCIPattern{}
 }
 
