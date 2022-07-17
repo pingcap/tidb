@@ -1443,11 +1443,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	sqlMode := ctx.GetSessionVars().SQLMode
 	var ifNotExistsStr string
 	if ifNotExists {
-		if !ctx.GetSessionVars().EnableSimplifiedShowCreateTable {
-			ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
-		} else {
-			ifNotExistsStr = "IF NOT EXISTS "
-		}
+		ifNotExistsStr = "IF NOT EXISTS "
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if dbInfo.Charset != "" {
