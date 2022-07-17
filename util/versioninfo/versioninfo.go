@@ -26,5 +26,5 @@ var (
 	TiDBGitBranch = "None"
 	TiDBEdition   = CommunityEdition
 	// TiKVMinVersion is the minimum version of TiKV that can be compatible with the current TiDB.
-	TiKVMinVersion = "v3.0.0-60965b006877ca7234adaced7890d7b029ed1306"
+	TiKVMinVersion = "6.2.0-alpha"
 )
