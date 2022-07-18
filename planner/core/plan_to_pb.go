@@ -189,7 +189,8 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
 	tsExec.Desc = p.Desc
-	*tsExec.KeepOrder = p.KeepOrder
+	keepOrder := p.KeepOrder
+	tsExec.KeepOrder = &keepOrder
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
