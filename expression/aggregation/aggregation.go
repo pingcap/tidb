@@ -211,8 +211,15 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
 func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
+<<<<<<< HEAD
 	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
+=======
+	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
+>>>>>>> de017e9ee... expression: forbid aggregate function with json type pushdown to tiflash wrongly (#36271)
 		return true
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+		// Now tiflash doesn't support CastJsonAsReal and CastJsonAsString.
+		return aggFunc.Args[0].GetType().GetType() != mysql.TypeJSON
 	}
 	return false
 }
