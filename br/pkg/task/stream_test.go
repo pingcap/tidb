@@ -16,6 +16,7 @@ package task
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -193,4 +194,68 @@ func TestGetGlobalResolvedTS2(t *testing.T) {
 	globalResolvedTS, err := getGlobalResolvedTS(ctx, s)
 	require.Nil(t, err)
 	require.Equal(t, uint64(99), globalResolvedTS)
+}
+
+func fakeCheckpointFiles(
+	ctx context.Context,
+	tmpDir string,
+	infos []fakeGlobalCheckPoint,
+) error {
+	cpDir := filepath.Join(tmpDir, stream.GetStreamBackupGlobalCheckpointPrefix())
+	s, err := storage.NewLocalStorage(cpDir)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// create normal files belong to global-checkpoint files
+	for _, info := range infos {
+		filename := fmt.Sprintf("%v.ts", info.storeID)
+		buff := make([]byte, 8)
+		binary.LittleEndian.PutUint64(buff, info.global_checkpoint)
+		if _, err := s.Create(ctx, filename); err != nil {
+			return errors.Trace(err)
+		}
+		if err := s.WriteFile(ctx, filename, buff); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// create a file not belonging to global-checkpoint-ts files
+	filename := fmt.Sprintf("%v.tst", 1)
+	err = s.WriteFile(ctx, filename, []byte("ping"))
+	return errors.AddStack(err)
+}
+
+type fakeGlobalCheckPoint struct {
+	storeID           int64
+	global_checkpoint uint64
+}
+
+func TestGetGlobalCheckpointFromStorage(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := storage.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+
+	infos := []fakeGlobalCheckPoint{
+		{
+			storeID:           1,
+			global_checkpoint: 98,
+		},
+		{
+			storeID:           2,
+			global_checkpoint: 90,
+		},
+		{
+			storeID:           2,
+			global_checkpoint: 99,
+		},
+	}
+
+	err = fakeCheckpointFiles(ctx, tmpdir, infos)
+	require.Nil(t, err)
+
+	ts, err := getGlobalCheckpointFromStorage(ctx, s)
+	require.Nil(t, err)
+	require.Equal(t, ts, uint64(99))
 }
