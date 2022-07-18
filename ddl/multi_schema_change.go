@@ -106,14 +106,21 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		if err != nil {
 			return ver, err
 		}
+		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
+		// We only generate 1 schema version for these sub-job.
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if sub.IsFinished() {
 				continue
 			}
 			subJobs[i] = *sub
 			proxyJob := sub.ToProxyJob(job)
+			if schemaVersionGenerated {
+				proxyJob.MultiSchemaInfo.SkipVersion = true
+			} else {
+				schemaVersionGenerated = true
+			}
 			ver, err = w.runDDLJob(d, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob)
 			if err != nil || proxyJob.Error != nil {
@@ -252,7 +259,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	default:
-		return dbterror.ErrRunMultiSchemaChanges
+		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
 	return nil
 }

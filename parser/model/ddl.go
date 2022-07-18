@@ -258,6 +258,8 @@ type MultiSchemaInfo struct {
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
+	SkipVersion bool `json:"-"`
+
 	AddColumns    []CIStr `json:"-"`
 	DropColumns   []CIStr `json:"-"`
 	ModifyColumns []CIStr `json:"-"`
