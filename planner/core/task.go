@@ -1041,6 +1041,9 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 }
 
 // pushTopNDownToDynamicPartition is a temp solution for partition table. It actually does the same thing as DataSource's isMatchProp.
+//  We need to support a more enhanced read strategy in the execution phase. So that we can achieve Limit(TiDB)->Reader(TiDB)->Limit(TiKV/TiFlash)->Scan(TiKV/TiFlash).
+// Before that is done, we use this logic to provide a way to keep the order property when reading from TiKV, so that we can use the orderliness of index to speed up the query.
+// Here we can change the execution plan to TopN(TiDB)->Reader(TiDB)->Limit(TiKV)->Scan(TiKV).(TiFlash is not supported).
 func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bool) {
 	var err error
 	copTsk = copTsk.copy().(*copTask)
@@ -1121,9 +1124,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 			return nil, false
 		}
 
-		// If we reach here, the index matches the order property of the top-n, we could push a limit down.
-		copTsk.keepOrder = true
-		idxScan.KeepOrder = true
 		idxScan.Desc = isDesc
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
@@ -1134,18 +1134,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 		pushedLimit.SetSchema(copTsk.indexPlan.Schema())
 		copTsk = attachPlan2Task(pushedLimit, copTsk).(*copTask)
 		pushedLimit.cost = copTsk.cost()
-		if copTsk.tablePlan != nil && !idxScan.Table.IsCommonHandle && copTsk.extraHandleCol == nil {
-			// The clustered index would always add handle, so we don't need to consider that case.
-			copTsk.extraHandleCol = &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				ID:       model.ExtraHandleID,
-				UniqueID: idxScan.ctx.GetSessionVars().AllocPlanColumnID(),
-			}
-			tblScan.Schema().Append(copTsk.extraHandleCol)
-			tblScan.Columns = append(tblScan.Columns, model.NewExtraHandleColInfo())
-			copTsk.needExtraProj = true
-			copTsk.originSchema = idxScan.dataSourceSchema
-		}
 	} else if copTsk.indexPlan == nil {
 
 		if tblScan.Table.GetPartitionInfo() == nil {
@@ -1168,8 +1156,6 @@ func (p *PhysicalTopN) pushTopNDownToDynamicPartition(copTsk *copTask) (task, bo
 				return nil, false
 			}
 		}
-		copTsk.keepOrder = true
-		tblScan.KeepOrder = true
 		tblScan.Desc = isDesc
 		childProfile := copTsk.plan().statsInfo()
 		newCount := p.Offset + p.Count
