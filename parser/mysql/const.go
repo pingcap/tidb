@@ -232,8 +232,11 @@ const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
+
 // SHAPWDHashLen is the length of sha256_password's hash.
 const SHAPWDHashLen = 70
+
+// SM3PWDHashLen is the length of sm3_password's hash.
 const SM3PWDHashLen = 64
 
 // Command2Str is the command information to command name.
