@@ -17,6 +17,7 @@ package statistics_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/kv"
 	"math"
 	"os"
 	"regexp"
@@ -932,9 +933,33 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 	}
 }
 
-func TestTopNAssistedEstimation(t *testing.T) {
+func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	collate.SetNewCollationEnabledForTest(false)
+	var (
+		input  []string
+		output []outputType
+	)
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	testTopNAssistedEstimationInner(t, input, output, store, dom)
+}
+
+func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	collate.SetNewCollationEnabledForTest(true)
+	var (
+		input  []string
+		output []outputType
+	)
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+	testTopNAssistedEstimationInner(t, input, output, store, dom)
+}
+
+func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outputType, store kv.Storage, dom *domain.Domain) {
 	h := dom.StatsHandle()
 	h.Clear()
 	tk := testkit.NewTestKit(t, store)
@@ -942,9 +967,6 @@ func TestTopNAssistedEstimation(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 3000")
-
-	collate.SetNewCollationEnabledForTest(true)
-
 	tk.MustExec("create table t(" +
 		"a varchar(100) charset utf8mb4 collate utf8mb4_bin," +
 		"b varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
@@ -973,18 +995,7 @@ func TestTopNAssistedEstimation(t *testing.T) {
 	tk.MustExec(`insert into t value("yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy")`)
 	tk.MustExec(`insert into t value("zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz")`)
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	tk.MustExec(`analyze table t`)
-
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
-		}
-	)
-
-	statsSuiteData := statistics.GetIntegrationSuiteData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	tk.MustExec(`analyze table t with 3 topn`)
 
 	for i, tt := range input {
 		testdata.OnRecord(func() {
@@ -993,4 +1004,9 @@ func TestTopNAssistedEstimation(t *testing.T) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+type outputType struct {
+	SQL    string
+	Result []string
 }
