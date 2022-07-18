@@ -476,7 +476,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		TTL:      utils.DefaultBRGCSafePointTTL,
 		ID:       utils.MakeSafePointID(),
 	}
-	g.Record("BackupTS", restoreTS)
+	g.Record("BackupTS", backupMeta.EndVersion)
+	g.Record("RestoreTS", restoreTS)
 
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
