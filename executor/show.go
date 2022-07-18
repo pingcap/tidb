@@ -1212,7 +1212,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	// add partition info here.
-	appendPartitionInfo(ctx, tableInfo.Partition, buf, sqlMode)
+	appendPartitionInfo(ctx, tableInfo, buf, sqlMode)
 	return nil
 }
 
@@ -1345,7 +1345,8 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func appendPartitionInfo(ctx sessionctx.Context, partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+func appendPartitionInfo(ctx sessionctx.Context, tbInfo *model.TableInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+	partitionInfo := tbInfo.Partition
 	if partitionInfo == nil {
 		return
 	}
@@ -1387,7 +1388,15 @@ func appendPartitionInfo(ctx sessionctx.Context, partitionInfo *model.PartitionI
 		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
 
-	// TODO: Check if non-table default placement rules has been set, then skip this and fall back to old behaviour
+	if partInfo := ddl.NewPartitionInfoIfRangeIntervalPartitioned(ctx, tbInfo); partInfo != nil {
+		tbInfo.Partition.IntervalNullPart = partInfo.IntervalNullPart
+		tbInfo.Partition.IntervalMaxPart = partInfo.IntervalMaxPart
+		tbInfo.Partition.IntervalFirst = partInfo.IntervalFirst
+		tbInfo.Partition.IntervalLast = partInfo.IntervalLast
+		tbInfo.Partition.IntervalExpr = partInfo.IntervalExpr
+		tbInfo.Partition.IntervalUnit = partInfo.IntervalUnit
+		tbInfo.Partition.IntervalOptions = partInfo.IntervalOptions
+	}
 	if partitionInfo.IntervalExpr != "" && partitionInfo.IntervalFirst != "" && partitionInfo.IntervalLast != "" {
 		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
 			buf.WriteString(" /*T![interval_partitioning]")
@@ -1407,7 +1416,9 @@ func appendPartitionInfo(ctx sessionctx.Context, partitionInfo *model.PartitionI
 		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
 			buf.WriteString(" */")
 		} else {
-			return
+			if !partitionInfo.IntervalOptions {
+				return
+			}
 		}
 	}
 
