@@ -443,7 +443,7 @@ func (c *innerItemLruCache) evictIfNeeded() {
 			c.cache.Remove(curr)
 			delete(c.elements[item.tblID][item.isIndex], item.id)
 		} else {
-			c.cache.PushFront(curr)
+			c.cache.MoveToFront(curr)
 			item.innerMemUsage = newMem
 		}
 		if c.onEvict != nil {
