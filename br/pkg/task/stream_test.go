@@ -207,6 +207,7 @@ func fakeCheckpointFiles(
 		return errors.Trace(err)
 	}
 
+	// create normal files belong to global-checkpoint files
 	for _, info := range infos {
 		filename := fmt.Sprintf("%v.ts", info.storeID)
 		buff := make([]byte, 8)
@@ -218,7 +219,11 @@ func fakeCheckpointFiles(
 			return errors.Trace(err)
 		}
 	}
-	return nil
+
+	// create a file not belonging to global-checkpoint-ts files
+	filename := fmt.Sprintf("%v.tst", 1)
+	err = s.WriteFile(ctx, filename, []byte("ping"))
+	return errors.AddStack(err)
 }
 
 type fakeGlobalCheckPoint struct {

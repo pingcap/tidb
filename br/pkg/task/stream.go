@@ -1278,11 +1278,14 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStora
 	var globalCheckPointTS uint64 = 0
 	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
 	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".ts") {
+			return nil
+		}
+
 		buff, err := s.ReadFile(ctx, path)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		ts := binary.LittleEndian.Uint64(buff)
 		globalCheckPointTS = mathutil.Max(ts, globalCheckPointTS)
 		return nil
