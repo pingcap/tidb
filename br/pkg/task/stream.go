@@ -17,12 +17,14 @@ package task
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -884,7 +886,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return err
 		}
 	}
-	readMetaDone := console.StartTask("Reading Metadata... ")
+	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
@@ -922,7 +924,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	removed := metas.RemoveDataBefore(shiftUntilTS)
 
 	// remove metadata
-	removeMetaDone := console.StartTask("Removing metadata... ")
+	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
 			return err
@@ -931,8 +933,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	removeMetaDone()
 
 	// remove log
-	clearDataFileDone := console.StartTask(
-		fmt.Sprintf("Clearing data files done. kv-count = %v, total-size = %v", kvCount, totalSize))
+	clearDataFileDone := console.ShowTask(
+		"Clearing data files... ", glue.WithTimeCost(),
+		glue.WithConstExtraField("kv-count", kvCount),
+		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
+	)
 	worker := utils.NewWorkerPool(128, "delete files")
 	wg := new(sync.WaitGroup)
 	for _, f := range removed {
@@ -1264,13 +1269,32 @@ func getLogRange(
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalResolvedTS(ctx, s)
+	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
+}
+
+func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
+	var globalCheckPointTS uint64 = 0
+	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
+	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".ts") {
+			return nil
+		}
+
+		buff, err := s.ReadFile(ctx, path)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ts := binary.LittleEndian.Uint64(buff)
+		globalCheckPointTS = mathutil.Max(ts, globalCheckPointTS)
+		return nil
+	})
+	return globalCheckPointTS, errors.Trace(err)
 }
 
 // getFullBackupTS gets the snapshot-ts of full bakcup

@@ -119,7 +119,7 @@ bin/tikv-ctl --config=tests/config/tikv.toml encryption-meta dump-file | grep "A
   RESTORE_LOG="restore.log"
   rm -f $RESTORE_LOG
   unset BR_LOG_TO_TERM
-  run_br restore full -s "s3://mybucket/$DB?$S3_KEY" --pd $PD_ADDR --s3.endpoint="http://$S3_ENDPOINT" \
+  run_br restore full --filter '*.*' --filter '!mysql.*' -s "s3://mybucket/$DB?$S3_KEY" --pd $PD_ADDR --s3.endpoint="http://$S3_ENDPOINT" \
       --log-file $RESTORE_LOG 
 
   for i in $(seq $DB_COUNT); do
