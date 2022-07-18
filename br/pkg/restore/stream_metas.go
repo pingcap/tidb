@@ -9,9 +9,12 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/util/mathutil"
+	"go.uber.org/zap"
 )
 
 type StreamMetadataSet struct {
@@ -51,6 +54,21 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 			}
 		}
 	}
+}
+
+// CalculateShiftTS calculates the shift-ts.
+func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
+	metadatas := make([]*backuppb.Metadata, 0, len(ms.metadata))
+	for _, m := range ms.metadata {
+		metadatas = append(metadatas, m)
+	}
+
+	minBeginTS, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
+	if !exist {
+		minBeginTS = startTS
+	}
+	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
+	return minBeginTS
 }
 
 // IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
@@ -213,4 +231,36 @@ func SetTSToFile(
 ) error {
 	content := strconv.FormatUint(safepoint, 10)
 	return truncateAndWrite(ctx, s, filename, []byte(content))
+}
+
+// CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
+func CalculateShiftTS(
+	metas []*backuppb.Metadata,
+	startTS uint64,
+	restoreTS uint64,
+) (uint64, bool) {
+	var (
+		minBeginTS uint64
+		isExist    bool
+	)
+	for _, m := range metas {
+		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+			continue
+		}
+
+		for _, d := range m.Files {
+			if d.Cf == stream.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+				continue
+			}
+			if d.MinTs > restoreTS || d.MaxTs < startTS {
+				continue
+			}
+			if d.MinBeginTsInDefaultCf < minBeginTS || !isExist {
+				isExist = true
+				minBeginTS = d.MinBeginTsInDefaultCf
+			}
+		}
+	}
+
+	return minBeginTS, isExist
 }

@@ -120,24 +120,27 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	}
 
 	if it.req.KeepOrder {
+		// Don't set high concurrency for the keep order case. It wastes a lot of memory and gains nothing.
+		// TL;DR
+		// Because for a keep order coprocessor request, the cop tasks are handled one by one, if we set a
+		// higher concurrency, the data is just cached and not consumed for a while, this increase the memory usage.
+		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
+		// decrease the performance.
+		if it.concurrency > 2 {
+			oldConcurrency := it.concurrency
+			it.concurrency = 2
+
+			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+				if val.(bool) {
+					// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
+					it.concurrency = oldConcurrency
+				}
+			})
+		}
 		it.sendRate = util.NewRateLimit(2 * it.concurrency)
 		it.respChan = nil
 	} else {
-		capacity := it.concurrency
-		if enabledRateLimitAction {
-			// The count of cached response in memory is controlled by the capacity of the it.sendRate, not capacity of the respChan.
-			// As the worker will send finCopResponse after each task being handled, we make the capacity of the respCh equals to
-			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
-			capacity = it.concurrency * 2
-		}
-		// in paging request, a request will be returned in multi batches,
-		// enlarge the channel size to avoid the request blocked by buffer full.
-		if req.Paging {
-			if capacity < 2048 {
-				capacity = 2048
-			}
-		}
-		it.respChan = make(chan *copResponse, capacity)
+		it.respChan = make(chan *copResponse)
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
@@ -197,7 +200,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
 	if req.Paging {
-		chanSize = 128
+		chanSize = 18
 	}
 
 	var tasks []*copTask
@@ -211,7 +214,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			// the size will grow every round.
 			pagingSize := uint64(0)
 			if req.Paging {
-				pagingSize = paging.MinPagingSize
+				pagingSize = req.MinPagingSize
 			}
 			tasks = append(tasks, &copTask{
 				region:        loc.Location.Region,
@@ -868,6 +871,7 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		// So we finish here.
 		return nil, nil
 	}
+
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
 	if task.ranges.Len() == 0 {
@@ -991,7 +995,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 			if resp.detail != nil {
-				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime) {
+				if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, worker.req.Paging) {
 					data := make([]byte, len(resp.pbResp.Data))
 					copy(data, resp.pbResp.Data)
 
