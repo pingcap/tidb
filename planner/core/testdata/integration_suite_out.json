@@ -2861,6 +2861,31 @@
     ]
   },
   {
+    "Name": "TestPushDownToTiFlashWithKeepOrderInFastMode",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select max(a) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:max(test.t.a)->Column#3",
+          "└─TopN 1.00 root  test.t.a:desc, offset:0, count:1",
+          "  └─TableReader 1.00 root  data:TopN",
+          "    └─TopN 1.00 batchCop[tiflash]  test.t.a:desc, offset:0, count:1",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select min(a) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:min(test.t.a)->Column#3",
+          "└─TopN 1.00 root  test.t.a, offset:0, count:1",
+          "  └─TableReader 1.00 root  data:TopN",
+          "    └─TopN 1.00 batchCop[tiflash]  test.t.a, offset:0, count:1",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMPPJoin",
     "Cases": [
       {
