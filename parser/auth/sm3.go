@@ -157,6 +157,8 @@ func (sm3 *sm3) Reset() {
 
 	sm3.length = 0
 	sm3.unhandleMsg = []byte{}
+	sm3.blockSize = 64
+	sm3.size = 32
 }
 
 // Write (via the embedded io.Writer interface) adds more data to the running hash.
@@ -199,8 +201,6 @@ func SM3(data []byte) []byte {
 	var h sm3
 	h.Reset()
 	h.Write(data)
-	h.blockSize = 64
-	h.size = 32
 	return h.Sum(nil)
 }
 
