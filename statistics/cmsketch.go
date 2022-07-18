@@ -169,6 +169,9 @@ func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount u
 // data are not tracked because size of CMSketch.topN take little influence
 // We ignore the size of other metadata in CMSketch.
 func (c *CMSketch) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
 	sum = int64(c.depth * c.width * 4)
 	return
 }

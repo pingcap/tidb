@@ -109,7 +109,6 @@ func (ec *ExecutableChecker) Close() error {
 
 // Parse parses a query and returns an ast.StmtNode.
 func (ec *ExecutableChecker) Parse(sql string) (stmt ast.StmtNode, err error) {
-
 	charset, collation := ec.session.GetSessionVars().GetCharsetInfo()
 	stmt, err = ec.parser.ParseOneStmt(sql, charset, collation)
 	return
