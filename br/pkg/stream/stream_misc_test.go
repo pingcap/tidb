@@ -7,6 +7,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,18 +16,27 @@ func TestGetCheckpointOfTask(t *testing.T) {
 		Info: backuppb.StreamBackupTaskInfo{
 			StartTs: 8,
 		},
-		Progress: map[uint64]uint64{
-			1: 10,
-			2: 8,
-			6: 12,
+		Checkpoints: []streamhelper.Checkpoint{
+			{
+				ID: 1,
+				TS: 10,
+			},
+			{
+				ID: 2,
+				TS: 8,
+			},
+			{
+				ID: 6,
+				TS: 12,
+			},
 		},
 	}
 
-	require.Equal(t, task.GetCheckpoint(), uint64(8), "progress = %v", task.Progress)
-	task.Progress[2] = 18
+	require.Equal(t, task.GetMinStoreCheckpoint().TS, uint64(8), "progress = %v", task.Checkpoints)
+	task.Checkpoints[1].TS = 18
 
-	require.Equal(t, task.GetCheckpoint(), uint64(10))
-	task.Progress[1] = 14
+	require.Equal(t, task.GetMinStoreCheckpoint().TS, uint64(10))
+	task.Checkpoints[0].TS = 14
 
-	require.Equal(t, task.GetCheckpoint(), uint64(12), "progress = %v", task.Progress)
+	require.Equal(t, task.GetMinStoreCheckpoint().TS, uint64(12), "progress = %v", task.Checkpoints)
 }

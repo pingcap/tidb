@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "failtest_test",
+    srcs = [
+        "fail_db_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//config",
+        "//ddl",
+        "//ddl/testutil",
+        "//ddl/util",
+        "//domain",
+        "//kv",
+        "//parser/model",
+        "//session",
+        "//sessionctx/variable",
+        "//store/mockstore",
+        "//tablecodec",
+        "//testkit",
+        "//testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -17,7 +17,6 @@ package core
 import (
 	"context"
 	"math"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -38,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -57,7 +58,9 @@ const (
 	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagSemiJoinRewrite
 	flagEliminateAgg
+	flagSkewDistinctAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
@@ -77,7 +80,9 @@ var optRuleList = []logicalOptRule{
 	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&semiJoinRewriter{},
 	&aggregationEliminator{},
+	&skewDistinctAggRewriter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
@@ -306,34 +311,40 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 func refineCETrace(sctx sessionctx.Context) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
-	sort.Slice(stmtCtx.OptimizerCETrace, func(i, j int) bool {
-		if stmtCtx.OptimizerCETrace[i] == nil && stmtCtx.OptimizerCETrace[j] != nil {
+	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) bool {
+		if i == nil && j != nil {
 			return true
 		}
-		if stmtCtx.OptimizerCETrace[i] == nil || stmtCtx.OptimizerCETrace[j] == nil {
+		if i == nil || j == nil {
 			return false
 		}
 
-		if stmtCtx.OptimizerCETrace[i].TableID != stmtCtx.OptimizerCETrace[j].TableID {
-			return stmtCtx.OptimizerCETrace[i].TableID < stmtCtx.OptimizerCETrace[j].TableID
+		if i.TableID != j.TableID {
+			return i.TableID < j.TableID
 		}
-		if stmtCtx.OptimizerCETrace[i].Type != stmtCtx.OptimizerCETrace[j].Type {
-			return stmtCtx.OptimizerCETrace[i].Type < stmtCtx.OptimizerCETrace[j].Type
+		if i.Type != j.Type {
+			return i.Type < j.Type
 		}
-		if stmtCtx.OptimizerCETrace[i].Expr != stmtCtx.OptimizerCETrace[j].Expr {
-			return stmtCtx.OptimizerCETrace[i].Expr < stmtCtx.OptimizerCETrace[j].Expr
+		if i.Expr != j.Expr {
+			return i.Expr < j.Expr
 		}
-		return stmtCtx.OptimizerCETrace[i].RowCount < stmtCtx.OptimizerCETrace[j].RowCount
+		return i.RowCount < j.RowCount
 	})
 	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
 		tbl, ok := is.TableByID(rec.TableID)
-		if !ok {
-			logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
-				zap.Int64("table id", rec.TableID))
+		if ok {
+			rec.TableName = tbl.Meta().Name.O
+			continue
 		}
-		rec.TableName = tbl.Meta().Name.O
+		tbl, _, _ = is.FindTableByPartitionID(rec.TableID)
+		if tbl != nil {
+			rec.TableName = tbl.Meta().Name.O
+			continue
+		}
+		logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",
+			zap.Int64("table id", rec.TableID))
 	}
 }
 
@@ -367,8 +378,137 @@ func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
+	handleFineGrainedShuffle(sctx, plan)
 	checkPlanCacheable(sctx, plan)
 	return plan
+}
+
+// Only for MPP(Window<-[Sort]<-ExchangeReceiver<-ExchangeSender).
+// TiFlashFineGrainedShuffleStreamCount:
+// == 0: fine grained shuffle is disabled.
+// > 0: use TiFlashFineGrainedShuffleStreamCount as stream count.
+// < 0: use TiFlashMaxThreads as stream count when it's greater than 0. Otherwise use DefStreamCountWhenMaxThreadsNotSet.
+func handleFineGrainedShuffle(sctx sessionctx.Context, plan PhysicalPlan) {
+	streamCount := sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount
+	if streamCount == 0 {
+		return
+	}
+	if streamCount < 0 {
+		if sctx.GetSessionVars().TiFlashMaxThreads > 0 {
+			streamCount = sctx.GetSessionVars().TiFlashMaxThreads
+		} else {
+			streamCount = variable.DefStreamCountWhenMaxThreadsNotSet
+		}
+	}
+	setupFineGrainedShuffle(uint64(streamCount), plan)
+}
+
+func setupFineGrainedShuffle(streamCount uint64, plan PhysicalPlan) {
+	if tableReader, ok := plan.(*PhysicalTableReader); ok {
+		if _, isExchangeSender := tableReader.tablePlan.(*PhysicalExchangeSender); isExchangeSender {
+			helper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: make([]*basePhysicalPlan, 1)}
+			setupFineGrainedShuffleInternal(tableReader.tablePlan, &helper, streamCount)
+		}
+	} else {
+		for _, child := range plan.Children() {
+			setupFineGrainedShuffle(streamCount, child)
+		}
+	}
+}
+
+type shuffleTarget uint8
+
+const (
+	unknown shuffleTarget = iota
+	window
+	joinBuild
+)
+
+type fineGrainedShuffleHelper struct {
+	shuffleTarget shuffleTarget
+	plans         []*basePhysicalPlan
+}
+
+func (h *fineGrainedShuffleHelper) clear() {
+	h.shuffleTarget = unknown
+	h.plans = h.plans[:0]
+}
+
+func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
+	h.shuffleTarget = t
+	h.plans = append(h.plans, p)
+}
+
+func setupFineGrainedShuffleInternal(plan PhysicalPlan, helper *fineGrainedShuffleHelper, streamCount uint64) {
+	switch x := plan.(type) {
+	case *PhysicalWindow:
+		// Do not clear the plans because window executor will keep the data partition.
+		// For non hash partition window function, there will be a passthrough ExchangeSender to collect data,
+		// which will break data partition.
+		helper.updateTarget(window, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalSort:
+		if x.IsPartialSort {
+			// Partial sort will keep the data partition.
+			helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		} else {
+			// Global sort will break the data partition.
+			helper.clear()
+		}
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalSelection:
+		helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalProjection:
+		helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalExchangeReceiver:
+		helper.plans = append(helper.plans, &x.basePhysicalPlan)
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalHashAgg:
+		// HashAgg is not implemented for now.
+		helper.clear()
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	case *PhysicalHashJoin:
+		child0 := x.children[0]
+		child1 := x.children[1]
+		if x.InnerChildIdx == 0 {
+			// Child0 is build side.
+			child0Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
+			setupFineGrainedShuffleInternal(child0, &child0Helper, streamCount)
+
+			// HashJoin is not implemented for now.
+			helper.clear()
+			setupFineGrainedShuffleInternal(child1, helper, streamCount)
+		} else {
+			// Child1 is build side.
+			child1Helper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
+			setupFineGrainedShuffleInternal(child1, &child1Helper, streamCount)
+
+			// HashJoin is not implemented for now.
+			helper.clear()
+			setupFineGrainedShuffleInternal(child0, helper, streamCount)
+		}
+	case *PhysicalExchangeSender:
+		if x.ExchangeType == tipb.ExchangeType_Hash {
+			if helper.shuffleTarget == window {
+				// Set up stream count for all plans based on shuffle target type.
+				// Currently, only enable fine grained shuffle if the shuffle target is window.
+				x.TiFlashFineGrainedShuffleStreamCount = streamCount
+				for _, p := range helper.plans {
+					p.TiFlashFineGrainedShuffleStreamCount = streamCount
+				}
+			}
+		}
+		// exchange sender will break the data partition.
+		helper.clear()
+		setupFineGrainedShuffleInternal(x.children[0], helper, streamCount)
+	default:
+		for _, child := range x.Children() {
+			childHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
+			setupFineGrainedShuffleInternal(child, &childHelper, streamCount)
+		}
+	}
 }
 
 // checkPlanCacheable used to check whether a plan can be cached. Plans that
@@ -489,7 +629,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 	opt := defaultPhysicalOptimizeOption()
 	stmtCtx := logic.SCtx().GetSessionVars().StmtCtx
 	if stmtCtx.EnableOptimizeTrace {
-		tracer := &tracing.PhysicalOptimizeTracer{State: make(map[string]map[string]*tracing.PlanTrace)}
+		tracer := &tracing.PhysicalOptimizeTracer{Candidates: make(map[int]*tracing.CandidatePlanTrace)}
 		opt = opt.withEnableOptimizeTracer(tracer)
 		defer func() {
 			if err == nil {

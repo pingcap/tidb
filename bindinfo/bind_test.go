@@ -331,6 +331,29 @@ func TestExplain(t *testing.T) {
 	tk.MustExec("drop global binding for SELECT * from t1 union SELECT * from t1")
 }
 
+func TestBindSemiJoinRewrite(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t2(id int)")
+	require.True(t, tk.HasKeywordInOperatorInfo("select * from t1 where exists(select 1 from t2 where t1.id=t2.id)", "semi join"))
+	require.True(t, tk.NotHasKeywordInOperatorInfo("select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id)", "semi join"))
+
+	tk.MustExec(`
+create global binding for
+	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id)
+`)
+
+	require.True(t, tk.NotHasKeywordInOperatorInfo("select * from t1 where exists(select 1 from t2 where t1.id=t2.id)", "semi join"))
+}
+
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
 func TestBindingSymbolList(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
@@ -496,12 +519,13 @@ func TestErrorBind(t *testing.T) {
 	require.NotNil(t, bind.UpdateTime)
 
 	tk.MustExec("drop index index_t on t")
-	_, err = tk.Exec("select * from t where i > 10")
+	rs, err := tk.Exec("select * from t where i > 10")
 	require.NoError(t, err)
+	rs.Close()
 
 	dom.BindHandle().DropInvalidBindRecord()
 
-	rs, err := tk.Exec("show global bindings")
+	rs, err = tk.Exec("show global bindings")
 	require.NoError(t, err)
 	chk := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), chk)

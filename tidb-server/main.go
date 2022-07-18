@@ -45,12 +45,14 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
+	uni_metrics "github.com/pingcap/tidb/store/mockstore/unistore/metrics"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
@@ -284,6 +286,9 @@ func registerStores() {
 
 func registerMetrics() {
 	metrics.RegisterMetrics()
+	if config.GetGlobalConfig().Store == "unistore" {
+		uni_metrics.RegisterMetrics()
+	}
 }
 
 func createStoreAndDomain() (kv.Storage, *domain.Domain) {
@@ -554,10 +559,8 @@ func setGlobalVars() {
 					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
 				case "enable-collect-execution-info":
 					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
-				case "plugin.load":
-					cfg.Instance.PluginLoad = cfg.Plugin.Load
-				case "plugin.dir":
-					cfg.Instance.PluginDir = cfg.Plugin.Dir
+				case "max-server-connections":
+					cfg.Instance.MaxConnections = cfg.MaxServerConnections
 				}
 			case "log":
 				switch oldName {
@@ -574,6 +577,13 @@ func setGlobalVars() {
 					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
 				case "memory-usage-alarm-ratio":
 					cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
+				}
+			case "plugin":
+				switch oldName {
+				case "load":
+					cfg.Instance.PluginLoad = cfg.Plugin.Load
+				case "dir":
+					cfg.Instance.PluginDir = cfg.Plugin.Dir
 				}
 			default:
 			}
@@ -600,8 +610,6 @@ func setGlobalVars() {
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
-	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
-	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
@@ -694,6 +702,8 @@ func setGlobalVars() {
 	tikv.SetStoreLivenessTimeout(t)
 	parsertypes.TiDBStrictIntegerDisplayWidth = cfg.DeprecateIntegerDisplayWidth
 	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
+	txninfo.Recorder.ResizeSummaries(cfg.TrxSummary.TransactionSummaryCapacity)
+	txninfo.Recorder.SetMinDuration(time.Duration(cfg.TrxSummary.TransactionIDDigestMinDuration) * time.Millisecond)
 }
 
 func setupLog() {

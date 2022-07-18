@@ -71,15 +71,17 @@ func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.Agg
 	}
 }
 
-// getAggFuncChildIdx gets which children it belongs to, 0 stands for left, 1 stands for right, -1 stands for both.
-func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) int {
+// getAggFuncChildIdx gets which children it belongs to.
+// 0 stands for left, 1 stands for right, -1 stands for both, 2 stands for neither (e.g. count(*), sum(1) ...)
+func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggFuncDesc, lSchema, rSchema *expression.Schema) int {
 	fromLeft, fromRight := false, false
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, aggFunc.Args, nil)
 	for _, col := range cols {
-		if schema.Contains(col) {
+		if lSchema.Contains(col) {
 			fromLeft = true
-		} else {
+		}
+		if rSchema.Contains(col) {
 			fromRight = true
 		}
 	}
@@ -87,8 +89,10 @@ func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggF
 		return -1
 	} else if fromLeft {
 		return 0
+	} else if fromRight {
+		return 1
 	}
-	return 1
+	return 2
 }
 
 // collectAggFuncs collects all aggregate functions and splits them into two parts: "leftAggFuncs" and "rightAggFuncs" whose
@@ -97,16 +101,34 @@ func (a *aggregationPushDownSolver) getAggFuncChildIdx(aggFunc *aggregation.AggF
 func (a *aggregationPushDownSolver) collectAggFuncs(agg *LogicalAggregation, join *LogicalJoin) (valid bool, leftAggFuncs, rightAggFuncs []*aggregation.AggFuncDesc) {
 	valid = true
 	leftChild := join.children[0]
+	rightChild := join.children[1]
 	for _, aggFunc := range agg.AggFuncs {
 		if !a.isDecomposableWithJoin(aggFunc) {
 			return false, nil, nil
 		}
-		index := a.getAggFuncChildIdx(aggFunc, leftChild.Schema())
+		index := a.getAggFuncChildIdx(aggFunc, leftChild.Schema(), rightChild.Schema())
 		switch index {
 		case 0:
+			if join.JoinType == RightOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+				return false, nil, nil
+			}
 			leftAggFuncs = append(leftAggFuncs, aggFunc)
 		case 1:
+			if join.JoinType == LeftOuterJoin && !a.checkAllArgsColumn(aggFunc) {
+				return false, nil, nil
+			}
 			rightAggFuncs = append(rightAggFuncs, aggFunc)
+		case 2:
+			// arguments are constant
+			switch join.JoinType {
+			case LeftOuterJoin:
+				leftAggFuncs = append(leftAggFuncs, aggFunc)
+			case RightOuterJoin:
+				rightAggFuncs = append(rightAggFuncs, aggFunc)
+			default:
+				// either left or right is fine, ideally we'd better put this to the hash build side
+				rightAggFuncs = append(rightAggFuncs, aggFunc)
+			}
 		default:
 			return false, nil, nil
 		}
@@ -287,6 +309,18 @@ func (a *aggregationPushDownSolver) checkAnyCountAndSum(aggFuncs []*aggregation.
 	return false
 }
 
+// checkAllArgsColumn checks whether the args in function are dedicated columns
+// eg: count(*) or sum(a+1) will return false while count(a) or sum(a) will return true
+func (a *aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncDesc) bool {
+	for _, arg := range fun.Args {
+		_, ok := arg.(*expression.Column)
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // TODO:
 //   1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
 //   2. remove this method and use splitPartialAgg instead for clean code.
@@ -404,6 +438,16 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 	if pushedAgg == nil {
 		return nil
 	}
+
+	// Update the agg mode for the pushed down aggregation.
+	for _, aggFunc := range pushedAgg.AggFuncs {
+		if aggFunc.Mode == aggregation.CompleteMode {
+			aggFunc.Mode = aggregation.Partial1Mode
+		} else if aggFunc.Mode == aggregation.FinalMode {
+			aggFunc.Mode = aggregation.Partial2Mode
+		}
+	}
+
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)

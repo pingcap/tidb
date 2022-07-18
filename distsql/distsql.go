@@ -46,10 +46,6 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	encodeType := tipb.EncodeType_TypeDefault
-	if canUseChunkRPC(sctx) {
-		encodeType = tipb.EncodeType_TypeChunk
-	}
 	// TODO: Add metric label and set open tracing.
 	return &selectResult{
 		label:      "mpp",
@@ -58,7 +54,6 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		encodeType: encodeType,
 		copPlanIDs: planIDs,
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
@@ -80,7 +75,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	kvReq.Streaming = false
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
 	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
@@ -116,36 +110,20 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}
 
 	// kvReq.MemTracker is used to trace and control memory usage in DistSQL layer;
-	// for streamResult, since it is a pipeline which has no buffer, it's not necessary to trace it;
 	// for selectResult, we just use the kvReq.MemTracker prepared for co-processor
 	// instead of creating a new one for simplification.
-	if kvReq.Streaming {
-		return &streamResult{
-			label:      "dag-stream",
-			sqlType:    label,
-			resp:       resp,
-			rowLen:     len(fieldTypes),
-			fieldTypes: fieldTypes,
-			ctx:        sctx,
-			feedback:   fb,
-		}, nil
-	}
-	encodetype := tipb.EncodeType_TypeDefault
-	if canUseChunkRPC(sctx) {
-		encodetype = tipb.EncodeType_TypeChunk
-	}
 	return &selectResult{
-		label:      "dag",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        sctx,
-		feedback:   fb,
-		sqlType:    label,
-		memTracker: kvReq.MemTracker,
-		encodeType: encodetype,
-		storeType:  kvReq.StoreType,
-		paging:     kvReq.Paging,
+		label:              "dag",
+		resp:               resp,
+		rowLen:             len(fieldTypes),
+		fieldTypes:         fieldTypes,
+		ctx:                sctx,
+		feedback:           fb,
+		sqlType:            label,
+		memTracker:         kvReq.MemTracker,
+		storeType:          kvReq.StoreType,
+		paging:             kvReq.Paging,
+		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }
 
@@ -177,6 +155,8 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
+	kvReq.RequestSource.RequestSourceInternal = true
+	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
@@ -186,12 +166,11 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 		label = metrics.LblInternal
 	}
 	result := &selectResult{
-		label:      "analyze",
-		resp:       resp,
-		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:    label,
-		encodeType: tipb.EncodeType_TypeDefault,
-		storeType:  kvReq.StoreType,
+		label:     "analyze",
+		resp:      resp,
+		feedback:  statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:   label,
+		storeType: kvReq.StoreType,
 	}
 	return result, nil
 }
@@ -205,12 +184,11 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars int
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		label:      "checksum",
-		resp:       resp,
-		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:    metrics.LblGeneral,
-		encodeType: tipb.EncodeType_TypeDefault,
-		storeType:  kvReq.StoreType,
+		label:     "checksum",
+		resp:      resp,
+		feedback:  statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:   metrics.LblGeneral,
+		storeType: kvReq.StoreType,
 	}
 	return result, nil
 }

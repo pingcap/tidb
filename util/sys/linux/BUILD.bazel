@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "linux",
+    srcs = [
+        "sys_linux.go",
+        "sys_other.go",
+        "sys_windows.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/sys/linux",
+    visibility = ["//visibility:public"],
+    deps = ["@org_golang_x_sys//unix"],
+)
+
+go_test(
+    name = "linux_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "sys_test.go",
+    ],
+    deps = [
+        ":linux",
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

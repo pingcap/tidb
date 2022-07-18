@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/promutil"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestDumpBlock(t *testing.T) {
@@ -113,16 +113,16 @@ func TestGetListTableTypeByConf(t *testing.T) {
 		consistency string
 		expected    listTableType
 	}{
-		{version.ParseServerInfo("5.7.25-TiDB-3.0.6"), consistencyTypeSnapshot, listTableByShowTableStatus},
+		{version.ParseServerInfo("5.7.25-TiDB-3.0.6"), ConsistencyTypeSnapshot, listTableByShowTableStatus},
 		// no bug version
-		{version.ParseServerInfo("8.0.2"), consistencyTypeLock, listTableByInfoSchema},
-		{version.ParseServerInfo("8.0.2"), consistencyTypeFlush, listTableByShowTableStatus},
-		{version.ParseServerInfo("8.0.23"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.2"), ConsistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.2"), ConsistencyTypeFlush, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.23"), ConsistencyTypeNone, listTableByShowTableStatus},
 
 		// bug version
-		{version.ParseServerInfo("8.0.3"), consistencyTypeLock, listTableByInfoSchema},
-		{version.ParseServerInfo("8.0.3"), consistencyTypeFlush, listTableByShowFullTables},
-		{version.ParseServerInfo("8.0.3"), consistencyTypeNone, listTableByShowTableStatus},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeLock, listTableByInfoSchema},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeFlush, listTableByShowFullTables},
+		{version.ParseServerInfo("8.0.3"), ConsistencyTypeNone, listTableByShowTableStatus},
 	}
 
 	for _, x := range cases {
@@ -206,5 +206,20 @@ func TestAdjustTableCollation(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expectedSQLs[i], newSQL)
 	}
+}
 
+func TestUnregisterMetrics(t *testing.T) {
+	ctx := context.Background()
+	conf := &Config{
+		SQL:          "not empty",
+		Where:        "not empty",
+		PromFactory:  promutil.NewDefaultFactory(),
+		PromRegistry: promutil.NewDefaultRegistry(),
+	}
+
+	_, err := NewDumper(ctx, conf)
+	require.Error(t, err)
+	_, err = NewDumper(ctx, conf)
+	// should not panic
+	require.Error(t, err)
 }

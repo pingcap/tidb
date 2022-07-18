@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"strconv"
 	"strings"
 	"text/template"
@@ -20,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
@@ -79,7 +81,6 @@ const (
 // Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
-	ExtStorage storage.ExternalStorage `json:"-"`
 
 	specifiedTables          bool
 	AllowCleartextPasswords  bool
@@ -135,9 +136,13 @@ type Config struct {
 	FileSize            uint64
 	StatementSize       uint64
 	SessionParams       map[string]interface{}
-	Labels              prometheus.Labels `json:"-"`
 	Tables              DatabaseTables
 	CollationCompatible string
+
+	Labels       prometheus.Labels       `json:"-"`
+	PromFactory  promutil.Factory        `json:"-"`
+	PromRegistry promutil.Registry       `json:"-"`
+	ExtStorage   storage.ExternalStorage `json:"-"`
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -165,7 +170,7 @@ func DefaultConfig() *Config {
 		SortByPk:            true,
 		Tables:              nil,
 		Snapshot:            "",
-		Consistency:         consistencyTypeAuto,
+		Consistency:         ConsistencyTypeAuto,
 		NoViews:             true,
 		NoSequences:         true,
 		Rows:                UnspecifiedSize,
@@ -183,6 +188,8 @@ func DefaultConfig() *Config {
 		PosAfterConnect:     false,
 		CollationCompatible: LooseCollationCompatible,
 		specifiedTables:     false,
+		PromFactory:         promutil.NewDefaultFactory(),
+		PromRegistry:        promutil.NewDefaultRegistry(),
 	}
 }
 
@@ -199,8 +206,9 @@ func (conf *Config) String() string {
 func (conf *Config) GetDSN(db string) string {
 	// maxAllowedPacket=0 can be used to automatically fetch the max_allowed_packet variable from server on every connection.
 	// https://github.com/go-sql-driver/mysql#maxallowedpacket
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
-		conf.User, conf.Password, conf.Host, conf.Port, db, conf.ReadTimeout)
+	hostPort := net.JoinHostPort(conf.Host, strconv.Itoa(conf.Port))
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?collation=utf8mb4_general_ci&readTimeout=%s&writeTimeout=30s&interpolateParams=true&maxAllowedPacket=0",
+		conf.User, conf.Password, hostPort, db, conf.ReadTimeout)
 	if len(conf.Security.CAPath) > 0 {
 		dsn += "&tls=dumpling-tls-target"
 	}
@@ -231,7 +239,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagLoglevel, "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	flags.StringP(flagLogfile, "L", "", "Log file `path`, leave empty to write to console")
 	flags.String(flagLogfmt, "text", "Log `format`: {text|json}")
-	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
+	flags.String(flagConsistency, ConsistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
 	flags.Bool(flagNoSequences, true, "Do not dump sequences")

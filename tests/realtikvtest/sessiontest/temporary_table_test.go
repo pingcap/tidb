@@ -15,7 +15,6 @@
 package sessiontest
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -23,14 +22,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -282,61 +277,6 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 		tk.MustExec("delete from tmp1")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
-}
-
-func TestTemporaryTableInterceptor(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Session().GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
-	require.NoError(t, err)
-	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
-	tblID := tbl.Meta().ID
-
-	// prepare a kv pair for temporary table
-	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
-	require.NoError(t, tk.Session().GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1")))
-
-	initTxnFuncs := []func() error{
-		func() error {
-			tk.Session().PrepareTSFuture(context.Background())
-			return nil
-		},
-		func() error {
-			return sessiontxn.NewTxn(context.Background(), tk.Session())
-		},
-		func() error {
-			return tk.Session().NewStaleTxnWithStartTS(context.Background(), 0)
-		},
-		func() error {
-			return tk.Session().InitTxnWithStartTS(0)
-		},
-	}
-
-	for _, initFunc := range initTxnFuncs {
-		require.NoError(t, initFunc())
-
-		txn, err := tk.Session().Txn(true)
-		require.NoError(t, err)
-
-		val, err := txn.Get(context.Background(), k)
-		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
-
-		val, err = txn.GetSnapshot().Get(context.Background(), k)
-		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
-
-		tk.Session().RollbackTxn(context.Background())
-	}
-
-	// Also check GetSnapshotWithTS
-	snap := tk.Session().GetSnapshotWithTS(0)
-	val, err := snap.Get(context.Background(), k)
-	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
 }
 
 func TestTemporaryTableSize(t *testing.T) {

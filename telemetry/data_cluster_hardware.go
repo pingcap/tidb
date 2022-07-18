@@ -17,13 +17,13 @@ package telemetry
 import (
 	"context"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/iancoleman/strcase"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -36,10 +36,10 @@ var (
 )
 
 func init() {
-	sort.Strings(sortedCPUAllowedFieldNames)
-	sort.Strings(sortedDiskAllowedFieldNames)
-	sort.Strings(sortedDiskAllowedPaths)
-	sort.Strings(sortedMemoryAllowedFieldNames)
+	slices.Sort(sortedCPUAllowedFieldNames)
+	slices.Sort(sortedDiskAllowedFieldNames)
+	slices.Sort(sortedDiskAllowedPaths)
+	slices.Sort(sortedMemoryAllowedFieldNames)
 }
 
 type clusterHardwareItem struct {
@@ -67,9 +67,9 @@ func normalizeFieldName(name string) string {
 	return strcase.ToLowerCamel(name)
 }
 
-func getClusterHardware(ctx sessionctx.Context) ([]*clusterHardwareItem, error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT TYPE, INSTANCE, DEVICE_TYPE, DEVICE_NAME, NAME, VALUE FROM information_schema.cluster_hardware`)
+func getClusterHardware(ctx context.Context, sctx sessionctx.Context) ([]*clusterHardwareItem, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT TYPE, INSTANCE, DEVICE_TYPE, DEVICE_NAME, NAME, VALUE FROM information_schema.cluster_hardware`)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

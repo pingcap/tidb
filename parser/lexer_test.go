@@ -375,16 +375,16 @@ func TestFeatureIDsComment(t *testing.T) {
 	requires.Equal(t, identifier, tok)
 	requires.Equal(t, "auto_random", lit)
 	requires.Equal(t, Pos{1, 16, 16}, pos)
-	tok, pos, _ = l.scan()
+	tok, _, _ = l.scan()
 	requires.Equal(t, int('('), tok)
 	_, pos, lit = l.scan()
 	requires.Equal(t, "5", lit)
 	requires.Equal(t, Pos{1, 28, 28}, pos)
-	tok, pos, _ = l.scan()
+	tok, _, _ = l.scan()
 	requires.Equal(t, int(')'), tok)
 
 	l = NewScanner("/*T![unsupported_feature] unsupported(123) */")
-	tok, pos, _ = l.scan()
+	tok, _, _ = l.scan()
 	requires.Equal(t, 0, tok)
 }
 

@@ -14,11 +14,13 @@
 package charset
 
 import (
+	"bytes"
+
 	"golang.org/x/text/encoding"
 )
 
 // EncodingLatin1Impl is the instance of encodingLatin1.
-// In TiDB, latin1 is an alias for utf8, so uses utf8 implementation for latin1.
+// TiDB uses utf8 implementation for latin1 charset because of the backward compatibility.
 var EncodingLatin1Impl = &encodingLatin1{encodingUTF8{encodingBase{enc: encoding.Nop}}}
 
 func init() {
@@ -31,6 +33,28 @@ type encodingLatin1 struct {
 }
 
 // Name implements Encoding interface.
-func (e *encodingLatin1) Name() string {
+func (*encodingLatin1) Name() string {
 	return CharsetLatin1
+}
+
+// Peek implements Encoding interface.
+func (*encodingLatin1) Peek(src []byte) []byte {
+	if len(src) == 0 {
+		return src
+	}
+	return src[:1]
+}
+
+// IsValid implements Encoding interface.
+func (*encodingLatin1) IsValid(_ []byte) bool {
+	return true
+}
+
+// Tp implements Encoding interface.
+func (*encodingLatin1) Tp() EncodingTp {
+	return EncodingTpLatin1
+}
+
+func (*encodingLatin1) Transform(_ *bytes.Buffer, src []byte, _ Op) ([]byte, error) {
+	return src, nil
 }

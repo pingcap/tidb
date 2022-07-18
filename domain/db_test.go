@@ -75,7 +75,9 @@ func TestNormalSessionPool(t *testing.T) {
 	defer domain.Close()
 	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	require.NoError(t, err1)
-	svr, err := server.NewServer(config.GetGlobalConfig(), nil)
+	conf := config.GetGlobalConfig()
+	conf.Socket = ""
+	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
 	svr.InitGlobalConnID(domain.ServerID)
@@ -105,7 +107,9 @@ func TestAbnormalSessionPool(t *testing.T) {
 	defer domain.Close()
 	info, err1 := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	require.NoError(t, err1)
-	svr, err := server.NewServer(config.GetGlobalConfig(), nil)
+	conf := config.GetGlobalConfig()
+	conf.Socket = ""
+	svr, err := server.NewServer(conf, nil)
 	require.NoError(t, err)
 	svr.SetDomain(domain)
 	svr.InitGlobalConnID(domain.ServerID)

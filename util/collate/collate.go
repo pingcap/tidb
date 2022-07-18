@@ -15,7 +15,6 @@
 package collate
 
 import (
-	"sort"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -66,6 +66,8 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
+	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 }
@@ -114,11 +116,10 @@ func CompatibleCollate(collate1, collate2 string) bool {
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id < 0 {
-			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
-		} else {
+		if id >= 0 {
 			return -id
 		}
+		logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -126,11 +127,10 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id > 0 {
-			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
-		} else {
+		if id <= 0 {
 			return -id
 		}
+		logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -254,8 +254,8 @@ func GetSupportedCollations() []*charset.Collation {
 				newSupportedCollations = append(newSupportedCollations, coll)
 			}
 		}
-		sort.Slice(newSupportedCollations, func(i int, j int) bool {
-			return newSupportedCollations[i].Name < newSupportedCollations[j].Name
+		slices.SortFunc(newSupportedCollations, func(i, j *charset.Collation) bool {
+			return i.Name < j.Name
 		})
 		return newSupportedCollations
 	}

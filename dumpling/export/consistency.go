@@ -7,18 +7,23 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 )
 
 const (
-	consistencyTypeAuto     = "auto"
-	consistencyTypeFlush    = "flush"
-	consistencyTypeLock     = "lock"
-	consistencyTypeSnapshot = "snapshot"
-	consistencyTypeNone     = "none"
+	// ConsistencyTypeAuto will use flush for MySQL/MariaDB and snapshot for TiDB.
+	ConsistencyTypeAuto = "auto"
+	// ConsistencyTypeFlush will use FLUSH TABLES WITH READ LOCK to temporarily interrupt the DML and DDL operations of the replica database,
+	// to ensure the global consistency of the backup connection.
+	ConsistencyTypeFlush = "flush"
+	// ConsistencyTypeLock will add read locks on all tables to be exported.
+	ConsistencyTypeLock = "lock"
+	// ConsistencyTypeSnapshot gets a consistent snapshot of the specified timestamp and exports it.
+	ConsistencyTypeSnapshot = "snapshot"
+	// ConsistencyTypeNone doesn't guarantee for consistency.
+	ConsistencyTypeNone = "none"
 )
 
 var tiDBDisableTableLockErr = errors.New("try to apply lock consistency on TiDB but it doesn't enable table lock. please set enable-table-lock=true in tidb server config")
@@ -30,22 +35,22 @@ func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB
 		return nil, errors.Trace(err)
 	}
 	switch conf.Consistency {
-	case consistencyTypeFlush:
+	case ConsistencyTypeFlush:
 		return &ConsistencyFlushTableWithReadLock{
 			serverType: conf.ServerInfo.ServerType,
 			conn:       conn,
 		}, nil
-	case consistencyTypeLock:
+	case ConsistencyTypeLock:
 		return &ConsistencyLockDumpingTables{
 			conn: conn,
 			conf: conf,
 		}, nil
-	case consistencyTypeSnapshot:
+	case ConsistencyTypeSnapshot:
 		if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
 			return nil, errors.New("snapshot consistency is not supported for this server")
 		}
 		return &ConsistencyNone{}, nil
-	case consistencyTypeNone:
+	case ConsistencyTypeNone:
 		return &ConsistencyNone{}, nil
 	default:
 		return nil, errors.Errorf("invalid consistency option %s", conf.Consistency)
@@ -97,7 +102,7 @@ func (c *ConsistencyFlushTableWithReadLock) TearDown(ctx context.Context) error 
 		return nil
 	}
 	defer func() {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}()
 	return UnlockTables(ctx, c.conn)
@@ -154,7 +159,7 @@ func (c *ConsistencyLockDumpingTables) TearDown(ctx context.Context) error {
 		return nil
 	}
 	defer func() {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}()
 	return UnlockTables(ctx, c.conn)

@@ -17,7 +17,6 @@ package backend
 import (
 	"context"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -69,8 +69,8 @@ func makeTag(tableName string, engineID int32) string {
 	return fmt.Sprintf("%s:%d", tableName, engineID)
 }
 
-func makeLogger(tag string, engineUUID uuid.UUID) log.Logger {
-	return log.With(
+func makeLogger(logger log.Logger, tag string, engineUUID uuid.UUID) log.Logger {
+	return logger.With(
 		zap.String("engineTag", tag),
 		zap.Stringer("engineUUID", engineUUID),
 	)
@@ -125,41 +125,8 @@ type CheckCtx struct {
 	DBMetas []*mydump.MDDatabaseMeta
 }
 
-// AbstractBackend is the abstract interface behind Backend.
-// Implementations of this interface must be goroutine safe: you can share an
-// instance and execute any method anywhere.
-type AbstractBackend interface {
-	// Close the connection to the backend.
-	Close()
-
-	// MakeEmptyRows creates an empty collection of encoded rows.
-	MakeEmptyRows() kv.Rows
-
-	// RetryImportDelay returns the duration to sleep when retrying an import
-	RetryImportDelay() time.Duration
-
-	// ShouldPostProcess returns whether KV-specific post-processing should be
-	// performed for this backend. Post-processing includes checksum and analyze.
-	ShouldPostProcess() bool
-
-	// NewEncoder creates an encoder of a TiDB table.
-	NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
-
-	OpenEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
-
-	CloseEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
-
-	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
-	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
-	// It's safe to reset or cleanup this engine.
-	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
-
-	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
-
-	// CheckRequirements performs the check whether the backend satisfies the
-	// version requirements
-	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
-
+// TargetInfoGetter defines the interfaces to get target information.
+type TargetInfoGetter interface {
 	// FetchRemoteTableModels obtains the models of all tables given the schema
 	// name. The returned table info does not need to be precise if the encoder,
 	// is not requiring them, but must at least fill in the following fields for
@@ -173,6 +140,45 @@ type AbstractBackend interface {
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
 	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+
+	// CheckRequirements performs the check whether the backend satisfies the version requirements
+	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
+}
+
+// EncodingBuilder consists of operations to handle encoding backend row data formats from source.
+type EncodingBuilder interface {
+	// NewEncoder creates an encoder of a TiDB table.
+	NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error)
+	// MakeEmptyRows creates an empty collection of encoded rows.
+	MakeEmptyRows() kv.Rows
+}
+
+// AbstractBackend is the abstract interface behind Backend.
+// Implementations of this interface must be goroutine safe: you can share an
+// instance and execute any method anywhere.
+type AbstractBackend interface {
+	EncodingBuilder
+	TargetInfoGetter
+	// Close the connection to the backend.
+	Close()
+
+	// RetryImportDelay returns the duration to sleep when retrying an import
+	RetryImportDelay() time.Duration
+
+	// ShouldPostProcess returns whether KV-specific post-processing should be
+	// performed for this backend. Post-processing includes checksum and analyze.
+	ShouldPostProcess() bool
+
+	OpenEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
+
+	CloseEngine(ctx context.Context, config *EngineConfig, engineUUID uuid.UUID) error
+
+	// ImportEngine imports engine data to the backend. If it returns ErrDuplicateDetected,
+	// it means there is duplicate detected. For this situation, all data in the engine must be imported.
+	// It's safe to reset or cleanup this engine.
+	ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error
+
+	CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	// FlushEngine ensures all KV pairs written to an open engine has been
 	// synchronized, such that kill-9'ing Lightning afterwards and resuming from
@@ -260,8 +266,8 @@ func (be Backend) MakeEmptyRows() kv.Rows {
 	return be.abstract.MakeEmptyRows()
 }
 
-func (be Backend) NewEncoder(tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
-	return be.abstract.NewEncoder(tbl, options)
+func (be Backend) NewEncoder(ctx context.Context, tbl table.Table, options *kv.SessionOptions) (kv.Encoder, error) {
+	return be.abstract.NewEncoder(ctx, tbl, options)
 }
 
 func (be Backend) ShouldPostProcess() bool {
@@ -290,12 +296,11 @@ func (be Backend) CheckDiskQuota(quota int64) (
 	totalMemSize int64,
 ) {
 	sizes := be.abstract.EngineFileSizes()
-	sort.Slice(sizes, func(i, j int) bool {
-		a, b := &sizes[i], &sizes[j]
-		if a.IsImporting != b.IsImporting {
-			return a.IsImporting
+	slices.SortFunc(sizes, func(i, j EngineFileSize) bool {
+		if i.IsImporting != j.IsImporting {
+			return i.IsImporting
 		}
-		return a.DiskSize+a.MemSize < b.DiskSize+b.MemSize
+		return i.DiskSize+i.MemSize < j.DiskSize+j.MemSize
 	})
 	for _, size := range sizes {
 		totalDiskSize += size.DiskSize
@@ -321,7 +326,7 @@ func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID
 	closedEngine := ClosedEngine{
 		engine: engine{
 			backend: be.abstract,
-			logger:  makeLogger("<import-and-reset>", engineUUID),
+			logger:  makeLogger(log.FromContext(ctx), "<import-and-reset>", engineUUID),
 			uuid:    engineUUID,
 		},
 	}
@@ -334,23 +339,29 @@ func (be Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID
 // OpenEngine opens an engine with the given table name and engine ID.
 func (be Backend) OpenEngine(ctx context.Context, config *EngineConfig, tableName string, engineID int32) (*OpenedEngine, error) {
 	tag, engineUUID := MakeUUID(tableName, engineID)
-	logger := makeLogger(tag, engineUUID)
+	logger := makeLogger(log.FromContext(ctx), tag, engineUUID)
 
 	if err := be.abstract.OpenEngine(ctx, config, engineUUID); err != nil {
 		return nil, err
 	}
 
-	openCounter := metric.ImporterEngineCounter.WithLabelValues("open")
-	openCounter.Inc()
+	if m, ok := metric.FromContext(ctx); ok {
+		openCounter := m.ImporterEngineCounter.WithLabelValues("open")
+		openCounter.Inc()
+	}
 
 	logger.Info("open engine")
 
 	failpoint.Inject("FailIfEngineCountExceeds", func(val failpoint.Value) {
-		closedCounter := metric.ImporterEngineCounter.WithLabelValues("closed")
-		openCount := metric.ReadCounter(openCounter)
-		closedCount := metric.ReadCounter(closedCounter)
-		if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
-			panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
+		if m, ok := metric.FromContext(ctx); ok {
+			closedCounter := m.ImporterEngineCounter.WithLabelValues("closed")
+			openCounter := m.ImporterEngineCounter.WithLabelValues("open")
+			openCount := metric.ReadCounter(openCounter)
+
+			closedCount := metric.ReadCounter(closedCounter)
+			if injectValue := val.(int); openCount-closedCount > float64(injectValue) {
+				panic(fmt.Sprintf("forcing failure due to FailIfEngineCountExceeds: %v - %v >= %d", openCount, closedCount, injectValue))
+			}
 		}
 	})
 
@@ -380,7 +391,9 @@ func (be Backend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, tab
 func (engine *OpenedEngine) Close(ctx context.Context, cfg *EngineConfig) (*ClosedEngine, error) {
 	closedEngine, err := engine.unsafeClose(ctx, cfg)
 	if err == nil {
-		metric.ImporterEngineCounter.WithLabelValues("closed").Inc()
+		if m, ok := metric.FromContext(ctx); ok {
+			m.ImporterEngineCounter.WithLabelValues("closed").Inc()
+		}
 	}
 	return closedEngine, err
 }
@@ -429,7 +442,7 @@ func (be Backend) UnsafeCloseEngine(ctx context.Context, cfg *EngineConfig, tabl
 func (be Backend) UnsafeCloseEngineWithUUID(ctx context.Context, cfg *EngineConfig, tag string, engineUUID uuid.UUID) (*ClosedEngine, error) {
 	return engine{
 		backend: be.abstract,
-		logger:  makeLogger(tag, engineUUID),
+		logger:  makeLogger(log.FromContext(ctx), tag, engineUUID),
 		uuid:    engineUUID,
 	}.unsafeClose(ctx, cfg)
 }

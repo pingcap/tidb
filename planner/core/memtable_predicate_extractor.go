@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -501,7 +501,7 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 		}
 		quantiles = append(quantiles, v)
 	}
-	sort.Float64s(quantiles)
+	slices.Sort(quantiles)
 	return quantiles
 }
 
@@ -515,7 +515,7 @@ func (helper extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
 		}
 		uint64s = append(uint64s, v)
 	}
-	sort.Slice(uint64s, func(i, j int) bool { return uint64s[i] < uint64s[j] })
+	slices.Sort(uint64s)
 	return uint64s
 }
 

@@ -15,11 +15,14 @@ package auth
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb/parser/format"
 )
 
 const (
+	// UserNameMaxLength is the max length of username.
 	UserNameMaxLength = 32
+	// HostNameMaxLength is the max length of host name.
 	HostNameMaxLength = 255
 )
 
@@ -62,14 +65,19 @@ func (user *UserIdentity) String() string {
 // It matches the login user.
 func (user *UserIdentity) LoginString() string {
 	// TODO: Escape username and hostname.
+	if user == nil {
+		return ""
+	}
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 
+// RoleIdentity represents a role name.
 type RoleIdentity struct {
 	Username string
 	Hostname string
 }
 
+// Restore implements Node interface.
 func (role *RoleIdentity) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteName(role.Username)
 	if role.Hostname != "" {
