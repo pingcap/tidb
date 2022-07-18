@@ -44,6 +44,11 @@ stop() {
     killall -v -9 "$svc" &>/dev/null || return 0
 }
 
+restart_services() {
+	stop_services
+	start_services
+}
+
 stop_services() {
     for svc in "br" "tidb-server" "tiflash" "TiFlashMain" "tikv-server" "pd-server" "cdc" "minio"; do
         stop $svc &
