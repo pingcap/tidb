@@ -208,6 +208,9 @@ type Config struct {
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
 
 	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
+
+	// whether there's explicit filter
+	ExplicitFilter bool `json:"-" toml:"-"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -467,6 +470,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.Tables = make(map[string]struct{})
 	var caseSensitive bool
 	if filterFlag := flags.Lookup(flagFilter); filterFlag != nil {
+		cfg.ExplicitFilter = flags.Changed(flagFilter)
 		cfg.FilterStr = filterFlag.Value.(pflag.SliceValue).GetSlice()
 		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
 		if err != nil {

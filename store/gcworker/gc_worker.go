@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -78,6 +79,7 @@ type GCWorker struct {
 		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
 		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 	}
+	logBackupEnabled bool
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -1027,9 +1029,8 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 
 	if tryResolveLocksTS < safePoint {
 		tryResolveLocksTS = safePoint
-	} else {
-		// to do: add a switch for tryResolveLocksTS.
-		// if the config log-backup.enable is false in PiTR, set safePoint to tryResolveLocksTS directly.
+	} else if !w.logBackupEnabled {
+		tryResolveLocksTS = safePoint
 	}
 
 	if !usePhysical {
@@ -1778,6 +1779,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
+	w.logBackupEnabled = utils.CheckLogBackupEnabled(se)
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)

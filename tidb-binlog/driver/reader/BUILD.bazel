@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "reader_test",
+    timeout = "short",
     srcs = ["offset_test.go"],
     embed = [":reader"],
     deps = [

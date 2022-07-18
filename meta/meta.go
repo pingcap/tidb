@@ -185,11 +185,11 @@ func (m *Meta) GetPolicyID() (int64, error) {
 	return m.txn.GetInt64(mPolicyGlobalID)
 }
 
-func (m *Meta) policyKey(policyID int64) []byte {
+func (*Meta) policyKey(policyID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
 }
 
-func (m *Meta) dbKey(dbID int64) []byte {
+func (*Meta) dbKey(dbID int64) []byte {
 	return DBkey(dbID)
 }
 
@@ -214,7 +214,7 @@ func IsDBkey(dbKey []byte) bool {
 	return strings.HasPrefix(string(dbKey), mDBPrefix+":")
 }
 
-func (m *Meta) autoTableIDKey(tableID int64) []byte {
+func (*Meta) autoTableIDKey(tableID int64) []byte {
 	return AutoTableIDKey(tableID)
 }
 
@@ -239,11 +239,11 @@ func ParseAutoTableIDKey(key []byte) (int64, error) {
 	return int64(id), err
 }
 
-func (m *Meta) autoIncrementIDKey(tableID int64) []byte {
+func (*Meta) autoIncrementIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mIncIDPrefix, tableID))
 }
 
-func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
+func (*Meta) autoRandomTableIDKey(tableID int64) []byte {
 	return AutoRandomTableIDKey(tableID)
 }
 
@@ -268,7 +268,7 @@ func ParseAutoRandomTableIDKey(key []byte) (int64, error) {
 	return int64(id), err
 }
 
-func (m *Meta) tableKey(tableID int64) []byte {
+func (*Meta) tableKey(tableID int64) []byte {
 	return TableKey(tableID)
 }
 
@@ -293,7 +293,7 @@ func ParseTableKey(tableKey []byte) (int64, error) {
 	return int64(id), errors.Trace(err)
 }
 
-func (m *Meta) sequenceKey(sequenceID int64) []byte {
+func (*Meta) sequenceKey(sequenceID int64) []byte {
 	return SequenceKey(sequenceID)
 }
 
@@ -318,7 +318,7 @@ func ParseSequenceKey(key []byte) (int64, error) {
 	return int64(id), errors.Trace(err)
 }
 
-func (m *Meta) sequenceCycleKey(sequenceID int64) []byte {
+func (*Meta) sequenceCycleKey(sequenceID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSeqCyclePrefix, sequenceID))
 }
 
@@ -938,7 +938,7 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	return jobs, nil
 }
 
-func (m *Meta) jobIDKey(id int64) []byte {
+func (*Meta) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	return b
@@ -961,7 +961,7 @@ func (m *Meta) reorgJobStartHandle(id int64, element *Element) []byte {
 	return b
 }
 
-func (m *Meta) reorgJobEndHandle(id int64, element *Element) []byte {
+func (*Meta) reorgJobEndHandle(id int64, element *Element) []byte {
 	b := make([]byte, 8, 25)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	b = append(b, element.TypeKey...)
@@ -972,7 +972,7 @@ func (m *Meta) reorgJobEndHandle(id int64, element *Element) []byte {
 	return b
 }
 
-func (m *Meta) reorgJobPhysicalTableID(id int64, element *Element) []byte {
+func (*Meta) reorgJobPhysicalTableID(id int64, element *Element) []byte {
 	b := make([]byte, 8, 25)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	b = append(b, element.TypeKey...)
@@ -1270,7 +1270,7 @@ func getReorgJobFieldHandle(t *structure.TxStructure, reorgJobField []byte) (kv.
 	return bs, nil
 }
 
-func (m *Meta) schemaDiffKey(schemaVersion int64) []byte {
+func (*Meta) schemaDiffKey(schemaVersion int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSchemaDiffPrefix, schemaVersion))
 }
 
