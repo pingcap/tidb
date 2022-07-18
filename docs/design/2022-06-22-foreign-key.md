@@ -247,7 +247,7 @@ When TiDB add pessimistic locks, if relate row exist in reference table, also ne
 
 ##### In Optimistic Transaction
 
-todo:
+Just like `SELECT FOR UPDATE` statement, need to use `doLockKeys` to lock the related row in the reference table.
 
 #### DML Load data
 
