@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "gosec",
+    srcs = ["analysis.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/gosec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_golangci_golangci_lint//pkg/result",
+        "@com_github_golangci_gosec//:gosec",
+        "@com_github_golangci_gosec//rules",
+        "@org_golang_x_tools//go/analysis",
+        "@org_golang_x_tools//go/loader",
+    ],
+)

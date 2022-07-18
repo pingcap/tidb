@@ -110,7 +110,7 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 			s.KVSnapshot.SetRuntimeStats(val.(*txnsnapshot.SnapshotRuntimeStats))
 		}
 	case kv.IsStalenessReadOnly:
-		s.KVSnapshot.SetIsStatenessReadOnly(val.(bool))
+		s.KVSnapshot.SetIsStalenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
@@ -123,6 +123,10 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.interceptor = val.(kv.SnapshotInterceptor)
 	case kv.RPCInterceptor:
 		s.KVSnapshot.SetRPCInterceptor(val.(interceptor.RPCInterceptor))
+	case kv.RequestSourceInternal:
+		s.KVSnapshot.SetRequestSourceInternal(val.(bool))
+	case kv.RequestSourceType:
+		s.KVSnapshot.SetRequestSourceType(val.(string))
 	}
 }
 

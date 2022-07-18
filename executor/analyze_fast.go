@@ -113,7 +113,8 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
 	if err != nil {
 		return
 	}
@@ -149,7 +150,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			}
 		}
 		var rs sqlexec.RecordSet
-		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql.String())
+		rs, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
 		if err != nil {
 			return
 		}
@@ -172,15 +173,16 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 }
 
 func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		if kv.ErrInvalidTxn.Equal(err) {
-			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
+			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			rollbackFn = func() error {
-				_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "rollback")
+				_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
 				return err
 			}
 		} else {

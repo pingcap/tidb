@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -375,11 +376,8 @@ func TestString(t *testing.T) {
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},
-		{ActionAddColumns, "add multi-columns"},
 		{ActionDropColumn, "drop column"},
-		{ActionDropColumns, "drop multi-columns"},
 		{ActionModifySchemaCharsetAndCollate, "modify schema charset and collate"},
-		{ActionDropIndexes, "drop multi-indexes"},
 		{ActionAlterTablePlacement, "alter table placement"},
 		{ActionAlterTablePartitionPlacement, "alter table partition placement"},
 		{ActionAlterNoCacheTable, "alter table nocache"},
@@ -577,4 +575,13 @@ func TestLocation(t *testing.T) {
 	require.Equal(t, nLoc.String(), "UTC")
 	location := time.FixedZone("UTC", loc1.Offset)
 	require.Equal(t, nLoc, location)
+}
+
+func TestDDLJobSize(t *testing.T) {
+	msg := `Please make sure that the following methods work as expected:
+- SubJob.FromProxyJob()
+- SubJob.ToProxyJob()
+`
+	job := Job{}
+	require.Equal(t, 288, int(unsafe.Sizeof(job)), msg)
 }

@@ -132,7 +132,7 @@ type CreateDatabaseStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Name        string
+	Name        model.CIStr
 	Options     []*DatabaseOption
 }
 
@@ -142,7 +142,7 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		err := option.Restore(ctx)
@@ -168,7 +168,7 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type AlterDatabaseStmt struct {
 	ddlNode
 
-	Name                 string
+	Name                 model.CIStr
 	AlterDefaultDatabase bool
 	Options              []*DatabaseOption
 }
@@ -191,7 +191,7 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER DATABASE")
 	if !n.AlterDefaultDatabase {
 		ctx.WritePlain(" ")
-		ctx.WriteName(n.Name)
+		ctx.WriteName(n.Name.O)
 	}
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
@@ -230,7 +230,7 @@ type DropDatabaseStmt struct {
 	ddlNode
 
 	IfExists bool
-	Name     string
+	Name     model.CIStr
 }
 
 // Restore implements Node interface.
@@ -239,7 +239,7 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Name.O)
 	return nil
 }
 
@@ -2020,7 +2020,7 @@ const (
 	TableOptionEngine
 	TableOptionCharset
 	TableOptionCollate
-	TableOptionAutoIdCache
+	TableOptionAutoIdCache //nolint:revive
 	TableOptionAutoIncrement
 	TableOptionAutoRandomBase
 	TableOptionComment
@@ -2529,7 +2529,7 @@ const (
 	AlterTableAddPartitions
 	// A tombstone for `AlterTableAlterPartition`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
-	__DEPRECATED_AlterTableAlterPartition
+	__DEPRECATED_AlterTableAlterPartition //nolint:revive
 	AlterTablePartitionAttributes
 	AlterTablePartitionOptions
 	AlterTableCoalescePartitions
@@ -2562,13 +2562,15 @@ const (
 	AlterTableSetTiFlashReplica
 	// A tombstone for `AlterTablePlacement`. It will never be used anymore.
 	// Just left a tombstone here to keep the enum number unchanged.
-	__DEPRECATED_AlterTablePlacement
+	__DEPRECATED_AlterTablePlacement //nolint:revive
 	AlterTableAddStatistics
 	AlterTableDropStatistics
 	AlterTableAttributes
 	AlterTableCache
 	AlterTableNoCache
 	AlterTableStatsOptions
+	// AlterTableSetTiFlashMode uses to alter the table mode of TiFlash.
+	AlterTableSetTiFlashMode
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2665,6 +2667,7 @@ type AlterTableSpec struct {
 	Num              uint64
 	Visibility       IndexVisibility
 	TiFlashReplica   *TiFlashReplicaSpec
+	TiFlashMode      model.TiFlashMode
 	Writeable        bool
 	Statistics       *StatisticsSpec
 	AttributesSpec   *AttributesSpec
@@ -2727,6 +2730,9 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case AlterTableSetTiFlashMode:
+		ctx.WriteKeyWord("SET TIFLASH MODE ")
+		ctx.WriteKeyWord(n.TiFlashMode.String())
 	case AlterTableAddStatistics:
 		ctx.WriteKeyWord("ADD STATS_EXTENDED ")
 		if n.IfNotExists {
@@ -3303,14 +3309,13 @@ type AlterTableStmt struct {
 
 func (n *AlterTableStmt) HaveOnlyPlacementOptions() bool {
 	for _, n := range n.Specs {
-		if n.Tp == AlterTablePartitionOptions {
-			if !n.IsAllPlacementRule() {
-				return false
-			}
-		} else {
+		if n.Tp != AlterTablePartitionOptions {
+			return false
+
+		}
+		if !n.IsAllPlacementRule() {
 			return false
 		}
-
 	}
 	return true
 }
@@ -3441,15 +3446,15 @@ type PartitionDefinitionClause interface {
 
 type PartitionDefinitionClauseNone struct{}
 
-func (n *PartitionDefinitionClauseNone) restore(ctx *format.RestoreCtx) error {
+func (*PartitionDefinitionClauseNone) restore(_ *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *PartitionDefinitionClauseNone) acceptInPlace(v Visitor) bool {
+func (*PartitionDefinitionClauseNone) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseNone) Validate(pt model.PartitionType, columns int) error {
+func (*PartitionDefinitionClauseNone) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
 	case 0:
 	case model.PartitionTypeRange:
@@ -3599,11 +3604,11 @@ func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error
 	return nil
 }
 
-func (n *PartitionDefinitionClauseHistory) acceptInPlace(v Visitor) bool {
+func (*PartitionDefinitionClauseHistory) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, columns int) error {
+func (*PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
 	case 0, model.PartitionTypeSystemTime:
 	default:

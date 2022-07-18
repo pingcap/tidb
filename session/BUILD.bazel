@@ -49,7 +49,6 @@ go_library(
         "//sessionctx/variable",
         "//sessiontxn",
         "//sessiontxn/isolation",
-        "//sessiontxn/legacy",
         "//sessiontxn/staleread",
         "//statistics",
         "//statistics/handle",
@@ -75,6 +74,7 @@ go_library(
         "//util/memory",
         "//util/parser",
         "//util/rowcodec",
+        "//util/sem",
         "//util/sli",
         "//util/sqlexec",
         "//util/tableutil",
@@ -100,6 +100,7 @@ go_library(
 
 go_test(
     name = "session_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
@@ -133,6 +134,7 @@ go_test(
         "//planner/core",
         "//sessionctx",
         "//sessionctx/variable",
+        "//sessiontxn",
         "//statistics",
         "//store/mockstore",
         "//table",

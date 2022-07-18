@@ -25,7 +25,7 @@ type flusher interface {
 
 type emptyFlusher struct{}
 
-func (e *emptyFlusher) Flush() error {
+func (*emptyFlusher) Flush() error {
 	return nil
 }
 
@@ -68,15 +68,15 @@ type noCompressionBuffer struct {
 	*bytes.Buffer
 }
 
-func (b *noCompressionBuffer) Flush() error {
+func (*noCompressionBuffer) Flush() error {
 	return nil
 }
 
-func (b *noCompressionBuffer) Close() error {
+func (*noCompressionBuffer) Close() error {
 	return nil
 }
 
-func (b *noCompressionBuffer) Compressed() bool {
+func (*noCompressionBuffer) Compressed() bool {
 	return false
 }
 
@@ -120,7 +120,7 @@ func (b *simpleCompressBuffer) Close() error {
 	return b.compressWriter.Close()
 }
 
-func (b *simpleCompressBuffer) Compressed() bool {
+func (*simpleCompressBuffer) Compressed() bool {
 	return true
 }
 
@@ -159,7 +159,7 @@ func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 				continue
 			}
 		}
-		u.buf.Flush()
+		_ = u.buf.Flush()
 		err := u.uploadChunk(ctx)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -208,12 +208,12 @@ type BytesWriter struct {
 }
 
 // Write delegates to bytes.Buffer.
-func (u *BytesWriter) Write(ctx context.Context, p []byte) (int, error) {
+func (u *BytesWriter) Write(_ context.Context, p []byte) (int, error) {
 	return u.buf.Write(p)
 }
 
 // Close delegates to bytes.Buffer.
-func (u *BytesWriter) Close(ctx context.Context) error {
+func (*BytesWriter) Close(_ context.Context) error {
 	// noop
 	return nil
 }

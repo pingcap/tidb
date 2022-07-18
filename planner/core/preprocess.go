@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -156,9 +155,8 @@ type PreprocessorReturn struct {
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
-	LastSnapshotTS   uint64
-	InfoSchema       infoschema.InfoSchema
-	ReadReplicaScope string
+	LastSnapshotTS uint64
+	InfoSchema     infoschema.InfoSchema
 }
 
 // preprocessWith is used to record info from WITH statements like CTE name.
@@ -716,20 +714,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
-	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
+	if isIncorrectName(stmt.Name.L) && !stmt.AlterDefaultDatabase {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
-	if isIncorrectName(stmt.Name) {
+	if isIncorrectName(stmt.Name.L) {
 		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
@@ -1653,24 +1651,12 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
 					return err
 				}
-				if err := txnManager.OnStmtStart(context.TODO()); err != nil {
+				if err := txnManager.OnStmtStart(context.TODO(), txnManager.GetCurrentStmt()); err != nil {
 					return err
 				}
 			}
 		}
 	}
-
-	// It is a little hacking for the below codes. `ReadReplicaScope` is used both by stale read's closest read and local txn.
-	// They are different features and the value for `ReadReplicaScope` will be conflicted in some scenes.
-	// But because local txn is still an experimental feature, we should make stale read work first.
-	if p.IsStaleness || p.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() {
-		// When stale read or closet read is set, we read the tidb's locality as the read replica scope
-		p.ReadReplicaScope = config.GetTxnScopeFromConfig()
-	} else {
-		// Otherwise, use the scope from TxnCtx for local txn validation
-		p.ReadReplicaScope = p.ctx.GetSessionVars().TxnCtx.TxnScope
-	}
-
 	p.initedLastSnapshotTS = true
 	return nil
 }
