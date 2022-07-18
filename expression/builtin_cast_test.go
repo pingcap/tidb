@@ -261,8 +261,12 @@ var (
 	curTimeWithFspReal   = float64(curTimeInt) + 0.555
 	curTimeString        = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
 	curTimeWithFspString = fmt.Sprintf("%4d-%02d-%02d 12:59:59.555000", year, int(month), day)
+	curTimeStringChar1   = fmt.Sprintf("%4d-%02d-%02da", year, int(month), day)
+	curTimeStringChar2   = fmt.Sprintf("%4d-%02d-%02d 12:59:59a", year, int(month), day)
+	curTimeStringChar3   = fmt.Sprintf("%4d-%02d-%02d 12:59a:59", year, int(month), day)
 	tm                   = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 0), mysql.TypeDatetime, types.DefaultFsp)
 	tmWithFsp            = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 555000), mysql.TypeDatetime, types.MaxFsp)
+	tmWithChar           = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 0, 0), mysql.TypeDatetime, types.DefaultFsp)
 	// timeDatum indicates datetime "curYear-curMonth-curDay 12:59:59".
 	timeDatum = types.NewDatum(tm)
 	// timeWithFspDatum indicates datetime "curYear-curMonth-curDay 12:59:59.555000".
@@ -865,6 +869,30 @@ func TestCastFuncSig(t *testing.T) {
 			mysql.TypeDatetime,
 			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeString)}),
 		},
+		// cast stringWithCharacter as Time.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			dt,
+			types.DefaultFsp,
+			mysql.TypeDate,
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeStringChar1)}),
+		},
+		// cast stringWithCharacter as Time.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			tm,
+			types.DefaultFsp,
+			mysql.TypeDatetime,
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeStringChar2)}),
+		},
+		// cast stringWithCharacter as Time.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			tmWithChar,
+			types.DefaultFsp,
+			mysql.TypeDatetime,
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeStringChar3)}),
+		},
 		// cast Duration as Date.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
@@ -896,11 +924,11 @@ func TestCastFuncSig(t *testing.T) {
 			sig = &builtinCastDecimalAsTimeSig{timeFunc}
 		case 2:
 			sig = &builtinCastIntAsTimeSig{timeFunc}
-		case 3:
+		case 3, 4, 5, 6:
 			sig = &builtinCastStringAsTimeSig{timeFunc}
-		case 4:
+		case 7:
 			sig = &builtinCastDurationAsTimeSig{timeFunc}
-		case 5:
+		case 8:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
 		res, isNull, err := sig.evalTime(c.row.ToRow())
@@ -1446,6 +1474,7 @@ func TestCastIntAsIntVec(t *testing.T) {
 	}
 }
 
+// TestCastStringAsDecimalSigWithUnsignedFlagInUnion
 // for issue https://github.com/pingcap/tidb/issues/16825
 func TestCastStringAsDecimalSigWithUnsignedFlagInUnion(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
