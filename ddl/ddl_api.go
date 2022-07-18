@@ -3148,9 +3148,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		case ast.AlterTableReorganizePartition:
 			err = errors.Trace(dbterror.ErrUnsupportedReorganizePartition)
 		case ast.AlterTableReorganizeFirstPartition:
-			err = errors.Trace(dbterror.ErrUnsupportedMergePartition)
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("MERGE FIRST PARTITION")
 		case ast.AlterTableReorganizeLastPartition:
-			err = errors.Trace(dbterror.ErrUnsupportedSplitPartition)
+			err = dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SPLIT LAST PARTITION")
 		case ast.AlterTableCheckPartitions:
 			err = errors.Trace(dbterror.ErrUnsupportedCheckPartition)
 		case ast.AlterTableRebuildPartition:
@@ -3797,8 +3797,8 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	if spec.Tp == ast.AlterTableDropFirstPartition {
 		partInfo = &model.PartitionInfo{}
 		if len(spec.Partition.Definitions) != 0 {
-			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
-				"Internal error during generating altered INTERVAL partitions, table info already contains partition definitions")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, table info already contains partition definitions")
 		}
 		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition, partInfo)
 		if err != nil {
@@ -3810,17 +3810,17 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		}
 		if len(spec.Partition.Definitions) == 0 ||
 			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
-			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
-				"Internal error during generating altered INTERVAL partitions, number of partitions does not match")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, number of partitions does not match")
 		}
 		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
-			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
-				"Internal error during generating altered INTERVAL partitions, number of partition names does not match")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, number of partition names does not match")
 		}
 		for i, part := range spec.Partition.Definitions {
 			if part.Name.L != meta.Partition.Definitions[i+pNullOffset].Name.L {
-				return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(
-					"Internal error during generating altered INTERVAL partitions, names does not match")
+				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+					"FIRST PARTITION, names does not match")
 			}
 			spec.PartitionNames = append(spec.PartitionNames, part.Name)
 		}
@@ -6323,7 +6323,7 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 
 func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec, part *model.PartitionInfo) error {
 	if meta.Partition.IntervalMaxPart {
-		return errors.Trace(dbterror.ErrPartitionLastPartitionMaxvalue)
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER LAST PARTITION: MAXVALUE partition exists")
 	}
 	if len(spec.PartDefinitions) > 0 {
 		return errors.Trace(dbterror.ErrUnsupportedAddPartition)

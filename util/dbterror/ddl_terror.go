@@ -143,10 +143,6 @@ var (
 	ErrUnsupportedCoalescePartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "coalesce partitions"), nil))
 	// ErrUnsupportedReorganizePartition returns for does not support reorganize partitions.
 	ErrUnsupportedReorganizePartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "reorganize partition"), nil))
-	// ErrUnsupportedSplitPartition returns for does not support SPLIT partitions.
-	ErrUnsupportedSplitPartition = ClassDDL.NewStd(mysql.ErrUnsupportedReorganizePartition)
-	// ErrUnsupportedMergePartition returns for does not support MERGE partitions.
-	ErrUnsupportedMergePartition = ClassDDL.NewStd(mysql.ErrUnsupportedReorganizePartition)
 	// ErrUnsupportedCheckPartition returns for does not support check partitions.
 	ErrUnsupportedCheckPartition = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "check partition"), nil))
 	// ErrUnsupportedOptimizePartition returns for does not support optimize partitions.
@@ -245,8 +241,6 @@ var (
 	ErrRangeNotIncreasing = ClassDDL.NewStd(mysql.ErrRangeNotIncreasing)
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
 	ErrPartitionMaxvalue = ClassDDL.NewStd(mysql.ErrPartitionMaxvalue)
-	// ErrPartitionLastPartitionMaxvalue Cannot do ALTER TABLE LAST PARTITION LESS THAN if MAXVALUE partition exists.
-	ErrPartitionLastPartitionMaxvalue = ClassDDL.NewStd(mysql.ErrPartitionLastPartitionMaxvalue)
 	// ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = ClassDDL.NewStd(mysql.ErrDropLastPartition)
 	// ErrTooManyPartitions returns too many partitions were defined.
@@ -382,8 +376,8 @@ var (
 
 	// ErrUnsupportedAlterTableSpec means we don't support this alter table specification (i.e. unknown)
 	ErrUnsupportedAlterTableSpec = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "Unsupported/unknown ALTER TABLE specification"), nil))
-	// ErrIntervalPartitionFail when something goes wrong during ALTER TABLE with INTERVAL PARTITIONing
-	ErrIntervalPartitionFail = ClassDDL.NewStd(mysql.ErrIntervalPartition)
+	// ErrGeneralUnsupportedDDL as a generic error to customise by argument
+	ErrGeneralUnsupportedDDL = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "%s"), nil))
 
 	// ErrAutoConvert when auto convert happens
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)

@@ -3869,7 +3869,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	err := tk.ExecToErr("alter table ipt LAST partition less than (100)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8246]Cannot ALTER TABLE <table> LAST PARTITION when MAXVALUE PARTITION exists, try ALTER TABLE <table> SPLIT MAXVALUE PARTITION instead", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported ALTER LAST PARTITION: MAXVALUE partition exists", err.Error())
 
 	tk.MustExec("alter table ipt first partition less than (30)")
 	tk.MustQuery("show create table ipt").Check(testkit.Rows(
@@ -3901,11 +3901,11 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	err = tk.ExecToErr("alter table ipt merge first partition less than (60)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported MERGE FIRST PARTITION", err.Error())
 
 	err = tk.ExecToErr("alter table ipt split maxvalue partition less than (140)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported SPLIT LAST PARTITION", err.Error())
 
 	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
 	tk.MustQuery("show create table ipt").Check(testkit.Rows(
@@ -4004,11 +4004,11 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	// Should we check and limit FIRST PARTITION for QUARTER and MONTH to not have day part in (29,30,31)?
 	err = tk.ExecToErr("alter table t first partition less than ('2022-03-31')")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8248]INTERVAL PARTITION LAST expr (2022-03-31) not matching FIRST + n INTERVALs ('2022-02-28' + n * '1' MONTH)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-03-31) not matching FIRST + n INTERVALs ('2022-02-28' + n * '1' MONTH)", err.Error())
 	tk.MustExec("alter table t last partition less than ('2022-06-30')")
 	err = tk.ExecToErr("alter table t last partition less than ('2022-07-31')")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8248]INTERVAL PARTITION LAST expr (2022-07-31) not matching FIRST + n INTERVALs ('2022-06-30' + n * '1' MONTH)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-07-31) not matching FIRST + n INTERVALs ('2022-06-30' + n * '1' MONTH)", err.Error())
 	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
@@ -4039,11 +4039,11 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	tk.MustExec("alter table t2 LAST partition less than (100)")
 	err = tk.ExecToErr("alter table t2 merge first partition less than (60)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported MERGE FIRST PARTITION", err.Error())
 
 	err = tk.ExecToErr("alter table t2 split maxvalue partition less than (140)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8247]Unsupported REORGANIZE PARTITION", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported SPLIT LAST PARTITION", err.Error())
 
 	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
 	tk.MustQuery("show create table t2").Check(testkit.Rows(
@@ -4167,7 +4167,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		" first partition less than ('0')" +
 		" last partition less than ('10000000') NULL PARTITION MAXVALUE PARTITION")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8215]Failed to repair table: INTERVAL partitioning only supports Date, Datetime and INT types", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL partitioning, only supports Date, Datetime and INT types", err.Error())
 	// TODO:
 	// test unsigned and different ranges for INT type
 	// test unsigned and different ranges for things like TO_DAYS()/TO_SECONDS()

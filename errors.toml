@@ -1236,21 +1236,6 @@ error = '''
 column %s id %d does not exist, this column may have been updated by other DDL ran in parallel
 '''
 
-["ddl:8246"]
-error = '''
-Cannot ALTER TABLE <table> LAST PARTITION when MAXVALUE PARTITION exists, try ALTER TABLE <table> SPLIT MAXVALUE PARTITION instead
-'''
-
-["ddl:8247"]
-error = '''
-Unsupported REORGANIZE PARTITION
-'''
-
-["ddl:8248"]
-error = '''
-INTERVAL PARTITION %s
-'''
-
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV

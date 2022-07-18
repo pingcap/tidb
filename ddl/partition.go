@@ -516,13 +516,11 @@ func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
 // returns error in case of error or non-accepted difference
 func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDefinition) error {
 	if len(a) != len(b) {
-		// Hijacked error from below... TODO better error?
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning number of partitions generated != partition defined (%d != %d)", len(a), len(b))
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("number of partitions generated != partition defined (%d != %d)", len(a), len(b))
 	}
 	for i := range a {
 		if len(b[i].Sub) > 0 {
-			// Hijacked error from below... TODO better error?
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does have unsupported subpartitions", b[i].Name.O))
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does have unsupported subpartitions", b[i].Name.O))
 		}
 		// TODO: We could extend the syntax to allow for table options too, like:
 		// CREATE TABLE t ... INTERVAL ... LAST PARTITION LESS THAN ('2015-01-01') PLACEMENT POLICY = 'cheapStorage'
@@ -530,13 +528,11 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 		// ALTER TABLE t LAST PARTITION LESS THAN ('2023-01-01') PLACEMENT POLICY 'fastStorage'
 		// But then it would be hard to still show it correctly in SHOW CREATE :(
 		if len(b[i].Options) > 0 {
-			// Hijacked error from below... TODO better error?
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does have unsupported options", b[i].Name.O))
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does have unsupported options", b[i].Name.O))
 		}
 		lessThan, ok := b[i].Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if !ok {
-			// Hijacked error from below... TODO better error?
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does not have the right type", b[i].Name.O))
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does not have the right type for LESS THAN", b[i].Name.O))
 		}
 		definedExpr := lessThan.Exprs[0]
 		generatedExpr := a[i].Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs[0]
@@ -546,8 +542,7 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 			if maxVG && maxVD {
 				continue
 			}
-			// Hijacked error from below... TODO better error?
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning MAXVALUE clause defined for partition %s differs between generated and defined", b[i].Name.O))
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s differs between generated and defined for MAXVALUE", b[i].Name.O))
 		}
 		cmpExpr := &ast.BinaryOperationExpr{
 			Op: opcode.EQ,
@@ -559,8 +554,7 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 			return err
 		}
 		if cmp.GetInt64() != 1 {
-			// Hijacked error from below... TODO better error?
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause for partition %s differs between generated and defined", b[i].Name.O))
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s differs between generated and defined for expression", b[i].Name.O))
 		}
 	}
 	return nil
@@ -584,38 +578,34 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		return nil
 	}
 	if tbInfo.Partition.Type != model.PartitionTypeRange {
-		// Hijacked error from below... TODO better error?
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only allowed on RANGE partitioning")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only allowed on RANGE partitioning")
 	}
 	if len(partOptions.ColumnNames) > 1 || len(tbInfo.Partition.Columns) > 1 {
-		// Hijacked error from below... TODO better error?
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning does not allow RANGE COLUMNS with more than one column")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column")
 	}
 	var partCol *model.ColumnInfo
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
 		if partCol == nil {
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning internal error, could not find any RANGE COLUMNS")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, could not find any RANGE COLUMNS")
 		}
 		// Only support Datetime, date and INT column types for RANGE INTERVAL! (TODO: list and check all!)
 		switch partCol.FieldType.EvalType() {
 		case types.ETInt, types.ETDatetime:
 		default:
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only supports Date, Datetime and INT types")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports Date, Datetime and INT types")
 		}
 	}
 	// Allow given partition definitions, but check it later!
 	definedPartDefs := partOptions.Definitions
 	partOptions.Definitions = make([]*ast.PartitionDefinition, 0, 1)
 	if partOptions.Interval.FirstRangeEnd == nil || partOptions.Interval.LastRangeEnd == nil {
-		// Hijacked error from below... TODO better error?
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning currently requires FIRST and LAST partitions to be defined")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined")
 	}
 	switch partOptions.Interval.IntervalExpr.TimeUnit {
 	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitDayMinute, ast.TimeUnitSecond:
 	default:
-		// Hijacked error from below... TODO better error?
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECONDS as time unit")
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECONDS as time unit")
 	}
 	first := ast.PartitionDefinitionClauseLessThan{
 		Exprs: []ast.ExprNode{*partOptions.Interval.FirstRangeEnd},
@@ -711,7 +701,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	var timeUnit ast.TimeUnitType
 	if partInfo != nil {
 		if tp == ast.AlterTablePartition {
-			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions")
 		}
 		timeUnit = ast.ToTimeUnit(tbInfo.Partition.IntervalUnit)
 		lastExpr = partitionOptions.Expr
@@ -753,7 +743,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 				intervalExpr = ast.NewValueExpr(tbInfo.Partition.IntervalExpr, "", "")
 			}
 		default:
-			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions, no known alter type")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
 		}
 		partInfo.IntervalUnit = tbInfo.Partition.IntervalUnit
 		partInfo.IntervalNullPart = tbInfo.Partition.IntervalNullPart
@@ -761,7 +751,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		partInfo.IntervalExpr = tbInfo.Partition.IntervalExpr
 	} else {
 		if tp != ast.AlterTablePartition {
-			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs("Internal error during generating INTERVAL partitions")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating INTERVAL partitions")
 		}
 		startExpr = *partitionOptions.Interval.FirstRangeEnd
 		lastExpr = *partitionOptions.Interval.LastRangeEnd
@@ -837,12 +827,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 				return err
 			}
 			startStr := sb.String()
-			errStr := fmt.Sprintf("LAST expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
+			errStr := fmt.Sprintf("INTERVAL LAST PARTITION: LAST expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
 				lastStr, startStr, exprStr)
 			if timeUnit != ast.TimeUnitInvalid {
 				errStr = errStr + " " + timeUnit.String()
 			}
-			return dbterror.ErrIntervalPartitionFail.GenWithStackByArgs(errStr + ")")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
 		}
 		valStr, err := currVal.ToString()
 		if err != nil {
@@ -908,8 +898,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 				return err
 			}
 		default:
-			// TODO fix error message
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Internal error during generating altered INTERVAL partitions, no known alter type")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
 		}
 	}
 	return nil
