@@ -279,3 +279,18 @@ func TestGlobalKillUsageInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, usage.GlobalKill)
 }
+
+func TestPagingUsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnablePaging == variable.DefTiDBEnablePaging)
+
+	tk.Session().GetSessionVars().EnablePaging = false
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnablePaging)
+}

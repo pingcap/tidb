@@ -49,6 +49,7 @@ type featureUsage struct {
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
 	LogBackup             bool                             `json:"logBackup"`
+	EnablePaging          bool                             `json:"enablePaging"`
 }
 
 type placementPolicyUsage struct {
@@ -84,6 +85,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.GlobalKill = getGlobalKillUsageInfo()
 
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
+
+	usage.EnablePaging = getPagingUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -286,4 +289,11 @@ func getGlobalKillUsageInfo() bool {
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
 	return utils.CheckLogBackupEnabled(ctx)
+}
+
+// getPagingUsageInfo gets the value of system variable `tidb_enable_paging`.
+// This variable is set to true as default since v6.2.0. We want to know many
+// users set it to false manually.
+func getPagingUsageInfo(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().EnablePaging
 }

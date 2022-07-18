@@ -52,7 +52,7 @@ rm -rf "/${TEST_DIR}/$DB"
 run_br backup full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 run_sql "DROP DATABASE $DB"
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 # wating for TiFlash sync
 sleep 100
