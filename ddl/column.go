@@ -638,7 +638,7 @@ func rollbackModifyColumnJobWithData(d *ddlCtx, t *meta.Meta, tblInfo *model.Tab
 func removeChangingColAndIdxs(tblInfo *model.TableInfo, changingColID int64) {
 	restIdx := tblInfo.Indices[:0]
 	for _, idx := range tblInfo.Indices {
-		if !idx.HasColumn(tblInfo, changingColID) {
+		if !idx.HasColumnInIndexColumns(tblInfo, changingColID) {
 			restIdx = append(restIdx, idx)
 		}
 	}
@@ -944,7 +944,7 @@ func updateChangingCol(col *model.ColumnInfo, newName model.CIStr, newOffset int
 func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.IndexInfo {
 	var indexInfos []*model.IndexInfo
 	for _, idx := range tblInfo.Indices {
-		if idx.HasColumn(tblInfo, colID) {
+		if idx.HasColumnInIndexColumns(tblInfo, colID) {
 			indexInfos = append(indexInfos, idx)
 		}
 	}
@@ -954,7 +954,7 @@ func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.Inde
 func buildRelatedIndexIDs(tblInfo *model.TableInfo, colID int64) []int64 {
 	var oldIdxIDs []int64
 	for _, idx := range tblInfo.Indices {
-		if idx.HasColumn(tblInfo, colID) {
+		if idx.HasColumnInIndexColumns(tblInfo, colID) {
 			oldIdxIDs = append(oldIdxIDs, idx.ID)
 		}
 	}
