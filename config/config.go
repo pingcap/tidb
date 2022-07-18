@@ -737,12 +737,12 @@ type TrxSummary struct {
 	// how many transaction summary in `transaction_summary` each TiDB node should keep.
 	TransactionSummaryCapacity uint `toml:"transaction-summary-capacity" json:"transaction-summary-capacity"`
 	// how many transaction id to digest mapping in `trx_id_digest` each TiDB node should keep.
-	TransactionIDDigestsCapacity uint `toml:"transaction-id-digests-capacity" json:"transaction-summary-capacity"`
+	TransactionIDDigestsCapacity uint `toml:"transaction-id-digests-capacity" json:"transaction-id-digests-capacity"`
 	// how long a transaction should be executed to make it be recorded in `transaction_id_digest`.
 	TransactionIDDigestMinDuration uint `toml:"transaction-id-digest-min-duration" json:"transaction-id-digest-min-duration"`
 }
 
-// Valid Validatse TrxSummary configs
+// Valid validates TrxSummary configs
 func (config *TrxSummary) Valid() error {
 	if config.TransactionSummaryCapacity > 5000 {
 		return errors.New("transaction-summary.transaction-summary-capacity should not be larger than 5000")

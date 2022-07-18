@@ -105,7 +105,7 @@ func (pq *trxIDDigests) onTrxEnd(trxID uint64, duration time.Duration, digest ui
 }
 
 func (pq *trxIDDigests) dump() [][]types.Datum {
-	var result [][]types.Datum
+	result := make([][]types.Datum, 0, len(pq.idDigests))
 	for i := 0; i < len(pq.idDigests); i++ {
 		digest := fmt.Sprintf("%x", pq.idDigests[i].Digest)
 		result = append(result, []types.Datum{
