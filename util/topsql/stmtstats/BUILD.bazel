@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "stmtstats_test",
+    timeout = "short",
     srcs = [
         "aggregator_test.go",
         "kv_exec_count_test.go",

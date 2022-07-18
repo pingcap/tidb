@@ -107,7 +107,7 @@ func TestBinaryPlanInExplainAndSlowLog(t *testing.T) {
 		SQL        string
 		BinaryPlan *tipb.ExplainData
 	}
-	planSuiteData := core.GetExplainBinarySuiteData()
+	planSuiteData := core.GetBinaryPlanSuiteData()
 	planSuiteData.GetTestCases(t, &input, &output)
 
 	for i, test := range input {

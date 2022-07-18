@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "texttree_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "texttree_test.go",

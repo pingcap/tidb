@@ -17,7 +17,7 @@ package task
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	"net/http"
 	"strings"
@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -402,33 +403,6 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 	return rs, nil
 }
 
-// checkRequirements will check some requirements before stream starts.
-func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
-	type backupStream struct {
-		EnableStreaming bool `json:"enable"`
-	}
-	type config struct {
-		BackupStream backupStream `json:"log-backup"`
-	}
-
-	supportBackupStream := true
-	hasTiKV := false
-	err := s.mgr.GetConfigFromTiKV(ctx, s.httpCli, func(resp *http.Response) error {
-		hasTiKV = true
-		c := &config{}
-		e := json.NewDecoder(resp.Body).Decode(c)
-		if e != nil {
-			return e
-		}
-		supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
-		return nil
-	})
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return hasTiKV && supportBackupStream, err
-}
-
 func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
@@ -504,7 +478,12 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	supportStream, err := streamMgr.checkRequirements(ctx)
+	se, err := g.CreateSession(streamMgr.mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
+	supportStream, err := utils.IsLogBackupEnabled(execCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1286,13 +1265,32 @@ func getLogRange(
 	logMinTS := mathutil.Max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalResolvedTS(ctx, s)
+	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	logMaxTS = mathutil.Max(logMinTS, logMaxTS)
 
 	return logMinTS, logMaxTS, nil
+}
+
+func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
+	var globalCheckPointTS uint64 = 0
+	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
+	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
+		if !strings.HasSuffix(path, ".ts") {
+			return nil
+		}
+
+		buff, err := s.ReadFile(ctx, path)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ts := binary.LittleEndian.Uint64(buff)
+		globalCheckPointTS = mathutil.Max(ts, globalCheckPointTS)
+		return nil
+	})
+	return globalCheckPointTS, errors.Trace(err)
 }
 
 // getFullBackupTS gets the snapshot-ts of full bakcup

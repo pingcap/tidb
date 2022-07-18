@@ -42,6 +42,7 @@ go_library(
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
+        "//util/paging",
         "//util/rowcodec",
         "//util/stmtsummary",
         "//util/stringutil",

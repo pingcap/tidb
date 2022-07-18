@@ -81,6 +81,9 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 			return 0, errors.Errorf("unknown task type %v", taskType)
 		}
 		selfCost = getCardinality(p.children[0], costFlag) * cpuFactor
+		if p.fromDataSource {
+			selfCost = 0 // for compatibility, see https://github.com/pingcap/tidb/issues/36243
+		}
 	case modelVer2: // selection cost: rows * num-filters * cpu-factor
 		var cpuFactor float64
 		switch taskType {
@@ -401,7 +404,7 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	switch p.ctx.GetSessionVars().CostModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-		if p.Desc {
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
@@ -438,7 +441,7 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	switch p.ctx.GetSessionVars().CostModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-		if p.Desc {
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
