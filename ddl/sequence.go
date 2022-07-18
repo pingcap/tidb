@@ -15,6 +15,8 @@
 package ddl
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mathutil"
-	"math"
 )
 
 func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
