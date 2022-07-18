@@ -5576,24 +5576,24 @@ func TestIndexJoinCost(t *testing.T) {
 		`│ └─Selection_17 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_16 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─TableReader_8(Probe) 1.00 3.88 root  data:TableRangeScan_7`,
-		`  └─TableRangeScan_7 1.00 0.00 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo`))
+		`  └─TableRangeScan_7 1.00 30.00 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo`))
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexScan
 		`IndexJoin_10 12487.50 235192.19 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
 		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
 		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexReader_9(Probe) 1.25 5.89 root  index:Selection_8`,
-		`  └─Selection_8 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
+		`  └─Selection_8 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_7 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ * from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexLookup
 		`IndexJoin_11 12487.50 531469.38 root  inner join, inner:IndexLookUp_10, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
 		`├─TableReader_23(Build) 9990.00 36412.58 root  data:Selection_22`,
 		`│ └─Selection_22 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_21 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexLookUp_10(Probe) 1.25 35.55 root  `,
-		`  ├─Selection_9(Build) 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`  │ └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`,
-		`  └─TableRowIDScan_8(Probe) 1.25 0.00 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo`))
+		`  ├─Selection_9(Build) 1.25 75.08 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`  │ └─IndexRangeScan_7 1.25 71.32 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`,
+		`  └─TableRowIDScan_8(Probe) 1.25 71.25 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo`))
 
 	tk.MustQuery("explain format=verbose select /*+ inl_hash_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a").Check(testkit.Rows(
 		`IndexHashJoin_12 12487.50 235192.19 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
@@ -5601,16 +5601,16 @@ func TestIndexJoinCost(t *testing.T) {
 		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexReader_9(Probe) 1.25 5.89 root  index:Selection_8`,
-		`  └─Selection_8 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
+		`  └─Selection_8 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_7 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery("explain format=verbose select /*+ inl_merge_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a").Check(testkit.Rows(
 		`IndexMergeJoin_17 12487.50 229210.68 root  inner join, inner:IndexReader_15, outer key:test.t_outer.a, inner key:test.t_inner_idx.a`,
 		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
 		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexReader_15(Probe) 1.25 5.89 root  index:Selection_14`,
-		`  └─Selection_14 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_13 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:true, stats:pseudo`))
+		`  └─Selection_14 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_13 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:true, stats:pseudo`))
 }
 
 func TestHeuristicIndexSelection(t *testing.T) {
