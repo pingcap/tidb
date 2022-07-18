@@ -765,6 +765,14 @@
     ]
   },
   {
+    "name": "TestSkewDistinctAgg",
+    "cases": [
+      "select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y')",
+      "select d, a, count(*), count(b), count(distinct c) from t group by d, a",
+      "select d, sum(a), count(b), avg(distinct c) from t group by d"
+    ]
+  },
+  {
     "name": "TestMPPSinglePartitionType",
     "cases": [
       // test normal aggregation, MPP2Phase.

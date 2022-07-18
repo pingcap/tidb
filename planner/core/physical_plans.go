@@ -468,6 +468,7 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
+	prop          *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -569,6 +570,7 @@ type PhysicalTableScan struct {
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
+	prop        *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1295,6 +1297,11 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	// The flag indicates whether this Selection is from a DataSource.
+	// The flag is only used by cost model for compatibility and will be removed later.
+	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
+	fromDataSource bool
 }
 
 // Clone implements PhysicalPlan interface.
