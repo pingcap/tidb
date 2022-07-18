@@ -91,6 +91,7 @@ func GetPartitionPruneModeOption(pruneMode string) OptionFuncAlias {
 	}
 }
 
+// GetAnalyzeSnapshotOption returns a function which tells ExecRestrictedStmt/SQL to run with analyzeSnapshot.
 func GetAnalyzeSnapshotOption(analyzeSnapshot bool) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.AnalyzeSnapshot = new(bool)
