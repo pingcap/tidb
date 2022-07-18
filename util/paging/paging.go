@@ -23,7 +23,7 @@ import "math"
 // Compare with the common unary request, paging request allows early access of data, it offers a streaming-like way processing data.
 // TODO: may make the paging parameters configurable.
 const (
-	MinPagingSize      uint64 = 64
+	MinPagingSize      uint64 = 1
 	maxPagingSizeShift        = 7
 	pagingSizeGrow            = 2
 	MaxPagingSize             = MinPagingSize << maxPagingSizeShift
