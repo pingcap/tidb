@@ -76,7 +76,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				if err != nil {
 					return ver, err
 				}
-				sub.FromProxyJob(&proxyJob)
+				sub.FromProxyJob(&proxyJob, ver)
 				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
@@ -95,7 +95,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 			proxyJob := sub.ToProxyJob(job)
 			ver, err = w.runDDLJob(d, t, &proxyJob)
-			sub.FromProxyJob(&proxyJob)
+			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
 		}
@@ -122,7 +122,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				schemaVersionGenerated = true
 			}
 			ver, err = w.runDDLJob(d, t, &proxyJob)
-			sub.FromProxyJob(&proxyJob)
+			sub.FromProxyJob(&proxyJob, ver)
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
@@ -144,7 +144,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		proxyJob := sub.ToProxyJob(job)
 		ver, err = w.runDDLJob(d, t, &proxyJob)
-		sub.FromProxyJob(&proxyJob)
+		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}
 	return finishMultiSchemaJob(job, t)
@@ -366,12 +366,12 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 }
 
 func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
-	ver, err = t.GetSchemaVersion()
-	if err != nil {
-		return ver, err
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		if ver < sub.SchemaVer {
+			ver = sub.SchemaVer
+		}
 	}
-	var tblInfo *model.TableInfo
-	tblInfo, err = t.GetTable(job.SchemaID, job.TableID)
+	tblInfo, err := t.GetTable(job.SchemaID, job.TableID)
 	if err != nil {
 		return ver, err
 	}
