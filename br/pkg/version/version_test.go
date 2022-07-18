@@ -48,19 +48,31 @@ func TestCheckClusterVersion(t *testing.T) {
 	{
 		build.ReleaseVersion = "v6.2.0"
 		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v5.4.2`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.2.0"
+		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.0.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
 	}
 
 	{
-		build.ReleaseVersion = "v6.1.0"
+		build.ReleaseVersion = "v6.2.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.1.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.NoError(t, err)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.2.0\+, please `, err.Error())
 	}
 
 	{
@@ -73,13 +85,32 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
-		build.ReleaseVersion = "v6.2.0"
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v5.4.2`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.Error(t, err)
+		require.Regexp(t, `^TiKV .* is too low when use PiTR, please `, err.Error())
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: `v6.1.0`}}
 		}
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
+		require.NoError(t, err)
+	}
+
+	{
+		build.ReleaseVersion = "v6.1.0"
+		mock.getAllStores = func() []*metapb.Store {
+			return []*metapb.Store{{Version: `v6.2.0`}}
+		}
+		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
 		require.Error(t, err)
-		require.Regexp(t, `^TiKV .* major version mismatch when use PiTR, please `, err.Error())
+		require.Regexp(t, `^TiKV .* version mismatch when use PiTR v6.1.0, please `, err.Error())
 	}
 
 	{

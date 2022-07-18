@@ -130,18 +130,31 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 }
 
 // CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
-// Note: BR'version > 6.1.0 at least in this function
+// Note: BR'version >= 6.1.0 at least in this function
 func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
 	}
 
-	// The versions of BR and TiKV should be the same, such as
-	// BR 6.1 <-> TiKV 6.1, BR 6.2 <-> TiKV 6.2
-	if BRVersion.Major != tikvVersion.Major || BRVersion.Minor != tikvVersion.Minor {
-		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s major version mismatch when use PiTR, please use the same version of BR",
-			s.Address, tikvVersion, build.ReleaseVersion)
+	// tikvVersion should at least 6.1.0
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor == 0) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s is too low when use PiTR, please update tikv's version to at least v6.1.0(v6.2.0+ recommanded)",
+			s.Address, tikvVersion)
+	}
+
+	// The versions of BR and TiKV should be the same when use BR 6.1.0
+	if BRVersion.Major == 6 && BRVersion.Minor == 1 {
+		if tikvVersion.Major != 6 || tikvVersion.Minor != 1 {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch when use PiTR v6.1.0, please use the same version of BR",
+				s.Address, tikvVersion, build.ReleaseVersion)
+		}
+	} else {
+		// If BRVersion > v6.1.0, the version of TiKV should be at least v6.2.0
+		if tikvVersion.Major == 6 && tikvVersion.Minor <= 1 {
+			return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch when use PiTR v6.2.0+, please use the tikv with version v6.2.0+",
+				s.Address, tikvVersion, build.ReleaseVersion)
+		}
 	}
 
 	return nil
