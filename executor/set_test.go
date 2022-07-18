@@ -690,6 +690,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
 
+	// test for tidb_opt_skew_distinct_agg
+	tk.MustQuery("select @@session.tidb_opt_skew_distinct_agg").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set session tidb_opt_skew_distinct_agg=1")
+	tk.MustQuery("select @@session.tidb_opt_skew_distinct_agg").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_opt_skew_distinct_agg").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_opt_skew_distinct_agg=1")
+	tk.MustQuery("select @@global.tidb_opt_skew_distinct_agg").Check(testkit.Rows("1"))
+
 	// the value of max_allowed_packet should be a multiple of 1024
 	tk.MustExec("set @@global.max_allowed_packet=16385")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '16385'"))
