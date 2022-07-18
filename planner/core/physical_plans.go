@@ -468,6 +468,7 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
+	prop          *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -569,6 +570,7 @@ type PhysicalTableScan struct {
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
+	prop        *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
