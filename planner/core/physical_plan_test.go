@@ -1921,6 +1921,47 @@ func TestIssue30965(t *testing.T) {
 			"      └─TableRowIDScan 10.00 cop[tikv] table:t30965 keep order:false, stats:pseudo"))
 }
 
+func TestSkewDistinctAgg(t *testing.T) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	planSuiteData := core.GetPlanSuiteData()
+	planSuiteData.GetTestCases(t, &input, &output)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` int(11), `b` int(11), `c` int(11), `d` date)")
+	tk.MustExec("insert into t (a,b,c,d) value(1,4,5,'2019-06-01')")
+	tk.MustExec("insert into t (a,b,c,d) value(2,null,1,'2019-07-01')")
+	tk.MustExec("insert into t (a,b,c,d) value(3,4,5,'2019-08-01')")
+	tk.MustExec("insert into t (a,b,c,d) value(3,6,2,'2019-09-01')")
+	tk.MustExec("insert into t (a,b,c,d) value(10,4,null,'2020-06-01')")
+	tk.MustExec("insert into t (a,b,c,d) value(20,null,1,'2020-07-01')")
+	tk.MustExec("insert into t (a,b,c,d) value(30,4,5,'2020-08-01')")
+	tk.MustExec("insert into t (a,b,c,d) value(30,6,5,'2020-09-01')")
+	tk.MustQuery("select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) " +
+		"from t group by date_format(d,'%Y') order by df;").Check(
+		testkit.Rows("2019 9 3 3", "2020 90 3 2"))
+	tk.MustExec("set @@tidb_opt_skew_distinct_agg=1")
+	tk.MustQuery("select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) " +
+		"from t group by date_format(d,'%Y') order by df;").Check(
+		testkit.Rows("2019 9 3 3", "2020 90 3 2"))
+
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestMPPSinglePartitionType(t *testing.T) {
 	var (
 		input  []string
