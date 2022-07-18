@@ -1326,6 +1326,16 @@ func (index *IndexInfo) HasPrefixIndex() bool {
 	return false
 }
 
+// HasColumn checks whether the index contains the column with the specified ID.
+func (index *IndexInfo) HasColumn(tblInfo *TableInfo, colID int64) bool {
+	for _, ic := range index.Columns {
+		if tblInfo.Columns[ic.Offset].ID == colID {
+			return true
+		}
+	}
+	return false
+}
+
 // ConstraintInfo provides meta data describing check-expression constraint.
 type ConstraintInfo struct {
 	ID             int64       `json:"id"`
