@@ -308,6 +308,7 @@ func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBette
 
 // getTaskPlanCost returns the cost of this task.
 // The new cost interface will be used if EnableNewCostInterface is true.
+// The second returned value indicates whether this task is valid.
 func getTaskPlanCost(t task) (float64, bool, error) {
 	if t.invalid() {
 		return math.MaxFloat64, true, nil
