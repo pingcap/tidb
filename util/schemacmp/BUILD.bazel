@@ -17,6 +17,7 @@ go_library(
         "//parser/mysql",
         "//parser/types",
         "//types",
+        "@org_golang_x_exp//slices",
     ],
 )
 

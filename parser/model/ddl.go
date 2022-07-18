@@ -67,9 +67,9 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	__DEPRECATED_ActionAddColumns       ActionType = 37
-	__DEPRECATED_ActionDropColumns      ActionType = 38
-	ActionModifyTableAutoIdCache        ActionType = 39
+	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
+	ActionModifyTableAutoIdCache        ActionType = 39 //nolint:revive
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
 	ActionExchangeTablePartition        ActionType = 42
@@ -79,10 +79,10 @@ const (
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
-	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
+	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46 //nolint:revive
 
 	ActionRenameTables                  ActionType = 47
-	__DEPRECATED_ActionDropIndexes      ActionType = 48
+	ActionDropIndexes                   ActionType = 48
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
@@ -138,8 +138,8 @@ var actionMap = map[ActionType]string{
 	ActionCreateSequence:                "create sequence",
 	ActionAlterSequence:                 "alter sequence",
 	ActionDropSequence:                  "drop sequence",
-	__DEPRECATED_ActionAddColumns:       "add multi-columns",
-	__DEPRECATED_ActionDropColumns:      "drop multi-columns",
+	ActionAddColumns:                    "add multi-columns",
+	ActionDropColumns:                   "drop multi-columns",
 	ActionModifyTableAutoIdCache:        "modify auto id cache",
 	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
 	ActionAlterIndexVisibility:          "alter index visibility",
@@ -147,7 +147,7 @@ var actionMap = map[ActionType]string{
 	ActionAddCheckConstraint:            "add check constraint",
 	ActionDropCheckConstraint:           "drop check constraint",
 	ActionAlterCheckConstraint:          "alter check constraint",
-	__DEPRECATED_ActionDropIndexes:      "drop multi-indexes",
+	ActionDropIndexes:                   "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
 	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
@@ -234,6 +234,7 @@ type TimeZoneLocation struct {
 	location *time.Location
 }
 
+// GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 	if tz.location != nil {
 		return tz.location, nil
@@ -271,6 +272,7 @@ type MultiSchemaInfo struct {
 	PositionColumns []CIStr `json:"-"`
 }
 
+// NewMultiSchemaInfo new a MultiSchemaInfo.
 func NewMultiSchemaInfo() *MultiSchemaInfo {
 	return &MultiSchemaInfo{
 		SubJobs:    nil,
@@ -278,6 +280,7 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 	}
 }
 
+// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
 	Args        []interface{}   `json:"-"`
@@ -341,6 +344,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 	}
 }
 
+// FromProxyJob converts a proxy job to a sub-job.
 func (sub *SubJob) FromProxyJob(proxyJob *Job) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
@@ -643,10 +647,12 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+// IsQueueing returns whether job is queuing or not.
 func (job *Job) IsQueueing() bool {
 	return job.State == JobStateQueueing
 }
 
+// NotStarted returns true if the job is never run by a worker.
 func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }

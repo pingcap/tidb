@@ -1041,7 +1041,7 @@ func onModifyTableComment(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
-		return 0, nil
+		return ver, nil
 	}
 
 	tblInfo.Comment = comment
@@ -1126,7 +1126,7 @@ func (w *worker) onSetTableFlashReplica(d *ddlCtx, t *meta.Meta, job *model.Job)
 
 	// Ban setting replica count for tables in system database.
 	if tidb_util.IsMemOrSysDB(job.SchemaName) {
-		return ver, errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
+		return ver, errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)

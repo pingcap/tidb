@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//util/hack",
         "//util/texttree",
         "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_errors//:errors",

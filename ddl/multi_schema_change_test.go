@@ -1037,6 +1037,7 @@ func TestMultiSchemaChangeTableOption(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+
 	tk.MustExec("create table t (a int auto_increment primary key, b int);")
 	tk.MustExec("alter table t modify column b tinyint, auto_increment = 100;")
 	tk.MustExec("insert into t (b) values (1);")
@@ -1051,9 +1052,9 @@ func TestMultiSchemaChangeTableOption(t *testing.T) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int) charset = utf8 shard_row_id_bits=2;")
-	tk.MustExec("alter table t modify column a tinyint, shard_row_id_bits = 3, comment = 'abc', charset = utf8mb4;")
+	tk.MustExec("alter table t modify column a tinyint, comment = 'abc', charset = utf8mb4;")
 	tk.MustQuery("select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where table_name = 't';").
-		Check(testkit.Rows("SHARD_BITS=3 abc utf8mb4_bin"))
+		Check(testkit.Rows("SHARD_BITS=2 abc utf8mb4_bin"))
 }
 
 func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
