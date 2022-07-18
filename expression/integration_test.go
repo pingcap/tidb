@@ -7465,12 +7465,6 @@ func TestIssue31600(t *testing.T) {
 		{"2022-12-12"},
 		{"2022-12-12"},
 	})
-	//tk.MustQuery("select coalesce(null, d, tm_fsp1, dt_fsp3) from t").Check([][]interface{}{
-	//	{"2022-12-12"},
-	//	{"2022-12-12"},
-	//	{"2022-12-12"},
-	//	{"2022-12-12"},
-	//})
 
 	tk.MustExec("drop table t")
 }
