@@ -262,18 +262,22 @@ var (
 	curTimeString        = fmt.Sprintf("%4d-%02d-%02d 12:59:59", year, int(month), day)
 	curTimeWithFspString = fmt.Sprintf("%4d-%02d-%02d 12:59:59.555000", year, int(month), day)
 	tm                   = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 0), mysql.TypeDatetime, types.DefaultFsp)
-	tmWithFsp            = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 000000), mysql.TypeDatetime, types.MaxFsp)
+	tmWithFsp            = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 555000), mysql.TypeDatetime, types.MaxFsp)
+	tmWithZeroFsp        = types.NewTime(types.FromDate(year, int(month), day, 12, 59, 59, 000000), mysql.TypeDatetime, types.MaxFsp)
 	// timeDatum indicates datetime "curYear-curMonth-curDay 12:59:59".
 	timeDatum = types.NewDatum(tm)
 	// timeWithFspDatum indicates datetime "curYear-curMonth-curDay 12:59:59.555000".
 	timeWithFspDatum = types.NewDatum(tmWithFsp)
 	duration         = types.Duration{
-		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond,
+		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second,
 		Fsp:      types.DefaultFsp}
 	// durationDatum indicates duration "12:59:59".
 	durationDatum   = types.NewDatum(duration)
 	durationWithFsp = types.Duration{
 		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond,
+		Fsp:      3}
+	durationWithZeroFsp = types.Duration{
+		Duration: 12*time.Hour + 59*time.Minute + 59*time.Second,
 		Fsp:      3}
 	// durationWithFspDatum indicates duration "12:59:59.555"
 	durationWithFspDatum = types.NewDatum(durationWithFsp)
