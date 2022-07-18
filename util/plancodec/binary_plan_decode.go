@@ -62,7 +62,7 @@ func DecodeBinaryPlan(binaryPlan string) (string, error) {
 	// length for a row * (row count + 1(for title row))
 	totalBytes := singleRowLen * (len(rows) + 1)
 	// there is a "\n" at the beginning
-	totalBytes += 1
+	totalBytes++
 
 	// 3. format the strings and get the final result
 	var b strings.Builder
@@ -250,17 +250,17 @@ func printAccessObject(pbAccessObjs []*tipb.AccessObject) string {
 			if ao == nil || ao.DynamicPartitionObjects == nil {
 				return ""
 			}
-			AOs := ao.DynamicPartitionObjects.Objects
-			if len(AOs) == 0 {
+			aos := ao.DynamicPartitionObjects.Objects
+			if len(aos) == 0 {
 				return ""
 			}
 			// If it only involves one table, just print the partitions.
-			if len(AOs) == 1 {
-				return printDynamicPartitionObject(AOs[0])
+			if len(aos) == 1 {
+				return printDynamicPartitionObject(aos[0])
 			}
 			var b strings.Builder
 			// If it involves multiple tables, we also need to print the table name.
-			for i, access := range AOs {
+			for i, access := range aos {
 				if access == nil {
 					continue
 				}
