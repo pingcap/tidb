@@ -1391,8 +1391,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
 			ExchangePartitionFlag:  true,
-			ExchangePartitionId:    ptID,
-			ExchangePartitionDefId: defID,
+			ExchangePartitionID:    ptID,
+			ExchangePartitionDefID: defID,
 		}
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
