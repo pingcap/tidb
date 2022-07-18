@@ -2728,5 +2728,5 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	} else if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
-	return s.DefaultStrMatchSelectivity
+	return 1 - s.DefaultStrMatchSelectivity
 }

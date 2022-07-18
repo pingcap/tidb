@@ -56,67 +56,67 @@
         "Result": null
       },
       {
-        "SQL": "explain select * from t where a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%'",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%'",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection_7 8000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 8000.00 root  regexp(test.t.b, \".*test.*\")",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "Selection_7 8000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 8000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' and a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%' and a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' or a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' or a + 10 > 100",
         "Result": [
-          "TableReader_7 9600.00 root  data:Selection_6",
-          "└─Selection_6 9600.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 9600.00 root  data:Selection",
+          "└─Selection 9600.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -124,67 +124,67 @@
         "Result": null
       },
       {
-        "SQL": "explain select * from t where a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%'",
         "Result": [
-          "TableReader_7 9000.00 root  data:Selection_6",
-          "└─Selection_6 9000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 9000.00 root  data:Selection",
+          "└─Selection 9000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%'",
         "Result": [
-          "TableReader_7 9000.00 root  data:Selection_6",
-          "└─Selection_6 9000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection_7 9000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 9000.00 root  regexp(test.t.b, \".*test.*\")",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "Selection_7 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 1000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' and a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%' and a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' or a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' or a + 10 > 100",
         "Result": [
-          "TableReader_7 9800.00 root  data:Selection_6",
-          "└─Selection_6 9800.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 9800.00 root  data:Selection",
+          "└─Selection 9800.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -192,67 +192,83 @@
         "Result": null
       },
       {
-        "SQL": "explain select * from t where a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%'",
         "Result": [
-          "TableReader_7 1000.00 root  data:Selection_6",
-          "└─Selection_6 1000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%'",
         "Result": [
-          "TableReader_7 1000.00 root  data:Selection_6",
-          "└─Selection_6 1000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 9000.00 root  data:Selection",
+          "└─Selection 9000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection_7 1000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 1000.00 root  regexp(test.t.b, \".*test.*\")",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b rlike '.*test.*'",
         "Result": [
-          "Selection_7 1000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 1000.00 root  regexp(test.t.b, \".*test.*\")",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b not rlike '.*test.*'",
         "Result": [
-          "TableReader_7 1000.00 root  data:Selection_6",
-          "└─Selection_6 1000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "TableReader_7 1000.00 root  data:Selection_6",
-          "└─Selection_6 1000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' or a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' and a + 10 > 100",
         "Result": [
-          "TableReader_7 8200.00 root  data:Selection_6",
-          "└─Selection_6 8200.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%' and a + 10 > 100",
+        "Result": [
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' or a + 10 > 100",
+        "Result": [
+          "TableReader 8200.00 root  data:Selection",
+          "└─Selection 8200.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -260,69 +276,73 @@
         "Result": null
       },
       {
-        "SQL": "explain select * from t where a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%'",
         "Result": [
-          "TableReader_7 1000.00 root  data:Selection_6",
-          "└─Selection_6 1000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%'",
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%'",
         "Result": [
-          "TableReader_7 9000.00 root  data:Selection_6",
-          "└─Selection_6 9000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 9000.00 root  data:Selection",
+          "└─Selection 9000.00 cop[tikv]  not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b regexp '.*test.*'",
         "Result": [
-          "Selection_7 1000.00 root  regexp(test.t.b, \".*test.*\")",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 1000.00 root  regexp(test.t.b, \".*test.*\")",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not regexp '.*test.*'",
+        "SQL": "explain format = 'brief' select * from t where b not regexp '.*test.*'",
         "Result": [
-          "Selection_7 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
-          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Selection 9000.00 root  not(istrue_with_null(regexp(test.t.b, \".*test.*\")))",
+          "└─TableReader 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' and a + 10 > 100",
         "Result": [
-          "TableReader_7 1000.00 root  data:Selection_6",
-          "└─Selection_6 1000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), like(test.t.b, \"%test%\", 92)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b not like '%test%' and a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b not like '%test%' and a + 10 > 100",
         "Result": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  gt(plus(test.t.a, 10), 100), not(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain select * from t where b like '%test%' or a + 10 > 100",
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' or a + 10 > 100",
         "Result": [
-          "TableReader_7 8200.00 root  data:Selection_6",
-          "└─Selection_6 8200.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader 8200.00 root  data:Selection",
+          "└─Selection 8200.00 cop[tikv]  or(like(test.t.b, \"%test%\", 92), gt(plus(test.t.a, 10), 100))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTopNAssistedEstimation",
+    "Cases": []
   }
 ]

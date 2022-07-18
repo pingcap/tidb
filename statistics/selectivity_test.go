@@ -931,3 +931,66 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func TestTopNAssistedEstimation(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	h := dom.StatsHandle()
+	h.Clear()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 3000")
+
+	collate.SetNewCollationEnabledForTest(true)
+
+	tk.MustExec("create table t(" +
+		"a varchar(100) charset utf8mb4 collate utf8mb4_bin," +
+		"b varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
+		"c varchar(100) charset utf8mb4 collate utf8mb4_general_ci," +
+		"d varchar(100) charset gbk collate gbk_bin," +
+		"e varchar(100) charset gbk collate gbk_chinese_ci," +
+		"f varbinary(100))")
+	// data distribution:
+	// "111abc111", "111cba111", "111234111": 10 rows for each value
+	// null: 3 rows
+	// "tttttt", "uuuuuu", "vvvvvv", "wwwwww", "xxxxxx", "yyyyyy", "zzzzzz": 1 rows for each value
+	// total: 40 rows
+	for i := 0; i < 10; i++ {
+		tk.MustExec(`insert into t value("111abc111", "111abc111", "111abc111", "111abc111", "111abc111", "111abc111")`)
+		tk.MustExec(`insert into t value("111cba111", "111cba111", "111cba111", "111cba111", "111cba111", "111cba111")`)
+		tk.MustExec(`insert into t value("111234111", "111234111", "111234111", "111234111", "111234111", "111234111")`)
+	}
+	for i := 0; i < 3; i++ {
+		tk.MustExec(`insert into t value(null, null, null, null, null, null)`)
+	}
+	tk.MustExec(`insert into t value("tttttt", "tttttt", "tttttt", "tttttt", "tttttt", "tttttt")`)
+	tk.MustExec(`insert into t value("uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu", "uuuuuu")`)
+	tk.MustExec(`insert into t value("vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv", "vvvvvv")`)
+	tk.MustExec(`insert into t value("wwwwww", "wwwwww", "wwwwww", "wwwwww", "wwwwww", "wwwwww")`)
+	tk.MustExec(`insert into t value("xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx")`)
+	tk.MustExec(`insert into t value("yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy")`)
+	tk.MustExec(`insert into t value("zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz")`)
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec(`analyze table t`)
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+
+	statsSuiteData := statistics.GetIntegrationSuiteData()
+	statsSuiteData.GetTestCases(t, &input, &output)
+
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
