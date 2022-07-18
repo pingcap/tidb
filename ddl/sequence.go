@@ -15,9 +15,6 @@
 package ddl
 
 import (
-	"math"
-	"reflect"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mathutil"
+	"math"
 )
 
 func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -259,7 +257,6 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	shouldUpdateVer := !reflect.DeepEqual(*tblInfo.Sequence, copySequenceInfo) || restart
 	tblInfo.Sequence = &copySequenceInfo
 
 	// Restart the sequence value.
@@ -276,7 +273,9 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 
 	// Store the sequence info into kv.
-	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, shouldUpdateVer)
+	// Set shouldUpdateVer always to be true even altering doesn't take effect, since some tools like drainer won't take
+	// care of SchemaVersion=0.
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
