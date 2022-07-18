@@ -237,7 +237,7 @@ const PWDHashLen = 40 // excluding the '*'
 const SHAPWDHashLen = 70
 
 // SM3PWDHashLen is the length of sm3_password's hash.
-const SM3PWDHashLen = 64
+const SM3PWDHashLen = 70
 
 // Command2Str is the command information to command name.
 var Command2Str = map[byte]string{

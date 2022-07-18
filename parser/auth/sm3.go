@@ -32,21 +32,23 @@ type sm3 struct {
 	digest      [8]uint32 // digest represents the partial evaluation of V
 	length      uint64    // length of the message
 	unhandleMsg []byte
+	blockSize   int
+	size        int
 }
 
-func (sm3 *sm3) ff0(x, y, z uint32) uint32 { return x ^ y ^ z }
+func ff0(x, y, z uint32) uint32 { return x ^ y ^ z }
 
-func (sm3 *sm3) ff1(x, y, z uint32) uint32 { return (x & y) | (x & z) | (y & z) }
+func ff1(x, y, z uint32) uint32 { return (x & y) | (x & z) | (y & z) }
 
-func (sm3 *sm3) gg0(x, y, z uint32) uint32 { return x ^ y ^ z }
+func gg0(x, y, z uint32) uint32 { return x ^ y ^ z }
 
-func (sm3 *sm3) gg1(x, y, z uint32) uint32 { return (x & y) | (^x & z) }
+func gg1(x, y, z uint32) uint32 { return (x & y) | (^x & z) }
 
-func (sm3 *sm3) p0(x uint32) uint32 { return x ^ sm3.leftRotate(x, 9) ^ sm3.leftRotate(x, 17) }
+func p0(x uint32) uint32 { return x ^ leftRotate(x, 9) ^ leftRotate(x, 17) }
 
-func (sm3 *sm3) p1(x uint32) uint32 { return x ^ sm3.leftRotate(x, 15) ^ sm3.leftRotate(x, 23) }
+func p1(x uint32) uint32 { return x ^ leftRotate(x, 15) ^ leftRotate(x, 23) }
 
-func (sm3 *sm3) leftRotate(x uint32, i uint32) uint32 { return x<<(i%32) | x>>(32-i%32) }
+func leftRotate(x uint32, i uint32) uint32 { return x<<(i%32) | x>>(32-i%32) }
 
 func (sm3 *sm3) pad() []byte {
 	msg := sm3.unhandleMsg
@@ -83,48 +85,48 @@ func (sm3 *sm3) update(msg []byte) [8]uint32 {
 			w[i] = binary.BigEndian.Uint32(msg[4*i : 4*(i+1)])
 		}
 		for i := 16; i < 68; i++ {
-			w[i] = sm3.p1(w[i-16]^w[i-9]^sm3.leftRotate(w[i-3], 15)) ^ sm3.leftRotate(w[i-13], 7) ^ w[i-6]
+			w[i] = p1(w[i-16]^w[i-9]^leftRotate(w[i-3], 15)) ^ leftRotate(w[i-13], 7) ^ w[i-6]
 		}
 		for i := 0; i < 64; i++ {
 			w1[i] = w[i] ^ w[i+4]
 		}
-		A, B, C, D, E, F, G, H := a, b, c, d, e, f, g, h
+		a1, b1, c1, d1, e1, f1, g1, h1 := a, b, c, d, e, f, g, h
 		for i := 0; i < 16; i++ {
-			SS1 := sm3.leftRotate(sm3.leftRotate(A, 12)+E+sm3.leftRotate(0x79cc4519, uint32(i)), 7)
-			SS2 := SS1 ^ sm3.leftRotate(A, 12)
-			TT1 := sm3.ff0(A, B, C) + D + SS2 + w1[i]
-			TT2 := sm3.gg0(E, F, G) + H + SS1 + w[i]
-			D = C
-			C = sm3.leftRotate(B, 9)
-			B = A
-			A = TT1
-			H = G
-			G = sm3.leftRotate(F, 19)
-			F = E
-			E = sm3.p0(TT2)
+			ss1 := leftRotate(leftRotate(a1, 12)+e1+leftRotate(0x79cc4519, uint32(i)), 7)
+			ss2 := ss1 ^ leftRotate(a1, 12)
+			tt1 := ff0(a1, b1, c1) + d1 + ss2 + w1[i]
+			tt2 := gg0(e1, f1, g1) + h1 + ss1 + w[i]
+			d1 = c1
+			c1 = leftRotate(b1, 9)
+			b1 = a1
+			a1 = tt1
+			h1 = g1
+			g1 = leftRotate(f1, 19)
+			f1 = e1
+			e1 = p0(tt2)
 		}
 		for i := 16; i < 64; i++ {
-			SS1 := sm3.leftRotate(sm3.leftRotate(A, 12)+E+sm3.leftRotate(0x7a879d8a, uint32(i)), 7)
-			SS2 := SS1 ^ sm3.leftRotate(A, 12)
-			TT1 := sm3.ff1(A, B, C) + D + SS2 + w1[i]
-			TT2 := sm3.gg1(E, F, G) + H + SS1 + w[i]
-			D = C
-			C = sm3.leftRotate(B, 9)
-			B = A
-			A = TT1
-			H = G
-			G = sm3.leftRotate(F, 19)
-			F = E
-			E = sm3.p0(TT2)
+			ss1 := leftRotate(leftRotate(a1, 12)+e1+leftRotate(0x7a879d8a, uint32(i)), 7)
+			ss2 := ss1 ^ leftRotate(a1, 12)
+			tt1 := ff1(a1, b1, c1) + d1 + ss2 + w1[i]
+			tt2 := gg1(e1, f1, g1) + h1 + ss1 + w[i]
+			d1 = c1
+			c1 = leftRotate(b1, 9)
+			b1 = a1
+			a1 = tt1
+			h1 = g1
+			g1 = leftRotate(f1, 19)
+			f1 = e1
+			e1 = p0(tt2)
 		}
-		a ^= A
-		b ^= B
-		c ^= C
-		d ^= D
-		e ^= E
-		f ^= F
-		g ^= G
-		h ^= H
+		a ^= a1
+		b ^= b1
+		c ^= c1
+		d ^= d1
+		e ^= e1
+		f ^= f1
+		g ^= g1
+		h ^= h1
 		msg = msg[64:]
 	}
 	var digest [8]uint32
@@ -135,10 +137,10 @@ func (sm3 *sm3) update(msg []byte) [8]uint32 {
 // BlockSize returns the hash's underlying block size.
 // The Write method must be able to accept any amount of data,
 // but it may operate more efficiently if all writes are a multiple of the block size.
-func (sm3 *sm3) BlockSize() int { return 64 }
+func (sm3 *sm3) BlockSize() int { return sm3.blockSize }
 
 // Size returns the number of bytes Sum will return.
-func (sm3 *sm3) Size() int { return 32 }
+func (sm3 *sm3) Size() int { return sm3.size }
 
 // Reset clears the internal state by zeroing bytes in the state buffer.
 // This can be skipped for a newly-created hash state; the default zero-allocated state is correct.
@@ -197,6 +199,8 @@ func SM3(data []byte) []byte {
 	var h sm3
 	h.Reset()
 	h.Write(data)
+	h.blockSize = 64
+	h.size = 32
 	return h.Sum(nil)
 }
 
