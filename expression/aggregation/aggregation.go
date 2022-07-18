@@ -221,8 +221,11 @@ func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 		}
 	}
 	switch aggFunc.Name {
-	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct, ast.AggFuncGroupConcat:
+	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
 		return true
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+		// Now tiflash doesn't support CastJsonAsReal and CastJsonAsString.
+		return aggFunc.Args[0].GetType().GetType() != mysql.TypeJSON
 	}
 	return false
 }
