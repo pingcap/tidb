@@ -59,6 +59,9 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 		baseTxnContextProvider: baseTxnContextProvider{
 			sctx:                  sctx,
 			causalConsistencyOnly: causalConsistencyOnly,
+			// For READ-COMMITTED isolation, every statement will use latest ts instead of transaction's start ts and
+			// some compatible works will be done for it. So it is not necessary to validate its information schema
+			infoSchemaValidated: true,
 			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.ReadCommitted

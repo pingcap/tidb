@@ -30,7 +30,10 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/util/breakpoint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -57,6 +60,14 @@ type baseTxnContextProvider struct {
 	txn             kv.Transaction
 	isTxnPrepared   bool
 	enterNewTxnType sessiontxn.EnterNewTxnType
+	// infoSchemaValidated is used to indicate whether the current information schema is compatible with start ts.
+	// Because for most scenes, information schema is fetched before start ts. So if the TSO is slow, it has a probability
+	// that the information has a stale version comparing with txn. At this time we need to fix the information schema and
+	// retry statement to avoid some unexpected result
+	infoSchemaValidated bool
+	// infoSchemaForFix indicates the "right" information schema for the txn. This variable should not be directly used by
+	// provider, it is only used for updating `p.inforSchema` when retry
+	infoSchemaForFix infoschema.InfoSchema
 }
 
 // OnInitialize is the hook that should be called when enter a new txn with this provider
@@ -66,6 +77,8 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.ctx = ctx
+	p.enterNewTxnType = tp
+
 	sessVars := p.sctx.GetSessionVars()
 	activeNow := true
 	switch tp {
@@ -74,6 +87,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		// There are two main steps here to enter a new txn:
 		// 1. prepareTxnWithOracleTS
 		// 2. ActivateTxn
+		p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
@@ -86,22 +100,27 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 			// There are two main steps here to enter a new txn:
 			// 1. prepareTxnWithOracleTS
 			// 2. ActivateTxn
+			p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 			if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 				return err
 			}
 			if err := p.prepareTxnWithOracleTS(); err != nil {
 				return err
 			}
+		} else {
+			// When we are reusing old txn, we should also reuse the old information schema of the txn
+			// to keep the fetching of information schema is always a head of start ts.
+			// This assumption will make it easier to validate the provider's information schema.
+			p.infoSchema = sessiontxn.GetTxnManager(p.sctx).GetTxnInfoSchema()
 		}
 		sessVars.SetInTxn(true)
 	case sessiontxn.EnterNewTxnBeforeStmt:
+		p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		activeNow = false
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
-	p.enterNewTxnType = tp
-	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -121,7 +140,14 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		_, err = p.ActivateTxn()
+		if _, err = p.ActivateTxn(); errExpiredInfoSchemaWithTxn.Equal(err) {
+			// When the information schema expired, it is safe to update `p.infoSchema` now because it is not used by anyone yet
+			logutil.Logger(p.ctx).Info("retry activate txn for expired information schema when initializing txn context provider",
+				zap.Uint64("conn", sessVars.ConnectionID),
+			)
+			p.fixInfoSchemaIfNeeded()
+			_, err = p.ActivateTxn()
+		}
 	}
 
 	return err
@@ -183,12 +209,14 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
+	p.fixInfoSchemaIfNeeded()
 	return nil
 }
 
 // OnStmtRetry is the hook that should be called when a statement is retried internally.
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
+	p.fixInfoSchemaIfNeeded()
 	return nil
 }
 
@@ -198,6 +226,11 @@ func (p *baseTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtE
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		// for pessimistic lock error, return the error by default
 		return sessiontxn.ErrorAction(err)
+	case sessiontxn.StmtErrAfterCompile, sessiontxn.StmtErrAfterExec:
+		if errExpiredInfoSchemaWithTxn.Equal(err) && p.infoSchemaForFix != nil {
+			return sessiontxn.RetryReady()
+		}
+		return sessiontxn.NoIdea()
 	default:
 		return sessiontxn.NoIdea()
 	}
@@ -224,6 +257,10 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	txnFuture := p.sctx.GetPreparedTxnFuture()
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
+		return nil, err
+	}
+
+	if err = p.validateInfoSchemaWithTxnStartTS(txn); err != nil {
 		return nil, err
 	}
 
@@ -268,6 +305,38 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	return txn, nil
 }
 
+func (p *baseTxnContextProvider) validateInfoSchemaWithTxnStartTS(txn kv.Transaction) error {
+	if p.infoSchemaValidated {
+		return nil
+	}
+
+	currentSchemaMetaVersion := p.infoSchema.SchemaMetaVersion()
+	if currentSchemaMetaVersion == p.sctx.GetDomainInfoSchema().SchemaMetaVersion() {
+		p.infoSchemaValidated = true
+		return nil
+	}
+
+	is, err := internal.GetSessionSnapshotInfoSchema(p.sctx, txn.StartTS())
+	if err != nil {
+		return err
+	}
+
+	if currentSchemaMetaVersion == is.SchemaMetaVersion() {
+		p.infoSchemaValidated = true
+		return nil
+	}
+
+	sessVars := p.sctx.GetSessionVars()
+	logutil.Logger(p.ctx).Info("information schema meta expired, not match with txn startTS",
+		zap.Uint64("conn", sessVars.ConnectionID),
+		zap.Int64("expiredSchemaMetaVersion", p.infoSchema.SchemaMetaVersion()),
+		zap.Int64("schemaMetaVersionForFix", is.SchemaMetaVersion()),
+		zap.Uint64("txnStartTS", txn.StartTS()),
+	)
+	p.infoSchemaForFix = is
+	return errExpiredInfoSchemaWithTxn
+}
+
 // prepareTxn prepares txn with an oracle ts future. If the snapshotTS is set,
 // the txn is prepared with it.
 func (p *baseTxnContextProvider) prepareTxn() error {
@@ -275,7 +344,10 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 		return nil
 	}
 
+	breakpoint.Inject(p.sctx, "providerPrepareTxn")
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		// We need not validate information schema when using `tidb_snapshot`.
+		p.infoSchemaValidated = true
 		return p.prepareTxnWithTS(snapshotTS)
 	}
 
@@ -291,6 +363,7 @@ func (p *baseTxnContextProvider) prepareTxnWithOracleTS() error {
 		return nil
 	}
 
+	breakpoint.Inject(p.sctx, "providerPrepareTxn")
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
 }
@@ -361,6 +434,21 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, 
 	}
 
 	return p.getSnapshotByTS(ts)
+}
+
+func (p *baseTxnContextProvider) fixInfoSchemaIfNeeded() {
+	if !p.infoSchemaValidated && p.infoSchemaForFix != nil {
+		sessVars := p.sctx.GetSessionVars()
+		logutil.Logger(p.ctx).Info("fix expired information schema meta",
+			zap.Uint64("conn", sessVars.ConnectionID),
+			zap.Int64("expiredSchemaMetaVersion", p.infoSchema.SchemaMetaVersion()),
+			zap.Int64("schemaMetaVersionForFix", p.infoSchemaForFix.SchemaMetaVersion()),
+		)
+		p.infoSchema = p.infoSchemaForFix
+		sessVars.TxnCtx.InfoSchema = p.infoSchema
+		p.infoSchemaValidated = true
+		p.infoSchemaForFix = nil
+	}
 }
 
 // getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related

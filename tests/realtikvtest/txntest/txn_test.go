@@ -181,3 +181,80 @@ func TestStatementErrorInTransaction(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
 }
+
+func TestExpiredTxnInformationSchemaWithTSO(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewSteppedTestKit(t, store)
+	defer tk.MustExec("rollback")
+	tk.MustExec("use test")
+
+	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
+	tk2.MustExec("use test")
+
+	tk.SetBreakPoints("providerPrepareTxn")
+	t.Run("begin with reuse ts", func(t *testing.T) {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a int, b int, index a(a))")
+
+		// session1 stopped before fetch tso. At this time, information schema has been initialized
+		tk.SteppedMustExec("begin").ExpectStopOnBreakPoint("providerPrepareTxn")
+
+		// session2 drops index 'a', insert new record (1, 1)
+		tk2.MustExec("alter table t1 drop index a")
+		tk2.MustExec("insert into t1 values(1, 1)")
+
+		// continue session1
+		tk.Continue().ExpectIdle()
+
+		// The result of the below two queries should be the same, can they should see the latest record (1, 1)
+		tk.MustQuery("select * from t1").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select /*+ USE_INDEX(t1, a)*/ * from t1").Check(testkit.Rows("1 1"))
+		tk.MustExec("rollback")
+	})
+
+	t.Run("begin without reuse ts", func(t *testing.T) {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a int, b int, index a(a))")
+
+		// to make the next begin not reuse tso
+		tk.MustExec("begin")
+
+		// session1 stopped before fetch tso. At this time, information schema has been initialized
+		tk.SteppedMustExec("begin").ExpectStopOnBreakPoint("providerPrepareTxn")
+
+		// session2 drops index 'a', insert new record (1, 1)
+		tk2.MustExec("alter table t1 drop index a")
+		tk2.MustExec("insert into t1 values(1, 1)")
+
+		// continue session1
+		tk.Continue().ExpectIdle()
+
+		// The result of the below two queries should be the same, can they should see the latest record (1, 1)
+		tk.MustQuery("select * from t1").Check(testkit.Rows("1 1"))
+		tk.MustQuery("select /*+ USE_INDEX(t1, a)*/ * from t1").Check(testkit.Rows("1 1"))
+		tk.MustExec("rollback")
+	})
+
+	t.Run("select", func(t *testing.T) {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a int, b int, index a(a))")
+		tk.MustExec("insert into t1 values(1, 1)")
+
+		// session1 stopped before fetch tso. At this time, information schema has been initialized
+		tk.SteppedMustQuery("select /*+ USE_INDEX(t1, a)*/ * from t1").ExpectStopOnBreakPoint("providerPrepareTxn")
+
+		// session2 drops index 'a', insert new record (2, 2) and update (1, 1) => (1, 10)
+		tk2.MustExec("alter table t1 drop index a")
+		tk2.MustExec("insert into t1 values(2, 2)")
+		tk2.MustExec("update t1 set b=10 where a=1")
+
+		// continue session1
+		tk.Continue().ExpectIdle()
+
+		// The result should be (1, 10), (2, 2) because session1's start ts is after session2's
+		tk.GetQueryResult().Check(testkit.Rows("1 10", "2 2"))
+	})
+}

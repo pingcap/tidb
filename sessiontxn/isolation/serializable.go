@@ -57,6 +57,6 @@ func (p *PessimisticSerializableTxnContextProvider) OnStmtErrorForNextAction(
 		// In oracle-like serializable isolation, we do not retry encountering pessimistic lock error.
 		return sessiontxn.ErrorAction(err)
 	default:
-		return sessiontxn.NoIdea()
+		return p.baseTxnContextProvider.OnStmtErrorForNextAction(point, err)
 	}
 }

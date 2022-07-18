@@ -110,7 +110,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
 	internal.SetTxnAssertionLevel(txn, sessVars.AssertionLevel)
-	is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
+	is, err := internal.GetSessionSnapshotInfoSchema(p.sctx, p.ts)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -134,7 +134,7 @@ func (p *StalenessTxnContextProvider) activateStaleTxn() error {
 
 func (p *StalenessTxnContextProvider) enterNewStaleTxnWithReplaceProvider() error {
 	if p.is == nil {
-		is, err := GetSessionSnapshotInfoSchema(p.sctx, p.ts)
+		is, err := internal.GetSessionSnapshotInfoSchema(p.sctx, p.ts)
 		if err != nil {
 			return err
 		}

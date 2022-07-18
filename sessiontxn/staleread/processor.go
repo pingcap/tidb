@@ -18,11 +18,11 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/table/temptable"
 )
 
@@ -93,7 +93,7 @@ func (p *baseProcessor) setAsNonStaleRead() error {
 }
 
 func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
-	is, err := GetSessionSnapshotInfoSchema(p.sctx, ts)
+	is, err := internal.GetSessionSnapshotInfoSchema(p.sctx, ts)
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (p *baseProcessor) setEvaluatedEvaluator(evaluator StalenessTSEvaluator) er
 		return err
 	}
 
-	is, err := GetSessionSnapshotInfoSchema(p.sctx, ts)
+	is, err := internal.GetSessionSnapshotInfoSchema(p.sctx, ts)
 	if err != nil {
 		return err
 	}
@@ -264,13 +264,4 @@ func getTsEvaluatorFromReadStaleness(sctx sessionctx.Context) StalenessTSEvaluat
 	return func(sctx sessionctx.Context) (uint64, error) {
 		return CalculateTsWithReadStaleness(sctx, readStaleness)
 	}
-}
-
-// GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
-func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
-	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
-	if err != nil {
-		return nil, err
-	}
-	return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is), nil
 }

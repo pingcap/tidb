@@ -18,6 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -72,4 +74,13 @@ func GetSnapshotWithTS(s sessionctx.Context, ts uint64) kv.Snapshot {
 		snap.SetOption(kv.RequestSourceType, tp)
 	}
 	return snap
+}
+
+// GetSessionSnapshotInfoSchema returns the session's information schema with specified ts
+func GetSessionSnapshotInfoSchema(sctx sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+	is, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+	if err != nil {
+		return nil, err
+	}
+	return temptable.AttachLocalTemporaryTableInfoSchema(sctx, is), nil
 }

@@ -1948,6 +1948,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	if err != nil {
+		err = s.retryIfNeededAfterCompileError(ctx, err, func() error {
+			stmt, err = compiler.Compile(ctx, stmtNode)
+			return err
+		})
+	}
+
 	if err == nil {
 		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, stmt.Plan)
 	}
@@ -1998,6 +2005,23 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	}
 	return recordSet, nil
+}
+
+func (s *session) retryIfNeededAfterCompileError(ctx context.Context, err error, compileFunc func() error) error {
+	txnManager := sessiontxn.GetTxnManager(s)
+	action, actionError := txnManager.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterCompile, err)
+	if actionError != nil {
+		return actionError
+	}
+
+	if action != sessiontxn.StmtActionRetryReady {
+		return err
+	}
+
+	if err = txnManager.OnStmtRetry(ctx); err != nil {
+		return err
+	}
+	return compileFunc()
 }
 
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
@@ -2257,8 +2281,17 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
 	if err != nil {
+		err = s.retryIfNeededAfterCompileError(ctx, err, func() error {
+			is = sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+			st, tiFlashPushDown, tiFlashExchangePushDown, err = executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
+			return err
+		})
+	}
+
+	if err != nil {
 		return nil, err
 	}
+
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
 		if tiFlashPushDown {

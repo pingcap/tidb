@@ -381,6 +381,38 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
 	}()
 
+	rs, err := a.buildExecutorAndExec(ctx)
+	if err != nil {
+		txnManager := sessiontxn.GetTxnManager(a.Ctx)
+		action, retryErr := txnManager.OnStmtErrorForNextAction(sessiontxn.StmtErrAfterExec, err)
+		if retryErr != nil {
+			return rs, retryErr
+		}
+
+		if action != sessiontxn.StmtActionRetryReady {
+			return rs, err
+		}
+
+		if rs != nil {
+			if err = rs.Close(); err != nil {
+				return nil, err
+			}
+		}
+
+		if err = txnManager.OnStmtRetry(a.GoCtx); err != nil {
+			return nil, err
+		}
+
+		if _, err = a.RebuildPlan(a.GoCtx); err != nil {
+			return nil, err
+		}
+
+		return a.buildExecutorAndExec(ctx)
+	}
+	return rs, err
+}
+
+func (a *ExecStmt) buildExecutorAndExec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
 		if n, ok := val.(int); ok && staleread.IsStmtStaleness(a.Ctx) {
 			txnManager := sessiontxn.GetTxnManager(a.Ctx)

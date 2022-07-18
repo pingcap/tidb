@@ -157,7 +157,7 @@ func (p *PessimisticRRTxnContextProvider) OnStmtErrorForNextAction(point session
 	case sessiontxn.StmtErrAfterPessimisticLock:
 		return p.handleAfterPessimisticLockError(err)
 	default:
-		return sessiontxn.NoIdea()
+		return p.baseTxnContextProvider.OnStmtErrorForNextAction(point, err)
 	}
 }
 

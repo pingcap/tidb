@@ -62,6 +62,10 @@ type StmtErrorHandlePoint int
 const (
 	// StmtErrAfterQuery means we are handling an error after the query failed
 	StmtErrAfterQuery StmtErrorHandlePoint = iota
+	// StmtErrAfterCompile means we are handling an error after compile error
+	StmtErrAfterCompile
+	// StmtErrAfterExec means we are handling an error after executor exec
+	StmtErrAfterExec
 	// StmtErrAfterPessimisticLock means we are handling an error after pessimistic lock failed.
 	StmtErrAfterPessimisticLock
 )
