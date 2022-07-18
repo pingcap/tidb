@@ -2347,8 +2347,8 @@ def go_deps():
         name = "com_github_nxadm_tail",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/nxadm/tail",
-        sum = "h1:nPr65rt6Y5JFSKQO7qToXr7pePgD6Gwiw05lkbyAQTE=",
-        version = "v1.4.8",
+        sum = "h1:DQuhQpB1tVlglWS2hLQ5OV6B5r8aGxSrPc5Qo6uTN78=",
+        version = "v1.4.4",
     )
     go_repository(
         name = "com_github_oklog_ulid",
@@ -3012,8 +3012,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:nbcwXbkilywhMoAseLPzg/VHdFNhMEWy6JeqL/Gmq7A=",
-        version = "v2.0.1-0.20220713085647-57c12f7c64f6",
+        sum = "h1:OSxo1R2y6iyAAxbUPL7h1HC/17CNuwNkW2lF1JySJ7k=",
+        version = "v2.0.1-0.20220718080214-86d51ba7eb02",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
