@@ -914,12 +914,13 @@ func TestDefaultSelectivityForStrMatch(t *testing.T) {
 	statsSuiteData := statistics.GetIntegrationSuiteData()
 	statsSuiteData.GetTestCases(t, &input, &output)
 
+	matchExplain, err := regexp.Compile("^explain")
+	require.NoError(t, err)
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 		})
-		ok, err := regexp.MatchString("^explain", tt)
-		require.NoError(t, err)
+		ok := matchExplain.MatchString(tt)
 		if !ok {
 			testKit.MustExec(tt)
 			continue
