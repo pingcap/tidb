@@ -593,9 +593,9 @@ const (
 	MaxBytesOfCharacter = 4
 )
 
-// IsUTF8Charset checks if charset is utf8, utf8mb4 or latin1.
+// IsUTF8Charset checks if charset is utf8, utf8mb4.
 func IsUTF8Charset(charset string) bool {
-	return charset == UTF8Charset || charset == UTF8MB4Charset || charset == Latin1Charset
+	return charset == UTF8Charset || charset == UTF8MB4Charset
 }
 
 // RangeGraph defines valid unicode characters to use in column names. It strictly follows MySQL's definition.

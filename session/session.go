@@ -3230,12 +3230,16 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 }
 
 // GetStartTSFromSession returns the startTS in the session `se`
-func GetStartTSFromSession(se interface{}) uint64 {
-	var startTS uint64
+func GetStartTSFromSession(se interface{}) (uint64, uint64) {
+	var startTS, processInfoID uint64
 	tmp, ok := se.(*session)
 	if !ok {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
-		return 0
+		return 0, 0
+	}
+	processInfo := tmp.ShowProcess()
+	if processInfo != nil {
+		processInfoID = processInfo.ID
 	}
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
@@ -3246,7 +3250,7 @@ func GetStartTSFromSession(se interface{}) uint64 {
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
 
-	return startTS
+	return startTS, processInfoID
 }
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL

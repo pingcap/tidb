@@ -31,6 +31,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tikvutil"
@@ -115,8 +116,6 @@ var (
 			map[string]string{
 				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
 				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
-				"plugin.load":                   "plugin_load",
-				"plugin.dir":                    "plugin_dir",
 			},
 		},
 		{
@@ -132,6 +131,13 @@ var (
 			map[string]string{
 				"force-priority":           "tidb_force_priority",
 				"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio",
+			},
+		},
+		{
+			"plugin",
+			map[string]string{
+				"load": "plugin_load",
+				"dir":  "plugin_dir",
 			},
 		},
 	}
@@ -253,6 +259,8 @@ type Config struct {
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 	// EnableGlobalKill indicates whether to enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"enable-global-kill"`
+	// LogBackup controls the log backup related items.
+	LogBackup LogBackup `toml:"log-backup" json:"log-backup"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -404,6 +412,13 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
+}
+
+// LogBackup is the config for log backup service.
+// For now, it includes the embed advancer.
+type LogBackup struct {
+	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
+	Enabled  bool                 `toml:"enabled" json:"enabled"`
 }
 
 // Log is the log section of config.
@@ -761,6 +776,8 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
+	MemQuotaQuery:                1 << 30,
+	OOMAction:                    "cancel",
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
@@ -791,6 +808,7 @@ var defaultConf = Config{
 		EnableErrorStack:    nbUnset, // If both options are nbUnset, getDisableErrorStack() returns true
 		EnableTimestamp:     nbUnset,
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
@@ -839,6 +857,7 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		ProjectionPushDown:    false,
+		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease:      "0s",
@@ -848,14 +867,15 @@ var defaultConf = Config{
 		StatsLoadConcurrency:     5,
 		StatsLoadQueueSize:       1000,
 		EnableStatsCacheMemQuota: false,
+		RunAutoAnalyze:           true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          false,
-		Capacity:         1000,
+		Enabled:          true,
+		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
@@ -897,6 +917,10 @@ var defaultConf = Config{
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
+	LogBackup: LogBackup{
+		Advancer: logbackupconf.Default(),
+		Enabled:  false,
+	},
 }
 
 var (

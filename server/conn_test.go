@@ -709,6 +709,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 		clients: map[uint64]*clientConn{
 			connID: cc,
 		},
+		dom: dom,
 	}
 	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()

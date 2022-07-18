@@ -636,6 +636,13 @@ func TestSetVar(t *testing.T) {
 	// for read-only instance scoped system variables.
 	tk.MustGetErrCode("set @@global.plugin_load = ''", errno.ErrIncorrectGlobalLocalVar)
 	tk.MustGetErrCode("set @@global.plugin_dir = ''", errno.ErrIncorrectGlobalLocalVar)
+
+	// test for tidb_max_auto_analyze_time
+	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBMaxAutoAnalyzeTime)))
+	tk.MustExec("set global tidb_max_auto_analyze_time = 60")
+	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("60"))
+	tk.MustExec("set global tidb_max_auto_analyze_time = -1")
+	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {

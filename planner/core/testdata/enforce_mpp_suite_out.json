@@ -634,5 +634,80 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestMPP2PhaseAggPushDown",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_opt_agg_push_down=1;",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select count(*) from c, o where c.c_id=o.c_id; -- 1. test agg push down, scalar aggregate",
+        "Plan": [
+          "HashAgg_13 1.00 root  funcs:count(Column#7)->Column#6",
+          "└─TableReader_35 9990.00 root  data:ExchangeSender_34",
+          "  └─ExchangeSender_34 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin_14 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
+          "      ├─ExchangeReceiver_26(Build) 8000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender_25 8000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection_24 8000.00 mpp[tiflash]  Column#7, test.o.c_id",
+          "      │     └─HashAgg_19 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:count(1)->Column#7, funcs:firstrow(test.o.c_id)->test.o.c_id",
+          "      │       └─ExchangeReceiver_23 10000.00 mpp[tiflash]  ",
+          "      │         └─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.o.c_id, collate: binary]",
+          "      │           └─TableFullScan_21 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
+          "      └─Selection_18(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
+          "        └─TableFullScan_17 10000.00 mpp[tiflash] table:c keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select o.o_id, count(*) from c, o where c.c_id=o.c_id group by o.o_id; -- 2. test agg push down, group by non-join column",
+        "Plan": [
+          "TableReader_78 8000.00 root  data:ExchangeSender_77",
+          "└─ExchangeSender_77 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_10 8000.00 mpp[tiflash]  test.o.o_id, Column#6",
+          "    └─Projection_76 8000.00 mpp[tiflash]  Column#6, test.o.o_id",
+          "      └─HashAgg_75 8000.00 mpp[tiflash]  group by:test.o.o_id, funcs:count(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.o_id",
+          "        └─ExchangeReceiver_71 9990.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_70 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.o.o_id, collate: binary]",
+          "            └─HashJoin_69 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
+          "              ├─ExchangeReceiver_27(Build) 8000.00 mpp[tiflash]  ",
+          "              │ └─ExchangeSender_26 8000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "              │   └─Projection_25 8000.00 mpp[tiflash]  Column#7, Column#8, test.o.o_id, test.o.c_id",
+          "              │     └─HashAgg_20 8000.00 mpp[tiflash]  group by:test.o.c_id, test.o.o_id, funcs:count(1)->Column#7, funcs:firstrow(test.o.o_id)->Column#8, funcs:firstrow(test.o.o_id)->test.o.o_id, funcs:firstrow(test.o.c_id)->test.o.c_id",
+          "              │       └─ExchangeReceiver_24 10000.00 mpp[tiflash]  ",
+          "              │         └─ExchangeSender_23 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.o.o_id, collate: binary], [name: test.o.c_id, collate: binary]",
+          "              │           └─TableFullScan_22 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
+          "              └─Selection_19(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
+          "                └─TableFullScan_18 10000.00 mpp[tiflash] table:c keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select o.c_id, count(*) from c, o where c.c_id=o.c_id group by o.c_id; -- 3. test agg push down, group by join column",
+        "Plan": [
+          "TableReader_78 8000.00 root  data:ExchangeSender_77",
+          "└─ExchangeSender_77 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_10 8000.00 mpp[tiflash]  test.o.c_id, Column#6",
+          "    └─Projection_76 8000.00 mpp[tiflash]  Column#6, test.o.c_id",
+          "      └─HashAgg_75 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:count(Column#7)->Column#6, funcs:firstrow(Column#8)->test.o.c_id",
+          "        └─ExchangeReceiver_71 9990.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_70 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.o.c_id, collate: binary]",
+          "            └─HashJoin_69 9990.00 mpp[tiflash]  inner join, equal:[eq(test.c.c_id, test.o.c_id)]",
+          "              ├─ExchangeReceiver_27(Build) 8000.00 mpp[tiflash]  ",
+          "              │ └─ExchangeSender_26 8000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "              │   └─Projection_25 8000.00 mpp[tiflash]  Column#7, Column#8, test.o.c_id",
+          "              │     └─HashAgg_20 8000.00 mpp[tiflash]  group by:test.o.c_id, funcs:count(1)->Column#7, funcs:firstrow(test.o.c_id)->Column#8, funcs:firstrow(test.o.c_id)->test.o.c_id",
+          "              │       └─ExchangeReceiver_24 10000.00 mpp[tiflash]  ",
+          "              │         └─ExchangeSender_23 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.o.c_id, collate: binary]",
+          "              │           └─TableFullScan_22 10000.00 mpp[tiflash] table:o keep order:false, stats:pseudo",
+          "              └─Selection_19(Probe) 9990.00 mpp[tiflash]  not(isnull(test.c.c_id))",
+          "                └─TableFullScan_18 10000.00 mpp[tiflash] table:c keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
   }
 ]

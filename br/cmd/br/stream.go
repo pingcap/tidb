@@ -16,6 +16,7 @@ package main
 
 import (
 	"github.com/pingcap/errors"
+	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -49,12 +50,14 @@ func NewStreamCommand() *cobra.Command {
 		newStreamStatusCommand(),
 		newStreamTruncateCommand(),
 		newStreamCheckCommand(),
+		newStreamAdvancerCommand(),
 	)
 	command.SetHelpFunc(func(command *cobra.Command, strings []string) {
 		task.HiddenFlagsForStream(command.Root().PersistentFlags())
 		command.Root().HelpFunc()(command, strings)
 	})
 
+	command.Hidden = true
 	return command
 }
 
@@ -156,6 +159,21 @@ func newStreamCheckCommand() *cobra.Command {
 	return command
 }
 
+func newStreamAdvancerCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "advancer",
+		Short: "Start a central worker for advancing the checkpoint. (only for debuging, this subcommand should be integrated to TiDB)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return streamCommand(cmd, task.StreamCtl)
+		},
+		Hidden: true,
+	}
+	task.DefineStreamCommonFlags(command.Flags())
+	advancercfg.DefineFlagsForCheckpointAdvancerConfig(command.Flags())
+	return command
+}
+
 func streamCommand(command *cobra.Command, cmdName string) error {
 	var cfg task.StreamConfig
 	var err error
@@ -189,6 +207,13 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 		}
 	case task.StreamPause:
 		if err = cfg.ParseStreamPauseFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	case task.StreamCtl:
+		if err = cfg.ParseStreamCommonFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+		if err = cfg.AdvancerCfg.GetFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
 	default:
