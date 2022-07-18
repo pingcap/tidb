@@ -451,6 +451,7 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
+	sctx.sessionVars.EnablePaging = true
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
