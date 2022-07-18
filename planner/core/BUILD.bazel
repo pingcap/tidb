@@ -53,6 +53,7 @@ go_library(
         "rule_partition_processor.go",
         "rule_predicate_push_down.go",
         "rule_result_reorder.go",
+        "rule_semi_join_rewrite.go",
         "rule_topn_push_down.go",
         "show_predicate_extractor.go",
         "stats.go",
