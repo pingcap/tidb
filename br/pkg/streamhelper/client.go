@@ -15,6 +15,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -350,6 +351,29 @@ func (t *Task) NextBackupTSList(ctx context.Context) ([]Checkpoint, error) {
 		cps = append(cps, cp)
 	}
 	return cps, nil
+}
+
+func (t *Task) GlobalCheckpointStatus(ctx context.Context) (uint64, error) {
+	prefix := GlobalCheckpointStatusOf(t.Info.Name)
+	scanner := scanEtcdPrefix(t.cli.Client, prefix)
+	kvs, err := scanner.AllPages(ctx, 1024)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
+	}
+
+	var globalCheckpointStatus = t.Info.StartTs
+	for _, kv := range kvs {
+		if len(kv.Value) != 8 {
+			return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"the value isn't 64bits (it is %d bytes, value = %s)",
+				len(kv.Value),
+				redact.Key(kv.Value))
+		}
+		ts := binary.BigEndian.Uint64(kv.Value)
+		globalCheckpointStatus = mathutil.Max(globalCheckpointStatus, ts)
+	}
+
+	return globalCheckpointStatus, nil
 }
 
 // MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
