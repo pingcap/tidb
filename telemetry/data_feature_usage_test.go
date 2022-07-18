@@ -287,7 +287,7 @@ func TestPagingUsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.True(t, usage.EnablePaging)
+	require.True(t, usage.EnablePaging == variable.DefTiDBEnablePaging)
 
 	tk.Session().GetSessionVars().EnablePaging = false
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
