@@ -576,6 +576,11 @@ error = '''
 Failed to read auto-random value from storage engine
 '''
 
+["ddl:0"]
+error = '''
+TiFlash mode will take effect after at least one TiFlash replica is set for the table
+'''
+
 ["ddl:1025"]
 error = '''
 Error on rename of '%-.210s' to '%-.210s' (errno: %d - %s)
