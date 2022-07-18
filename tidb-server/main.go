@@ -612,8 +612,6 @@ func setGlobalVars() {
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
-	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
-	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	if cfg.SplitTable {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)

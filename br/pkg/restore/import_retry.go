@@ -107,30 +107,35 @@ func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, 
 	return true
 }
 
-// Run executes the `regionFunc` over the regions in `o.start` and `o.end`.
-// It would retry the errors according to the `rpcResponse`.
-func (o *OverRegionsInRangeController) Run(ctx context.Context, f RegionFunc) error {
-	if !o.rs.ShouldRetry() {
-		return o.errors
-	}
-	tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
-	defer cancel()
-	// Scan regions covered by the file range
-	regionInfos, errScanRegion := PaginateScanRegion(
-		tctx, o.metaClient, o.start, o.end, ScanRegionPaginationLimit)
-	if errScanRegion != nil {
-		return errors.Trace(errScanRegion)
-	}
-
-	// Try to download and ingest the file in every region
+func (o *OverRegionsInRangeController) prepareLogCtx(ctx context.Context) context.Context {
 	lctx := logutil.ContextWithField(
 		ctx,
 		logutil.Key("startKey", o.start),
 		logutil.Key("endKey", o.end),
 	)
+	return lctx
+}
+
+// Run executes the `regionFunc` over the regions in `o.start` and `o.end`.
+// It would retry the errors according to the `rpcResponse`.
+func (o *OverRegionsInRangeController) Run(ctx context.Context, f RegionFunc) error {
+	return o.runOverRegions(o.prepareLogCtx(ctx), f)
+}
+
+func (o *OverRegionsInRangeController) runOverRegions(ctx context.Context, f RegionFunc) error {
+	if !o.rs.ShouldRetry() {
+		return o.errors
+	}
+
+	// Scan regions covered by the file range
+	regionInfos, errScanRegion := PaginateScanRegion(
+		ctx, o.metaClient, o.start, o.end, ScanRegionPaginationLimit)
+	if errScanRegion != nil {
+		return errors.Trace(errScanRegion)
+	}
 
 	for _, region := range regionInfos {
-		cont, err := o.runInRegion(lctx, f, region)
+		cont, err := o.runInRegion(ctx, f, region)
 		if err != nil {
 			return err
 		}
@@ -157,7 +162,7 @@ func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f Region
 		case StrategyFromThisRegion:
 			logutil.CL(ctx).Warn("retry for region", logutil.Region(region.Region), logutil.ShortError(&result))
 			if !o.handleInRegionError(ctx, result, region) {
-				return false, o.Run(ctx, f)
+				return false, o.runOverRegions(ctx, f)
 			}
 			return o.runInRegion(ctx, f, region)
 		case StrategyFromStart:
@@ -165,7 +170,7 @@ func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f Region
 			// TODO: make a backoffer considering more about the error info,
 			//       instead of ingore the result and retry.
 			time.Sleep(o.rs.ExponentialBackoff())
-			return false, o.Run(ctx, f)
+			return false, o.runOverRegions(ctx, f)
 		}
 	}
 	return true, nil
@@ -229,6 +234,7 @@ func (r *RPCResult) StrategyForRetryGoError() RetryStrategy {
 	if r.Err == nil {
 		return StrategyGiveUp
 	}
+
 	// we should unwrap the error or we cannot get the write gRPC status.
 	if gRPCErr, ok := status.FromError(errors.Cause(r.Err)); ok {
 		switch gRPCErr.Code() {

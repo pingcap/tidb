@@ -23,6 +23,7 @@ go_library(
         "//util/set",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//util",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
@@ -30,6 +31,7 @@ go_library(
 
 go_test(
     name = "stmtsummary_test",
+    timeout = "short",
     srcs = [
         "evicted_test.go",
         "main_test.go",

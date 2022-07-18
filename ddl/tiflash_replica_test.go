@@ -56,6 +56,7 @@ func TestSetTableFlashReplica(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(2), tbl.Meta().TiFlashReplica.Count)
 	require.Equal(t, "a,b", strings.Join(tbl.Meta().TiFlashReplica.LocationLabels, ","))
+	require.Equal(t, model.TiFlashModeNormal, tbl.Meta().TiFlashMode) // check the default tiflash mode
 
 	tk.MustExec("alter table t_flash set tiflash replica 0")
 	tbl = external.GetTableByName(t, tk, "test", "t_flash")
@@ -185,7 +186,7 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
 			if db == "MySQL" {
-				require.Equal(t, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported", err.Error())
+				require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
 			}

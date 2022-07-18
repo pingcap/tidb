@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
@@ -37,15 +38,17 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex          *ClusterIndexUsage             `json:"clusterIndex"`
-	NewClusterIndex       *NewClusterIndexUsage          `json:"newClusterIndex"`
-	TemporaryTable        bool                           `json:"temporaryTable"`
-	CTE                   *m.CTEUsageCounter             `json:"cte"`
-	CachedTable           bool                           `json:"cachedTable"`
-	AutoCapture           bool                           `json:"autoCapture"`
-	PlacementPolicyUsage  *placementPolicyUsage          `json:"placementPolicy"`
-	NonTransactionalUsage *m.NonTransactionalStmtCounter `json:"nonTransactional"`
-	GlobalKill            bool                           `json:"globalKill"`
+	ClusterIndex          *ClusterIndexUsage               `json:"clusterIndex"`
+	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
+	TemporaryTable        bool                             `json:"temporaryTable"`
+	CTE                   *m.CTEUsageCounter               `json:"cte"`
+	CachedTable           bool                             `json:"cachedTable"`
+	AutoCapture           bool                             `json:"autoCapture"`
+	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
+	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
+	GlobalKill            bool                             `json:"globalKill"`
+	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	LogBackup             bool                             `json:"logBackup"`
 }
 
 type placementPolicyUsage struct {
@@ -70,6 +73,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.CTE = getCTEUsageInfo()
 
+	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
+
 	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
 
 	collectFeatureUsageFromInfoschema(sctx, &usage)
@@ -77,6 +82,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
+
+	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -201,6 +208,7 @@ type TxnUsage struct {
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
+var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -233,7 +241,6 @@ func postReportTxnUsage() {
 	initialTxnCommitCounter = metrics.GetTxnCommitCounter()
 }
 
-// ResetCTEUsage resets CTE usages.
 func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
@@ -242,6 +249,16 @@ func postReportCTEUsage() {
 func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
+	return &diff
+}
+
+func postReportMultiSchemaChangeUsage() {
+	initialMultiSchemaChangeCounter = m.GetMultiSchemaCounter()
+}
+
+func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
+	curr := m.GetMultiSchemaCounter()
+	diff := curr.Sub(initialMultiSchemaChangeCounter)
 	return &diff
 }
 
@@ -265,4 +282,8 @@ func postReportNonTransactionalCounter() {
 
 func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
+}
+
+func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
+	return utils.CheckLogBackupEnabled(ctx)
 }

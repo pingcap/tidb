@@ -171,6 +171,7 @@ type IndexReaderExecutor struct {
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
+	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
@@ -308,6 +309,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -582,6 +584,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetPaging(e.indexPaging).
+			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
@@ -680,6 +683,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table:            table,
 		dagPB:            e.tableRequest,
 		startTS:          e.startTS,
+		txnScope:         e.txnScope,
 		readReplicaScope: e.readReplicaScope,
 		isStaleness:      e.isStaleness,
 		columns:          e.columns,
@@ -779,13 +783,11 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 
 func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
-		if e.stats == nil {
-			e.stats = &IndexLookUpRunTimeStats{
-				indexScanBasicStats: &execdetails.BasicRuntimeStats{},
-				Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
-			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		e.stats = &IndexLookUpRunTimeStats{
+			indexScanBasicStats: &execdetails.BasicRuntimeStats{},
+			Concurrency:         e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -1136,7 +1138,6 @@ func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	e.TaskWait += tmp.TaskWait
 	e.TableRowScan += tmp.TableRowScan
 	e.TableTaskNum += tmp.TableTaskNum
-	e.Concurrency += tmp.Concurrency
 }
 
 // Tp implements the RuntimeStats interface.

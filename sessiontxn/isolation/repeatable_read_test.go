@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testfork"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -48,6 +49,7 @@ func TestPessimisticRRErrorHandle(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk, true)
 
@@ -138,6 +140,7 @@ func TestRepeatableReadProviderTS(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializeRepeatableReadProvider(t, tk, true)
 
@@ -192,61 +195,67 @@ func TestRepeatableReadProviderInitialize(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
-	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+	testfork.RunTest(t, func(t *testfork.T) {
+		clearScopeSettings := forkScopeSettings(t, store)
+		defer clearScopeSettings()
 
-	// begin outside a txn
-	assert := activePessimisticRRAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
+		se := tk.Session()
+		tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
+		tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 
-	// begin in a txn
-	assert = activePessimisticRRAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		// begin outside a txn
+		assert := activePessimisticRRAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
-	assert = activePessimisticRRAssert(t, se, true)
-	assert.causalConsistencyOnly = true
-	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
-	assert.Check(t)
+		// begin in a txn
+		assert = activePessimisticRRAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// EnterNewTxnDefault will create an active txn, but not explicit
-	assert = activePessimisticRRAssert(t, se, false)
-	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-		Type:    sessiontxn.EnterNewTxnDefault,
-		TxnMode: ast.Pessimistic,
-	}))
-	assert.Check(t)
+		// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
+		assert = activePessimisticRRAssert(t, se, true)
+		assert.causalConsistencyOnly = true
+		tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
+		assert.Check(t)
 
-	// non-active txn and then active it
-	tk.MustExec("rollback")
-	tk.MustExec("set @@autocommit=0")
-	assert = inactivePessimisticRRAssert(se)
-	assertAfterActive := activePessimisticRRAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider := assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	ts, err := provider.GetStmtReadTS()
-	require.NoError(t, err)
-	assertAfterActive.Check(t)
-	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-	tk.MustExec("rollback")
+		// EnterNewTxnDefault will create an active txn, but not explicit
+		assert = activePessimisticRRAssert(t, se, false)
+		require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+			Type:    sessiontxn.EnterNewTxnDefault,
+			TxnMode: ast.Pessimistic,
+		}))
+		assert.Check(t)
 
-	// Case Pessimistic Autocommit
-	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inactivePessimisticRRAssert(se)
-	assertAfterActive = activePessimisticRRAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	ts, err = provider.GetStmtReadTS()
-	require.NoError(t, err)
-	assertAfterActive.Check(t)
-	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-	tk.MustExec("rollback")
+		// non-active txn and then active it
+		tk.MustExec("rollback")
+		tk.MustExec("set @@autocommit=0")
+		assert = inactivePessimisticRRAssert(se)
+		assertAfterActive := activePessimisticRRAssert(t, se, true)
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		provider := assert.CheckAndGetProvider(t)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+		ts, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		assertAfterActive.Check(t)
+		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+		tk.MustExec("rollback")
+
+		// Case Pessimistic Autocommit
+		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+		assert = inactivePessimisticRRAssert(se)
+		assertAfterActive = activePessimisticRRAssert(t, se, true)
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		provider = assert.CheckAndGetProvider(t)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+		ts, err = provider.GetStmtReadTS()
+		require.NoError(t, err)
+		assertAfterActive.Check(t)
+		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+		tk.MustExec("rollback")
+	})
 }
 
 func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
@@ -254,6 +263,7 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'REPEATABLE-READ'")
 	safePoint := "20160102-15:04:05 -0700"
@@ -471,6 +481,7 @@ func TestConflictErrorInInsertInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -500,8 +511,10 @@ func TestConflictErrorInPointGetForUpdateInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -538,8 +551,10 @@ func TestConflictErrorInDeleteInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -576,8 +591,10 @@ func TestConflictErrorInUpdateInRR(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -612,8 +629,10 @@ func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
@@ -632,7 +651,7 @@ func TestConflictErrorInOtherQueryContainingPointGet(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertPessimisticLockErr"))
 }
 
-func activePessimisticRRAssert(t *testing.T, sctx sessionctx.Context,
+func activePessimisticRRAssert(t testing.TB, sctx sessionctx.Context,
 	inTxn bool) *txnAssert[*isolation.PessimisticRRTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticRRTxnContextProvider]{
 		sctx:         sctx,

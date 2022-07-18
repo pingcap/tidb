@@ -81,6 +81,9 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType, costFlag uin
 			return 0, errors.Errorf("unknown task type %v", taskType)
 		}
 		selfCost = getCardinality(p.children[0], costFlag) * cpuFactor
+		if p.fromDataSource {
+			selfCost = 0 // for compatibility, see https://github.com/pingcap/tidb/issues/36243
+		}
 	case modelVer2: // selection cost: rows * num-filters * cpu-factor
 		var cpuFactor float64
 		switch taskType {

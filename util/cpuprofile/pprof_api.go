@@ -184,7 +184,7 @@ const labelSQL = "sql"
 
 // removeLabel uses to remove the sql_digest and plan_digest labels for pprof cpu profile data.
 // Since TopSQL will set the sql_digest and plan_digest label, they are strange for other users.
-func (pc *Collector) removeLabel(profileData *profile.Profile) {
+func (*Collector) removeLabel(profileData *profile.Profile) {
 	for _, s := range profileData.Sample {
 		for k := range s.Label {
 			if k != labelSQL {

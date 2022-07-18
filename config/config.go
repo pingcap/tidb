@@ -32,6 +32,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	logbackupconf "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/parser/terror"
 	typejson "github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/logutil"
@@ -257,8 +258,10 @@ type Config struct {
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
 	// EnableGlobalKill indicates whether to enable global kill.
-	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
+	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
+	// LogBackup controls the log backup related items.
+	LogBackup LogBackup `toml:"log-backup" json:"log-backup"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -415,6 +418,13 @@ func (b *AtomicBool) UnmarshalText(text []byte) error {
 		return errors.New("Invalid value for bool type: " + str)
 	}
 	return nil
+}
+
+// LogBackup is the config for log backup service.
+// For now, it includes the embed advancer.
+type LogBackup struct {
+	Advancer logbackupconf.Config `toml:"advancer" json:"advancer"`
+	Enabled  bool                 `toml:"enabled" json:"enabled"`
 }
 
 // Log is the log section of config.
@@ -614,8 +624,6 @@ type Performance struct {
 	ServerMemoryQuota   uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
 	TxnEntrySizeLimit   uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
@@ -878,8 +886,6 @@ var defaultConf = Config{
 		CrossJoin:             true,
 		StatsLease:            "3s",
 		StmtCountLimit:        5000,
-		FeedbackProbability:   0.0,
-		QueryFeedbackLimit:    512,
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
 		BindInfoLease:         "3s",
@@ -949,6 +955,10 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
+	LogBackup: LogBackup{
+		Advancer: logbackupconf.Default(),
+		Enabled:  false,
+	},
 }
 
 var (
@@ -1023,6 +1033,8 @@ var removedConfig = map[string]struct{}{
 	"performance.memory-usage-alarm-ratio":   {}, // use tidb_memory_usage_alarm_ratio
 	"plugin.load":                            {}, // use plugin_load
 	"plugin.dir":                             {}, // use plugin_dir
+	"performance.feedback-probability":       {}, // This feature is deprecated
+	"performance.query-feedback-limit":       {},
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate
