@@ -39,7 +39,7 @@ echo 'Simple check'
 
 run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
 run_sql "drop schema $DB;"
-run_br restore full -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
 
 run_sql "select c from $DB.one;"
 run_sql "select c from $DB.two;"
@@ -53,7 +53,7 @@ echo 'Filtered backup check'
 
 run_br backup full -f "$DB.t*" -s "local://$TEST_DIR/$DB/t" --pd $PD_ADDR
 run_sql "drop schema $DB;"
-run_br restore full -s "local://$TEST_DIR/$DB/t" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/t" --pd $PD_ADDR
 
 ! run_sql "select c from $DB.one;"
 run_sql "select c from $DB.two;"
@@ -105,10 +105,10 @@ run_sql 'select c from '"$DB"'.`the,special,table`;'
 echo 'Case sensitive backup check'
 
 run_sql "drop schema $DB;"
-run_br restore full --case-sensitive -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' --case-sensitive -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
 run_br backup full --case-sensitive -f "$DB.[oF]*" -s "local://$TEST_DIR/$DB/of" --pd $PD_ADDR
 run_sql "drop schema $DB;"
-run_br restore full --case-sensitive -s "local://$TEST_DIR/$DB/of" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' --case-sensitive -s "local://$TEST_DIR/$DB/of" --pd $PD_ADDR
 
 run_sql "select c from $DB.one;"
 ! run_sql "select c from $DB.two;"
