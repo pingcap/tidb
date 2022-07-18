@@ -1315,6 +1315,11 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	// The flag indicates whether this Selection is from a DataSource.
+	// The flag is only used by cost model for compatibility and will be removed later.
+	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
+	fromDataSource bool
 }
 
 // Clone implements PhysicalPlan interface.
