@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
