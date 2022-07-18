@@ -1031,6 +1031,43 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 }
 
+func TestMultiSchemaChangeTableOption(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int auto_increment primary key, b int);")
+	tk.MustExec("alter table t modify column b tinyint, auto_increment = 100;")
+	tk.MustExec("insert into t (b) values (1);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("100 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int auto_increment primary key, b int);")
+	tk.MustExec("alter table t auto_increment = 110, auto_increment = 90;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1105 Can't reset AUTO_INCREMENT to 90 without FORCE option, using 110 instead"))
+	tk.MustExec("insert into t (b) values (1);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("110 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int) charset = utf8 shard_row_id_bits=2;")
+	tk.MustExec("alter table t modify column a tinyint, comment = 'abc', charset = utf8mb4;")
+	tk.MustQuery("select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where table_name = 't';").
+		Check(testkit.Rows("SHARD_BITS=2 abc utf8mb4_bin"))
+}
+
+func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a tinyint);")
+	tk.MustExec("insert into t set a = 10;")
+	tk.MustExec("alter table t add column b int not null, change column a c char(5) first;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("10 0"))
+}
+
 func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
