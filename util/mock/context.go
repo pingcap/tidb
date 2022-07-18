@@ -447,12 +447,11 @@ func NewContext() *Context {
 	}
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32
-	sctx.sessionVars.MinPagingSize = 1
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
-	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	sctx.sessionVars.EnablePaging = variable.DefTiDBEnablePaging
+	sctx.sessionVars.MinPagingSize = variable.DefMinPagingSize
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
