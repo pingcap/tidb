@@ -327,7 +327,7 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *basicCopRuntimeStats) Tp() int {
+func (*basicCopRuntimeStats) Tp() int {
 	return TpBasicCopRunTimeStats
 }
 
@@ -501,7 +501,7 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *BasicRuntimeStats) Tp() int {
+func (*BasicRuntimeStats) Tp() int {
 	return TpBasicRuntimeStats
 }
 
@@ -767,7 +767,7 @@ type RuntimeStatsWithConcurrencyInfo struct {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *RuntimeStatsWithConcurrencyInfo) Tp() int {
+func (*RuntimeStatsWithConcurrencyInfo) Tp() int {
 	return TpRuntimeStatsWithConcurrencyInfo
 }
 
@@ -809,8 +809,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
-}
+func (*RuntimeStatsWithConcurrencyInfo) Merge(RuntimeStats) {}
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
@@ -820,7 +819,7 @@ type RuntimeStatsWithCommit struct {
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *RuntimeStatsWithCommit) Tp() int {
+func (*RuntimeStatsWithCommit) Tp() int {
 	return TpRuntimeStatsWithCommit
 }
 
@@ -1008,7 +1007,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
+func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 	if len(backoffTypes) == 0 {
 		return ""
 	}
