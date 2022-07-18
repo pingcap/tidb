@@ -244,7 +244,6 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
-      "expression/aggregation": "expression/aggregation code",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
