@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//util/hack",
         "//util/texttree",
         "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_errors//:errors",
@@ -18,6 +19,7 @@ go_library(
 
 go_test(
     name = "plancodec_test",
+    timeout = "short",
     srcs = [
         "codec_test.go",
         "id_test.go",

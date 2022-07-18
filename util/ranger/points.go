@@ -114,7 +114,7 @@ func rangePointLess(sc *stmtctx.StatementContext, a, b *point, collator collate.
 	return rangePointEqualValueLess(a, b), errors.Trace(err)
 }
 
-func rangePointEnumLess(sc *stmtctx.StatementContext, a, b *point) (bool, error) {
+func rangePointEnumLess(_ *stmtctx.StatementContext, a, b *point) (bool, error) {
 	cmp := types.CompareInt64(a.value.GetInt64(), b.value.GetInt64())
 	if cmp != 0 {
 		return cmp < 0, nil
@@ -188,7 +188,7 @@ type builder struct {
 func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
-		return r.buildFromColumn(x)
+		return r.buildFromColumn()
 	case *expression.ScalarFunction:
 		return r.buildFromScalarFunc(x, collator)
 	case *expression.Constant:
@@ -220,7 +220,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 	return getFullRange()
 }
 
-func (r *builder) buildFromColumn(expr *expression.Column) []*point {
+func (*builder) buildFromColumn() []*point {
 	// column name expression is equivalent to column name is true.
 	startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 	endPoint1 := &point{excl: true}
@@ -504,7 +504,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 	return res
 }
 
-func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []*point {
+func (*builder) buildFromIsTrue(_ *expression.ScalarFunction, isNot int, keepNull bool) []*point {
 	if isNot == 1 {
 		if keepNull {
 			// Range is {[0, 0]}
@@ -533,7 +533,7 @@ func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, ke
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFromIsFalse(expr *expression.ScalarFunction, isNot int) []*point {
+func (*builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*point {
 	if isNot == 1 {
 		// NOT FALSE range is {[-inf, 0), (0, +inf], [null, null]}
 		startPoint1 := &point{start: true}

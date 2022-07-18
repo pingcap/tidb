@@ -289,30 +289,35 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
 func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
-	if curTask.invalid() {
+	curCost, curInvalid, err := getTaskPlanCost(curTask)
+	if err != nil {
+		return false, err
+	}
+	bestCost, bestInvalid, err := getTaskPlanCost(bestTask)
+	if err != nil {
+		return false, err
+	}
+	if curInvalid {
 		return false, nil
 	}
-	if bestTask.invalid() {
+	if bestInvalid {
 		return true, nil
 	}
-	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
-		curCost, err := getTaskPlanCost(curTask)
-		if err != nil {
-			return false, err
-		}
-		bestCost, err := getTaskPlanCost(bestTask)
-		if err != nil {
-			return false, err
-		}
-		return curCost < bestCost, nil
-	}
-	return curTask.cost() < bestTask.cost(), nil
+	return curCost < bestCost, nil
 }
 
-func getTaskPlanCost(t task) (float64, error) {
+// getTaskPlanCost returns the cost of this task.
+// The new cost interface will be used if EnableNewCostInterface is true.
+// The second returned value indicates whether this task is valid.
+func getTaskPlanCost(t task) (float64, bool, error) {
 	if t.invalid() {
-		return math.MaxFloat64, nil
+		return math.MaxFloat64, true, nil
 	}
+	if !t.plan().SCtx().GetSessionVars().EnableNewCostInterface {
+		return t.cost(), false, nil
+	}
+
+	// use the new cost interface
 	var taskType property.TaskType
 	switch t.(type) {
 	case *rootTask:
@@ -322,9 +327,10 @@ func getTaskPlanCost(t task) (float64, error) {
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
-		return 0, errors.New("unknown task type")
+		return 0, false, errors.New("unknown task type")
 	}
-	return t.plan().GetPlanCost(taskType, 0)
+	cost, err := t.plan().GetPlanCost(taskType, 0)
+	return cost, false, err
 }
 
 type physicalOptimizeOp struct {
@@ -341,30 +347,16 @@ func (op *physicalOptimizeOp) withEnableOptimizeTracer(tracer *tracing.PhysicalO
 	return op
 }
 
-func (op *physicalOptimizeOp) buildPhysicalOptimizeTraceInfo(p LogicalPlan) {
-	if op == nil || op.tracer == nil {
-		return
-	}
-	name := tracing.CodecPlanName(p.TP(), p.ID())
-	if _, ok := op.tracer.State[name]; !ok {
-		op.tracer.State[name] = make(map[string]*tracing.PlanTrace)
-	}
-}
-
 func (op *physicalOptimizeOp) appendCandidate(lp LogicalPlan, pp PhysicalPlan, prop *property.PhysicalProperty) {
 	if op == nil || op.tracer == nil || pp == nil {
 		return
 	}
-	PhysicalPlanTrace := &tracing.PlanTrace{TP: pp.TP(), ID: pp.ID(),
-		ExplainInfo: pp.ExplainInfo(), Cost: pp.Cost(), ProperType: prop.String()}
-	name := tracing.CodecPlanName(lp.TP(), lp.ID())
-	key := tracing.CodecPlanName(pp.TP(), pp.ID())
-	pps := op.tracer.State[name]
-	if pps == nil {
-		op.buildPhysicalOptimizeTraceInfo(lp)
-	}
-	pps[key] = PhysicalPlanTrace
-	op.tracer.State[name] = pps
+	candidate := &tracing.CandidatePlanTrace{
+		PlanTrace: &tracing.PlanTrace{TP: pp.TP(), ID: pp.ID(),
+			ExplainInfo: pp.ExplainInfo(), Cost: pp.Cost(), ProperType: prop.String()},
+		MappingLogicalPlan: tracing.CodecPlanName(lp.TP(), lp.ID())}
+	op.tracer.AppendCandidate(candidate)
+	pp.appendChildCandidate(op)
 }
 
 // findBestTask implements LogicalPlan interface.
@@ -439,7 +431,6 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 
 	var cnt int64
 	var curTask task
-	opt.buildPhysicalOptimizeTraceInfo(p)
 	if bestTask, cnt, err = p.enumeratePhysicalPlans4Task(plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
@@ -876,7 +867,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 	}()
 
-	opt.buildPhysicalOptimizeTraceInfo(ds)
 	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
@@ -1401,6 +1391,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			Columns:         ds.Columns,
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
+			DBName:          ds.DBName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
@@ -2079,6 +2070,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := BatchPointGetPlan{
 		ctx:              ds.ctx,
+		dbName:           ds.DBName.L,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsSortItemEmpty(),
@@ -2212,6 +2204,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
+		prop:            prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
 	copy(ts.filterCondition, path.TableFilters)
@@ -2281,6 +2274,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
+		prop:             prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {

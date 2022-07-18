@@ -195,6 +195,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AdvancerOwner)
 	prometheus.MustRegister(AdvancerTickDuration)
 	prometheus.MustRegister(GetCheckpointBatchSize)
+	prometheus.MustRegister(RegionCheckpointRequest)
+	prometheus.MustRegister(RegionCheckpointFailure)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
