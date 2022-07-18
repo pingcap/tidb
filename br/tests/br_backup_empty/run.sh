@@ -28,7 +28,7 @@ fi
 
 # restore empty.
 echo "restore empty cluster start..."
-run_br restore full -s "local://$TEST_DIR/empty_cluster" --pd $PD_ADDR --ratelimit 1024
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/empty_cluster" --pd $PD_ADDR --ratelimit 1024
 if [ $? -ne 0 ]; then
     echo "TEST: [$TEST_NAME] failed on restore empty cluster!"
     exit 1
@@ -55,7 +55,7 @@ done
 
 # restore empty.
 echo "restore empty db start..."
-run_br restore full -s "local://$TEST_DIR/empty_db" --pd $PD_ADDR --ratelimit 1024
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/empty_db" --pd $PD_ADDR --ratelimit 1024
 if [ $? -ne 0 ]; then
     echo "TEST: [$TEST_NAME] failed on restore empty cluster!"
     exit 1
@@ -76,7 +76,7 @@ while [ $i -le $DB_COUNT ]; do
 done
 
 echo "restore empty table start..."
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/empty_table"
+run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/empty_table"
 
 # insert one row to make sure table is restored.
 run_sql "INSERT INTO ${DB}1.usertable1 VALUES (\"a\", \"b\");"
