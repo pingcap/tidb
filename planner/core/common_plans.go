@@ -1445,6 +1445,7 @@ func binaryDataFromFlatPlan(explainCtx sessionctx.Context, flat *FlatPhysicalPla
 	}
 	res := &tipb.ExplainData{}
 	for _, op := range flat.Main {
+		// We assume that runtime stats are available to this plan tree if any operator in the "Main" has runtime stats.
 		rootStats, copStats, _, _ := getRuntimeInfo(explainCtx, op.Origin, nil)
 		if rootStats != nil || copStats != nil {
 			res.WithRuntimeStats = true
