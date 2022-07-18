@@ -6649,3 +6649,194 @@ func TestIssue31609(t *testing.T) {
 		"      └─MemTableScan_9 10000.00 root table:TABLES ",
 	))
 }
+<<<<<<< HEAD
+=======
+
+func TestDecimalOverflow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table deci (a decimal(65,30),b decimal(65,0))")
+	tk.MustExec("insert into deci values (1234567890.123456789012345678901234567890,987654321098765432109876543210987654321098765432109876543210)")
+	tk.MustQuery("select a from deci union ALL select b from deci;").Sort().Check(testkit.Rows("1234567890.123456789012345678901234567890", "99999999999999999999999999999999999.999999999999999999999999999999"))
+}
+
+func TestIssue35083(t *testing.T) {
+	defer func() {
+		variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ProjectionPushDown = true
+	})
+	variable.SetSysVar(variable.TiDBOptProjectionPushDown, variable.BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown))
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a varchar(100), b int)")
+	tk.MustQuery("select @@tidb_opt_projection_push_down").Check(testkit.Rows("1"))
+	tk.MustQuery("explain format = 'brief' select cast(a as datetime) from t1").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:Projection",
+		"└─Projection 10000.00 cop[tikv]  cast(test.t1.a, datetime BINARY)->Column#4",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+
+func TestIssue25813(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec("insert into t values('{\"id\": \"ish\"}');")
+	tk.MustQuery("select t2.a from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows("{\"id\": \"ish\"}"))
+
+	tk.MustQuery("explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';").Check(testkit.Rows(
+		"Selection 8000.00 root  eq(json_extract(test.t.a, \"$.id\"), cast(\"ish\", json BINARY))",
+		"└─HashJoin 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
+		"  ├─TableReader(Build) 8000.00 root  data:Selection",
+		"  │ └─Selection 8000.00 cop[tikv]  not(isnull(cast(test.t.a, var_string(4294967295))))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+}
+
+func TestRepeatPushDownToTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(2147483647, 2)")
+	tk.MustExec("insert into t values(12, 2)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
+func TestIssue36194(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	// create virtual tiflash replica.
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustQuery("explain format = 'brief' select * from t where a + 1 > 20 limit 100;;").Check(testkit.Rows(
+		"Limit 100.00 root  offset:0, count:100",
+		"└─TableReader 100.00 root  data:ExchangeSender",
+		"  └─ExchangeSender 100.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
+		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
+		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+}
+
+func TestGetFormatPushDownToTiFlash(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(location varchar(10));")
+	tk.MustExec("insert into t values('USA'), ('JIS'), ('ISO'), ('EUR'), ('INTERNAL')")
+	tk.MustExec("set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select GET_FORMAT(DATE, location) from t;").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:ExchangeSender",
+		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─Projection 10000.00 mpp[tiflash]  get_format(DATE, test.t.location)->Column#3",
+		"    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+}
+
+func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec("insert into t values(null);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"HashAgg_6", "root", "funcs:avg(Column#4)->Column#3"},
+		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
+		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
+		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+
+	rows = [][]interface{}{
+		{"HashAgg_6", "root", "funcs:sum(Column#4)->Column#3"},
+		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
+		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
+		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+
+	rows = [][]interface{}{
+		{"HashAgg_6", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
+		{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#4"},
+		{"  └─TableReader_10", "root", "data:TableFullScan_9"},
+		{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+>>>>>>> de017e9ee... expression: forbid aggregate function with json type pushdown to tiflash wrongly (#36271)
