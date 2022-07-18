@@ -360,6 +360,7 @@ func (d *Datum) SetMysqlDuration(b Duration) {
 	d.decimal = uint16(b.Fsp)
 }
 
+// SetMysqlDurationWithFsp sets Duration value with Fsp
 func (d *Datum) SetMysqlDurationWithFsp(b Duration, fsp int) {
 	d.k = KindMysqlDuration
 	d.i = int64(b.Duration)
