@@ -15,8 +15,6 @@
 package ddl
 
 import (
-	"math"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -25,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mathutil"
+	"math"
+	"reflect"
 )
 
 func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -259,6 +259,11 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 	tblInfo.Sequence = &copySequenceInfo
+	same := !reflect.DeepEqual(*tblInfo.Sequence, copySequenceInfo)
+	if same {
+		job.State = model.JobStateDone
+		return ver, errors.Trace(err)
+	}
 
 	// Restart the sequence value.
 	// Notice: during the alter sequence process, if there is some dml continually consumes sequence (nextval/setval),
