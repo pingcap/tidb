@@ -17,7 +17,6 @@ package statistics
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -144,8 +144,37 @@ func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64
-	DropEvicted()
 	MemoryUsage() CacheItemMemoryUsage
+	IsAllEvicted() bool
+
+	dropCMS()
+	dropTopN()
+	isStatsInitialized() bool
+	getEvictedStatus() int
+	statsVer() int64
+	isCMSExist() bool
+}
+
+// DropEvicted drop stats for table column/index
+func DropEvicted(item TableCacheItem) {
+	if !item.isStatsInitialized() {
+		return
+	}
+	switch item.getEvictedStatus() {
+	case allLoaded:
+		if item.isCMSExist() && item.statsVer() < Version2 {
+			item.dropCMS()
+			return
+		}
+		// For stats version2, there is no cms thus we directly drop topn
+		item.dropTopN()
+		return
+	case onlyCmsEvicted:
+		item.dropTopN()
+		return
+	default:
+		return
+	}
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
@@ -161,6 +190,7 @@ type ColumnMemUsage struct {
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
 	FMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -176,7 +206,7 @@ func (c *ColumnMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *ColumnMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage
 }
 
 // IndexMemUsage records index memory usage
@@ -184,6 +214,7 @@ type IndexMemUsage struct {
 	IndexID           int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -199,7 +230,7 @@ func (c *IndexMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.
@@ -272,7 +303,7 @@ func (t *Table) String() string {
 	for _, col := range t.Columns {
 		cols = append(cols, col)
 	}
-	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+	slices.SortFunc(cols, func(i, j *Column) bool { return i.ID < j.ID })
 	for _, col := range cols {
 		strs = append(strs, col.String())
 	}
@@ -280,7 +311,7 @@ func (t *Table) String() string {
 	for _, idx := range t.Indices {
 		idxs = append(idxs, idx)
 	}
-	sort.Slice(idxs, func(i, j int) bool { return idxs[i].ID < idxs[j].ID })
+	slices.SortFunc(idxs, func(i, j *Index) bool { return i.ID < j.ID })
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}

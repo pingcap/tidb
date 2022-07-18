@@ -690,6 +690,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
 
+	// test for tidb_opt_skew_distinct_agg
+	tk.MustQuery("select @@session.tidb_opt_skew_distinct_agg").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set session tidb_opt_skew_distinct_agg=1")
+	tk.MustQuery("select @@session.tidb_opt_skew_distinct_agg").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_opt_skew_distinct_agg").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_opt_skew_distinct_agg=1")
+	tk.MustQuery("select @@global.tidb_opt_skew_distinct_agg").Check(testkit.Rows("1"))
+
 	// the value of max_allowed_packet should be a multiple of 1024
 	tk.MustExec("set @@global.max_allowed_packet=16385")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '16385'"))
@@ -1833,4 +1841,46 @@ func TestGcMaxWaitTime(t *testing.T) {
 	tk.MustExec("set global tidb_gc_max_wait_time = 86400")
 	tk.MustExec("set global tidb_gc_life_time = \"72h\"")
 	tk.MustExec("set global tidb_gc_max_wait_time = 1000")
+}
+
+func TestTiFlashFineGrainedShuffle(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Default is -1.
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
+
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
+	// Min val is -1.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = -2")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("-1"))
+
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 0")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 1024")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("1024"))
+	// Max val is 1024.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_stream_count = 1025")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_stream_count;").Check(testkit.Rows("1024"))
+
+	// Default is 8192.
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("8192"))
+
+	// Min is 1.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_batch_size = 0")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_batch_size = -1")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("1"))
+
+	// Max is uint64_max.
+	tk.MustExec("set @@tiflash_fine_grained_shuffle_batch_size = 18446744073709551615")
+	tk.MustQuery("select @@tiflash_fine_grained_shuffle_batch_size;").Check(testkit.Rows("18446744073709551615"))
+
+	// Test set global.
+	tk.MustExec("set global tiflash_fine_grained_shuffle_stream_count = -1")
+	tk.MustExec("set global tiflash_fine_grained_shuffle_batch_size = 8192")
 }

@@ -18,6 +18,7 @@ go_library(
         "//util/codec",
         "@com_github_pingcap_failpoint//:failpoint",
         "@in_gopkg_yaml_v2//:yaml_v2",
+        "@org_golang_x_exp//slices",
     ],
 )
 

@@ -172,6 +172,7 @@ func MakeFakeLoaderPackageInfo(pass *analysis.Pass) *loader.PackageInfo {
 // ReadFile reads a file and adds it to the FileSet
 // so that we can report errors against it using lineStart.
 func ReadFile(fset *token.FileSet, filename string) ([]byte, *token.File, error) {
+	//nolint: gosec
 	content, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, nil, err
@@ -200,7 +201,6 @@ func FindOffset(fileText string, line, column int) int {
 		} else {
 			currentCol++
 		}
-
 	}
 	return -1 //not found
 }

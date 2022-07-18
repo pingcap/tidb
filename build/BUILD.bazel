@@ -125,6 +125,7 @@ nogo(
                "//build/linter/exportloopref:exportloopref",
                "//build/linter/gofmt:gofmt",
                "//build/linter/gci:gci",
+               "//build/linter/gosec:gosec",
                "//build/linter/ineffassign:ineffassign",
                "//build/linter/misspell:misspell",
                "//build/linter/prealloc:prealloc",
@@ -132,7 +133,10 @@ nogo(
                "//build/linter/unconvert:unconvert",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
-               "//build:with_nogo": ["//build/linter/errcheck:errcheck"],
+               "//build:with_nogo": [
+                   "//build/linter/errcheck:errcheck",
+                   "//build/linter/revive:revive",
+               ],
                "//conditions:default": [],
            }),
 )

@@ -94,14 +94,30 @@ func (m *txnManager) GetStmtForUpdateTS() (uint64, error) {
 	return ts, nil
 }
 
-func (m *txnManager) GetReadSnapshot() (kv.Snapshot, error) {
+func (m *txnManager) GetTxnScope() string {
+	if m.ctxProvider == nil {
+		return kv.GlobalTxnScope
+	}
+	return m.ctxProvider.GetTxnScope()
+}
+
+func (m *txnManager) GetReadReplicaScope() string {
+	if m.ctxProvider == nil {
+		return kv.GlobalReplicaScope
+	}
+	return m.ctxProvider.GetReadReplicaScope()
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
+func (m *txnManager) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")
 	}
 	return m.ctxProvider.GetSnapshotWithStmtReadTS()
 }
 
-func (m *txnManager) GetForUpdateSnapshot() (kv.Snapshot, error) {
+// GetSnapshotWithStmtForUpdateTS gets snapshot with for update ts
+func (m *txnManager) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")
 	}

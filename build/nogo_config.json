@@ -154,6 +154,22 @@
       "util/printer/printer.go": "ignore util/printer code"
     }
   },
+  "gosec": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "parser/goyacc/": "ignore goyacc code",
+      ".*_test\\.go$": "ignore generated code",
+      "/cgo/": "ignore cgo code",
+      "/rules_go_work-*": "ignore generated code",
+      "tools/check/ut.go": "ignore tools/check code",
+      "tools/check/xprog.go": "ignore tools/check code",
+      "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
+      "tools/check/xprog.go:": "ignore tools/check code",
+      "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "GOROOT/": "ignore code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "httpresponse": {
     "exclude_files": {
       "/external/": "no need to vet third party code",
@@ -213,6 +229,24 @@
     "exclude_files": {
       "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "revive": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      "GOROOT/": "ignore code",
+      "/cgo/": "ignore cgo",
+      "tools/": "ignore tool code",
+      "parser/goyacc/": "ignore goyacc code",
+      "parser/ast/": "ignore parser/ast code",
+      "parser/test_driver/": "ignore parser/test_driver code",
+      ".*_test\\.go$": "ignore generated code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "util/": "util code",
+      "parser/": "parser code",
+      "meta/": "parser code"
     }
   },
   "shift": {
