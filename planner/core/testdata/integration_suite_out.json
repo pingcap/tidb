@@ -1514,26 +1514,26 @@
         "SQL": "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
         "Plan": [
           "HashJoin 8000.00 root  semi join, equal:[eq(test.t.a, test.t.a)]",
-          "├─HashJoin(Build) 12500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "│ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│ └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)",
         "Plan": [
           "HashJoin 8000.00 root  semi join, equal:[eq(test.t.a, test.t.a)]",
-          "├─HashJoin(Build) 12500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "│ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "│ └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 12500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2559,22 +2559,22 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
         "Plan": [
-          "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
-          "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
-          "│ └─StreamAgg_60 1.00 8.18 root  funcs:count(Column#32)->Column#18",
-          "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
-          "│     └─StreamAgg_44 1.00 49.50 batchCop[tiflash]  funcs:count(1)->Column#32",
-          "│       └─TableFullScan_59 3.00 40.50 batchCop[tiflash] table:t1 keep order:false",
-          "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
-          "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
-          "    ├─TableReader_24(Build) 3.00 10.16 root  data:TableFullScan_23",
-          "    │ └─TableFullScan_23 3.00 108.00 cop[tikv] table:t keep order:false",
-          "    └─Projection_27(Probe) 1.00 21.95 root  1->Column#26",
-          "      └─Limit_30 1.00 3.35 root  offset:0, count:1",
-          "        └─TableReader_38 1.00 3.35 root  data:ExchangeSender_37",
-          "          └─ExchangeSender_37 1.00 19.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "            └─Limit_36 1.00 19.50 mpp[tiflash]  offset:0, count:1",
-          "              └─TableFullScan_35 1.00 19.50 mpp[tiflash] table:t2 keep order:false"
+          "HashJoin_20 3.00 127.40 root  CARTESIAN left outer semi join",
+          "├─Selection_40(Build) 0.80 11.18 root  eq(2, Column#18)",
+          "│ └─StreamAgg_61 1.00 8.18 root  funcs:count(Column#32)->Column#18",
+          "│   └─TableReader_62 1.00 5.17 root  data:StreamAgg_45",
+          "│     └─StreamAgg_45 1.00 49.50 batchCop[tiflash]  funcs:count(1)->Column#32",
+          "│       └─TableFullScan_60 3.00 40.50 batchCop[tiflash] table:t1 keep order:false",
+          "└─Projection_21(Probe) 3.00 95.82 root  1->Column#28",
+          "  └─Apply_23 3.00 76.02 root  CARTESIAN left outer join",
+          "    ├─TableReader_25(Build) 3.00 10.16 root  data:TableFullScan_24",
+          "    │ └─TableFullScan_24 3.00 108.00 cop[tikv] table:t keep order:false",
+          "    └─Projection_28(Probe) 1.00 21.95 root  1->Column#26",
+          "      └─Limit_31 1.00 3.35 root  offset:0, count:1",
+          "        └─TableReader_39 1.00 3.35 root  data:ExchangeSender_38",
+          "          └─ExchangeSender_38 1.00 19.50 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─Limit_37 1.00 19.50 mpp[tiflash]  offset:0, count:1",
+          "              └─TableFullScan_36 1.00 19.50 mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {

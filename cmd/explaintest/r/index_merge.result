@@ -11,13 +11,13 @@ id	estRows	task	access object	operator info
 Sort_8	4433.77	root		test.t1.c1
 └─Projection_10	4433.77	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Selection_11	4433.77	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), Column#9))
-    └─HashJoin_12	5542.21	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c3, test.t1.c3)
-      ├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
-      │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexMerge_16(Probe)	5542.21	root		
-        ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan_15(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─HashJoin_13	5542.21	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c3, test.t1.c3)
+      ├─TableReader_19(Build)	10000.00	root		data:TableFullScan_18
+      │ └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexMerge_17(Probe)	5542.21	root		
+        ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan_16(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 in (select c3 from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -31,13 +31,13 @@ id	estRows	task	access object	operator info
 Sort_8	4433.77	root		test.t1.c1
 └─Projection_10	4433.77	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Selection_11	4433.77	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), Column#9))
-    └─HashJoin_12	5542.21	root		CARTESIAN anti left outer semi join, other cond:eq(test.t1.c3, test.t1.c3)
-      ├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
-      │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexMerge_16(Probe)	5542.21	root		
-        ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan_15(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─HashJoin_13	5542.21	root		CARTESIAN anti left outer semi join, other cond:eq(test.t1.c3, test.t1.c3)
+      ├─TableReader_19(Build)	10000.00	root		data:TableFullScan_18
+      │ └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexMerge_17(Probe)	5542.21	root		
+        ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan_16(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 not in (select c3 from t1) order by 1;
 c1	c2	c3
 1	1	1
@@ -67,13 +67,13 @@ id	estRows	task	access object	operator info
 Sort_9	4433.77	root		test.t1.c1
 └─Projection_11	4433.77	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Selection_12	4433.77	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), Column#10))
-    └─HashJoin_22	5542.21	root		left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)]
-      ├─IndexReader_30(Build)	10000.00	root		index:IndexFullScan_29
-      │ └─IndexFullScan_29	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-      └─IndexMerge_26(Probe)	5542.21	root		
-        ├─IndexRangeScan_23(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan_24(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan_25(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─HashJoin_23	5542.21	root		left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)]
+      ├─IndexReader_31(Build)	10000.00	root		index:IndexFullScan_30
+      │ └─IndexFullScan_30	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+      └─IndexMerge_27(Probe)	5542.21	root		
+        ├─IndexRangeScan_24(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan_25(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan_26(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
 c1	c2	c3
 1	1	1
@@ -87,13 +87,13 @@ id	estRows	task	access object	operator info
 Sort_9	4433.77	root		test.t1.c1
 └─Projection_11	4433.77	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Selection_12	4433.77	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), Column#10))
-    └─HashJoin_22	5542.21	root		anti left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)]
-      ├─IndexReader_30(Build)	10000.00	root		index:IndexFullScan_29
-      │ └─IndexFullScan_29	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-      └─IndexMerge_26(Probe)	5542.21	root		
-        ├─IndexRangeScan_23(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan_24(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan_25(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─HashJoin_23	5542.21	root		anti left outer semi join, equal:[eq(test.t1.c1, test.t2.c1)]
+      ├─IndexReader_31(Build)	10000.00	root		index:IndexFullScan_30
+      │ └─IndexFullScan_30	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+      └─IndexMerge_27(Probe)	5542.21	root		
+        ├─IndexRangeScan_24(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan_25(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan_26(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and NOT EXISTS(select 1 from t2 where t2.c1 = t1.c1) order by 1;
 c1	c2	c3
 1	1	1
@@ -210,19 +210,19 @@ id	estRows	task	access object	operator info
 Sort_14	4433.77	root		test.t1.c1
 └─Projection_16	4433.77	root		test.t1.c1, test.t1.c2, test.t1.c3
   └─Selection_17	4433.77	root		or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), Column#13))
-    └─HashJoin_18	5542.21	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c3, test.t2.c1)
-      ├─HashJoin_37(Build)	9990.00	root		inner join, equal:[eq(test.t2.c2, test.t2.c3)]
-      │ ├─HashAgg_41(Build)	7992.00	root		group by:test.t2.c3, funcs:firstrow(test.t2.c3)->test.t2.c3
-      │ │ └─TableReader_48	9990.00	root		data:Selection_47
-      │ │   └─Selection_47	9990.00	cop[tikv]		not(isnull(test.t2.c3))
-      │ │     └─TableFullScan_46	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-      │ └─TableReader_51(Probe)	9990.00	root		data:Selection_50
-      │   └─Selection_50	9990.00	cop[tikv]		not(isnull(test.t2.c2))
-      │     └─TableFullScan_49	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-      └─IndexMerge_22(Probe)	5542.21	root		
-        ├─IndexRangeScan_19(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-        ├─IndexRangeScan_20(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-        └─TableRowIDScan_21(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─HashJoin_19	5542.21	root		CARTESIAN left outer semi join, other cond:eq(test.t1.c3, test.t2.c1)
+      ├─HashJoin_38(Build)	9990.00	root		inner join, equal:[eq(test.t2.c2, test.t2.c3)]
+      │ ├─HashAgg_42(Build)	7992.00	root		group by:test.t2.c3, funcs:firstrow(test.t2.c3)->test.t2.c3
+      │ │ └─TableReader_49	9990.00	root		data:Selection_48
+      │ │   └─Selection_48	9990.00	cop[tikv]		not(isnull(test.t2.c3))
+      │ │     └─TableFullScan_47	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      │ └─TableReader_52(Probe)	9990.00	root		data:Selection_51
+      │   └─Selection_51	9990.00	cop[tikv]		not(isnull(test.t2.c2))
+      │     └─TableFullScan_50	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─IndexMerge_23(Probe)	5542.21	root		
+        ├─IndexRangeScan_20(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+        ├─IndexRangeScan_21(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+        └─TableRowIDScan_22(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 IN (select c1 from t2 where c2 in (select c3 from t2)) order by 1;
 c1	c2	c3
 1	1	1

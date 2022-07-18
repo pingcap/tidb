@@ -2869,3 +2869,27 @@ func TestOuterJoin(t *testing.T) {
 		),
 	)
 }
+
+func TestAllSemiJoinWithOuterBuildTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("USE TEST")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1(a int, b int default 0)")
+	tk.MustExec("INSERT INTO t1 (a) values(1), (2), (3), (4), (5), (null)")
+	plannercore.ForceUseOuterBuild4Test = true
+	// Anti left outer semi join
+	tk.MustQuery("select * from (select t1.a not in (select t1.a from t1) from t1) x;").
+		Check(testkit.Rows("0", "0", "0", "0", "0", "<nil>"))
+	// Left outer semi join
+	tk.MustQuery("select * from (select t1.a in (select t1.a from t1) from t1) x;").
+		Check(testkit.Rows("1", "1", "1", "1", "1", "<nil>"))
+	// Semi join
+	tk.MustQuery("select * from (select t1.a from t1 where exists (select t1.a from t1) ) x;").
+		Check(testkit.Rows("1", "2", "3", "4", "5", "<nil>"))
+	// Anti semi join
+	tk.MustQuery("select * from (select t1.a from t1 where t1.a not in (select t1.a from t1) ) x;").
+		Check(testkit.Rows())
+}

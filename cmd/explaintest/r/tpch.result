@@ -1300,8 +1300,8 @@ Sort	1.00	root		Column#31
   └─HashAgg	1.00	root		group by:Column#37, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
     └─Projection	0.00	root		tpch.customer.c_acctbal, substring(tpch.customer.c_phone, 1, 2)->Column#36, substring(tpch.customer.c_phone, 1, 2)->Column#37
       └─HashJoin	0.00	root		anti semi join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
-        ├─TableReader(Build)	75000000.00	root		data:TableFullScan
-        │ └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-        └─TableReader(Probe)	0.00	root		data:Selection
-          └─Selection	0.00	cop[tikv]		gt(tpch.customer.c_acctbal, NULL), in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
-            └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+        ├─TableReader(Build)	0.00	root		data:Selection
+        │ └─Selection	0.00	cop[tikv]		gt(tpch.customer.c_acctbal, NULL), in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
+        │   └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
+        └─TableReader(Probe)	75000000.00	root		data:TableFullScan
+          └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false

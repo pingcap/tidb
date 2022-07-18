@@ -673,9 +673,10 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 		chk := task.outerResult.GetChunk(chkIdx)
 		for rowIdx, val := range outerRowStatus {
 			if val == outerRowMatched {
-				continue
+				iw.joiner.onMatch(chk.GetRow(rowIdx), joinResult.chk)
+			} else {
+				iw.joiner.onMissMatch(val == outerRowHasNull, chk.GetRow(rowIdx), joinResult.chk)
 			}
-			iw.joiner.onMissMatch(val == outerRowHasNull, chk.GetRow(rowIdx), joinResult.chk)
 			if joinResult.chk.IsFull() {
 				select {
 				case resultCh <- joinResult:

@@ -592,30 +592,30 @@
       {
         "SQL": "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
         "Plan": [
-          "TableReader_48 8000.00 root  data:ExchangeSender_47",
-          "└─ExchangeSender_47 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader_49 8000.00 root  data:ExchangeSender_48",
+          "└─ExchangeSender_48 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 mpp[tiflash]  test.t.a",
-          "    └─Selection_45 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_46 10000.00 mpp[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
-          "        ├─ExchangeReceiver_26(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_25 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan_24 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan_23(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Selection_46 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_47 10000.00 mpp[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_27(Build) 10000.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_25 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_24(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
         "Plan": [
-          "TableReader_48 8000.00 root  data:ExchangeSender_47",
-          "└─ExchangeSender_47 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader_49 8000.00 root  data:ExchangeSender_48",
+          "└─ExchangeSender_48 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 mpp[tiflash]  test.t.a",
-          "    └─Selection_45 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_46 10000.00 mpp[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
-          "        ├─ExchangeReceiver_26(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_25 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan_24 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan_23(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Selection_46 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_47 10000.00 mpp[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_27(Build) 10000.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_25 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_24(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -623,10 +623,10 @@
         "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
         "Plan": [
           "MergeJoin_10 8000.00 root  anti semi join, left key:test.t.a, right key:test.s.a, left cond:[lt(test.t.a, 1)]",
-          "├─TableReader_29(Build) 10000.00 root  data:TableFullScan_28",
-          "│ └─TableFullScan_28 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
-          "└─TableReader_25(Probe) 10000.00 root  data:TableFullScan_24",
-          "  └─TableFullScan_24 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+          "├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "│ └─TableFullScan_29 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
+          "└─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "  └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",

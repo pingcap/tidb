@@ -104,6 +104,9 @@ type joiner interface {
 	// parameter passed to `onMissMatch`.
 	onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk)
 
+	// onMatch operates on the matched outer row according to the join type.
+	onMatch(outer chunk.Row, chk *chunk.Chunk)
+
 	// Clone deep copies a joiner.
 	Clone() joiner
 }
@@ -397,7 +400,6 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
 		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
-			chk.AppendRowByColIdxs(outer, j.lUsed)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
@@ -412,7 +414,6 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 		}
 		if matched {
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
-			chk.AppendRowByColIdxs(outer, j.lUsed)
 		} else {
 			outerRowStatus = append(outerRowStatus, outerRowUnmatched)
 		}
@@ -422,6 +423,10 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 }
 
 func (j *semiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+}
+
+func (j *semiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
+	chk.AppendRowByColIdxs(outer, j.lUsed)
 }
 
 // Clone implements joiner interface.
@@ -493,7 +498,9 @@ func (j *antiSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.C
 		chk.AppendRowByColIdxs(outer, j.lUsed)
 	}
 }
+func (j *antiSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
 
+}
 func (j *antiSemiJoiner) Clone() joiner {
 	return &antiSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
@@ -537,7 +544,6 @@ func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chun
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
 		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
-			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
@@ -550,7 +556,6 @@ func (j *leftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chun
 			return nil, err
 		}
 		if matched {
-			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		} else if isNull {
 			outerRowStatus = append(outerRowStatus, outerRowHasNull)
@@ -619,7 +624,6 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner 
 	outer, numToAppend := outers.Current(), chk.RequiredRows()-chk.NumRows()
 	if len(j.conditions) == 0 {
 		for ; outer != outers.End() && numToAppend > 0; outer, numToAppend = outers.Next(), numToAppend-1 {
-			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		}
 		return outerRowStatus, nil
@@ -632,7 +636,6 @@ func (j *antiLeftOuterSemiJoiner) tryToMatchOuters(outers chunk.Iterator, inner 
 			return nil, err
 		}
 		if matched {
-			j.onMatch(outer, chk)
 			outerRowStatus = append(outerRowStatus, outerRowMatched)
 		} else if isNull {
 			outerRowStatus = append(outerRowStatus, outerRowHasNull)
@@ -739,6 +742,9 @@ func (j *leftOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk)
 	lWide := chk.AppendRowByColIdxs(outer, j.lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, j.defaultInner, j.rUsed)
 }
+func (j *leftOuterJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
+
+}
 
 func (j *leftOuterJoiner) Clone() joiner {
 	return &leftOuterJoiner{baseJoiner: j.baseJoiner.Clone()}
@@ -813,6 +819,8 @@ func (j *rightOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.R
 func (j *rightOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
 	lWide := chk.AppendRowByColIdxs(j.defaultInner, j.lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, outer, j.rUsed)
+}
+func (j *rightOuterJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
 }
 
 func (j *rightOuterJoiner) Clone() joiner {
@@ -897,6 +905,9 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 }
 
 func (j *innerJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+}
+
+func (j *innerJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
 }
 
 func (j *innerJoiner) Clone() joiner {

@@ -318,7 +318,8 @@ func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size f
 }
 
 func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
-	if p.storeTp == kv.TiFlash {
+	// TODO: we reject semi join with outer to build now until mpp support it
+	if p.storeTp == kv.TiFlash && !(p.UseOuterToBuild && p.JoinType.IsSemiJoin()) {
 		return p.attach2TaskForTiFlash(tasks...)
 	}
 	lTask := tasks[0].convertToRootTask(p.ctx)

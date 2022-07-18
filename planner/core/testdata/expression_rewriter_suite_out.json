@@ -54,11 +54,11 @@
         "SQL": "select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2)",
         "Plan": [
           "HashJoin 2.40 root  CARTESIAN anti semi join, other cond:eq(Column#7, test.t2.b), eq(test.t1.a, test.t2.a)",
-          "├─TableReader(Build) 4.00 root  data:TableFullScan",
-          "│ └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false",
-          "└─HashAgg(Probe) 3.00 root  group by:test.t1.a, funcs:count(1)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
-          "  └─TableReader 4.00 root  data:TableFullScan",
-          "    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"
+          "├─HashAgg(Build) 3.00 root  group by:test.t1.a, funcs:count(1)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
+          "│ └─TableReader 4.00 root  data:TableFullScan",
+          "│   └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+          "└─TableReader(Probe) 4.00 root  data:TableFullScan",
+          "  └─TableFullScan 4.00 cop[tikv] table:t2 keep order:false"
         ],
         "Res": [
           "4"

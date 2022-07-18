@@ -90,6 +90,6 @@ func (cb *ConcurrentBitmap) UnsafeIsSet(bitIndex int) (isSet bool) {
 	}
 
 	mask := bitMask >> uint32(bitIndex%segmentWidth)
-	isSet = ((cb.segments[bitIndex>>segmentWidthPower] & mask) != 0)
+	isSet = (cb.segments[bitIndex>>segmentWidthPower] & mask) != 0
 	return
 }

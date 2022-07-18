@@ -83,8 +83,9 @@ type HashJoinExec struct {
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
 
-	outerMatchedStatus []*bitmap.ConcurrentBitmap
-	useOuterToBuild    bool
+	outerMatchedStatus   []*bitmap.ConcurrentBitmap
+	outerUnMatchedIsNull []*bitmap.ConcurrentBitmap
+	useOuterToBuild      bool
 
 	prepared    bool
 	isOuterJoin bool
@@ -152,6 +153,8 @@ func (e *HashJoinExec) Close() error {
 		terror.Call(e.rowContainer.Close)
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
+	e.outerUnMatchedIsNull = e.outerUnMatchedIsNull[:0]
+
 	e.buildSideRows = nil
 	e.buildSideRowPtrs = nil
 	if e.stats != nil && e.rowContainer != nil {
@@ -379,8 +382,8 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	e.joinWorkerWaitGroup.Done()
 }
 
-// Concurrently handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
+// Concurrently handling rows from the hash table
+func (e *HashJoinExec) handleRowsFromHashTable(workerID uint) {
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return
@@ -395,8 +398,12 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 			return
 		}
 		for j := 0; j < chk.NumRows(); j++ {
-			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
-				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
+			if e.outerMatchedStatus[i].UnsafeIsSet(j) {
+				// To satisfy property of semi join, we unify process matched rows to avoid duplicate row
+				e.joiners[workerID].onMatch(chk.GetRow(j), joinResult.chk)
+			} else {
+				// Process unmatched outer rows
+				e.joiners[workerID].onMissMatch(e.outerUnMatchedIsNull[i].UnsafeIsSet(j), chk.GetRow(j), joinResult.chk)
 			}
 			if joinResult.chk.IsFull() {
 				e.joinResultCh <- joinResult
@@ -422,7 +429,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 		for i := uint(0); i < e.concurrency; i++ {
 			var workerID = i
 			e.joinWorkerWaitGroup.Add(1)
-			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
+			go util.WithRecovery(func() { e.handleRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
 		}
 		e.joinWorkerWaitGroup.Wait()
 	}
@@ -519,6 +526,8 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		for i := range outerMatchStatus {
 			if outerMatchStatus[i] == outerRowMatched {
 				e.outerMatchedStatus[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
+			} else if outerMatchStatus[i] == outerRowHasNull {
+				e.outerUnMatchedIsNull[rowsPtrs[rowIdx+i].ChkIdx].Set(int(rowsPtrs[rowIdx+i].RowIdx))
 			}
 		}
 		rowIdx += len(outerMatchStatus)
@@ -798,7 +807,8 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
-			e.memTracker.Consume(bitMap.BytesConsumed())
+			e.outerUnMatchedIsNull = append(e.outerUnMatchedIsNull, bitmap.NewConcurrentBitmap(chk.NumRows()))
+			e.memTracker.Consume(2 * bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
 				err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 			} else {
