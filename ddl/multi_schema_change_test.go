@@ -868,6 +868,13 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("insert into t values (1, 2);")
 	tk.MustGetErrCode("alter table t add index i(b), modify column a int null default 1 after a;", errno.ErrBadField)
+
+	// Test rolling back modify column with reorganization.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(3), b int, unique index i1(a), index i2(a, b));")
+	tk.MustExec("insert into t values ('aaa', 1), ('aa', 2);")
+	tk.MustExec("set @@sql_mode = '';") // Make it possible to truncate 'aaa' to 'aa'.
+	tk.MustGetErrCode("alter table t modify column b tinyint, modify column a char(2);", errno.ErrDupEntry)
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
@@ -1031,6 +1038,43 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 	dom.DDL().SetHook(originHook)
 }
 
+func TestMultiSchemaChangeTableOption(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int auto_increment primary key, b int);")
+	tk.MustExec("alter table t modify column b tinyint, auto_increment = 100;")
+	tk.MustExec("insert into t (b) values (1);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("100 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int auto_increment primary key, b int);")
+	tk.MustExec("alter table t auto_increment = 110, auto_increment = 90;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1105 Can't reset AUTO_INCREMENT to 90 without FORCE option, using 110 instead"))
+	tk.MustExec("insert into t (b) values (1);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("110 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int) charset = utf8 shard_row_id_bits=2;")
+	tk.MustExec("alter table t modify column a tinyint, comment = 'abc', charset = utf8mb4;")
+	tk.MustQuery("select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where table_name = 't';").
+		Check(testkit.Rows("SHARD_BITS=2 abc utf8mb4_bin"))
+}
+
+func TestMultiSchemaChangeNonPublicDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a tinyint);")
+	tk.MustExec("insert into t set a = 10;")
+	tk.MustExec("alter table t add column b int not null, change column a c char(5) first;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("10 0"))
+}
+
 func TestMultiSchemaChangeAlterIndexVisibility(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1098,6 +1142,17 @@ func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
 		"Note 1060 Duplicate column name 'a'", "Note 1060 Duplicate column name 'b'"))
 	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Equal(t, "create table", rs[0][3])
+}
+
+func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 1;",
+		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
 }
 
 type cancelOnceHook struct {
