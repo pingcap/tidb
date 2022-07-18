@@ -250,6 +250,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	case model.ActionAlterIndexVisibility:
 		idxName := job.Args[0].(model.CIStr)
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
+	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
