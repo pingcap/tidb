@@ -27,6 +27,9 @@ import (
 )
 
 func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
+	if len(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo.SubJobs) == 0 {
+		return nil
+	}
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -223,6 +226,31 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 				}
 			}
 		}
+	case model.ActionRenameIndex:
+		from := job.Args[0].(model.CIStr)
+		to := job.Args[1].(model.CIStr)
+		info.AddIndexes = append(info.AddIndexes, to)
+		info.DropIndexes = append(info.DropIndexes, from)
+	case model.ActionModifyColumn:
+		newCol := *job.Args[0].(**model.ColumnInfo)
+		oldColName := job.Args[1].(model.CIStr)
+		pos := job.Args[2].(*ast.ColumnPosition)
+		if newCol.Name.L != oldColName.L {
+			info.AddColumns = append(info.AddColumns, newCol.Name)
+			info.DropColumns = append(info.DropColumns, oldColName)
+		} else {
+			info.ModifyColumns = append(info.ModifyColumns, newCol.Name)
+		}
+		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
+			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
+		}
+	case model.ActionSetDefaultValue:
+		col := job.Args[0].(*table.Column)
+		info.ModifyColumns = append(info.ModifyColumns, col.Name)
+	case model.ActionAlterIndexVisibility:
+		idxName := job.Args[0].(model.CIStr)
+		info.AlterIndexes = append(info.AlterIndexes, idxName)
+	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
@@ -299,20 +327,14 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 }
 
 func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job) {
-	if job.MultiSchemaInfo == nil {
+	if job.MultiSchemaInfo == nil || job.Type != model.ActionMultiSchemaChange {
 		return
 	}
-	if job.Type == model.ActionMultiSchemaChange {
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			if sub.Warning != nil {
-				ctx.GetSessionVars().StmtCtx.AppendNote(sub.Warning)
-			}
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		if sub.Warning != nil {
+			ctx.GetSessionVars().StmtCtx.AppendNote(sub.Warning)
 		}
 	}
-	for _, w := range job.MultiSchemaInfo.Warnings {
-		ctx.GetSessionVars().StmtCtx.AppendNote(w)
-	}
-
 }
 
 // rollingBackMultiSchemaChange updates a multi-schema change job

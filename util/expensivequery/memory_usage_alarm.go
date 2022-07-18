@@ -236,6 +236,7 @@ func (record *memoryUsageAlarm) recordProfile() {
 			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
 			return
 		}
+		//nolint: revive
 		defer func() {
 			err := f.Close()
 			if err != nil {

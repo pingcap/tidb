@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "etcd_test",
+    timeout = "short",
     srcs = ["etcd_test.go"],
     embed = [":etcd"],
     deps = [

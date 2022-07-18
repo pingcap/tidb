@@ -323,8 +323,13 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
 	}
 
-	idx := tblInfo.FindIndexByName(from.L)
-	idx.Name = to
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, false)
+	}
+
+	renameIndexes(tblInfo, from, to)
 	if ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -333,11 +338,16 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
-	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
+func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	var idx *model.IndexInfo
+	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
-	} else if idx.Invisible == invisible {
-		return true, nil
+	}
+	if ctx == nil || ctx.GetSessionVars() == nil || ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+		// Early return.
+		if idx.Invisible == invisible {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -347,14 +357,27 @@ func onAlterIndexVisibility(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
-	idx := tblInfo.FindIndexByName(from.L)
-	idx.Invisible = invisible
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return updateVersionAndTableInfo(d, t, job, tblInfo, false)
+	}
+
+	setIndexVisibility(tblInfo, from, invisible)
 	if ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func setIndexVisibility(tblInfo *model.TableInfo, name model.CIStr, invisible bool) {
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+			idx.Invisible = invisible
+		}
+	}
 }
 
 func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, error) {
@@ -910,12 +933,13 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	skip, err := validateAlterIndexVisibility(nil, indexName, invisible, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 	if skip {
+		job.State = model.JobStateDone
 		return nil, indexName, invisible, nil
 	}
 	return tblInfo, indexName, invisible, nil
@@ -1534,17 +1558,74 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func findIndexesByColName(indexes []*model.IndexInfo, colName string) ([]*model.IndexInfo, []int) {
-	idxInfos := make([]*model.IndexInfo, 0, len(indexes))
-	offsets := make([]int, 0, len(indexes))
-	for _, idxInfo := range indexes {
-		for i, c := range idxInfo.Columns {
-			if strings.EqualFold(colName, c.Name.L) {
-				idxInfos = append(idxInfos, idxInfo)
-				offsets = append(offsets, i)
-				break
+// changingIndex is used to store the index that need to be changed during modifying column.
+type changingIndex struct {
+	indexInfo *model.IndexInfo
+	// Column offset in idxInfo.Columns.
+	offset int
+	// When the modifying column is contained in the index, a temp index is created.
+	// isTemp indicates whether the indexInfo is a temp index created by a previous modify column job.
+	isTemp bool
+}
+
+// findRelatedIndexesToChange finds the indexes that covering the given column.
+// The normal one will be overridden by the temp one.
+func findRelatedIndexesToChange(tblInfo *model.TableInfo, colName model.CIStr) []changingIndex {
+	// In multi-schema change jobs that contains several "modify column" sub-jobs, there may be temp indexes for another temp index.
+	// To prevent reorganizing too many indexes, we should create the temp indexes that are really necessary.
+	var normalIdxInfos, tempIdxInfos []changingIndex
+	for _, idxInfo := range tblInfo.Indices {
+		if pos := findIdxCol(idxInfo, colName); pos != -1 {
+			isTemp := isTempIdxInfo(idxInfo, tblInfo)
+			r := changingIndex{indexInfo: idxInfo, offset: pos, isTemp: isTemp}
+			if isTemp {
+				tempIdxInfos = append(tempIdxInfos, r)
+			} else {
+				normalIdxInfos = append(normalIdxInfos, r)
 			}
 		}
 	}
-	return idxInfos, offsets
+	// Overwrite if the index has the corresponding temp index. For example,
+	// we try to find the indexes that contain the column `b` and there are two indexes, `i(a, b)` and `$i($a, b)`.
+	// Note that the symbol `$` means temporary. The index `$i($a, b)` is temporarily created by the previous "modify a" statement.
+	// In this case, we would create a temporary index like $$i($a, $b), so the latter should be chosen.
+	result := normalIdxInfos
+	for _, tmpIdx := range tempIdxInfos {
+		origName := getChangingIndexOriginName(tmpIdx.indexInfo)
+		for i, normIdx := range normalIdxInfos {
+			if normIdx.indexInfo.Name.O == origName {
+				result[i] = tmpIdx
+			}
+		}
+	}
+	return result
+}
+
+func isTempIdxInfo(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	for _, idxCol := range idxInfo.Columns {
+		if tblInfo.Columns[idxCol.Offset].ChangeStateInfo != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func findIdxCol(idxInfo *model.IndexInfo, colName model.CIStr) int {
+	for offset, idxCol := range idxInfo.Columns {
+		if idxCol.Name.L == colName.L {
+			return offset
+		}
+	}
+	return -1
+}
+
+func renameIndexes(tblInfo *model.TableInfo, from, to model.CIStr) {
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L == from.L {
+			idx.Name = to
+		} else if isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == from.O {
+			idx.Name.L = strings.Replace(idx.Name.L, from.L, to.L, 1)
+			idx.Name.O = strings.Replace(idx.Name.O, from.O, to.O, 1)
+		}
+	}
 }

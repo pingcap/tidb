@@ -24,6 +24,7 @@ go_library(
 
 go_test(
     name = "json_test",
+    timeout = "short",
     srcs = [
         "binary_functions_test.go",
         "binary_test.go",
