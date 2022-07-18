@@ -85,7 +85,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.GlobalKill = getGlobalKillUsageInfo()
 
 	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
-  
+
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
 	return &usage, nil
@@ -287,12 +287,11 @@ func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
 }
 
-
 // TiFlashModeStatistics records the usage info of Fast Mode
 type TiFlashModeStatistics struct {
 	FastModeTableCount   int64 `json:"fast_mode_table_count"`
 	NormalModeTableCount int64 `json:"normal_mode_table_count"`
-	AllTableCount        int64 `json:"all_table_count`
+	AllTableCount        int64 `json:"all_table_count"`
 }
 
 func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
