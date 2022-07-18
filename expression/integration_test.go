@@ -7448,3 +7448,20 @@ func TestImcompleteDateFunc(t *testing.T) {
 	tk.MustQuery("select YEARWEEK('1998-10-00')").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
 }
+
+func TestIssue36279(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET timestamp=UNIX_TIMESTAMP('2011-11-01 17:48:00')")
+
+	// test const
+	tk.MustQuery("SELECT cast(cast('12:12:12' as time) as datetime(6))").Check(testkit.Rows("2011-11-01 12:12:12.000000"))
+
+	// test vec
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (tm time(6))")
+	tk.MustExec("insert into t values('23:59:59')")
+	tk.MustQuery("SELECT cast(tm as datetime(6)) from t").Check(testkit.Rows("2011-11-01 23:59:59.000000"))
+}

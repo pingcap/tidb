@@ -608,6 +608,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 	ds := buf.GoDurations()
 	times := result.Times()
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
+	ts, _ := getStmtTimestamp(b.ctx)
 	fsp := b.tp.GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -616,7 +617,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		tm, err := duration.ConvertToTime(stmtCtx, b.tp.GetType())
+		tm, err := duration.ConvertToTimeWithSysTimestamp(stmtCtx, b.tp.GetType(), ts)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err

@@ -1487,6 +1487,17 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 	return t.Convert(sc, tp)
 }
 
+// ConvertToTimeWithSysTimestamp converts duration to Time by system timestamp.
+// Tp is TypeDatetime, TypeTimestamp and TypeDate.
+func (d Duration) ConvertToTimeWithSysTimestamp(sc *stmtctx.StatementContext, tp uint8, ts gotime.Time) (Time, error) {
+	year, month, day := ts.In(sc.TimeZone).Date()
+	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
+	mixDateAndDuration(&datePart, d)
+
+	t := NewTime(datePart, mysql.TypeDatetime, d.Fsp)
+	return t.Convert(sc, tp)
+}
+
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11
