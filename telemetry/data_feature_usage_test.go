@@ -289,7 +289,6 @@ func TestGlobalKillUsageInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, usage.GlobalKill)
 }
-
 type tiflashContext struct {
 	store   kv.Storage
 	dom     *domain.Domain
