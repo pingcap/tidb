@@ -119,7 +119,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	if err != nil {
 		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
 			job.Warning = toTError(err)
-			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			job.State = model.JobStateDone
 			return ver, nil
 		}
 		return ver, errors.Trace(err)
@@ -230,7 +230,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
 			// Convert the "not exists" error to a warning.
 			job.Warning = toTError(err)
-			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.State = model.JobStateDone
 			return ver, nil
 		}
 		return ver, errors.Trace(err)
