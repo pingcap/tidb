@@ -2573,6 +2573,13 @@ type Limit struct {
 	Offset ExprNode
 }
 
+type LimitSimple struct {
+	node
+
+	Count  int64
+	Offset int64
+}
+
 // Restore implements Node interface.
 func (n *Limit) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("LIMIT ")
