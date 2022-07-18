@@ -139,7 +139,7 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 
 	// The versions of BR and TiKV should be the same, such as
 	// BR 6.1 <-> TiKV 6.1, BR 6.2 <-> TiKV 6.2
-	if BRVersion.Major != tikvVersion.Major {
+	if BRVersion.Major != tikvVersion.Major || BRVersion.Minor != tikvVersion.Minor {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s major version mismatch when use PiTR, please use the same version of BR",
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
