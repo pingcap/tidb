@@ -3329,7 +3329,7 @@ func TestFuncNameConst(t *testing.T) {
 	rs, err = tk.Exec(`select name_const("hello", 1);`)
 	require.NoError(t, err)
 	require.Len(t, rs.Fields(), 1)
-	require.Equal(t, "hello", rs.Fields()[0].Column.Name.L)
+	require.Equal(t, "hello", rs.Fields()[0].ColumnAsName.L)
 }
 
 func TestValuesEnum(t *testing.T) {

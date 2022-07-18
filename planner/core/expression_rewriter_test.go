@@ -36,7 +36,7 @@ func TestIfNullEliminateColName(t *testing.T) {
 	require.NoError(t, err)
 	fields := rs.Fields()
 	require.Greater(t, len(fields), 0)
-	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
+	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].ColumnAsName.L)
 	require.NoError(t, rs.Close())
 
 	tk.MustExec("drop table if exists t")

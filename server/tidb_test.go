@@ -1109,7 +1109,7 @@ func TestFieldList(t *testing.T) {
 	rs, err := Execute(ctx, qctx, "select "+tooLongColumnAsName)
 	require.NoError(t, err)
 	cols := rs.Columns()
-	require.Equal(t, tooLongColumnAsName, cols[0].OrgName)
+	require.Equal(t, "", cols[0].OrgName)
 	require.Equal(t, columnAsName, cols[0].Name)
 	rs.Close()
 
