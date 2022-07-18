@@ -733,6 +733,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '0'"))
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("2"))
+
+	tk.MustQuery("select @@tidb_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_analyze_snapshot = 1")
+	tk.MustQuery("select @@global.tidb_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_analyze_snapshot = 0")
+	tk.MustQuery("select @@global.tidb_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_analyze_snapshot = 1")
+	tk.MustQuery("select @@session.tidb_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_analyze_snapshot = 0")
+	tk.MustQuery("select @@session.tidb_analyze_snapshot").Check(testkit.Rows("0"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {

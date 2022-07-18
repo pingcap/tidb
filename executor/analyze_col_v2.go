@@ -155,6 +155,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 		Job:           e.job,
 		StatsVer:      e.StatsVersion,
 		Count:         count,
+		Snapshot:      e.snapshot,
 		ExtStats:      extStats,
 		BaseCount:     e.baseCount,
 		BaseModifyCnt: e.baseModifyCnt,
@@ -492,6 +493,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 				Flags:          sc.PushDownFlags(),
 				TimeZoneOffset: offset,
 			},
+			snapshot: e.snapshot,
 		}
 		idxExec := &AnalyzeIndexExec{
 			baseAnalyzeExec: base,

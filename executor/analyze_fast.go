@@ -90,6 +90,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) *statistics.AnalyzeResults {
 		Job:      exec.job,
 		StatsVer: statistics.Version1,
 		Count:    cnt,
+		Snapshot: exec.snapshot,
 	}
 }
 
@@ -190,7 +191,11 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 		}
 	}
 	txn.SetOption(kv.Priority, kv.PriorityLow)
-	txn.SetOption(kv.IsolationLevel, kv.RC)
+	isoLevel := kv.RC
+	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+		isoLevel = kv.SI
+	}
+	txn.SetOption(kv.IsolationLevel, isoLevel)
 	txn.SetOption(kv.NotFillCache, true)
 	return rollbackFn, nil
 }
@@ -388,7 +393,14 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 }
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
-	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
+	var snapshot kv.Snapshot
+	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
+		snapshot.SetOption(kv.IsolationLevel, kv.SI)
+	} else {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
+	}
+	snapshot = e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
@@ -409,9 +421,15 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 
 func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
-	snapshot := e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
+	var snapshot kv.Snapshot
+	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
+		snapshot.SetOption(kv.IsolationLevel, kv.SI)
+	} else {
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
+		snapshot.SetOption(kv.IsolationLevel, kv.RC)
+	}
 	snapshot.SetOption(kv.NotFillCache, true)
-	snapshot.SetOption(kv.IsolationLevel, kv.RC)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
@@ -613,6 +631,7 @@ type AnalyzeTestFastExec struct {
 	Collectors  []*statistics.SampleCollector
 	TblInfo     *model.TableInfo
 	Opts        map[ast.AnalyzeOptionType]uint64
+	Snapshot    uint64
 }
 
 // TestFastSample only test the fast sample in unit test.
@@ -627,6 +646,7 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 	e.job = &statistics.AnalyzeJob{}
 	e.tblInfo = e.TblInfo
 	e.opts = e.Opts
+	e.snapshot = e.Snapshot
 	_, _, _, _, err := e.buildStats()
 	e.Collectors = e.collectors
 	return err

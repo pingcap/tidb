@@ -53,7 +53,6 @@ type AnalyzeExec struct {
 	wg         util.WaitGroupWrapper
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
-	snapshot   uint64
 }
 
 var (
@@ -255,7 +254,7 @@ func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, n
 				}
 			}
 		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable(), e.snapshot); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable()); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(e.ctx, results.Job, err)
@@ -321,6 +320,7 @@ type baseAnalyzeExec struct {
 	analyzePB   *tipb.AnalyzeReq
 	opts        map[ast.AnalyzeOptionType]uint64
 	job         *statistics.AnalyzeJob
+	snapshot    uint64
 }
 
 // AddNewAnalyzeJob records the new analyze job.
