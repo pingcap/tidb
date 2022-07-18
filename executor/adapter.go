@@ -108,9 +108,7 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 			dbName = defaultDBCIStr
 		}
 		origColName := names[i].OrigColName
-		//if origColName.L == "" {
-		//	origColName = names[i].ColName
-		//}
+
 		rf := &ast.ResultField{
 			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
 			ColumnAsName: names[i].ColName,
