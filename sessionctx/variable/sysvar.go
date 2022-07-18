@@ -1623,7 +1623,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNewCostInterface, Value: BoolToOnOff(false), Hidden: true, Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNewCostInterface, Value: BoolToOnOff(true), Hidden: true, Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.EnableNewCostInterface = TiDBOptOn(s)
 			return nil
