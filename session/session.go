@@ -2644,6 +2644,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
+		s.GetSessionVars().EnablePaging = true
 		err = s.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
