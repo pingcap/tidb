@@ -259,12 +259,12 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo.Sequence = &copySequenceInfo
 	same := !reflect.DeepEqual(*tblInfo.Sequence, copySequenceInfo)
 	if same {
 		job.State = model.JobStateDone
 		return ver, errors.Trace(err)
 	}
+	tblInfo.Sequence = &copySequenceInfo
 
 	// Restart the sequence value.
 	// Notice: during the alter sequence process, if there is some dml continually consumes sequence (nextval/setval),
