@@ -25,11 +25,9 @@ import (
 )
 
 var (
-	mockCMSMemoryUsage         = int64(4)
-	mockTopNMemoryUsage        = int64(64)
-	mockHistMemoryUsage        = int64(289)
-	mockColumnTotalMemoryUsage = statistics.EmptyHistogramSize + mockCMSMemoryUsage
-	mockIndexTotalMemoryUsage  = statistics.EmptyHistogramSize + mockCMSMemoryUsage
+	mockCMSMemoryUsage  = int64(4)
+	mockTopNMemoryUsage = int64(64)
+	mockHistMemoryUsage = int64(153)
 )
 
 // each column and index consumes 4 bytes memory
@@ -126,7 +124,6 @@ func TestLRUEvict(t *testing.T) {
 	capacity := int64(24)
 	lru := newStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(2, 0, true, false, false)
-	require.Equal(t, t1.MemoryUsage().TotalMemUsage, 2*mockColumnTotalMemoryUsage)
 	require.Equal(t, t1.MemoryUsage().TotalIdxTrackingMemUsage(), int64(0))
 	require.Equal(t, t1.MemoryUsage().TotalColTrackingMemUsage(), 2*mockCMSMemoryUsage)
 
@@ -138,7 +135,6 @@ func TestLRUEvict(t *testing.T) {
 	// Put t2, assert TotalMemUsage and TotalColTrackingMemUsage
 	t2 := newMockStatisticsTable(2, 1, true, false, false)
 	lru.Put(int64(2), t2)
-	require.Equal(t, lru.TotalCost(), 4*mockColumnTotalMemoryUsage+1*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 4*mockCMSMemoryUsage+1*mockCMSMemoryUsage)
 
 	// Put t3, a column of t1 should be evicted
@@ -209,25 +205,20 @@ func TestLRUFreshMemUsage(t *testing.T) {
 	lru.Put(int64(1), t1)
 	lru.Put(int64(2), t2)
 	lru.Put(int64(3), t3)
-	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+6*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 	mockTableAppendColumn(t1)
 	lru.FreshMemUsage()
-	require.Equal(t, lru.TotalCost(), 7*mockColumnTotalMemoryUsage+6*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 	mockTableAppendIndex(t1)
 	lru.FreshMemUsage()
-	require.Equal(t, lru.TotalCost(), 7*mockColumnTotalMemoryUsage+7*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 
 	mockTableRemoveColumn(t1)
 	lru.Put(int64(1), t1)
-	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+7*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 7*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 
 	mockTableRemoveIndex(t1)
 	lru.Put(int64(1), t1)
-	require.Equal(t, lru.TotalCost(), 6*mockColumnTotalMemoryUsage+6*mockIndexTotalMemoryUsage)
 	require.Equal(t, lru.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 }
 
@@ -238,7 +229,6 @@ func TestLRUPutTooBig(t *testing.T) {
 	lru.Put(int64(1), mockTable)
 	_, ok := lru.Get(int64(1))
 	require.True(t, ok)
-	require.Equal(t, lru.TotalCost(), mockColumnTotalMemoryUsage-mockCMSMemoryUsage+mockIndexTotalMemoryUsage-mockCMSMemoryUsage)
 	require.Equal(t, lru.Cost(), int64(0))
 	require.Equal(t, mockTable.MemoryUsage().TotalTrackingMemUsage(), int64(0))
 }
@@ -287,7 +277,6 @@ func TestLRUEvictPolicy(t *testing.T) {
 	s := newStatsLruCache(capacity)
 	t1 := newMockStatisticsTable(1, 0, true, true, true)
 	s.Put(1, t1)
-	//fmt.Println(s.TotalCost())
 	require.Equal(t, s.TotalCost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)
 	require.Equal(t, s.Cost(), mockCMSMemoryUsage+mockTopNMemoryUsage+mockHistMemoryUsage)
 	cost := s.Cost()
