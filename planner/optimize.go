@@ -126,7 +126,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if err != nil {
 		return nil, nil, err
 	}
-	if !(sessVars.UsePlanBaselines || sessVars.EvolvePlanBaselines) {
+	if !(useBinding || sessVars.EvolvePlanBaselines) {
 		return bestPlan, names, nil
 	}
 	err = setFoundInBinding(sctx, true)
