@@ -306,9 +306,9 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if backend.GetS3() == nil {
+		if backend.GetS3() == nil && backend.GetLocal() == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
-				"Only support s3 storage currently.")
+				"Only support s3/local storage currently.")
 		}
 
 		opts := storage.ExternalStorageOptions{
