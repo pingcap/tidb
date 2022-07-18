@@ -23,7 +23,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"strconv"
 	"strings"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
