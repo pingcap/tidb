@@ -105,6 +105,7 @@ func (t zapStreamBackupTaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) err
 	return nil
 }
 
+// StreamBackupTaskInfo makes the zap fields for a stream backup task info.
 func StreamBackupTaskInfo(t *backuppb.StreamBackupTaskInfo) zap.Field {
 	return zap.Object("streamTaskInfo", zapStreamBackupTaskInfo{t})
 }
@@ -271,7 +272,7 @@ func Redact(field zap.Field) zap.Field {
 	return field
 }
 
-// StringifyRanges wrappes the key range into a stringer.
+// StringifyKeys wraps the key range into a stringer.
 type StringifyKeys []kv.KeyRange
 
 func (kr StringifyKeys) String() string {

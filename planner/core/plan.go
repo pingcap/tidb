@@ -375,6 +375,10 @@ type PhysicalPlan interface {
 
 	// Clone clones this physical plan.
 	Clone() (PhysicalPlan, error)
+
+	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
+	// be tracked during findBestTask or enumeratePhysicalPlans4Task
+	appendChildCandidate(op *physicalOptimizeOp)
 }
 
 type baseLogicalPlan struct {
@@ -770,4 +774,21 @@ func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
 func (p *basePlan) buildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
+}
+
+func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
+	if len(p.Children()) < 1 {
+		return
+	}
+	childrenID := make([]int, 0)
+	for _, child := range p.Children() {
+		childCandidate := &tracing.CandidatePlanTrace{
+			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
+				ExplainInfo: child.ExplainInfo(), Cost: child.Cost()},
+		}
+		op.tracer.AppendCandidate(childCandidate)
+		child.appendChildCandidate(op)
+		childrenID = append(childrenID, child.ID())
+	}
+	op.tracer.Candidates[p.ID()].PlanTrace.ChildrenID = childrenID
 }

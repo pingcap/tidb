@@ -32,6 +32,6 @@ func (alloc *IDAllocator) Alloc() (uint64, error) {
 }
 
 // Rebase implements the IDAllocator interface.
-func (alloc *IDAllocator) Rebase() error {
+func (*IDAllocator) Rebase() error {
 	return nil
 }
