@@ -304,12 +304,12 @@ func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
 	var allTableCount int64 = 0
 	for _, dbInfo := range is.AllSchemas() {
 		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			allTableCount += 1
+			allTableCount++
 			if tbInfo.Meta().TiFlashReplica != nil {
 				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
-					fastModeTableCount += 1
+					fastModeTableCount++
 				} else {
-					normalModeTableCount += 1
+					normalModeTableCount++
 				}
 			}
 		}
