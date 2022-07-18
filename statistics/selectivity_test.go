@@ -17,7 +17,6 @@ package statistics_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/kv"
 	"math"
 	"os"
 	"regexp"
@@ -27,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
