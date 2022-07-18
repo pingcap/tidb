@@ -400,7 +400,6 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	} else {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	}
-	snapshot = e.ctx.GetStore().GetSnapshot(kv.MaxVersion)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
