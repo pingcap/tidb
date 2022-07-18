@@ -289,6 +289,7 @@ func TestGlobalKillUsageInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, usage.GlobalKill)
 }
+
 type tiflashContext struct {
 	store   kv.Storage
 	dom     *domain.Domain
@@ -377,4 +378,19 @@ func TestTiFlashModeStatistics(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), usage.TiFlashModeStatistics.FastModeTableCount)
 	require.Equal(t, int64(1), usage.TiFlashModeStatistics.NormalModeTableCount)
+}
+
+func TestPagingUsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnablePaging == variable.DefTiDBEnablePaging)
+
+	tk.Session().GetSessionVars().EnablePaging = false
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnablePaging)
 }
