@@ -18,10 +18,12 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"io/ioutil"
 	"reflect"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/loader"
 	"honnef.co/go/tools/analysis/report"
 )
 
@@ -146,4 +148,59 @@ func FormatCode(code string) string {
 	}
 
 	return fmt.Sprintf("`%s`", code)
+}
+
+// MakeFakeLoaderPackageInfo creates a fake loader.PackageInfo for a given package.
+func MakeFakeLoaderPackageInfo(pass *analysis.Pass) *loader.PackageInfo {
+	var errs []error
+
+	typeInfo := pass.TypesInfo
+
+	return &loader.PackageInfo{
+		Pkg:                   pass.Pkg,
+		Importable:            true, // not used
+		TransitivelyErrorFree: true, // not used
+
+		// use compiled (preprocessed) go files AST;
+		// AST linters use not preprocessed go files AST
+		Files:  pass.Files,
+		Errors: errs,
+		Info:   *typeInfo,
+	}
+}
+
+// ReadFile reads a file and adds it to the FileSet
+// so that we can report errors against it using lineStart.
+func ReadFile(fset *token.FileSet, filename string) ([]byte, *token.File, error) {
+	//nolint: gosec
+	content, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return nil, nil, err
+	}
+	tf := fset.AddFile(filename, -1, len(content))
+	tf.SetLinesForContent(content)
+	return content, tf, nil
+}
+
+// FindOffset returns the offset of a given position in a file.
+func FindOffset(fileText string, line, column int) int {
+	// we count our current line and column position
+	currentCol := 1
+	currentLine := 1
+
+	for offset, ch := range fileText {
+		// see if we found where we wanted to go to
+		if currentLine == line && currentCol == column {
+			return offset
+		}
+
+		// line break - increment the line counter and reset the column
+		if ch == '\n' {
+			currentLine++
+			currentCol = 1
+		} else {
+			currentCol++
+		}
+	}
+	return -1 //not found
 }

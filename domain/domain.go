@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/telemetry"
@@ -92,6 +94,7 @@ type Domain struct {
 	indexUsageSyncLease  time.Duration
 	dumpFileGcChecker    *dumpFileGcChecker
 	expiredTimeStamp4PC  types.Time
+	logBackupAdvancer    *streamhelper.AdvancerDaemon
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -318,7 +321,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica, model.ActionSetTiFlashMode:
 		return true
 	}
 	return false
@@ -326,6 +329,11 @@ func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 
 // InfoSchema gets the latest information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
+	if do.infoCache == nil {
+		// Return nil is for test purpose where domain is not well initialized in session context.
+		// In real implementation, the code will not reach here.
+		return nil
+	}
 	return do.infoCache.GetLatest()
 }
 
@@ -364,6 +372,11 @@ func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
+}
+
+// SetDDL sets DDL to domain, it's only used in tests.
+func (do *Domain) SetDDL(d ddl.DDL) {
+	do.ddl = d
 }
 
 // InfoSyncer gets infoSyncer from domain.
@@ -879,7 +892,30 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
 	}
+	err = do.initLogBackup(ctx, pdClient)
+	if err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
+	cfg := config.GetGlobalConfig()
+	if cfg.LogBackup.Enabled {
+		env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+		if err != nil {
+			return err
+		}
+		adv := streamhelper.NewCheckpointAdvancer(env)
+		adv.UpdateConfig(cfg.LogBackup.Advancer)
+		do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+		loop, err := do.logBackupAdvancer.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		do.wg.Run(loop)
+	}
 	return nil
 }
 
@@ -970,14 +1006,15 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "set @@autocommit = 1")
+func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sctx.GetSessionVars().InRestrictedSQL = true
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "set @@autocommit = 1")
 	if err != nil {
 		return err
 	}
 	do.privHandle = privileges.NewHandle()
-	err = do.privHandle.Update(ctx)
+	err = do.privHandle.Update(sctx)
 	if err != nil {
 		return err
 	}
@@ -1016,7 +1053,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			}
 
 			count = 0
-			err := do.privHandle.Update(ctx)
+			err := do.privHandle.Update(sctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -1596,6 +1633,26 @@ func (do *Domain) NotifyUpdateSysVarCache() {
 	if err := do.rebuildSysVarCache(nil); err != nil {
 		logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 	}
+}
+
+// LoadSigningCertLoop loads the signing cert periodically to make sure it's fresh new.
+func (do *Domain) LoadSigningCertLoop() {
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
+			util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
+		}()
+		for {
+			select {
+			case <-time.After(sessionstates.LoadCertInterval):
+				sessionstates.ReloadSigningCert()
+			case <-do.exit:
+				return
+			}
+		}
+	}()
 }
 
 // ServerID gets serverID.

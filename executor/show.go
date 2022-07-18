@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -354,6 +355,7 @@ func (e *ShowExec) fetchShowBind() error {
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
 	if err != nil {
@@ -384,6 +386,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM information_schema.engines`)
@@ -411,7 +414,7 @@ func moveInfoSchemaToFront(dbs []string) {
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	sort.Strings(dbs)
+	slices.Sort(dbs)
 	var (
 		fieldPatternsLike collate.WildcardPattern
 		fieldFilter       string
@@ -516,7 +519,7 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
 	}
-	sort.Strings(tableNames)
+	slices.Sort(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
 			e.appendRow([]interface{}{v, tableTypes[v]})
@@ -539,6 +542,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	}
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 
 	var snapshot uint64
 	txn, err := e.ctx.Txn(false)
@@ -835,7 +839,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 					continue
 				}
-				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
+				if e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
@@ -860,7 +864,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
 			continue
 		}
-		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
+		if e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
 		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
@@ -1520,6 +1524,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 
 	userName, hostName := e.User.Username, e.User.Hostname
 	sessVars := e.ctx.GetSessionVars()
@@ -2019,8 +2024,19 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
-	// This will be implemented in future PRs.
-	tokenBytes, err := gjson.Marshal("")
+	// session token
+	var token *sessionstates.SessionToken
+	// In testing, user may be nil.
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
+		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
+		}
+		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+			return err
+		}
+	}
+	tokenBytes, err := gjson.Marshal(token)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2039,10 +2055,11 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	if !tbl.IsView() {
 		return nil
 	}
+	ctx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
-	return runWithSystemSession(sctx, func(s sessionctx.Context) error {
+	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
@@ -2064,12 +2081,12 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	})
 }
 
-func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
+func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
 	b := &baseExecutor{ctx: sctx}
 	sysCtx, err := b.getSysSession()
 	if err != nil {
 		return err
 	}
-	defer b.releaseSysSession(sysCtx)
+	defer b.releaseSysSession(ctx, sysCtx)
 	return fn(sysCtx)
 }

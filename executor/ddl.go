@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -88,6 +89,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	e.done = true
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	// For each DDL, we should commit the previous transaction and create a new transaction.
 	// Following cases are exceptions
 	var localTempTablesToDrop []*ast.TableName
@@ -222,30 +224,12 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
-	isAlterTable := false
-	var err error
-	if len(s.TableToTables) == 1 {
-		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
-		if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
+	for _, tables := range s.TableToTables {
+		if _, ok := e.getLocalTemporaryTable(tables.OldTable.Schema, tables.OldTable.Name); ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 		}
-		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
-		err = domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
-	} else {
-		oldIdents := make([]ast.Ident, 0, len(s.TableToTables))
-		newIdents := make([]ast.Ident, 0, len(s.TableToTables))
-		for _, tables := range s.TableToTables {
-			oldIdent := ast.Ident{Schema: tables.OldTable.Schema, Name: tables.OldTable.Name}
-			if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
-				return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
-			}
-			newIdent := ast.Ident{Schema: tables.NewTable.Schema, Name: tables.NewTable.Name}
-			oldIdents = append(oldIdents, oldIdent)
-			newIdents = append(newIdents, newIdent)
-		}
-		err = domain.GetDomain(e.ctx).DDL().RenameTables(e.ctx, oldIdents, newIdents, isAlterTable)
 	}
-	return err
+	return domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, s)
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
@@ -302,14 +286,11 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
-	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ident.Schema, ident.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.KeyType, model.NewCIStr(s.IndexName),
-		s.IndexPartSpecifications, s.IndexOption, s.IfNotExists)
-	return err
+	return domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, s)
 }
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
@@ -365,26 +346,19 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 }
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
-	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
-	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
-		err = nil
-	}
-	return err
+	return domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, s)
 }
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
-	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
 	}
 
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
-	return err
+	return domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, s)
 }
 
 // executeRecoverTable represents a recover table executor.
@@ -437,7 +411,8 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 	if err != nil {
 		return nil, nil, err
 	}
-	defer e.releaseSysSession(se)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	defer e.releaseSysSession(ctx, se)
 	job, err := ddl.GetHistoryJobByID(se, s.JobID)
 	if err != nil {
 		return nil, nil, err

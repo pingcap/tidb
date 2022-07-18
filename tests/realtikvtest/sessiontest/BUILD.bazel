@@ -2,8 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "sessiontest_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
+        "paging_test.go",
         "retry_test.go",
         "session_fail_test.go",
         "session_test.go",
@@ -16,7 +18,6 @@ go_test(
         "//domain",
         "//errno",
         "//executor",
-        "//infoschema",
         "//kv",
         "//meta/autoid",
         "//parser",
@@ -30,11 +31,9 @@ go_test(
         "//session",
         "//sessionctx",
         "//sessionctx/variable",
-        "//sessiontxn",
         "//store/copr",
         "//store/mockstore",
         "//table/tables",
-        "//tablecodec",
         "//testkit",
         "//tests/realtikvtest",
         "//types",

@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type memtableRetriever struct {
@@ -100,7 +100,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		sort.Sort(infoschema.SchemasSorter(dbs))
+		slices.SortFunc(dbs, model.LessDBInfo)
 		var err error
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
@@ -150,7 +150,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableConstraints:
 			e.setDataFromTableConstraints(sctx, dbs)
 		case infoschema.TableSessionVar:
-			err = e.setDataFromSessionVar(sctx)
+			e.rows, err = infoschema.GetDataFromSessionVariables(sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
@@ -172,6 +172,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForTrxSummary(sctx)
 		case infoschema.ClusterTableTrxSummary:
 			err = e.setDataForClusterTrxSummary(sctx)
+		case infoschema.TableVariablesInfo:
+			err = e.setDataForVariablesInfo(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -289,6 +291,7 @@ func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int6
 	}
 	c.mu.RUnlock()
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
@@ -334,6 +337,60 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 		return true
 	}
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
+}
+
+func scopeStr(sv *variable.SysVar) string {
+	var scopes []string
+	if sv.HasNoneScope() {
+		return "NONE"
+	}
+	if sv.HasSessionScope() {
+		scopes = append(scopes, "SESSION")
+	}
+	if sv.HasGlobalScope() {
+		scopes = append(scopes, "GLOBAL")
+	}
+	if sv.HasInstanceScope() {
+		scopes = append(scopes, "INSTANCE")
+	}
+	return strings.Join(scopes, ",")
+}
+
+func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, sv := range sysVars {
+		currentVal, err := variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), sv.Name)
+		if err != nil {
+			currentVal = ""
+		}
+		isNoop := "NO"
+		if sv.IsNoop {
+			isNoop = "YES"
+		}
+		row := types.MakeDatums(
+			sv.Name,      // VARIABLE_NAME
+			scopeStr(sv), // VARIABLE_SCOPE
+			sv.Value,     // DEFAULT_VALUE
+			currentVal,   // CURRENT_VALUE
+			sv.MinValue,  // MIN_VALUE
+			sv.MaxValue,  // MAX_VALUE
+			nil,          // POSSIBLE_VALUES
+			isNoop,       // IS_NOOP
+		)
+		// min and max value is only supported for numeric types
+		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
+			row[4].SetNull()
+			row[5].SetNull()
+		}
+		if sv.Type == variable.TypeEnum {
+			possibleValues := strings.Join(sv.PossibleValues, ",")
+			row[6].SetString(possibleValues, mysql.DefaultCollationName)
+		}
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
 }
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
@@ -690,8 +747,9 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		_, ok := e.viewSchemaMap[tbl.ID]
 		if !ok {
 			var viewLogicalPlan plannercore.Plan
+			internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
-			if err := runWithSystemSession(sctx, func(s sessionctx.Context) error {
+			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl)
@@ -1245,6 +1303,12 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
 			req.AppendString(12, e.runningJobs[i].Query)
+			if e.runningJobs[i].MultiSchemaInfo != nil {
+				for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
+					req.AppendString(12, e.runningJobs[i].Query)
+				}
+			}
+
 		}
 		e.cursor += num
 		count += num
@@ -1260,6 +1324,11 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, job := range e.cacheJobs {
 			e.appendJobToChunk(req, job, checker)
 			req.AppendString(12, job.Query)
+			if job.MultiSchemaInfo != nil {
+				for range job.MultiSchemaInfo.SubJobs {
+					req.AppendString(12, job.Query)
+				}
+			}
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -1419,7 +1488,7 @@ func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
 	}
-	sort.Strings(tables)
+	slices.Sort(tables)
 	rows := make([][]types.Datum, 0, len(tables))
 	for _, name := range tables {
 		schema := infoschema.MetricTableMap[name]
@@ -1883,30 +1952,13 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx sessionctx.
 	return rows, nil
 }
 
-func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error {
-	var err error
-	sessionVars := ctx.GetSessionVars()
-	sysVars := variable.GetSysVars()
-	rows := make([][]types.Datum, 0, len(sysVars))
-	for _, v := range sysVars {
-		var value string
-		value, err = variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
-		if err != nil {
-			return err
-		}
-		row := types.MakeDatums(v.Name, value)
-		rows = append(rows, row)
-	}
-	e.rows = rows
-	return nil
-}
-
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
 func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, err error) {
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	chunkRows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, maxAnalyzeJobs)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, maxAnalyzeJobs)
 	if err != nil {
 		return nil, err
 	}
@@ -2091,6 +2143,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
 				progress,                                             // PROGRESS
+				tbl.TiFlashMode.String(),                             // TABLE_MPDE
 			)
 			rows = append(rows, record)
 		}
@@ -2718,7 +2771,9 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	if !e.initialized {
 		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 		dbs := is.AllSchemas()
-		sort.Sort(infoschema.SchemasSorter(dbs))
+		slices.SortFunc(dbs, func(i, j *model.DBInfo) bool {
+			return i.Name.L < j.Name.L
+		})
 		e.dbs = dbs
 		e.initialized = true
 		e.rows = make([][]types.Datum, 0, 1024)

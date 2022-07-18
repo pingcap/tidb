@@ -184,6 +184,12 @@ func (d *Datum) SetFloat32(f float32) {
 	d.i = int64(math.Float64bits(float64(f)))
 }
 
+// SetFloat32FromF64 sets float32 values from f64
+func (d *Datum) SetFloat32FromF64(f float64) {
+	d.k = KindFloat32
+	d.i = int64(math.Float64bits(f))
+}
+
 // GetString gets string value.
 func (d *Datum) GetString() string {
 	return string(hack.String(d.b))
@@ -856,7 +862,7 @@ func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set, comparer 
 	}
 }
 
-func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.BinaryJSON) (int, error) {
+func (d *Datum) compareMysqlJSON(_ *stmtctx.StatementContext, target json.BinaryJSON) (int, error) {
 	origin, err := d.ToMysqlJSON()
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -1093,8 +1099,10 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 						r, size = utf8.DecodeLastRuneInString(tempStr)
 						if r == utf8.RuneError && size == 0 {
 							// Empty string
+							continue
 						} else if r == utf8.RuneError && size == 1 {
 							// Invalid string
+							continue
 						} else {
 							// Get the truncate position
 							break
@@ -1125,7 +1133,6 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					s = truncateStr(s, truncateLen)
 				}
 			}
-
 		} else if len(s) > flen {
 			characterLen = len(s)
 			overflowed = s[flen:]
@@ -1666,7 +1673,7 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	return ret, err
 }
 
-func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
+func (d *Datum) convertToMysqlJSON(_ *stmtctx.StatementContext, _ *FieldType) (ret Datum, err error) {
 	switch d.k {
 	case KindString, KindBytes:
 		var j json.BinaryJSON
@@ -1803,8 +1810,7 @@ func (d *Datum) ToDecimal(sc *stmtctx.StatementContext) (*MyDecimal, error) {
 
 // ToInt64 converts to a int64.
 func (d *Datum) ToInt64(sc *stmtctx.StatementContext) (int64, error) {
-	switch d.Kind() {
-	case KindMysqlBit:
+	if d.Kind() == KindMysqlBit {
 		uintVal, err := d.GetBinaryLiteral().ToInt(sc)
 		return int64(uintVal), err
 	}
@@ -2044,7 +2050,7 @@ func (d *Datum) MarshalJSON() ([]byte, error) {
 		jd.MyDecimal = d.GetMysqlDecimal()
 	default:
 		if d.x != nil {
-			return nil, errors.New(fmt.Sprintf("unsupported type: %d", d.k))
+			return nil, fmt.Errorf("unsupported type: %d", d.k)
 		}
 	}
 	return gjson.Marshal(jd)

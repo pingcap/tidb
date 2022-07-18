@@ -785,6 +785,8 @@ var tokenMap = map[string]int{
 	"VERBOSE":                  verboseType,
 	"VOTER":                    voter,
 	"VOTER_CONSTRAINTS":        voterConstraints,
+	"NORMAL":                   normal,
+	"FAST":                     fast,
 	"VOTERS":                   voters,
 	"VIEW":                     view,
 	"VIRTUAL":                  virtual,
@@ -940,6 +942,7 @@ var hintTokenMap = map[string]int{
 	"FORCE_INDEX":             hintForceIndex,
 	"STRAIGHT_JOIN":           hintStraightJoin,
 	"LEADING":                 hintLeading,
+	"SEMI_JOIN_REWRITE":       hintSemiJoinRewrite,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

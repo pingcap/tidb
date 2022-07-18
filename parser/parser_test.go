@@ -2177,7 +2177,7 @@ func TestIdentifier(t *testing.T) {
 		{`select COUNT from DESC`, false, ""},
 		{`select COUNT from SELECT.DESC`, true, "SELECT `COUNT` FROM `SELECT`.`DESC`"},
 		{"use `select`", true, "USE `select`"},
-		{"use `sel``ect`", true, "USE `sel``ect`"},
+		{"use `sel``ect`", true, "USE `sel``ect`"}, //nolint: misspell
 		{"use select", false, "USE `select`"},
 		{`select * from t as a`, true, "SELECT * FROM `t` AS `a`"},
 		{"select 1 full, 1 row, 1 abs", false, ""},
@@ -4892,6 +4892,8 @@ func TestExplain(t *testing.T) {
 		{"EXPLAIN FORMAT = JSON FOR CONNECTION 1", true, "EXPLAIN FORMAT = 'JSON' FOR CONNECTION 1"},
 		{"EXPLAIN FORMAT = JSON SELECT 1", true, "EXPLAIN FORMAT = 'JSON' SELECT 1"},
 		{"EXPLAIN FORMAT = 'hint' SELECT 1", true, "EXPLAIN FORMAT = 'hint' SELECT 1"},
+		{"EXPLAIN ANALYZE FORMAT = 'verbose' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'verbose' SELECT 1"},
+		{"EXPLAIN ANALYZE FORMAT = 'binary' SELECT 1", true, "EXPLAIN ANALYZE FORMAT = 'binary' SELECT 1"},
 		{"EXPLAIN ALTER TABLE t1 ADD INDEX (a)", true, "EXPLAIN FORMAT = 'row' ALTER TABLE `t1` ADD INDEX(`a`)"},
 		{"EXPLAIN ALTER TABLE t1 ADD a varchar(255)", true, "EXPLAIN FORMAT = 'row' ALTER TABLE `t1` ADD COLUMN `a` VARCHAR(255)"},
 	}
@@ -6192,6 +6194,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		node.Specs = specs
 	case *ast.Join:
 		node.ExplicitParens = false
+	case *ast.ColumnDef:
+		node.Tp.CleanElemIsBinaryLit()
 	}
 	return in, false
 }

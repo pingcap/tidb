@@ -16,7 +16,6 @@ package infoschema
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/ngaut/pools"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type policyGetter struct {
@@ -648,7 +648,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTbls = append(sortedTbls, tbl)
-	sort.Sort(sortedTbls)
+	slices.SortFunc(sortedTbls, func(i, j table.Table) bool {
+		return i.Meta().ID < j.Meta().ID
+	})
 	b.is.sortedTablesBuckets[bucketIdx] = sortedTbls
 
 	newTbl, ok := b.is.TableByID(tableID)
@@ -803,7 +805,9 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
-		sort.Sort(v)
+		slices.SortFunc(v, func(a, b table.Table) bool {
+			return a.Meta().ID < b.Meta().ID
+		})
 	}
 	return b, nil
 }

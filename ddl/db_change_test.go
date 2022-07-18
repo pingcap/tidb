@@ -1961,19 +1961,6 @@ func TestExpressionIndexDDLError(t *testing.T) {
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
 }
 
-func TestRestrainDropColumnWithIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, index(a))")
-	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=0")
-	tk.MustQuery("select @@tidb_enable_change_multi_schema").Check(testkit.Rows("0"))
-	tk.MustGetErrCode("alter table t drop column a", errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=1")
-	tk.MustExec("alter table t drop column a")
-}
-
 func TestParallelRenameTable(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -2091,4 +2078,61 @@ func TestParallelRenameTable(t *testing.T) {
 	require.Error(t, checkErr)
 	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
 	tk.MustExec("rename table tt to t")
+}
+
+func TestConcurrentSetDefaultValue(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a YEAR NULL DEFAULT '2029')")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	setdefaultSQL := []string{
+		"alter table t alter a SET DEFAULT '2098'",
+		"alter table t alter a SET DEFAULT '1'",
+	}
+	setdefaultSQLOffset := 0
+
+	var wg sync.WaitGroup
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{Do: dom}
+	skip := false
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			if skip {
+				break
+			}
+			skip = true
+			wg.Add(1)
+			go func() {
+				_, err := tk1.Exec(setdefaultSQL[setdefaultSQLOffset])
+				if setdefaultSQLOffset == 0 {
+					require.Nil(t, err)
+				}
+				wg.Done()
+			}()
+		}
+	}
+
+	d.SetHook(callback)
+	tk.MustExec("alter table t modify column a MEDIUMINT NULL DEFAULT '-8145111'")
+
+	wg.Wait()
+	tk.MustQuery("select column_type from information_schema.columns where table_name = 't' and table_schema = 'test';").Check(testkit.Rows("mediumint(9)"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int default 2)")
+	skip = false
+	setdefaultSQLOffset = 1
+	tk.MustExec("alter table t modify column a TIMESTAMP NULL DEFAULT '2017-08-06 10:47:11'")
+	wg.Wait()
+	tk.MustExec("show create table t")
+	tk.MustExec("insert into t value()")
 }
