@@ -84,11 +84,11 @@ func (s *StreamBackupSearch) SetEndTs(endTs uint64) {
 }
 
 func (s *StreamBackupSearch) readDataFiles(ctx context.Context, ch chan<- *backuppb.DataFileInfo) error {
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	pool := utils.NewWorkerPool(64, "read backup meta")
 	eg, egCtx := errgroup.WithContext(ctx)
 	err := s.storage.WalkDir(egCtx, opt, func(path string, size int64) error {
-		if !strings.Contains(path, streamBackupMetaPrefix) {
+		if !strings.Contains(path, stream.GetStreamBackupMetaPrefix()) {
 			return nil
 		}
 
