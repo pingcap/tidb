@@ -1546,6 +1546,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		stats := p.tableStats.ScaleByExpectCnt(count)
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, is.blockOffset)
 		indexSel.SetChildren(is)
+		indexSel.SetCost(copTask.cst)
 		copTask.indexPlan = indexSel
 	}
 	if len(tableConds) > 0 {
@@ -1561,6 +1562,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			tableSel.stats = copTask.plan().statsInfo().Scale(selectivity)
 		}
 		tableSel.SetChildren(copTask.tablePlan)
+		tableSel.SetCost(copTask.cst)
 		copTask.tablePlan = tableSel
 	}
 }
@@ -2198,6 +2200,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
+		prop:            prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
 	copy(ts.filterCondition, path.TableFilters)
@@ -2267,6 +2270,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
+		prop:             prop,
 	}.Init(ds.ctx, ds.blockOffset)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
