@@ -711,6 +711,52 @@ func (b *builtinSHA2Sig) Clone() builtinFunc {
 	return newSig
 }
 
+type sm3FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *sm3FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(40)
+	sig := &builtinSM3Sig{bf}
+	//sig.setPbCode(tipb.ScalarFuncSig_SM3) // TODO
+	return sig, nil
+}
+
+type builtinSM3Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSM3Sig) Clone() builtinFunc {
+	newSig := &builtinSM3Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals SM3(str).
+// The value is returned as a string of 70 hexadecimal digits, or NULL if the argument was NULL.
+func (b *builtinSM3Sig) evalString(row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	hasher := auth.NewSM3()
+	_, err = hasher.Write([]byte(str))
+	if err != nil {
+		return "", true, err
+	}
+	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
+}
+
 // Supported hash length of SHA-2 family
 const (
 	SHA0   = 0

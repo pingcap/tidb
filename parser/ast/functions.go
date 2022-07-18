@@ -309,6 +309,7 @@ const (
 	SHA1                     = "sha1"
 	SHA                      = "sha"
 	SHA2                     = "sha2"
+	SM3                      = "sm3"
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"

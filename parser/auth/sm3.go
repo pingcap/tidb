@@ -25,6 +25,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash"
 	"strconv"
 )
 
@@ -196,10 +197,16 @@ func (sm3 *sm3) Sum(in []byte) []byte {
 	return out
 }
 
-// SM3 returns the sm3 checksum of the data.
-func SM3(data []byte) []byte {
+// NewSM3 returns a new hash.Hash computing the SM3 checksum.
+func NewSM3() hash.Hash {
 	var h sm3
 	h.Reset()
+	return &h
+}
+
+// SM3 returns the sm3 checksum of the data.
+func SM3(data []byte) []byte {
+	h := NewSM3()
 	h.Write(data)
 	return h.Sum(nil)
 }

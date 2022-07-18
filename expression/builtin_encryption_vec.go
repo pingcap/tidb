@@ -516,6 +516,39 @@ func (b *builtinSHA2Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	return nil
 }
 
+func (b *builtinSM3Sig) vectorized() bool {
+	return true
+}
+
+// vecEvalString evals SM3(str).
+func (b *builtinSM3Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	hasher := auth.NewSM3()
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		str := buf.GetBytes(i)
+		_, err = hasher.Write(str)
+		if err != nil {
+			return err
+		}
+		result.AppendString(fmt.Sprintf("%x", hasher.Sum(nil)))
+		hasher.Reset()
+	}
+	return nil
+}
+
 func (b *builtinCompressSig) vectorized() bool {
 	return true
 }

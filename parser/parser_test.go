@@ -2113,6 +2113,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT SHA1('abc');`, true, "SELECT SHA1(_UTF8MB4'abc')"},
 		{`SELECT SHA('abc');`, true, "SELECT SHA(_UTF8MB4'abc')"},
 		{`SELECT SHA2('abc', 224);`, true, "SELECT SHA2(_UTF8MB4'abc', 224)"},
+		{`SELECT SM3('abc');`, true, "SELECT SM3(_UTF8MB4'abc')"},
 		{`SELECT UNCOMPRESS('any string');`, true, "SELECT UNCOMPRESS(_UTF8MB4'any string')"},
 		{`SELECT UNCOMPRESSED_LENGTH(@compressed_string);`, true, "SELECT UNCOMPRESSED_LENGTH(@`compressed_string`)"},
 		{`SELECT VALIDATE_PASSWORD_STRENGTH(@str);`, true, "SELECT VALIDATE_PASSWORD_STRENGTH(@`str`)"},
