@@ -1064,10 +1064,6 @@ type PartitionInfo struct {
 	IntervalLast        string                `json:"interval_last"`
 	IntervalNullPart    bool                  `json:"interval_null_part"`
 	IntervalMaxPart     bool                  `json:"interval_max_part"`
-
-	// IntervalOptions is set if there are any options set or names are non-generated
-	// TODO: Should this really be here, or can it be cached somewhere else?
-	IntervalOptions bool `json:"interval_options"`
 }
 
 func (pi *PartitionInfo) Clone() *PartitionInfo {

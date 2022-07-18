@@ -1388,15 +1388,6 @@ func appendPartitionInfo(ctx sessionctx.Context, tbInfo *model.TableInfo, buf *b
 		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
 
-	if partInfo := ddl.NewPartitionInfoIfRangeIntervalPartitioned(ctx, tbInfo); partInfo != nil {
-		tbInfo.Partition.IntervalNullPart = partInfo.IntervalNullPart
-		tbInfo.Partition.IntervalMaxPart = partInfo.IntervalMaxPart
-		tbInfo.Partition.IntervalFirst = partInfo.IntervalFirst
-		tbInfo.Partition.IntervalLast = partInfo.IntervalLast
-		tbInfo.Partition.IntervalExpr = partInfo.IntervalExpr
-		tbInfo.Partition.IntervalUnit = partInfo.IntervalUnit
-		tbInfo.Partition.IntervalOptions = partInfo.IntervalOptions
-	}
 	if partitionInfo.IntervalExpr != "" && partitionInfo.IntervalFirst != "" && partitionInfo.IntervalLast != "" {
 		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
 			buf.WriteString(" /*T![interval_partitioning]")
@@ -1416,9 +1407,7 @@ func appendPartitionInfo(ctx sessionctx.Context, tbInfo *model.TableInfo, buf *b
 		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
 			buf.WriteString(" */")
 		} else {
-			if !partitionInfo.IntervalOptions {
-				return
-			}
+			return
 		}
 	}
 

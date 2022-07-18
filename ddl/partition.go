@@ -511,198 +511,32 @@ func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
 	return false
 }
 
-// NewPartitionInfoIfRangeIntervalPartitioned checks if a partitioned table matches a generated INTERVAL partitioned scheme
-// and will also update tbInfo.Partition
-func NewPartitionInfoIfRangeIntervalPartitioned(ctx sessionctx.Context, tbInfo *model.TableInfo) *model.PartitionInfo {
-	if tbInfo.Partition == nil ||
-		tbInfo.Partition.Type != model.PartitionTypeRange {
-		return nil
-	}
-	if tbInfo.Partition.IntervalExpr != "" ||
-		tbInfo.Partition.IntervalFirst != "" ||
-		tbInfo.Partition.IntervalLast != "" {
-		// TODO: Validate?
-		return nil
-	}
-	if len(tbInfo.Partition.Columns) > 1 {
-		// Multi-column RANGE COLUMNS is not supported with INTERVAL
-		return nil
-	}
-	if len(tbInfo.Partition.Definitions) < 4 {
-		// If not specified, don't try to show it as INTERVAL unless it has at least 4 partitions
-		return nil
-	}
-
-	var (
-		interval ast.PartitionInterval
-		startIdx int            = 0
-		endIdx   int            = len(tbInfo.Partition.Definitions) - 1
-		colType  types.EvalType = types.ETInt
-		minVal   string         = "0"
-	)
-	if len(tbInfo.Partition.Columns) > 0 {
-		partCol := findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
-		if partCol.FieldType.EvalType() == types.ETInt {
-			min := getLowerBoundInt(partCol)
-			minVal = strconv.FormatInt(min, 10)
-		} else if partCol.FieldType.EvalType() == types.ETDatetime {
-			minVal = "0000-01-01"
-		} else {
-			return nil
-		}
-		colType = partCol.FieldType.EvalType()
-	} else {
-		if !isPartExprUnsigned(ctx, tbInfo) {
-			minVal = "-9223372036854775808"
-		}
-	}
-	// Check if possible null partition
-	if strings.EqualFold(tbInfo.Partition.Definitions[0].LessThan[0], minVal) {
-		interval.NullPart = true
-		startIdx++
-	}
-	// flag if MAXVALUE partition
-	if strings.EqualFold(tbInfo.Partition.Definitions[endIdx].LessThan[0], partitionMaxValue) {
-		interval.MaxValPart = true
-		endIdx--
-	}
-	// Guess the interval
-	if startIdx >= endIdx {
-		return nil
-	}
-	if colType == types.ETInt {
-		var startExpr, endExpr ast.ExprNode
-		startVal, err := strconv.Atoi(tbInfo.Partition.Definitions[startIdx].LessThan[0])
-		if err != nil {
-			return nil
-		}
-		startExpr = ast.NewValueExpr(startVal, "", "")
-		interval.FirstRangeEnd = &startExpr
-		endVal, err := strconv.Atoi(tbInfo.Partition.Definitions[endIdx].LessThan[0])
-		if err != nil {
-			return nil
-		}
-		endExpr = ast.NewValueExpr(endVal, "", "")
-		interval.LastRangeEnd = &endExpr
-		exprStr := fmt.Sprintf("((%d) - (%d)) DIV %d", endVal, startVal, endIdx-startIdx)
-		//exprStr := fmt.Sprintf("(%d) - (%d)", endVal, startVal)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
-		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
-		if isNull || err != nil {
-			return nil
-		}
-		// TODO: Validate the interval?
-		interval.IntervalExpr.Expr = ast.NewValueExpr(val, "", "")
-	} else if colType == types.ETDatetime {
-		panic("TODO: IMPLEMENT ME!")
-	} else {
-		return nil
-	}
-
-	partitionMethod := ast.PartitionMethod{Interval: &interval}
-	partOption := &ast.PartitionOptions{PartitionMethod: partitionMethod}
-	partitionBackup := tbInfo.Partition
-	partitionUpdated := *tbInfo.Partition
-	tbInfo.Partition = &partitionUpdated
-	// Generate the definitions from interval, first and last
-	err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo, nil)
-	tbInfo.Partition = partitionBackup
-	if err != nil {
-		return nil
-	}
-
-	// compare the generated partition definitions with the original
-	if len(partitionBackup.Definitions) != len(partOption.Definitions) {
-		return nil
-	}
-	// TODO: Any other kind of validation needed? (Yes the interval?)
-
-	return &partitionUpdated
-}
-
-// comparePartitionAstAndModel compares a generated *ast.PartitionOptions and a *model.PartitionInfo
-//options, err := comparePartitionAstAndModel(ctx, partOptions, tbInfo)
-func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo) (bool, error) {
-	a := pAst.Definitions
-	m := pModel.Definitions
-	if len(pAst.Definitions) != len(pModel.Definitions) {
-		// Hijacked error from below... TODO better error?
-		return false, dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning number of partitions generated != partition defined (%d != %d)", len(a), len(m))
-	}
-	var nonDefaultOptions bool
-	for i := range pAst.Definitions {
-		// TODO: a[i].Options?
-		if m[i].PlacementPolicyRef != nil {
-			nonDefaultOptions = true
-		}
-		// Allow names to differ!
-		if a[i].Name.O != m[i].Name.O {
-			nonDefaultOptions = true
-		}
-
-		// Check MAXVALUE
-		maxVD := false
-		if strings.EqualFold(m[i].LessThan[0], partitionMaxValue) {
-			maxVD = true
-		}
-		generatedExpr := a[i].Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs[0]
-		_, maxVG := generatedExpr.(*ast.MaxValueExpr)
-		if maxVG || maxVD {
-			if maxVG && maxVD {
-				continue
-			}
-			// Hijacked error from below... TODO better error?
-			return false, dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning MAXVALUE clause defined for partition %s differs between generated and defined", m[i].Name.O))
-		}
-
-		cmpExpr := &ast.BinaryOperationExpr{
-			Op: opcode.EQ,
-			L:  ast.NewValueExpr(m[i].LessThan[0], "", ""),
-			R:  generatedExpr,
-		}
-		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
-		if err != nil {
-			return false, err
-		}
-		if cmp.GetInt64() != 1 {
-			// Hijacked error from below... TODO better error?
-			return false, dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause for partition %s differs between generated and defined", m[i].Name.O))
-		}
-	}
-	return nonDefaultOptions, nil
-}
-
 // comparePartitionDefinitions check if generated definitions are the same as the given ones
-// returns true if there are non-default settings like placement rules, different partition names etc.
-// returns error in case of error
-func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDefinition) (bool, error) {
+// Allow names to differ!
+// returns error in case of error or non-accepted difference
+func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDefinition) error {
 	if len(a) != len(b) {
 		// Hijacked error from below... TODO better error?
-		return false, dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning number of partitions generated != partition defined (%d != %d)", len(a), len(b))
+		return dbterror.ErrRepairTableFail.GenWithStackByArgs("INTERVAL partitioning number of partitions generated != partition defined (%d != %d)", len(a), len(b))
 	}
-	var nonDefaultOptions bool
 	for i := range a {
 		if len(b[i].Sub) > 0 {
 			// Hijacked error from below... TODO better error?
-			return false, dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does have unsupported subpartitions", b[i].Name.O))
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does have unsupported subpartitions", b[i].Name.O))
 		}
-		// TODO: Should we allow PLACEMENT POLICY in INTERVAL partitioning?
 		// TODO: We could extend the syntax to allow for table options too, like:
 		// CREATE TABLE t ... INTERVAL ... LAST PARTITION LESS THAN ('2015-01-01') PLACEMENT POLICY = 'cheapStorage'
 		// ALTER TABLE t LAST PARTITION LESS THAN ('2022-01-01') PLACEMENT POLICY 'defaultStorage'
 		// ALTER TABLE t LAST PARTITION LESS THAN ('2023-01-01') PLACEMENT POLICY 'fastStorage'
 		// But then it would be hard to still show it correctly in SHOW CREATE :(
 		if len(b[i].Options) > 0 {
-			nonDefaultOptions = true
-		}
-		// Allow names to differ!
-		if a[i].Name.O != b[i].Name.O {
-			nonDefaultOptions = true
+			// Hijacked error from below... TODO better error?
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does have unsupported options", b[i].Name.O))
 		}
 		lessThan, ok := b[i].Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if !ok {
 			// Hijacked error from below... TODO better error?
-			return false, dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does not have the right type", b[i].Name.O))
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause defined for partition %s does not have the right type", b[i].Name.O))
 		}
 		definedExpr := lessThan.Exprs[0]
 		generatedExpr := a[i].Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs[0]
@@ -713,7 +547,7 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 				continue
 			}
 			// Hijacked error from below... TODO better error?
-			return false, dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning MAXVALUE clause defined for partition %s differs between generated and defined", b[i].Name.O))
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning MAXVALUE clause defined for partition %s differs between generated and defined", b[i].Name.O))
 		}
 		cmpExpr := &ast.BinaryOperationExpr{
 			Op: opcode.EQ,
@@ -722,15 +556,14 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 		}
 		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
 		if err != nil {
-			return false, err
+			return err
 		}
 		if cmp.GetInt64() != 1 {
 			// Hijacked error from below... TODO better error?
-			return false, dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause for partition %s differs between generated and defined", b[i].Name.O))
+			return dbterror.ErrRepairTableFail.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning clause for partition %s differs between generated and defined", b[i].Name.O))
 		}
-		// TODO: check that this loop is tested!
 	}
-	return nonDefaultOptions, nil
+	return nil
 }
 
 func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
@@ -850,20 +683,12 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	}
 
 	if len(definedPartDefs) > 0 {
-		options, err := comparePartitionDefinitions(ctx, partOptions.Definitions, definedPartDefs)
+		err = comparePartitionDefinitions(ctx, partOptions.Definitions, definedPartDefs)
 		if err != nil {
 			return err
 		}
 		// Seems valid, so keep the defined so that the user defined names are kept etc.
 		partOptions.Definitions = definedPartDefs
-		partOptions.Interval.Options = options
-		tbInfo.Partition.IntervalOptions = options
-	} else if len(tbInfo.Partition.Definitions) > 0 {
-		options, err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition)
-		if err != nil {
-			return err
-		}
-		tbInfo.Partition.IntervalOptions = options
 	}
 
 	return nil
