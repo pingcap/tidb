@@ -25,7 +25,6 @@ type TableInfo struct {
 type FKInfo struct {
     ID        int64       `json:"id"`
     Name      CIStr       `json:"fk_name"`
-    Enable    bool        `json:"enable"`
     RefSchema CIStr       `json:"ref_schema"`
     RefTable  CIStr       `json:"ref_table"`
     RefCols   []CIStr     `json:"ref_cols"`
@@ -33,6 +32,7 @@ type FKInfo struct {
     OnDelete  int         `json:"on_delete"`
     OnUpdate  int         `json:"on_update"`
     State     SchemaState `json:"state"`
+    Version   bool        `json:"version"`
 }
 
 // ReferredFKInfo provides the referred foreign key in the child table.
@@ -45,7 +45,7 @@ type ReferredFKInfo struct {
 ```
 
 Struct `FKInfo` uses for child table to record the referenced parent table. Struct `FKInfo` has existed for a long time, I just added some fields.
-  - `Enable`: uses to distinguish between old and new versions.
+  - `Version`: uses to distinguish between old and new versions.
 Struct `ReferredFKInfo` uses for referenced table to record the child table which referenced me.
 
 ### Create Table with Foreign Key
@@ -215,20 +215,41 @@ On Child Table Insert Or Update, need to Find FK column value whether exist in r
     foreign key columns, use snapshot `Get` API.
     - `Iter` default scan batch size is 256, need to set 2 to avoid read unnecessary data.
 4. compact column value to make sure exist.
-5. put column value into reference fk column value cache.
+5. If relate row exist in reference table, also need to add lock in the related row.
+6. put column value into reference fk column value cache.
 
-check order should check unique/primary key constrain first:
+#### Lock
 
+Let's see an example in MySQL first:
+
+prepare:
 ```sql
-test> create table t1 (id int key,a int, index(a));
-test> create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
-test> insert into t1 values (1, 1);
-test> insert into t2 values (1, 1);
-test> insert into t2 values (1, 2);
-(1062, "Duplicate entry '1' for key 't2.PRIMARY'")
-test> insert ignore into t2 values (1, 2);
-Query OK, 0 rows affected
+create table t1 (id int key,a int, b int, unique index(a, b, id));
+create table t2 (id int key,a int, b int, index (a,b,id), foreign key fk(a, b) references t1(a, b));
+insert into t1 values (-1, 1, 1);
 ```
+
+Then, execute following SQL in 2 session:
+
+| Session 1                        | Session 2                                   |
+| -------------------------------- | ------------------------------------------- |
+| Begin;                           |                                             |
+| insert into t2 values (1, 1, 1); |                                             |
+|                                  | delete from t1;  -- Blocked by wait lock    |
+| Commit                           |                                             |
+|                                  | ERROR: Cannot delete or update a parent row |
+
+So we need to add lock in reference table when insert/update child table.
+
+##### In Pessimistic Transaction
+
+When TiDB add pessimistic locks, if relate row exist in reference table, also need to add lock in the related row.
+
+##### In Optimistic Transaction
+
+todo:
+
+#### DML Load data
 
 Load data should also do foreign key check, but report warning instead error:
 
@@ -520,6 +541,21 @@ test> select * from t1;
 | id | a |
 +----+---+
 0 rows in set
+```
+
+### Check order
+
+check order should check unique/primary key constrain first:
+
+```sql
+test> create table t1 (id int key,a int, index(a));
+test> create table t2 (id int key,a int, foreign key fk(a) references t1(id) ON DELETE CASCADE);
+test> insert into t1 values (1, 1);
+test> insert into t2 values (1, 1);
+test> insert into t2 values (1, 2);
+(1062, "Duplicate entry '1' for key 't2.PRIMARY'")
+test> insert ignore into t2 values (1, 2);
+Query OK, 0 rows affected
 ```
 
 ### MATCH FULL or MATCH SIMPLE
