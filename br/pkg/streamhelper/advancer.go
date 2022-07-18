@@ -226,7 +226,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, rst RangesSharesTS)
 
 // CalculateGlobalCheckpointLight tries to advance the global checkpoint by the cache.
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context) (uint64, error) {
-	log.Info("advancer with cache: current tree", zap.Stringer("ct", c.cache))
+	log.Info("[log backup advancer hint] advancer with cache: current tree", zap.Stringer("ct", c.cache))
 	rsts := c.cache.PopRangesWithGapGT(config.DefaultTryAdvanceThreshold)
 	if len(rsts) == 0 {
 		return 0, nil
@@ -236,7 +236,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context)
 		samples = rsts[:3]
 	}
 	for _, sample := range samples {
-		log.Info("sample range.", zap.Object("range", sample.Zap()), zap.Int("total-len", len(rsts)))
+		log.Info("[log backup advancer hint] sample range.", zap.Object("range", sample.Zap()), zap.Int("total-len", len(rsts)))
 	}
 
 	workers := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "regions")
@@ -428,6 +428,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpo
 	if err != nil {
 		return err
 	}
+	log.Info("get checkpoint", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
 	if cp < c.lastCheckpoint {
 		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
 	}
