@@ -639,7 +639,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	}
 	col := cols[0]
 	tp := col.RetType
-	if types.IsString(tp.GetType()) && !collate.IsBinCollation(tp.GetCollate()) {
+	if types.IsString(tp.GetType()) && collate.NewCollationEnabled() && !collate.IsBinCollation(tp.GetCollate()) {
 		return false, 0, nil
 	}
 
