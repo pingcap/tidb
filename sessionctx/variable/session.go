@@ -2720,3 +2720,13 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 	}
 	return s.DefaultStrMatchSelectivity
 }
+
+// GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
+func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == 0 {
+		return 0.9
+	} else if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
+		return DefTiDBDefaultStrMatchSelectivity
+	}
+	return s.DefaultStrMatchSelectivity
+}

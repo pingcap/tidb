@@ -455,7 +455,7 @@ OUTER:
 			delete(notCoveredStrMatch, i)
 		}
 		for i, scalarCond := range notCoveredNegateStrMatch {
-			ok, sel, err := coll.GetSelectivityByFilter(ctx, 1-ctx.GetSessionVars().GetStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
+			ok, sel, err := coll.GetSelectivityByFilter(ctx, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity(), []expression.Expression{scalarCond})
 			if err != nil {
 				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
 			}
@@ -481,7 +481,7 @@ OUTER:
 			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
 		}
 		if len(notCoveredNegateStrMatch) > 0 {
-			minSelectivity = math.Min(minSelectivity, 1-ctx.GetSessionVars().GetStrMatchDefaultSelectivity())
+			minSelectivity = math.Min(minSelectivity, ctx.GetSessionVars().GetNegateStrMatchDefaultSelectivity())
 		}
 		ret *= minSelectivity
 	}
