@@ -9318,7 +9318,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Time spent on the RPC layer between TiDB and TiKV",
+          "description": "Time spent on the RPC layer between TiDB and TiKV, including the part used in the TiDB batch client",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
