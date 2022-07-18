@@ -22,12 +22,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/tikv/client-go/v2/oracle"
 	"golang.org/x/exp/slices"
 )
@@ -534,4 +536,31 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
+}
+
+func getRuntimeTLSVersion() string {
+	// get minTlsVersion
+	minTLSVersion := tlsVersionString[tlsutil.DefaultMinTLSVersion]
+	for _, v := range tlsVersionString {
+		if v == config.GetGlobalConfig().Security.MinTLSVersion {
+			minTLSVersion = v
+		}
+	}
+	// get all available tls version
+	tlsVersionSlice := make([]string, 0, len(tlsVersionString))
+	for _, v := range tlsVersionString {
+		tlsVersionSlice = append(tlsVersionSlice, v)
+	}
+	sort.Strings(tlsVersionSlice)
+
+	// choose we support
+	for i := 0; i < len(tlsVersionSlice); i++ {
+		if minTLSVersion == tlsVersionSlice[i] {
+			tlsVersionSlice = tlsVersionSlice[i:]
+			break
+		}
+	}
+
+	return strings.Join(tlsVersionSlice, ",")
+
 }
