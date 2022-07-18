@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "paging_test.go",
         "retry_test.go",
         "session_fail_test.go",
         "session_test.go",
