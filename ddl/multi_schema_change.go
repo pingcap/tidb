@@ -147,8 +147,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		sub.FromProxyJob(&proxyJob)
 		return ver, err
 	}
-	job.State = model.JobStateDone
-	return ver, err
+	return finishMultiSchemaJob(job, t)
 }
 
 func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror.Error) {
@@ -364,4 +363,18 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 	}
 	job.State = model.JobStateRollingback
 	return dbterror.ErrCancelledDDLJob
+}
+
+func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
+	ver, err = t.GetSchemaVersion()
+	if err != nil {
+		return ver, err
+	}
+	var tblInfo *model.TableInfo
+	tblInfo, err = t.GetTable(job.SchemaID, job.TableID)
+	if err != nil {
+		return ver, err
+	}
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	return ver, err
 }
