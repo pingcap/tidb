@@ -288,6 +288,7 @@ func (kr StringifyKeys) String() string {
 	return sb.String()
 }
 
+// StringifyRange is the wrapper for displaying a key range.
 type StringifyRange kv.KeyRange
 
 func (rng StringifyRange) String() string {
