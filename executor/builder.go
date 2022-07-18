@@ -3127,7 +3127,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
 		netDataSize:      v.GetNetDataSize(),
-		avgRowSize:       v.GetAvgRowSize(),
 		table:            tbl,
 		keepOrder:        ts.KeepOrder,
 		desc:             ts.Desc,
@@ -3912,11 +3911,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			if err != nil {
 				return nil, err
 			}
-			e.updateRowsCount(float64(len(lookUpContents)))
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
 		handles, _ := dedupHandles(lookUpContents)
-		e.updateRowsCount(float64(len(handles)))
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
@@ -3937,7 +3934,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		usedPartitions[p.GetPhysicalID()] = p
 	}
 	var kvRanges []kv.KeyRange
-	needLookupRows := 0
 	if v.IsCommonHandle {
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			locateKey := make([]types.Datum, e.Schema().Len())
@@ -3965,7 +3961,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					return nil, err
 				}
 				kvRanges = append(kvRanges, tmp...)
-				needLookupRows += len(contents)
 			}
 		} else {
 			kvRanges = make([]kv.KeyRange, 0, len(usedPartitions)*len(lookUpContents))
@@ -3976,13 +3971,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				}
 				kvRanges = append(tmp, kvRanges...)
 			}
-			needLookupRows += len(lookUpContents)
 		}
 		// The key ranges should be ordered.
 		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 			return bytes.Compare(i.StartKey, j.StartKey) < 0
 		})
-		e.updateRowsCount(float64(needLookupRows))
 		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
 
@@ -4006,21 +3999,18 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			handle := kv.IntHandle(content.keys[0].GetInt64())
 			tmp := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
 			kvRanges = append(kvRanges, tmp...)
-			needLookupRows++
 		}
 	} else {
 		for _, p := range usedPartitionList {
 			tmp := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
 			kvRanges = append(kvRanges, tmp...)
 		}
-		needLookupRows = len(handles)
 	}
 
 	// The key ranges should be ordered.
 	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
 		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
-	e.updateRowsCount(float64(needLookupRows))
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
 
@@ -4145,7 +4135,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 			b.SetTableHandles(getPhysicalTableID(e.table), handles)
 		}
 	}
-	e.updateRowsCount(float64(len(handles)))
+
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 

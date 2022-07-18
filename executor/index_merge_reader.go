@@ -615,7 +615,6 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		columns:          e.columns,
 		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
 		plans:            e.tblPlans,
-		avgRowSize:       e.dataAvgRowSize,
 		netDataSize:      e.dataAvgRowSize * float64(len(handles)),
 	}
 	if e.isCorColInTableFilter {
