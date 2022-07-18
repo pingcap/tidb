@@ -105,23 +105,28 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	warns = warns[:0]
+
+	stmtNode, isStmtNode := node.(ast.StmtNode)
+	useBinding := sessVars.UsePlanBaselines && isStmtNode
+	var bindRecord *bindinfo.BindRecord
+	var scope string
+	if useBinding {
+		bindRecord, scope = getBindRecord(sctx, stmtNode)
+		if bindRecord == nil {
+			useBinding = false
+		}
+	}
+	if isStmtNode {
+		// add the extra Limit after matching the bind record
+		stmtNode = plannercore.TryAddExtraLimit(sctx, stmtNode)
+		node = stmtNode
+	}
+
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !(sessVars.UsePlanBaselines || sessVars.EvolvePlanBaselines) {
-		return bestPlan, names, nil
-	}
-	stmtNode, ok := node.(ast.StmtNode)
-	if !ok {
-		return bestPlan, names, nil
-	}
-	bindRecord, scope := getBindRecord(sctx, stmtNode)
-	if bindRecord == nil {
-		return bestPlan, names, nil
-	}
-	if sctx.GetSessionVars().SelectLimit != math.MaxUint64 {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
 		return bestPlan, names, nil
 	}
 	err = setFoundInBinding(sctx, true)
