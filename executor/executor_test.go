@@ -242,7 +242,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields := rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, "NULL", fields[0].Column.Name.O)
+	require.Equal(t, "NULL", fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select "\N";`
@@ -251,7 +251,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `N`, fields[0].Column.Name.O)
+	require.Equal(t, `N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	tk.MustExec("use test;")
@@ -264,7 +264,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `\N`, fields[0].Column.Name.O)
+	require.Equal(t, `\N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select \N from test;`
@@ -274,7 +274,7 @@ func TestSelectBackslashN(t *testing.T) {
 	fields = rs.Fields()
 	require.NoError(t, err)
 	require.Len(t, fields, 1)
-	require.Equal(t, `NULL`, fields[0].Column.Name.O)
+	require.Equal(t, `NULL`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select (\N) from test;`
@@ -283,7 +283,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `NULL`, fields[0].Column.Name.O)
+	require.Equal(t, `NULL`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select `\\N` from test;"
@@ -292,7 +292,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `\N`, fields[0].Column.Name.O)
+	require.Equal(t, `\N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = "select (`\\N`) from test;"
@@ -301,7 +301,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `\N`, fields[0].Column.Name.O)
+	require.Equal(t, `\N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select '\N' from test;`
@@ -310,7 +310,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `N`, fields[0].Column.Name.O)
+	require.Equal(t, `N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 
 	sql = `select ('\N') from test;`
@@ -319,7 +319,7 @@ func TestSelectBackslashN(t *testing.T) {
 	require.NoError(t, err)
 	fields = rs.Fields()
 	require.Len(t, fields, 1)
-	require.Equal(t, `N`, fields[0].Column.Name.O)
+	require.Equal(t, `N`, fields[0].ColumnAsName.O)
 	require.NoError(t, rs.Close())
 }
 
