@@ -1546,7 +1546,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		stats := p.tableStats.ScaleByExpectCnt(count)
 		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, is.blockOffset)
 		indexSel.SetChildren(is)
-		indexSel.SetCost(copTask.cst)
 		copTask.indexPlan = indexSel
 	}
 	if len(tableConds) > 0 {
@@ -1562,7 +1561,6 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			tableSel.stats = copTask.plan().statsInfo().Scale(selectivity)
 		}
 		tableSel.SetChildren(copTask.tablePlan)
-		tableSel.SetCost(copTask.cst)
 		copTask.tablePlan = tableSel
 	}
 }
