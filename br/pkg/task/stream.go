@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -906,7 +907,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 			return err
 		}
 	}
-	readMetaDone := console.StartTask("Reading Metadata... ")
+	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := restore.StreamMetadataSet{
 		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
@@ -944,7 +945,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	removed := metas.RemoveDataBefore(shiftUntilTS)
 
 	// remove metadata
-	removeMetaDone := console.StartTask("Removing metadata... ")
+	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
 			return err
@@ -953,8 +954,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	removeMetaDone()
 
 	// remove log
-	clearDataFileDone := console.StartTask(
-		fmt.Sprintf("Clearing data files done. kv-count = %v, total-size = %v", kvCount, totalSize))
+	clearDataFileDone := console.ShowTask(
+		"Clearing data files... ", glue.WithTimeCost(),
+		glue.WithConstExtraField("kv-count", kvCount),
+		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
+	)
 	worker := utils.NewWorkerPool(128, "delete files")
 	wg := new(sync.WaitGroup)
 	for _, f := range removed {
