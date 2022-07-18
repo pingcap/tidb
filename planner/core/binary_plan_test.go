@@ -415,7 +415,13 @@ func TestDecodeBinaryPlan(t *testing.T) {
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
 	}()
-
+	tk.MustExec(`create table tp (a int, b int) partition by range(a) (
+		partition p0 values less than (100),
+		partition p1 values less than (200),
+		partition p2 values less than (300),
+		partition p3 values less than maxvalue
+	)`)
+	tk.MustExec("insert into tp value(1,1), (10,10), (123,234), (213, 234);")
 	tk.MustExec("create table t(a int, b int, c int, index ia(a));")
 	tk.MustExec("insert into t value(1,1,1), (10,10,10), (123,234,345), (-213, -234, -234);")
 	cases := []string{
@@ -423,9 +429,25 @@ func TestDecodeBinaryPlan(t *testing.T) {
 		"explain analyze format = 'verbose' select * from t where a > 10",
 		"explain analyze format = 'verbose' select /*+ inl_join(t1) */ * from t t1 join t t2 where t1.a = t2.a",
 		"explain analyze format = 'verbose' WITH RECURSIVE cte(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM cte WHERE n < 5) SELECT * FROM cte",
+		"set @@tidb_partition_prune_mode='static'",
+		"explain analyze format = 'verbose' select * from tp",
+		"explain analyze format = 'verbose' select * from tp t1 join tp t2 on t1.b > t2.b",
+		"explain analyze format = 'verbose' select * from tp where a > 400",
+		"explain analyze format = 'verbose' select * from tp where a < 30",
+		"explain analyze format = 'verbose' select * from tp where a > 0",
+		"set @@tidb_partition_prune_mode='dynamic'",
+		"explain analyze format = 'verbose' select * from tp",
+		"explain analyze format = 'verbose' select * from tp t1 join tp t2 on t1.b > t2.b",
+		"explain analyze format = 'verbose' select * from tp where a > 400",
+		"explain analyze format = 'verbose' select * from tp where a < 30",
+		"explain analyze format = 'verbose' select * from tp where a > 0",
 	}
 
 	for _, c := range cases {
+		if len(c) < 7 || c[:7] != "explain" {
+			tk.MustExec(c)
+			continue
+		}
 		comment := fmt.Sprintf("sql:%s", c)
 
 		var res1, res2 []string
