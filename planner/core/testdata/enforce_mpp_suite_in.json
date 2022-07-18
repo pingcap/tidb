@@ -104,6 +104,7 @@
       "EXPLAIN select date_format(d,'%Y') as df, count(distinct c) from t group by date_format(d,'%Y');",
       "EXPLAIN select date_format(d,'%Y') as df, a, count(b), count(distinct c) from t group by date_format(d,'%Y'), a;",
       "EXPLAIN select date_format(d,'%Y') as df, a, count(b), avg(distinct c) from t group by date_format(d,'%Y'), a;",
+      "EXPLAIN select d,e, min(b), count(distinct c), bit_or(a) from t group by e,d; -- bit agg func can't be pushed to TiFlash",
       "EXPLAIN select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
       "EXPLAIN select count(b), count(distinct c) from t; -- single distinct func but no group key, bail out"
     ]

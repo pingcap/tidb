@@ -829,6 +829,19 @@
         "Warn": null
       },
       {
+        "SQL": "EXPLAIN select d,e, min(b), count(distinct c), bit_or(a) from t group by e,d; -- bit agg func can't be pushed to TiFlash",
+        "Plan": [
+          "Projection_4 8000.00 root  test.t.d, test.t.e, Column#7, Column#8, Column#9",
+          "└─HashAgg_6 8000.00 root  group by:test.t.d, test.t.e, funcs:min(test.t.b)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:bit_or(test.t.a)->Column#9, funcs:firstrow(test.t.d)->test.t.d, funcs:firstrow(test.t.e)->test.t.e",
+          "  └─TableReader_10 10000.00 root  data:TableFullScan_9",
+          "    └─TableFullScan_9 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Aggregation can not be pushed to tiflash because AggFunc `bit_or` is not supported now",
+          "Aggregation can not be pushed to tiflash because AggFunc `bit_or` is not supported now"
+        ]
+      },
+      {
         "SQL": "EXPLAIN select a, count(b), avg(distinct c), count(distinct c) from t group by a; -- multi distinct funcs, bail out",
         "Plan": [
           "Projection_4 8000.00 root  test.t.a, Column#7, Column#8, Column#9",

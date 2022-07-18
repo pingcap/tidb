@@ -218,7 +218,7 @@ func (a *skewDistinctAggRewriter) isQualifiedAgg(aggFunc *aggregation.AggFuncDes
 	case ast.AggFuncFirstRow, ast.AggFuncCount, ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin:
 		return true
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
-		return true
+		return false
 	case ast.AggFuncAvg:
 		return aggFunc.HasDistinct
 	default:
