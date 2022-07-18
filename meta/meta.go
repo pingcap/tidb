@@ -93,6 +93,11 @@ const (
 	typeUnknown int = 0
 	typeJSON    int = 1
 	// todo: customized handler.
+
+	// MaxInt48 is the max value of int48.
+	MaxInt48 = 0x0000FFFFFFFFFFFF
+	// MaxGlobalID reserves 1000 IDs. Use MaxInt48 to reserves the high 2 bytes to compatible with Multi-tenancy.
+	MaxGlobalID = MaxInt48 - 1000
 )
 
 var (
@@ -150,7 +155,14 @@ func (m *Meta) GenGlobalID() (int64, error) {
 	globalIDMutex.Lock()
 	defer globalIDMutex.Unlock()
 
-	return m.txn.Inc(mNextGlobalIDKey, 1)
+	newID, err := m.txn.Inc(mNextGlobalIDKey, 1)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if newID > MaxGlobalID {
+		return 0, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
+	}
+	return newID, err
 }
 
 // GenGlobalIDs generates the next n global IDs.
@@ -161,6 +173,9 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	newID, err := m.txn.Inc(mNextGlobalIDKey, int64(n))
 	if err != nil {
 		return nil, err
+	}
+	if newID > MaxGlobalID {
+		return nil, errors.Errorf("global id:%d exceeds the limit:%d", newID, MaxGlobalID)
 	}
 	origID := newID - int64(n)
 	ids := make([]int64, 0, n)

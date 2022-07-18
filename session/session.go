@@ -2707,10 +2707,13 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
-	DDLJobTables = []string{
-		"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_ids text(65535), table_ids text(65535), job_meta longblob, type int, processing int, primary key(job_id))",
-		"create table tidb_ddl_reorg(job_id bigint not null, ele_id bigint, ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob, unique key(job_id, ele_id, ele_type(20)))",
-		"create table tidb_ddl_history(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_ids text(65535), table_ids text(65535), create_time datetime, primary key(job_id))",
+	DDLJobTables = []struct {
+		SQL string
+		id  int64
+	}{
+		{"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_ids text(65535), table_ids text(65535), job_meta longblob, type int, processing int, primary key(job_id))", ddl.JobTableID},
+		{"create table tidb_ddl_reorg(job_id bigint not null, ele_id bigint, ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob, unique key(job_id, ele_id, ele_type(20)))", ddl.ReorgTableID},
+		{"create table tidb_ddl_history(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_ids text(65535), table_ids text(65535), create_time datetime, primary key(job_id))", ddl.HistoryTableID},
 	}
 )
 
@@ -2727,8 +2730,15 @@ func InitDDLJobTables(store kv.Storage) error {
 			return err
 		}
 		p := parser.New()
-		for _, s := range DDLJobTables {
-			stmt, err := p.ParseOneStmt(s, "", "")
+		for _, tbl := range DDLJobTables {
+			id, err := t.GetGlobalID()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if id >= meta.MaxGlobalID {
+				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
+			}
+			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2737,7 +2747,7 @@ func InitDDLJobTables(store kv.Storage) error {
 				return errors.Trace(err)
 			}
 			tblInfo.State = model.StatePublic
-			tblInfo.ID, err = t.GenGlobalID()
+			tblInfo.ID = tbl.id
 			tblInfo.UpdateTS = t.StartTS
 			if err != nil {
 				return errors.Trace(err)
