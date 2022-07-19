@@ -112,7 +112,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	var scope string
 	if useBinding {
 		bindRecord, scope = getBindRecord(sctx, stmtNode)
-		if bindRecord == nil {
+		if bindRecord == nil || len(bindRecord.Bindings) == 0 {
 			useBinding = false
 		}
 	}
@@ -126,7 +126,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if err != nil {
 		return nil, nil, err
 	}
-	if !(useBinding || sessVars.EvolvePlanBaselines) {
+	if !useBinding {
+		return bestPlan, names, nil
+	}
+	if !(sessVars.UsePlanBaselines || sessVars.EvolvePlanBaselines) {
 		return bestPlan, names, nil
 	}
 	err = setFoundInBinding(sctx, true)
