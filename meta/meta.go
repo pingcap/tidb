@@ -1302,9 +1302,6 @@ func (m *Meta) ClearALLDDLJob() error {
 	if err := m.txn.LClear(mDDLJobListKey); err != nil {
 		return errors.Trace(err)
 	}
-	if err := m.txn.LClear(mDDLJobHistoryKey); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 

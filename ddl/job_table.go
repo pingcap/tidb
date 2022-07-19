@@ -466,19 +466,21 @@ func (d *ddl) MoveJobFromQueue2Table(force bool) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if tp == addIdxWorker {
-				for _, job := range jobs {
-					element, start, end, pid, err := t.GetDDLReorgHandle(job)
-					if meta.ErrDDLReorgElementNotExist.Equal(err) {
-						continue
-					}
-					if err != nil {
-						return errors.Trace(err)
-					}
-					err = initDDLReorgHandle(se, job.ID, start, end, pid, element)
-					if err != nil {
-						return errors.Trace(err)
-					}
+			if tp == generalWorker {
+				// general job do not have reorg info.
+				continue
+			}
+			for _, job := range jobs {
+				element, start, end, pid, err := t.GetDDLReorgHandle(job)
+				if meta.ErrDDLReorgElementNotExist.Equal(err) {
+					continue
+				}
+				if err != nil {
+					return errors.Trace(err)
+				}
+				err = initDDLReorgHandle(se, job.ID, start, end, pid, element)
+				if err != nil {
+					return errors.Trace(err)
 				}
 			}
 		}

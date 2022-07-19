@@ -970,6 +970,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			if sessVars.StmtCtx.DDLJobID != 0 {
 				se, err := d.sessPool.get()
 				if err != nil {
+					logutil.BgLogger().Error("[ddl] get session failed, check again", zap.Error(err))
 					continue
 				}
 				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.

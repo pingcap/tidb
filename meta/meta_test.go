@@ -767,6 +767,45 @@ func TestSequenceKey(b *testing.T) {
 	require.Equal(b, tableID, id)
 }
 
+func TestClearJob(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
+	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
+	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
+
+	m := meta.NewMeta(txn)
+
+	require.NoError(t, m.EnQueueDDLJob(job1))
+	require.NoError(t, m.EnQueueDDLJob(job2))
+	require.NoError(t, m.EnQueueDDLJob(job3))
+
+	require.NoError(t, m.AddHistoryDDLJob(job1, false))
+	require.NoError(t, m.AddHistoryDDLJob(job2, false))
+
+	jobs, err := m.GetAllDDLJobsInQueue()
+	require.NoError(t, err)
+	require.Len(t, jobs, 3)
+	require.NoError(t, m.ClearALLDDLJob())
+	jobs, err = m.GetAllDDLJobsInQueue()
+	require.NoError(t, err)
+	require.Len(t, jobs, 0)
+
+	count, err := m.GetHistoryDDLCount()
+	require.NoError(t, err)
+	require.Equal(t, count, uint64(2))
+
+	err = txn.Rollback()
+	require.NoError(t, err)
+}
+
 func TestCreateMySQLDatabase(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

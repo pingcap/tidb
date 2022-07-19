@@ -787,7 +787,7 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
-	// Only upgrade from under version92 and this tidb is not owner set.
+	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	original := variable.EnableConcurrentDDL.Load()
 	if ver < version92 && !domain.GetDomain(s).DDL().OwnerManager().IsOwner() {
