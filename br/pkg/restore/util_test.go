@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
@@ -180,12 +181,12 @@ func TestPaginateScanRegion(t *testing.T) {
 		Id: 1,
 	}
 
-	makeRegions := func(num uint64) (map[uint64]*restore.RegionInfo, []*restore.RegionInfo) {
-		regionsMap := make(map[uint64]*restore.RegionInfo, num)
-		regions := make([]*restore.RegionInfo, 0, num)
+	makeRegions := func(num uint64) (map[uint64]*split.RegionInfo, []*split.RegionInfo) {
+		regionsMap := make(map[uint64]*split.RegionInfo, num)
+		regions := make([]*split.RegionInfo, 0, num)
 		endKey := make([]byte, 8)
 		for i := uint64(0); i < num-1; i++ {
-			ri := &restore.RegionInfo{
+			ri := &split.RegionInfo{
 				Region: &metapb.Region{
 					Id:    i + 1,
 					Peers: peers,
@@ -210,7 +211,7 @@ func TestPaginateScanRegion(t *testing.T) {
 		} else {
 			endKey = codec.EncodeBytes([]byte{}, endKey)
 		}
-		ri := &restore.RegionInfo{
+		ri := &split.RegionInfo{
 			Region: &metapb.Region{
 				Id:       num,
 				Peers:    peers,
@@ -225,9 +226,9 @@ func TestPaginateScanRegion(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	regionMap := make(map[uint64]*restore.RegionInfo)
-	var regions []*restore.RegionInfo
-	var batch []*restore.RegionInfo
+	regionMap := make(map[uint64]*split.RegionInfo)
+	var regions []*split.RegionInfo
+	var batch []*split.RegionInfo
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/scanRegionBackoffer", "return(true)"))
 	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.Error(t, err)
