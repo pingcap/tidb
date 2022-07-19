@@ -1,3 +1,5 @@
+// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+
 package split
 
 import (
@@ -8,8 +10,10 @@ import (
 
 // RegionInfo includes a region and the leader of the region.
 type RegionInfo struct {
-	Region *metapb.Region
-	Leader *metapb.Peer
+	Region       *metapb.Region
+	Leader       *metapb.Peer
+	PendingPeers []*metapb.Peer
+	DownPeers    []*metapb.Peer
 }
 
 // ContainsInterior returns whether the region contains the given key, and also

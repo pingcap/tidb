@@ -1,3 +1,5 @@
+// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+
 package split
 
 import (
@@ -24,17 +26,23 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
-	errors2 "github.com/pingcap/tidb/br/pkg/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/br/pkg/utils/utildb"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/store/pdtypes"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
+)
+
+const (
+	splitRegionMaxRetryTime = 4
 )
 
 // SplitClient is an external client used by RegionSplitter.
@@ -55,9 +63,11 @@ type SplitClient interface {
 	BatchSplitRegionsWithOrigin(ctx context.Context, regionInfo *RegionInfo, keys [][]byte) (*RegionInfo, []*RegionInfo, error)
 	// ScatterRegion scatters a specified region.
 	ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error
+	// ScatterRegions scatters regions in a batch.
+	ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
-	// ScanRegion gets a list of regions, starts from the region that contains key.
+	// ScanRegions gets a list of regions, starts from the region that contains key.
 	// Limit limits the maximum number of regions returned.
 	ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error)
 	// GetPlacementRule loads a placement rule from PD.
@@ -66,7 +76,7 @@ type SplitClient interface {
 	SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error
 	// DeletePlacementRule removes a placement rule from PD.
 	DeletePlacementRule(ctx context.Context, groupID, ruleID string) error
-	// SetStoreLabel add or update specified label of stores. If labelValue
+	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
 }
@@ -74,22 +84,22 @@ type SplitClient interface {
 func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
-		return errors.Annotatef(errors2.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endkey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endkey: %s",
 			redact.Key(startKey), redact.Key(endKey))
 	}
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return errors.Annotatef(errors2.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
 			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
 	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return errors.Annotatef(errors2.ErrPDBatchScanRegion, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
 			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
 	}
 
 	cur := regions[0]
 	for _, r := range regions[1:] {
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return errors.Annotatef(errors2.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
 				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
 		}
 		cur = r
@@ -105,12 +115,12 @@ func PaginateScanRegion(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		return nil, errors.Annotatef(errors2.ErrRestoreInvalidRange, "startKey >= endKey, startKey: %s, endkey: %s",
+		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey >= endKey, startKey: %s, endkey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
 	var regions []*RegionInfo
-	err := utildb.WithRetry(ctx, func() error {
+	err := utils.WithRetry(ctx, func() error {
 		regions = []*RegionInfo{}
 		scanStartKey := startKey
 		for {
@@ -144,7 +154,7 @@ type scanRegionBackoffer struct {
 	attempt int
 }
 
-func newScanRegionBackoffer() utildb.Backoffer {
+func newScanRegionBackoffer() utils.Backoffer {
 	return &scanRegionBackoffer{
 		attempt: 3,
 	}
@@ -152,7 +162,7 @@ func newScanRegionBackoffer() utildb.Backoffer {
 
 // NextBackoff returns a duration to wait before retrying again
 func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
-	if errors2.ErrPDBatchScanRegion.Equal(err) {
+	if berrors.ErrPDBatchScanRegion.Equal(err) {
 		// 500ms * 3 could be enough for splitting remain regions in the hole.
 		b.attempt--
 		return 500 * time.Millisecond
@@ -166,21 +176,19 @@ func (b *scanRegionBackoffer) Attempt() int {
 	return b.attempt
 }
 
-const (
-	splitRegionMaxRetryTime = 4
-)
-
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
 type pdClient struct {
 	mu         sync.Mutex
 	client     pd.Client
 	tlsConf    *tls.Config
 	storeCache map[uint64]*metapb.Store
-	isRawKv    bool
+
 	// FIXME when config changed during the lifetime of pdClient,
 	// 	this may mislead the scatter.
 	needScatterVal  bool
 	needScatterInit sync.Once
+
+	isRawKv bool
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
@@ -207,6 +215,24 @@ func (c *pdClient) needScatter(ctx context.Context) bool {
 		}
 	})
 	return c.needScatterVal
+}
+
+// ScatterRegions scatters regions in a batch.
+func (c *pdClient) ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	regionsID := make([]uint64, 0, len(regionInfo))
+	for _, v := range regionInfo {
+		regionsID = append(regionsID, v.Region.Id)
+	}
+	resp, err := c.client.ScatterRegions(ctx, regionsID)
+	if err != nil {
+		return err
+	}
+	if pbErr := resp.GetHeader().GetError(); pbErr.GetType() != pdpb.ErrorType_OK {
+		return errors.Annotatef(berrors.ErrPDInvalidResponse, "pd returns error during batch scattering: %s", pbErr)
+	}
+	return nil
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -247,8 +273,10 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 		return nil, nil
 	}
 	return &RegionInfo{
-		Region: region.Meta,
-		Leader: region.Leader,
+		Region:       region.Meta,
+		Leader:       region.Leader,
+		PendingPeers: region.PendingPeers,
+		DownPeers:    region.DownPeers,
 	}, nil
 }
 
@@ -258,7 +286,7 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 		peer = regionInfo.Leader
 	} else {
 		if len(regionInfo.Region.Peers) == 0 {
-			return nil, errors.Annotate(errors2.ErrRestoreNoPeer, "region does not have peer")
+			return nil, errors.Annotate(berrors.ErrRestoreNoPeer, "region does not have peer")
 		}
 		peer = regionInfo.Region.Peers[0]
 	}
@@ -290,7 +318,7 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 			logutil.Region(regionInfo.Region),
 			logutil.Key("key", key),
 			zap.Stringer("regionErr", resp.RegionError))
-		return nil, errors.Annotatef(errors2.ErrRestoreSplitFailed, "err=%v", resp.RegionError)
+		return nil, errors.Annotatef(berrors.ErrRestoreSplitFailed, "err=%v", resp.RegionError)
 	}
 
 	// BUG: Left is deprecated, it may be nil even if split is succeed!
@@ -306,7 +334,7 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 		}
 	}
 	if newRegion == nil {
-		return nil, errors.Annotate(errors2.ErrRestoreSplitFailed, "new region is nil")
+		return nil, errors.Annotate(berrors.ErrRestoreSplitFailed, "new region is nil")
 	}
 	var leader *metapb.Peer
 	// Assume the leaders will be at the same store.
@@ -330,6 +358,7 @@ func splitRegionWithFailpoint(
 	peer *metapb.Peer,
 	client tikvpb.TikvClient,
 	keys [][]byte,
+	isRawKv bool,
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	failpoint.Inject("not-leader-error", func(injectNewLeader failpoint.Value) {
 		log.Debug("failpoint not-leader-error injected.")
@@ -360,6 +389,7 @@ func splitRegionWithFailpoint(
 			Peer:        peer,
 		},
 		SplitKeys: keys,
+		IsRawKv:   isRawKv,
 	})
 }
 
@@ -368,82 +398,96 @@ func (c *pdClient) sendSplitRegionRequest(
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	var splitErrors error
 	for i := 0; i < splitRegionMaxRetryTime; i++ {
-		var peer *metapb.Peer
-		// scanRegions may return empty Leader in https://github.com/tikv/pd/blob/v4.0.8/server/grpc_service.go#L524
-		// so wee also need check Leader.Id != 0
-		if regionInfo.Leader != nil && regionInfo.Leader.Id != 0 {
-			peer = regionInfo.Leader
-		} else {
-			if len(regionInfo.Region.Peers) == 0 {
-				return nil, multierr.Append(splitErrors,
-					errors.Annotatef(errors2.ErrRestoreNoPeer, "region[%d] doesn't have any peer", regionInfo.Region.GetId()))
-			}
-			peer = regionInfo.Region.Peers[0]
+		retry, result, err := sendSplitRegionRequest(c, ctx, regionInfo, keys, &splitErrors, i)
+		if retry {
+			continue
 		}
-		storeID := peer.GetStoreId()
-		store, err := c.GetStore(ctx, storeID)
 		if err != nil {
 			return nil, multierr.Append(splitErrors, err)
 		}
-		opt := grpc.WithInsecure()
-		if c.tlsConf != nil {
-			opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
+		if result != nil {
+			return result, nil
 		}
-		conn, err := grpc.Dial(store.GetAddress(), opt)
-		if err != nil {
-			return nil, multierr.Append(splitErrors, err)
-		}
-		defer conn.Close()
-		client := tikvpb.NewTikvClient(conn)
-		resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys)
-		if err != nil {
-			return nil, multierr.Append(splitErrors, err)
-		}
-		if resp.RegionError != nil {
-			log.Warn("fail to split region",
-				logutil.Region(regionInfo.Region),
-				zap.Stringer("regionErr", resp.RegionError))
-			splitErrors = multierr.Append(splitErrors,
-				errors.Annotatef(errors2.ErrRestoreSplitFailed, "split region failed: err=%v", resp.RegionError))
-			if nl := resp.RegionError.NotLeader; nl != nil {
-				if leader := nl.GetLeader(); leader != nil {
-					regionInfo.Leader = leader
-				} else {
-					newRegionInfo, findLeaderErr := c.GetRegionByID(ctx, nl.RegionId)
-					if findLeaderErr != nil {
-						return nil, multierr.Append(splitErrors, findLeaderErr)
-					}
-					if !CheckRegionEpoch(newRegionInfo, regionInfo) {
-						return nil, multierr.Append(splitErrors, errors2.ErrKVEpochNotMatch)
-					}
-					log.Info("find new leader", zap.Uint64("new leader", newRegionInfo.Leader.Id))
-					regionInfo = newRegionInfo
-				}
-				log.Info("split region meet not leader error, retrying",
-					zap.Int("retry times", i),
-					zap.Uint64("regionID", regionInfo.Region.Id),
-					zap.Any("new leader", regionInfo.Leader),
-				)
-				continue
-			}
-			// TODO: we don't handle RegionNotMatch and RegionNotFound here,
-			// because I think we don't have enough information to retry.
-			// But maybe we can handle them here by some information the error itself provides.
-			if resp.RegionError.ServerIsBusy != nil ||
-				resp.RegionError.StaleCommand != nil {
-				log.Warn("a error occurs on split region",
-					zap.Int("retry times", i),
-					zap.Uint64("regionID", regionInfo.Region.Id),
-					zap.String("error", resp.RegionError.Message),
-					zap.Any("error verbose", resp.RegionError),
-				)
-				continue
-			}
-			return nil, errors.Trace(splitErrors)
-		}
-		return resp, nil
+		return nil, errors.Trace(splitErrors)
 	}
 	return nil, errors.Trace(splitErrors)
+}
+
+func sendSplitRegionRequest(c *pdClient, ctx context.Context, regionInfo *RegionInfo, keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
+	var peer *metapb.Peer
+	// scanRegions may return empty Leader in https://github.com/tikv/pd/blob/v4.0.8/server/grpc_service.go#L524
+	// so wee also need check Leader.Id != 0
+	if regionInfo.Leader != nil && regionInfo.Leader.Id != 0 {
+		peer = regionInfo.Leader
+	} else {
+		if len(regionInfo.Region.Peers) == 0 {
+			return false, nil,
+				errors.Annotatef(berrors.ErrRestoreNoPeer, "region[%d] doesn't have any peer", regionInfo.Region.GetId())
+		}
+		peer = regionInfo.Region.Peers[0]
+	}
+	storeID := peer.GetStoreId()
+	store, err := c.GetStore(ctx, storeID)
+	if err != nil {
+		return false, nil, err
+	}
+	opt := grpc.WithInsecure()
+	if c.tlsConf != nil {
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
+	}
+	conn, err := grpc.Dial(store.GetAddress(), opt)
+	if err != nil {
+		return false, nil, err
+	}
+	defer conn.Close()
+	client := tikvpb.NewTikvClient(conn)
+	resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys, c.isRawKv)
+	if err != nil {
+		return false, nil, err
+	}
+	if resp.RegionError != nil {
+		log.Warn("fail to split region",
+			logutil.Region(regionInfo.Region),
+			zap.Stringer("regionErr", resp.RegionError))
+		*splitErrors = multierr.Append(*splitErrors,
+			errors.Annotatef(berrors.ErrRestoreSplitFailed, "split region failed: err=%v", resp.RegionError))
+		if nl := resp.RegionError.NotLeader; nl != nil {
+			if leader := nl.GetLeader(); leader != nil {
+				regionInfo.Leader = leader
+			} else {
+				newRegionInfo, findLeaderErr := c.GetRegionByID(ctx, nl.RegionId)
+				if findLeaderErr != nil {
+					return false, nil, findLeaderErr
+				}
+				if !checkRegionEpoch(newRegionInfo, regionInfo) {
+					return false, nil, berrors.ErrKVEpochNotMatch
+				}
+				log.Info("find new leader", zap.Uint64("new leader", newRegionInfo.Leader.Id))
+				regionInfo = newRegionInfo
+			}
+			log.Info("split region meet not leader error, retrying",
+				zap.Int("retry times", retry),
+				zap.Uint64("regionID", regionInfo.Region.Id),
+				zap.Any("new leader", regionInfo.Leader),
+			)
+			return true, nil, nil
+		}
+		// TODO: we don't handle RegionNotMatch and RegionNotFound here,
+		// because I think we don't have enough information to retry.
+		// But maybe we can handle them here by some information the error itself provides.
+		if resp.RegionError.ServerIsBusy != nil ||
+			resp.RegionError.StaleCommand != nil {
+			log.Warn("a error occurs on split region",
+				zap.Int("retry times", retry),
+				zap.Uint64("regionID", regionInfo.Region.Id),
+				zap.String("error", resp.RegionError.Message),
+				zap.Any("error verbose", resp.RegionError),
+			)
+			return true, nil, nil
+		}
+		return false, nil, nil
+	}
+	return false, resp, nil
 }
 
 func (c *pdClient) BatchSplitRegionsWithOrigin(
@@ -502,7 +546,7 @@ func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
 
 func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	api := c.getPDAPIAddr()
-	configAPI := api + "/pd/api/v1/config"
+	configAPI := api + "/pd/api/v1/config/replicate"
 	req, err := http.NewRequestWithContext(ctx, "GET", configAPI, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -511,6 +555,11 @@ func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	var conf pdtypes.ReplicationConfig
 	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
 		return 0, errors.Trace(err)
@@ -549,6 +598,11 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 }
 
 func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error) {
+	failpoint.Inject("no-leader-error", func(_ failpoint.Value) {
+		logutil.CL(ctx).Debug("failpoint no-leader-error injected.")
+		failpoint.Return(nil, status.Error(codes.Unavailable, "not leader"))
+	})
+
 	regions, err := c.client.ScanRegions(ctx, key, endKey, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -567,7 +621,7 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	var rule pdtypes.Rule
 	addr := c.getPDAPIAddr()
 	if addr == "" {
-		return rule, errors.Annotate(errors2.ErrRestoreSplitFailed, "failed to add stores labels: no leader")
+		return rule, errors.Annotate(berrors.ErrRestoreSplitFailed, "failed to add stores labels: no leader")
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", addr+path.Join("/pd/api/v1/config/rule", groupID, ruleID), nil)
 	if err != nil {
@@ -577,11 +631,15 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
+	defer func() {
+		if err = res.Body.Close(); err != nil {
+			log.Error("Response fail to close", zap.Error(err))
+		}
+	}()
 	b, err := io.ReadAll(res.Body)
 	if err != nil {
 		return rule, errors.Trace(err)
 	}
-	res.Body.Close()
 	err = json.Unmarshal(b, &rule)
 	if err != nil {
 		return rule, errors.Trace(err)
@@ -592,7 +650,7 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
 	addr := c.getPDAPIAddr()
 	if addr == "" {
-		return errors.Annotate(errors2.ErrPDLeaderNotFound, "failed to add stores labels")
+		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
 	m, _ := json.Marshal(rule)
 	req, err := http.NewRequestWithContext(ctx, "POST", addr+path.Join("/pd/api/v1/config/rule"), bytes.NewReader(m))
@@ -609,7 +667,7 @@ func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) erro
 func (c *pdClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
 	addr := c.getPDAPIAddr()
 	if addr == "" {
-		return errors.Annotate(errors2.ErrPDLeaderNotFound, "failed to add stores labels")
+		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
 	req, err := http.NewRequestWithContext(ctx, "DELETE", addr+path.Join("/pd/api/v1/config/rule", groupID, ruleID), nil)
 	if err != nil {
@@ -628,7 +686,7 @@ func (c *pdClient) SetStoresLabel(
 	b := []byte(fmt.Sprintf(`{"%s": "%s"}`, labelKey, labelValue))
 	addr := c.getPDAPIAddr()
 	if addr == "" {
-		return errors.Annotate(errors2.ErrPDLeaderNotFound, "failed to add stores labels")
+		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
 	}
 	httpCli := httputil.NewClient(c.tlsConf)
 	for _, id := range stores {
@@ -660,8 +718,8 @@ func (c *pdClient) getPDAPIAddr() string {
 	return strings.TrimRight(addr, "/")
 }
 
-func CheckRegionEpoch(newInfo, oldInfo *RegionInfo) bool {
-	return newInfo.Region.GetId() == oldInfo.Region.GetId() &&
-		newInfo.Region.GetRegionEpoch().GetVersion() == oldInfo.Region.GetRegionEpoch().GetVersion() &&
-		newInfo.Region.GetRegionEpoch().GetConfVer() == oldInfo.Region.GetRegionEpoch().GetConfVer()
+func checkRegionEpoch(_new, _old *RegionInfo) bool {
+	return _new.Region.GetId() == _old.Region.GetId() &&
+		_new.Region.GetRegionEpoch().GetVersion() == _old.Region.GetRegionEpoch().GetVersion() &&
+		_new.Region.GetRegionEpoch().GetConfVer() == _old.Region.GetRegionEpoch().GetConfVer()
 }
