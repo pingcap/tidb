@@ -868,6 +868,13 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("insert into t values (1, 2);")
 	tk.MustGetErrCode("alter table t add index i(b), modify column a int null default 1 after a;", errno.ErrBadField)
+
+	// Test rolling back modify column with reorganization.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(3), b int, unique index i1(a), index i2(a, b));")
+	tk.MustExec("insert into t values ('aaa', 1), ('aa', 2);")
+	tk.MustExec("set @@sql_mode = '';") // Make it possible to truncate 'aaa' to 'aa'.
+	tk.MustGetErrCode("alter table t modify column b tinyint, modify column a char(2);", errno.ErrDupEntry)
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
