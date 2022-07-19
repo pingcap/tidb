@@ -864,13 +864,12 @@ func astIntValueExprFromStr(s string, unsigned bool) (ast.ExprNode, error) {
 			return nil, err
 		}
 		return ast.NewValueExpr(u, "", ""), nil
-	} else {
-		i, err := strconv.ParseInt(s, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		return ast.NewValueExpr(i, "", ""), nil
 	}
+	i, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return ast.NewValueExpr(i, "", ""), nil
 }
 
 // GeneratePartDefsFromInterval generates range partitions from INTERVAL partitioning.
