@@ -2476,7 +2476,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk2.MustExec("insert into t1 values(1, 1, 1);")
 	tk2.MustExec("insert into t1 values(2, 2, 2);")
 
-	// NewSM3 value has duplicates.
+	// New value has duplicates.
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(3, 3, 3)")
 	tk.MustExec("insert into t1 values(4, 4, 3)")
@@ -2485,7 +2485,7 @@ func TestAmendForUniqueIndex(t *testing.T) {
 	tk2.MustExec("alter table t1 drop index uk1")
 	tk2.MustExec("admin check table t1")
 
-	// NewSM3 values has duplicates with old values.
+	// New values has duplicates with old values.
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values(3, 3, 3)")
 	tk.MustExec("insert into t1 values(4, 4, 1)")
