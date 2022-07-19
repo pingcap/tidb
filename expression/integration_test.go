@@ -7396,6 +7396,28 @@ func TestIssue31867(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestIssue31569(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int primary key, c2 enum('a', 'b'))")
+	tk.MustExec("set session sql_mode = ''")
+	tk.MustExec("insert into t values(4, 'a')")
+	tk.MustExec("insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2)")
+	// tidb produces two warnings here (when eval (4, 0) & values(c2)), which is slightly incompatible with mysql
+	tk.MustQuery("show warnings").Check([][]interface{}{
+		{"Warning", "1265", "Data truncated for column 'c2' at row 1"},
+		{"Warning", "1265", "Data truncated for column 'c2' at row 1"},
+	})
+	tk.MustExec("insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2)")
+	tk.MustQuery("show warnings").Check([][]interface{}{})
+	tk.MustExec("drop table t")
+}
+
 func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
