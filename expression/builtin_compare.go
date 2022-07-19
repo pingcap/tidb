@@ -356,6 +356,7 @@ func (b *builtinCoalesceDurationSig) Clone() builtinFunc {
 func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalDuration(b.ctx, row)
+		res.Fsp = b.tp.GetDecimal()
 		if err != nil || !isNull {
 			break
 		}
