@@ -93,7 +93,7 @@ type brieTaskInfo struct {
 	storage     string
 	connID      uint64
 	backupTS    uint64
-	restoreTS 	uint64
+	restoreTS   uint64
 	archiveSize uint64
 	message     string
 }
