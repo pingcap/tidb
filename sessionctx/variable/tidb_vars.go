@@ -50,6 +50,9 @@ const (
 	// TiDBOptDistinctAggPushDown is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
+	// TiDBOptSkewDistinctAgg is used to indicate the distinct agg has data skew
+	TiDBOptSkewDistinctAgg = "tidb_opt_skew_distinct_agg"
+
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
@@ -754,6 +757,10 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
+	TiDBAuthSigningCert = "tidb_auth_signing_cert"
+	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
+	TiDBAuthSigningKey = "tidb_auth_signing_key"
 )
 
 // TiDB intentional limits
@@ -936,6 +943,7 @@ const (
 	DefTiDBBatchPendingTiFlashCount                = 4000
 	DefRCReadCheckTS                               = false
 	DefTiDBRemoveOrderbyInSubquery                 = false
+	DefTiDBSkewDistinctAgg                         = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864

@@ -40,6 +40,7 @@ go_library(
 
 go_test(
     name = "chunk_test",
+    timeout = "short",
     srcs = [
         "alloc_test.go",
         "chunk_test.go",

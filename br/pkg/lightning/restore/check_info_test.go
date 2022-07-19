@@ -336,10 +336,18 @@ func TestCheckCSVHeader(t *testing.T) {
 			},
 		},
 	}
+
+	ioWorkers := worker.NewPool(context.Background(), 1, "io")
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:        cfg,
+		srcStorage: mockStore,
+		ioWorkers:  ioWorkers,
+	}
 	rc := &Controller{
-		cfg:       cfg,
-		store:     mockStore,
-		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
+		cfg:           cfg,
+		store:         mockStore,
+		ioWorkers:     ioWorkers,
+		preInfoGetter: preInfoGetter,
 	}
 
 	p := parser.New()
@@ -398,7 +406,7 @@ func TestCheckCSVHeader(t *testing.T) {
 			})
 		}
 
-		err := rc.checkCSVHeader(ctx, dbMetas)
+		err := rc.checkCSVHeader(WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos), dbMetas)
 		require.NoError(t, err)
 		if ca.level != passed {
 			require.Equal(t, 1, rc.checkTemplate.FailedCount(ca.level))
@@ -436,10 +444,20 @@ func TestCheckTableEmpty(t *testing.T) {
 		},
 	}
 
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg: cfg,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              cfg,
+		dbMetas:          dbMetas,
+		targetInfoGetter: targetInfoGetter,
+	}
+
 	rc := &Controller{
 		cfg:           cfg,
 		dbMetas:       dbMetas,
 		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
+		preInfoGetter: preInfoGetter,
 	}
 
 	ctx := context.Background()
@@ -459,12 +477,12 @@ func TestCheckTableEmpty(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
-	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
-	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	// not error, need not to init check template
 	err = rc.checkTableEmpty(ctx)
@@ -474,16 +492,16 @@ func TestCheckTableEmpty(t *testing.T) {
 	// single table contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
-	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
 		WillReturnError(&gmysql.MySQLError{Number: errno.ErrPDServerTimeout})
-	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
@@ -497,13 +515,13 @@ func TestCheckTableEmpty(t *testing.T) {
 	// multi tables contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
-	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
-	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
-	mock.ExpectQuery("select 1 from `test2`.`tbl1` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test2`.`tbl1` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
 	rc.checkTemplate = NewSimpleTemplate()
 	err = rc.checkTableEmpty(ctx)
@@ -540,9 +558,9 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	// only need to check the one that is not in checkpoint
-	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
+	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)

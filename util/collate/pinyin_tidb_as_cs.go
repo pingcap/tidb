@@ -18,22 +18,22 @@ package collate
 type zhPinyinTiDBASCSCollator struct {
 }
 
-// Collator interface, no implements now.
-func (py *zhPinyinTiDBASCSCollator) Compare(a, b string) int {
+// Compare is not implemented.
+func (*zhPinyinTiDBASCSCollator) Compare(_, _ string) int {
 	panic("implement me")
 }
 
-// Collator interface, no implements now.
-func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
+// Key is not implemented.
+func (*zhPinyinTiDBASCSCollator) Key(_ string) []byte {
 	panic("implement me")
 }
 
-// Collator interface, no implements now.
-func (py *zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(str string) []byte {
+// KeyWithoutTrimRightSpace is not implemented.
+func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 	panic("implement me")
 }
 
-// Collator interface, no implements now.
-func (py *zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
+// Pattern is not implemented.
+func (*zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")
 }

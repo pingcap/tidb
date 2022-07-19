@@ -4359,8 +4359,8 @@ func TestGetResultRowsCount(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(plannercore.Plan)
 		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session(), p)
-		require.Equal(t, cnt, ca.row, fmt.Sprintf("sql: %v", ca.sql))
+		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
 

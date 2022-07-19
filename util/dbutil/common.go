@@ -250,7 +250,7 @@ func GetRandomValues(ctx context.Context, db QueryExecutor, schemaName, table, c
 }
 
 // GetMinMaxValue return min and max value of given column by specified limitRange condition.
-func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column string, limitRange string, limitArgs []interface{}, collation string) (string, string, error) {
+func GetMinMaxValue(ctx context.Context, db QueryExecutor, schema, table, column string, limitRange string, limitArgs []interface{}, collation string) (minStr string, maxStr string, err error) {
 	/*
 		example:
 		mysql> SELECT MIN(`id`) as MIN, MAX(`id`) as MAX FROM `test`.`testa` WHERE id > 0 AND id < 10;
@@ -334,7 +334,6 @@ func FormatTimeZoneOffset(offset time.Duration) string {
 	minutes := (offset % time.Hour) / time.Minute
 
 	return fmt.Sprintf("%s%02d:%02d", prefix, hours, minutes)
-
 }
 
 func queryTables(ctx context.Context, db QueryExecutor, q string) (tables []string, err error) {
