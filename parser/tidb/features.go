@@ -28,18 +28,15 @@ const (
 	FeatureIDForceAutoInc = "force_inc"
 	// FeatureIDPlacement is the `placement rule` feature.
 	FeatureIDPlacement = "placement"
-	// FeatureIDIntervalPartition is the `RANGE INTERVAL partitioning` feature.
-	FeatureIDIntervalPartition = "interval_partitioning"
 )
 
 var featureIDs = map[string]struct{}{
-	FeatureIDAutoRandom:        {},
-	FeatureIDAutoIDCache:       {},
-	FeatureIDAutoRandomBase:    {},
-	FeatureIDClusteredIndex:    {},
-	FeatureIDForceAutoInc:      {},
-	FeatureIDPlacement:         {},
-	FeatureIDIntervalPartition: {},
+	FeatureIDAutoRandom:     {},
+	FeatureIDAutoIDCache:    {},
+	FeatureIDAutoRandomBase: {},
+	FeatureIDClusteredIndex: {},
+	FeatureIDForceAutoInc:   {},
+	FeatureIDPlacement:      {},
 }
 
 func CanParseFeature(fs ...string) bool {

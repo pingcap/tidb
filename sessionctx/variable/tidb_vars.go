@@ -678,10 +678,6 @@ const (
 	// When set to true, a non-transactional DML finishes all batches even if errors are met in some batches.
 	TiDBNonTransactionalIgnoreError = "tidb_nontransactional_ignore_error"
 
-	// TiDBExtensionNonMySQLCompatible changes output for SHOW CREATE TABLE etc. for TiDB enhancements
-	// that are not compatible with MySQL, like INTERVAL table partitioning
-	TiDBExtensionNonMySQLCompatible = "tidb_extension_non_mysql_compatible"
-
 	// Fine grained shuffle is disabled when TiFlashFineGrainedShuffleStreamCount is zero.
 	TiFlashFineGrainedShuffleStreamCount = "tiflash_fine_grained_shuffle_stream_count"
 	TiFlashFineGrainedShuffleBatchSize   = "tiflash_fine_grained_shuffle_batch_size"
@@ -953,7 +949,6 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
-	DefTiDBExtensionNonMySQLCompatible             = false
 )
 
 // Process global variables.

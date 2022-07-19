@@ -1658,12 +1658,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBExtensionNonMySQLCompatible, Value: BoolToOnOff(DefTiDBExtensionNonMySQLCompatible), Type: TypeBool,
-		SetSession: func(s *SessionVars, val string) error {
-			s.ExtensionNonMySQLCompatible = TiDBOptOn(val)
-			return nil
-		},
-	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashFineGrainedShuffleStreamCount, Value: strconv.Itoa(DefTiFlashFineGrainedShuffleStreamCount), Type: TypeInt, MinValue: -1, MaxValue: 1024,
 		SetSession: func(s *SessionVars, val string) error {
 			s.TiFlashFineGrainedShuffleStreamCount = TidbOptInt64(val, DefTiFlashFineGrainedShuffleStreamCount)

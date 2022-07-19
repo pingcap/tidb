@@ -1155,8 +1155,6 @@ type SessionVars struct {
 	// NonTransactionalIgnoreError indicates whether to ignore error in non-transactional statements.
 	// When set to false, returns immediately when it meets the first error.
 	NonTransactionalIgnoreError bool
-	// ExtensionNonMySQLCompatible allows output of SHOW CREATE TABLE etc. to be non-compatible with MySQL
-	ExtensionNonMySQLCompatible bool
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64

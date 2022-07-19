@@ -1046,11 +1046,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		// If PKIsHandle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
 		fmt.Fprintf(buf, "  PRIMARY KEY (%s)", stringutil.Escape(pkCol.Name.O, sqlMode))
-		if ctx.GetSessionVars().ExtensionNonMySQLCompatible {
-			buf.WriteString(" CLUSTERED")
-		} else {
-			buf.WriteString(" /*T![clustered_index] CLUSTERED */")
-		}
+		buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 	}
 
 	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
@@ -1093,17 +1089,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
-				buf.WriteString(" /*T![clustered_index]")
-			}
+			buf.WriteString(" /*T![clustered_index]")
 			if tableInfo.HasClusteredIndex() {
 				buf.WriteString(" CLUSTERED")
 			} else {
 				buf.WriteString(" NONCLUSTERED")
 			}
-			if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
-				buf.WriteString(" */")
-			}
+			buf.WriteString(" */")
 		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
@@ -1133,13 +1125,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
-	buf.WriteString("\n")
-
-	if ctx.GetSessionVars().ExtensionNonMySQLCompatible {
-		buf.WriteString(")")
-	} else {
-		buf.WriteString(") ENGINE=InnoDB")
-	}
+	buf.WriteString("\n) ENGINE=InnoDB")
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1386,38 +1372,6 @@ func appendPartitionInfo(ctx sessionctx.Context, tbInfo *model.TableInfo, buf *b
 		buf.WriteString(")")
 	} else {
 		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)", partitionInfo.Type.String(), partitionInfo.Expr)
-	}
-
-	if partInfo := ddl.NewPartitionInfoIfRangeIntervalPartitioned(ctx, tbInfo); partInfo != nil {
-		tbInfo.Partition.IntervalNullPart = partInfo.IntervalNullPart
-		tbInfo.Partition.IntervalMaxPart = partInfo.IntervalMaxPart
-		tbInfo.Partition.IntervalFirst = partInfo.IntervalFirst
-		tbInfo.Partition.IntervalLast = partInfo.IntervalLast
-		tbInfo.Partition.IntervalExpr = partInfo.IntervalExpr
-		tbInfo.Partition.IntervalUnit = partInfo.IntervalUnit
-	}
-	if partitionInfo.IntervalExpr != "" && partitionInfo.IntervalFirst != "" && partitionInfo.IntervalLast != "" {
-		// TODO: Remove this?
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
-			buf.WriteString(" /*T![interval_partitioning]")
-		}
-		intervalStr := partitionInfo.IntervalExpr
-		if partitionInfo.IntervalUnit != "" {
-			intervalStr += " " + partitionInfo.IntervalUnit
-		}
-		fmt.Fprintf(buf, " INTERVAL (%s) FIRST PARTITION LESS THAN (%s) LAST PARTITION LESS THAN (%s)",
-			intervalStr, partitionInfo.IntervalFirst, partitionInfo.IntervalLast)
-		if partitionInfo.IntervalNullPart {
-			buf.WriteString(" NULL PARTITION")
-		}
-		if partitionInfo.IntervalMaxPart {
-			buf.WriteString(" MAXVALUE PARTITION")
-		}
-		if !ctx.GetSessionVars().ExtensionNonMySQLCompatible {
-			buf.WriteString(" */")
-		} else {
-			return
-		}
 	}
 
 	buf.WriteString("\n(")
