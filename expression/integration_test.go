@@ -9986,3 +9986,435 @@ func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue29513(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(45678);")
+	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
+	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
+}
+
+func TestIssue29755(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	tk.MustQuery("select char(123, NULL, 123)").Check(testkit.Rows("{{"))
+	tk.MustQuery("select char(NULL, 123, 123)").Check(testkit.Rows("{{"))
+	tk.MustExec("set tidb_enable_vectorized_expression = off;")
+	tk.MustQuery("select char(123, NULL, 123)").Check(testkit.Rows("{{"))
+	tk.MustQuery("select char(NULL, 123, 123)").Check(testkit.Rows("{{"))
+}
+
+func TestIssue30101(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 bigint unsigned, c2 bigint unsigned);")
+	tk.MustExec("insert into t1 values(9223372036854775808, 9223372036854775809);")
+	tk.MustQuery("select greatest(c1, c2) from t1;").Sort().Check(testkit.Rows("9223372036854775809"))
+}
+
+func TestIssue28739(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`USE test`)
+	tk.MustExec("SET time_zone = 'Europe/Vilnius'")
+	tk.MustQuery("SELECT UNIX_TIMESTAMP('2020-03-29 03:45:00')").Check(testkit.Rows("1585443600"))
+	tk.MustQuery("SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'))").Check(testkit.Rows("2020-03-29 04:00:00"))
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`CREATE TABLE t (dt DATETIME NULL)`)
+	defer tk.MustExec(`DROP TABLE t`)
+	// Test the vector implememtation
+	tk.MustExec(`INSERT INTO t VALUES ('2021-10-31 02:30:00'), ('2021-03-28 02:30:00'), ('2020-10-04 02:15:00'), ('2020-03-29 03:45:00'), (NULL)`)
+	tk.MustQuery(`SELECT dt, UNIX_TIMESTAMP(dt) FROM t`).Sort().Check(testkit.Rows(
+		"2020-03-29 03:45:00 1585443600",
+		"2020-10-04 02:15:00 1601766900",
+		"2021-03-28 02:30:00 1616891400",
+		"2021-10-31 02:30:00 1635636600",
+		"<nil> <nil>"))
+}
+
+func TestIssue30326(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1),(1),(2),(2);")
+	tk.MustExec("set tidb_window_concurrency = 1;")
+	err := tk.QueryToErr("select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;")
+	require.Error(t, err, "[executor:1242]Subquery returns more than 1 row")
+}
+
+func TestIssue30174(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("CREATE TABLE `t1` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL,\n  `c2` blob NOT NULL,\n  PRIMARY KEY (`c2`(5)),\n  UNIQUE KEY `idx_89` (`c1`)\n);")
+	tk.MustExec("CREATE TABLE `t2` (\n  `c1` enum('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'Alice',\n  `c2` set('Alice','Bob','Charlie','David') NOT NULL DEFAULT 'David',\n  `c3` enum('Alice','Bob','Charlie','David') NOT NULL,\n  PRIMARY KEY (`c3`,`c2`)\n);")
+	tk.MustExec("insert into t1 values('Charlie','');")
+	tk.MustExec("insert into t2 values('Charlie','Charlie','Alice');")
+	tk.MustQuery("select * from t2 where c3 in (select c2 from t1);").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where c2 in (select c2 from t1);").Check(testkit.Rows())
+}
+
+func TestIssue30264(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// compare Time/Int/Int as string type, return string type
+	tk.MustQuery("select greatest(time '21:00', year(date'20220101'), 23);").Check(testkit.Rows("23"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(time '21:00', date'891001', 120000);").Check(testkit.Rows("21:00:00"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(time '20:00', date'101001', 120101);").Check(testkit.Rows("20:00:00"))
+	// compare Date/String/Int as Date type, return string type
+	tk.MustQuery("select greatest(date'101001', '19990329', 120101);").Check(testkit.Rows("2012-01-01"))
+	// compare Time/Date as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(time '20:00', date'691231');").Check(testkit.Rows("2069-12-31 00:00:00"))
+	// compare Date/Date as Date type, return Date type
+	tk.MustQuery("select greatest(date '120301', date'691231');").Check(testkit.Rows("2069-12-31"))
+	// compare Time/Time as Time type, return Time type
+	tk.MustQuery("select greatest(time '203001', time '2230');").Check(testkit.Rows("20:30:01"))
+	// compare DateTime/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(timestamp '2021-01-31 00:00:01', timestamp '2021-12-31 12:00:00');").Check(testkit.Rows("2021-12-31 12:00:00"))
+	// compare Time/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(time '00:00:01', timestamp '2069-12-31 12:00:00');").Check(testkit.Rows("2069-12-31 12:00:00"))
+	// compare Date/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(date '21000101', timestamp '2069-12-31 12:00:00');").Check(testkit.Rows("2100-01-01 00:00:00"))
+	// compare JSON/JSON, return JSON type
+	tk.MustQuery("select greatest(cast('1' as JSON), cast('2' as JSON));").Check(testkit.Rows("2"))
+	//Original 30264 Issue:
+	tk.MustQuery("select greatest(time '20:00:00', 120000);").Check(testkit.Rows("20:00:00"))
+	tk.MustQuery("select greatest(date '2005-05-05', 20010101, 20040404, 20030303);").Check(testkit.Rows("2005-05-05"))
+	tk.MustQuery("select greatest(date '1995-05-05', 19910101, 20050505, 19930303);").Check(testkit.Rows("2005-05-05"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("CREATE TABLE `t1` (a datetime, b date, c time)")
+	tk.MustExec("insert into t1 values(timestamp'2021-01-31 00:00:01', '2069-12-31', '20:00:01');")
+	tk.MustExec("set tidb_enable_vectorized_expression = on;")
+	// compare Time/Int/Int as string type, return string type
+	tk.MustQuery("select greatest(c, year(date'20220101'), 23) from t1;").Check(testkit.Rows("23"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(c, date'891001', 120000) from t1;").Check(testkit.Rows("20:00:01"))
+	// compare Time/Date/Int as string type, return string type
+	tk.MustQuery("select greatest(c, date'101001', 120101) from t1;").Check(testkit.Rows("20:00:01"))
+	// compare Date/String/Int as Date type, return string type
+	tk.MustQuery("select greatest(b, '19990329', 120101) from t1;").Check(testkit.Rows("2069-12-31"))
+	// compare Time/Date as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(time '20:00', b) from t1;").Check(testkit.Rows("2069-12-31 00:00:00"))
+	// compare Date/Date as Date type, return Date type
+	tk.MustQuery("select greatest(date '120301', b) from t1;").Check(testkit.Rows("2069-12-31"))
+	// compare Time/Time as Time type, return Time type
+	tk.MustQuery("select greatest(c, time '2230') from t1;").Check(testkit.Rows("20:00:01"))
+	// compare DateTime/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(a, timestamp '2021-12-31 12:00:00') from t1;").Check(testkit.Rows("2021-12-31 12:00:00"))
+	// compare Time/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(c, timestamp '2069-12-31 12:00:00') from t1;").Check(testkit.Rows("2069-12-31 12:00:00"))
+	// compare Date/DateTime as DateTime type, return DateTime type
+	tk.MustQuery("select greatest(date '21000101', a) from t1;").Check(testkit.Rows("2100-01-01 00:00:00"))
+	// compare JSON/JSON, return JSON type
+	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
+}
+
+func TestIssue29708(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
+	_, err := tk.Exec("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
+	require.NotNil(t, err)
+	tk.MustQuery("select * from t1").Check(nil)
+
+	// test vectorized build-in function
+	tk.MustExec("insert into t1 (a) values ('a'),('b');")
+	_, err = tk.Exec("insert into t1 select REPEAT(a,200000000) from t1;")
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	// test cast
+	_, err = tk.Exec(`insert into t1 values  (cast("a" as binary(4294967295)));`)
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
+	require.NoError(t, err)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{nil},
+		{"a"},
+		{"b"},
+	})
+}
+
+func TestIssue22206(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tz := tk.Session().GetSessionVars().StmtCtx.TimeZone
+	result := tk.MustQuery("select from_unixtime(32536771199.999999)")
+	unixTime := time.Unix(32536771199, 999999000).In(tz).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime('32536771200.000000')")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime(5000000000);")
+	unixTime = time.Unix(5000000000, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(unixTime))
+}
+
+func TestIssue32488(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
+	tk.MustExec("insert into t values('ʞ'), ('İ');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+}
+
+func TestIssue33397(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
+	tk.MustExec("insert into t values(''), ('');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	result := tk.MustQuery("select compress(a) from t").Rows()
+	require.Equal(t, [][]interface{}{{""}, {""}}, result)
+}
+
+func TestIssue34659(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32))")
+	tk.MustExec("insert into t values(date_add(cast('00:00:00' as time), interval 1.1 second))")
+	result := tk.MustQuery("select * from t").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.1"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:00.000001"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1000000 microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.000000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1111119 second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.0 second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.0"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 second_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 second_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 minute_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:01:01"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 minute_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"308:38:31"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:01:01"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 hour_second) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"308:38:31"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 hour_minute) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"01:01:00"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1.1 day_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.100000"}}, result)
+
+	result = tk.MustQuery("select cast(date_add(cast('00:00:00' as time), interval 1111111 day_microsecond) as char)").Rows()
+	require.Equal(t, [][]interface{}{{"00:00:01.111111"}}, result)
+}
+
+func TestIssue31799(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(i int, c varchar(32))")
+	tk.MustExec("insert into t values(1, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1 second))")
+	tk.MustExec("insert into t values(2, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1 second))")
+	tk.MustExec("insert into t values(3, date_add(cast('2001-01-01 00:00:00' as datetime), interval 1.1 second))")
+	tk.MustExec("insert into t values(4, date_add(cast('2001-01-01 00:00:00' as datetime(6)), interval 1.1 second))")
+	tk.MustExec("insert into t values(5, date_add(cast('00:00:00' as time), interval 1.1 second))")
+	tk.MustQuery("select c from t order by i").Check([][]interface{}{{"2001-01-01 00:00:01"}, {"2001-01-01 00:00:01.000000"}, {"2001-01-01 00:00:01.1"}, {"2001-01-01 00:00:01.100000"}, {"00:00:01.1"}})
+	tk.MustExec("drop table t")
+}
+
+func TestIssue31867(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp(6) not null default current_timestamp(6) on update current_timestamp(6))")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000000')")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000001')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000001')")
+	tk.MustQuery("select date_add(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 01:01:01.000000"},
+		{"1970-01-01 01:01:01.000001"},
+		{"1971-01-01 01:01:00.000000"},
+		{"1971-01-01 01:01:00.000001"},
+		{"2001-01-01 00:01:00.000000"},
+		{"2001-01-01 00:01:00.000001"},
+		{"2001-01-01 01:01:00.000000"},
+		{"2001-01-01 01:01:00.000001"},
+	})
+	tk.MustQuery("select date_sub(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 00:59:01.000000"},
+		{"1970-01-01 00:59:01.000001"},
+		{"1971-01-01 00:59:00.000000"},
+		{"1971-01-01 00:59:00.000001"},
+		{"2000-12-31 23:59:00.000000"},
+		{"2000-12-31 23:59:00.000001"},
+		{"2001-01-01 00:59:00.000000"},
+		{"2001-01-01 00:59:00.000001"},
+	})
+	tk.MustExec("drop table t")
+}
+
+func TestDateAddForNonExistingTimestamp(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = 'CET'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp)")
+	tk.MustExec("set time_zone = 'UTC'")
+	tk.MustExec("insert into t values('2022-03-27 00:30:00')")
+	tk.MustExec("insert into t values('2022-10-30 00:30:00')")
+	tk.MustExec("insert into t values('2022-10-30 01:30:00')")
+	tk.MustExec("set time_zone = 'Europe/Amsterdam'")
+	// Non-existing CET timestamp.
+	tk.MustGetErrCode("insert into t values('2022-03-27 02:30:00')", errno.ErrTruncatedWrongValue)
+	tk.MustQuery("select date_add(ts, interval 1 hour) from t order by ts").Check([][]interface{}{
+		{"2022-03-27 02:30:00"},
+		{"2022-10-30 03:30:00"},
+		{"2022-10-30 03:30:00"},
+	})
+	tk.MustExec("drop table t")
+}
+
+func TestImcompleteDateFunc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select to_seconds('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_seconds('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT CONVERT_TZ('2004-10-00 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT CONVERT_TZ('2004-00-01 12:00:00','GMT','MET');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_ADD('1998-10-00',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_ADD('2004-00-01',INTERVAL 1 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_SUB('1998-10-00', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DATE_SUB('2004-00-01', INTERVAL 31 DAY);").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DAYOFYEAR('2007-00-03');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT DAYOFYEAR('2007-02-00');;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-00-01','2003-05-01');").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-00');;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_days('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select week('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select week('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKDAY('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKDAY('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKOFYEAR('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select WEEKOFYEAR('1998-00-11')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select YEARWEEK('1998-10-00')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
+}
+
+func TestIssue34998(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `PK_S_MULTI_43`(`COL1` time(2) NOT NULL, `COL2` time(2) NOT NULL, `COL3` time(2) DEFAULT NULL, PRIMARY KEY(`COL1`,`COL2`))")
+	tk.MustExec("insert into PK_S_MULTI_43(col1, col2) values('-512:37:22.00', '-512:37:22.00')")
+	tk.MustQuery("select extract(day_microsecond from '-512:37:22.00')").Check(testkit.Rows("-5123722000000"))
+	tk.MustQuery("select extract(day_microsecond from col1) from PK_S_MULTI_43").Check(testkit.Rows("-5123722000000"))
+}
+>>>>>>> 51b8884fe... expression: fix the issue that extracting `day_microsecond/day_second/day_minute/day_hour` from `Time` type emits wrong result (#36297)
