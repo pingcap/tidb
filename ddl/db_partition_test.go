@@ -3957,7 +3957,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	tk.MustExec("create table t2 (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90)")
 	tk.MustExec("alter table t2 first partition less than (20)")
-	tk.MustExec("alter table t2 LAST partition less than (100)")
+	tk.MustExec("alter table t2 LAST partition less than (110)")
 	err = tk.ExecToErr("alter table t2 merge first partition less than (60)")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported MERGE FIRST PARTITION", err.Error())
@@ -3982,7 +3982,8 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `P_LT_70` VALUES LESS THAN (70),\n" +
 			" PARTITION `P_LT_80` VALUES LESS THAN (80),\n" +
 			" PARTITION `P_LT_90` VALUES LESS THAN (90),\n" +
-			" PARTITION `P_LT_100` VALUES LESS THAN (100))"))
+			" PARTITION `P_LT_100` VALUES LESS THAN (100),\n" +
+			" PARTITION `P_LT_110` VALUES LESS THAN (110))"))
 	tk.MustExec("drop table t2")
 
 	err = tk.ExecToErr("create table t (id timestamp, val varchar(255)) partition by range columns (id) interval (1 minute) first partition less than ('2022-01-01 00:01:00') last partition less than ('2022-01-01 01:00:00')")

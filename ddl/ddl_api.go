@@ -3676,7 +3676,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 			AppendPartitionDefs(ctx, partInfo, &buf, sqlMode)
 
 			alterFirstPart := strings.Index(strings.ToLower(query), " last partition")
-			newQuery := query[:alterFirstPart] + "ADD PARTITION (" + buf.String() + ")"
+			newQuery := query[:alterFirstPart] + " ADD PARTITION (" + buf.String() + ")"
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
@@ -3843,7 +3843,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 			for i := range spec.PartitionNames {
 				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
 			}
-			newQuery := query[:alterFirstPart] + "DROP PARTITION " + strings.Join(partNames, ", ")
+			newQuery := query[:alterFirstPart] + " DROP PARTITION " + strings.Join(partNames, ", ")
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
