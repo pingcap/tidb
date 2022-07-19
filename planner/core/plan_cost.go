@@ -404,7 +404,7 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	switch p.ctx.GetSessionVars().CostModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-		if p.Desc {
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
@@ -441,7 +441,7 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	switch p.ctx.GetSessionVars().CostModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-		if p.Desc {
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
