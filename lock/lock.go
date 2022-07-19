@@ -89,7 +89,6 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 				}
 			}
 		}
-
 	}
 
 	if !alterWriteable && c.ctx.HasLockedTables() {
