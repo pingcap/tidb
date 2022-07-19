@@ -676,11 +676,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show global variables like 'tidb_ignore_prepared_cache_close_stmt'").Check(testkit.Rows("tidb_ignore_prepared_cache_close_stmt OFF"))
 
 	// test for tidb_enable_new_cost_interface
-	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0")) // default value is 0
-	tk.MustExec("set global tidb_enable_new_cost_interface=1")
-	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1")) // default value is 1
 	tk.MustExec("set global tidb_enable_new_cost_interface=0")
 	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_new_cost_interface=1")
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
 
 	// test for tidb_remove_orderby_in_subquery
 	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
@@ -689,6 +689,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
 	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
+
+	// test for tidb_opt_skew_distinct_agg
+	tk.MustQuery("select @@session.tidb_opt_skew_distinct_agg").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set session tidb_opt_skew_distinct_agg=1")
+	tk.MustQuery("select @@session.tidb_opt_skew_distinct_agg").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_opt_skew_distinct_agg").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_opt_skew_distinct_agg=1")
+	tk.MustQuery("select @@global.tidb_opt_skew_distinct_agg").Check(testkit.Rows("1"))
 
 	// the value of max_allowed_packet should be a multiple of 1024
 	tk.MustExec("set @@global.max_allowed_packet=16385")
