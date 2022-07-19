@@ -90,6 +90,9 @@ type Context interface {
 	// includes the temporary table definitions stored in session
 	GetDomainInfoSchema() InfoschemaMetaVersion
 
+	// GetDomainInfoSchemaWithLock returns the latest information schema in domain with the lock
+	GetDomainInfoSchemaWithLock() InfoschemaMetaVersion
+
 	GetSessionVars() *variable.SessionVars
 
 	GetSessionManager() util.SessionManager

@@ -212,12 +212,19 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 // MockInfoschema only serves for test.
 var MockInfoschema func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion
 
+var MockInfoschemaWithLock func(is sessionctx.InfoschemaMetaVersion) sessionctx.InfoschemaMetaVersion
+
 // GetDomainInfoSchema returns the latest information schema in domain
 func (c *Context) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
 	if c.is == nil {
 		c.is = MockInfoschema(nil)
 	}
 	return c.is
+}
+
+// GetDomainInfoSchemaWithLock returns the latest information schema in domain with lock
+func (c *Context) GetDomainInfoSchemaWithLock() sessionctx.InfoschemaMetaVersion {
+	return MockInfoschemaWithLock(c.GetDomainInfoSchema())
 }
 
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.

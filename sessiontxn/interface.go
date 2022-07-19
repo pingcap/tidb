@@ -140,6 +140,8 @@ type TxnContextProvider interface {
 	OnStmtRetry(ctx context.Context) error
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
+	// Close closes the provider
+	Close()
 }
 
 // TxnManager is an interface providing txn context management in session

@@ -53,7 +53,7 @@ type baseTxnContextProvider struct {
 
 	// Runtime states
 	ctx             context.Context
-	infoSchema      infoschema.InfoSchema
+	infoSchema      infoschema.LockedInfoSchema
 	txn             kv.Transaction
 	isTxnPrepared   bool
 	enterNewTxnType sessiontxn.EnterNewTxnType
@@ -65,7 +65,15 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		return errors.New("ts functions should not be nil")
 	}
 
+	defer func() {
+		if err != nil && p.infoSchema != nil {
+			p.infoSchema.ReleaseLock()
+		}
+	}()
+
 	p.ctx = ctx
+	p.enterNewTxnType = tp
+
 	sessVars := p.sctx.GetSessionVars()
 	activeNow := true
 	switch tp {
@@ -74,6 +82,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 		// There are two main steps here to enter a new txn:
 		// 1. prepareTxnWithOracleTS
 		// 2. ActivateTxn
+		p.infoSchema = p.sctx.GetDomainInfoSchemaWithLock().(infoschema.LockedInfoSchema)
 		if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 			return err
 		}
@@ -81,11 +90,17 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 			return err
 		}
 	case sessiontxn.EnterNewTxnWithBeginStmt:
-		if !canReuseTxnWhenExplicitBegin(p.sctx) {
+		var is infoschema.LockedInfoSchema
+		if provider, ok := sessiontxn.GetTxnManager(p.sctx).GetContextProvider().(*baseTxnContextProvider); ok {
+			is = provider.infoSchema
+		}
+
+		if !canReuseTxnWhenExplicitBegin(p.sctx) || is == nil {
 			// As we will enter a new txn, we need to commit the old txn if it's still valid.
 			// There are two main steps here to enter a new txn:
 			// 1. prepareTxnWithOracleTS
 			// 2. ActivateTxn
+			is = p.sctx.GetDomainInfoSchemaWithLock().(infoschema.LockedInfoSchema)
 			if err := internal.CommitBeforeEnterNewTxn(p.ctx, p.sctx); err != nil {
 				return err
 			}
@@ -93,15 +108,15 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 				return err
 			}
 		}
+		p.infoSchema = is
 		sessVars.SetInTxn(true)
 	case sessiontxn.EnterNewTxnBeforeStmt:
+		p.infoSchema = p.sctx.GetDomainInfoSchemaWithLock().(infoschema.LockedInfoSchema)
 		activeNow = false
 	default:
 		return errors.Errorf("Unsupported type: %v", tp)
 	}
 
-	p.enterNewTxnType = tp
-	p.infoSchema = p.sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
 			CreateTime: time.Now(),
@@ -227,6 +242,8 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return nil, err
 	}
 
+	p.infoSchema.ReleaseLock()
+
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.StartTS = txn.StartTS()
 
@@ -266,6 +283,12 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	p.txn = txn
 	return txn, nil
+}
+
+func (p *baseTxnContextProvider) Close() {
+	if p.infoSchema != nil {
+		p.infoSchema.ReleaseLock()
+	}
 }
 
 // prepareTxn prepares txn with an oracle ts future. If the snapshotTS is set,

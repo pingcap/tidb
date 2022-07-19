@@ -139,6 +139,10 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		return err
 	}
 
+	if m.ctxProvider != nil {
+		m.ctxProvider.Close()
+	}
+
 	m.ctxProvider = ctxProvider
 	if r.Type == sessiontxn.EnterNewTxnWithBeginStmt {
 		m.sctx.GetSessionVars().SetInTxn(true)
@@ -147,7 +151,10 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 }
 
 func (m *txnManager) OnTxnEnd() {
-	m.ctxProvider = nil
+	if m.ctxProvider != nil {
+		m.ctxProvider.Close()
+		m.ctxProvider = nil
+	}
 	m.stmtNode = nil
 }
 

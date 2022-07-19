@@ -62,6 +62,11 @@ type InfoSchema interface {
 	AllPlacementPolicies() []*model.PolicyInfo
 }
 
+type LockedInfoSchema interface {
+	InfoSchema
+	ReleaseLock()
+}
+
 type sortedTables []table.Table
 
 func (s sortedTables) searchTable(id int64) int {
@@ -351,6 +356,12 @@ func init() {
 	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {
 		return MockInfoSchema(tbList)
 	}
+	mock.MockInfoschemaWithLock = func(is sessionctx.InfoschemaMetaVersion) sessionctx.InfoschemaMetaVersion {
+		return &lockedInfoSchema{
+			InfoSchema:  is.(InfoSchema),
+			releaseLock: func() {},
+		}
+	}
 }
 
 // HasAutoIncrementColumn checks whether the table has auto_increment columns, if so, return true and the column name.
@@ -566,4 +577,11 @@ func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.Table
 	}
 
 	return ts.InfoSchema.SchemaByTable(tableInfo)
+}
+
+// ReleaseLock releases the lock if the inner is `LockedInfoSchema`
+func (ts *TemporaryTableAttachedInfoSchema) ReleaseLock() {
+	if l, ok := ts.InfoSchema.(LockedInfoSchema); ok {
+		l.ReleaseLock()
+	}
 }

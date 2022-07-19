@@ -3312,6 +3312,12 @@ func (s *session) GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
+// GetDomainInfoSchemaWithLock returns the latest information schema in domain with lock
+func (s *session) GetDomainInfoSchemaWithLock() sessionctx.InfoschemaMetaVersion {
+	is := domain.GetDomain(s).InfoSchemaWithLock()
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
+}
+
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
 	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {

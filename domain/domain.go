@@ -337,6 +337,15 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 	return do.infoCache.GetLatest()
 }
 
+func (do *Domain) InfoSchemaWithLock() infoschema.LockedInfoSchema {
+	if do.infoCache == nil {
+		// Return nil is for test purpose where domain is not well initialized in session context.
+		// In real implementation, the code will not reach here.
+		return nil
+	}
+	return do.infoCache.GetLatestWithLeaseLock()
+}
+
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
 	// if the snapshotTS is new enough, we can get infoschema directly through sanpshotTS.
@@ -437,6 +446,7 @@ func (do *Domain) Reload() error {
 		// loaded newer schema
 		if oldSchemaVersion < is.SchemaMetaVersion() {
 			// Update self schema version to etcd.
+			<-do.infoCache.WaitStaleSchemaLockReleased()
 			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), is.SchemaMetaVersion())
 			if err != nil {
 				logutil.BgLogger().Info("update self version failed",

@@ -31,6 +31,15 @@ var (
 	hitVersionCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "version")
 )
 
+type lockedInfoSchema struct {
+	InfoSchema
+	releaseLock func()
+}
+
+func (l *lockedInfoSchema) ReleaseLock() {
+	l.releaseLock()
+}
+
 // InfoCache handles information schema, including getting and setting.
 // The cache behavior, however, is transparent and under automatic management.
 // It only promised to cache the infoschema, if it is newer than all the cached.
@@ -40,11 +49,17 @@ type InfoCache struct {
 	cache []InfoSchema
 	// record SnapshotTS of the latest schema Insert.
 	maxUpdatedSnapshotTS uint64
+
+	latestSchemaLocksWg   *sync.WaitGroup
+	waitingReleaseLocksWg *sync.WaitGroup
 }
 
 // NewCache creates a new InfoCache.
 func NewCache(capcity int) *InfoCache {
-	return &InfoCache{cache: make([]InfoSchema, 0, capcity)}
+	return &InfoCache{
+		cache:               make([]InfoSchema, 0, capcity),
+		latestSchemaLocksWg: &sync.WaitGroup{},
+	}
 }
 
 // GetLatest gets the newest information schema.
@@ -57,6 +72,50 @@ func (h *InfoCache) GetLatest() InfoSchema {
 		return h.cache[0]
 	}
 	return nil
+}
+
+func (h *InfoCache) GetLatestWithLeaseLock() LockedInfoSchema {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	getLatestCounter.Inc()
+	if len(h.cache) > 0 {
+		hitLatestCounter.Inc()
+		wg := h.latestSchemaLocksWg
+		wg.Add(1)
+
+		lock := &lockedInfoSchema{
+			InfoSchema: h.cache[0],
+		}
+
+		var once sync.Once
+		lock.releaseLock = func() {
+			once.Do(wg.Done)
+		}
+
+		return lock
+	}
+
+	return nil
+}
+
+func (h *InfoCache) WaitStaleSchemaLockReleased() chan struct{} {
+	h.mu.RLock()
+	wg := h.waitingReleaseLocksWg
+	h.mu.RUnlock()
+
+	done := make(chan struct{})
+	if wg == nil {
+		close(done)
+		return done
+	}
+
+	go func() {
+		defer close(done)
+		wg.Wait()
+	}()
+
+	return done
 }
 
 // GetByVersion gets the information schema based on schemaVersion. Returns nil if it is not loaded.
@@ -110,6 +169,11 @@ func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
 	// cached entry
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
 		return true
+	}
+
+	if i == 0 {
+		h.waitingReleaseLocksWg = h.latestSchemaLocksWg
+		h.latestSchemaLocksWg = &sync.WaitGroup{}
 	}
 
 	if len(h.cache) < cap(h.cache) {
