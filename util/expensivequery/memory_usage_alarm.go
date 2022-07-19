@@ -16,10 +16,6 @@ package expensivequery
 
 import (
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,6 +23,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -91,7 +91,7 @@ func (record *memoryUsageAlarm) uploadFileToS3(filenames []string) {
 		uploader := s3manager.NewUploader(sess)
 
 		for _, filename := range filenames {
-			file, err := os.OpenFile(filename, os.O_RDONLY, 0666)
+			file, err := os.OpenFile(filename, os.O_RDONLY, 0600)
 			if err != nil {
 				logutil.BgLogger().Error("open record file fail", zap.Error(err))
 				return
