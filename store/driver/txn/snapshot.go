@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/txnkv/txnutil"
 )
@@ -127,6 +128,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetRequestSourceInternal(val.(bool))
 	case kv.RequestSourceType:
 		s.KVSnapshot.SetRequestSourceType(val.(string))
+	case kv.ReplicaReadAdjuster:
+		s.KVSnapshot.SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	}
 }
 
