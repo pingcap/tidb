@@ -868,6 +868,13 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	tk.MustExec("create table t(a int, b int);")
 	tk.MustExec("insert into t values (1, 2);")
 	tk.MustGetErrCode("alter table t add index i(b), modify column a int null default 1 after a;", errno.ErrBadField)
+
+	// Test rolling back modify column with reorganization.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(3), b int, unique index i1(a), index i2(a, b));")
+	tk.MustExec("insert into t values ('aaa', 1), ('aa', 2);")
+	tk.MustExec("set @@sql_mode = '';") // Make it possible to truncate 'aaa' to 'aa'.
+	tk.MustGetErrCode("alter table t modify column b tinyint, modify column a char(2);", errno.ErrDupEntry)
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
@@ -1135,6 +1142,17 @@ func TestMultiSchemaChangeNoSubJobs(t *testing.T) {
 		"Note 1060 Duplicate column name 'a'", "Note 1060 Duplicate column name 'b'"))
 	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Equal(t, "create table", rs[0][3])
+}
+
+func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustGetErrMsg("alter table t add column c int, auto_id_cache = 1;",
+		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
 }
 
 type cancelOnceHook struct {
