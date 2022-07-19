@@ -630,8 +630,16 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	exprs = append(exprs, function)
 
 	// ExtractDatetime: can be pushed
+<<<<<<< HEAD
 	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn)
 	c.Assert(err, IsNil)
+=======
+	extractDatetimeUnitCol := new(Constant)
+	extractDatetimeUnitCol.Value = types.NewStringDatum("day")
+	extractDatetimeUnitCol.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeUnitCol, datetimeColumn)
+	require.NoError(t, err)
+>>>>>>> 51b8884fe... expression: fix the issue that extracting `day_microsecond/day_second/day_minute/day_hour` from `Time` type emits wrong result (#36297)
 	exprs = append(exprs, function)
 
 	// CastIntAsInt
@@ -1022,8 +1030,16 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	exprs = append(exprs, function)
 
 	// ExtractDatetimeFromString: can not be pushed
+<<<<<<< HEAD
 	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
 	c.Assert(err, IsNil)
+=======
+	extractDatetimeFromStringUnitCol := new(Constant)
+	extractDatetimeFromStringUnitCol.Value = types.NewStringDatum("day_microsecond")
+	extractDatetimeFromStringUnitCol.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeFromStringUnitCol, stringColumn)
+	require.NoError(t, err)
+>>>>>>> 51b8884fe... expression: fix the issue that extracting `day_microsecond/day_second/day_minute/day_hour` from `Time` type emits wrong result (#36297)
 	exprs = append(exprs, function)
 
 	// Cast to Int32: not supported

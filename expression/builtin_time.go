@@ -2592,36 +2592,31 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 
-	datetimeUnits := map[string]struct{}{
-		"DAY":             {},
-		"WEEK":            {},
-		"MONTH":           {},
-		"QUARTER":         {},
-		"YEAR":            {},
-		"DAY_MICROSECOND": {},
-		"DAY_SECOND":      {},
-		"DAY_MINUTE":      {},
-		"DAY_HOUR":        {},
-		"YEAR_MONTH":      {},
-	}
-	isDatetimeUnit := true
 	args[0] = WrapWithCastAsString(ctx, args[0])
-	if _, isCon := args[0].(*Constant); isCon {
-		unit, _, err1 := args[0].EvalString(ctx, chunk.Row{})
-		if err1 != nil {
-			return nil, err1
-		}
-		_, isDatetimeUnit = datetimeUnits[unit]
+	unit, _, err := args[0].EvalString(ctx, chunk.Row{})
+	if err != nil {
+		return nil, err
 	}
+	isClockUnit := types.IsClockUnit(unit)
+	isDateUnit := types.IsDateUnit(unit)
 	var bf baseBuiltinFunc
-	if isDatetimeUnit {
-		if args[1].GetType().EvalType() != types.ETString {
-			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+	if isClockUnit && isDateUnit {
+		// For unit DAY_MICROSECOND/DAY_SECOND/DAY_MINUTE/DAY_HOUR, the interpretation of the second argument depends on its evaluation type:
+		// 1. Datetime/timestamp/time are interchangeably interpreted as time. For example:
+		// extract(day_second from time('02:03:04')) = 20304
+		// extract(day_second from datetime('2001-01-01 02:03:04')) = 20304
+		// 2. Otherwise are interpreted as datetime. For example:
+		// extract(day_second from '2001-01-01 02:03:04') = 1020304
+		// extract(day_second from 20010101020304) = 1020304
+		// Note the heading 1 (the "day" portion) in results of the above two cases.
+		// They are why these units are special -
+		if args[1].GetType().EvalType() == types.ETDatetime || args[1].GetType().EvalType() == types.ETTimestamp || args[1].GetType().EvalType() == types.ETDuration {
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDuration)
 			if err != nil {
 				return nil, err
 			}
-			sig = &builtinExtractDatetimeSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
+			sig = &builtinExtractDurationSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ExtractDuration)
 		} else {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
 			if err != nil {
@@ -2631,13 +2626,22 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			sig = &builtinExtractDatetimeFromStringSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetimeFromString)
 		}
-	} else {
+	} else if isClockUnit {
+		// Clock units interpret the second argument as time.
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDuration)
 		if err != nil {
 			return nil, err
 		}
 		sig = &builtinExtractDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_ExtractDuration)
+	} else {
+		// Date units interpret the second argument as datetime.
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+		if err != nil {
+			return nil, err
+		}
+		sig = &builtinExtractDatetimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
 	}
 	return sig, nil
 }
@@ -2652,7 +2656,7 @@ func (b *builtinExtractDatetimeFromStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinExtractDatetimeSig.
+// evalInt evals a builtinExtractDatetimeFromStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_extract
 func (b *builtinExtractDatetimeFromStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	unit, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -2664,9 +2668,14 @@ func (b *builtinExtractDatetimeFromStringSig) evalInt(row chunk.Row) (int64, boo
 		return 0, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
+<<<<<<< HEAD
 	switch strings.ToUpper(unit) {
 	case "DAY_MICROSECOND", "DAY_SECOND", "DAY_MINUTE", "DAY_HOUR":
 		dur, err := types.ParseDuration(sc, dtStr, types.GetFsp(dtStr))
+=======
+	if types.IsClockUnit(unit) && types.IsDateUnit(unit) {
+		dur, _, err := types.ParseDuration(sc, dtStr, types.GetFsp(dtStr))
+>>>>>>> 51b8884fe... expression: fix the issue that extracting `day_microsecond/day_second/day_minute/day_hour` from `Time` type emits wrong result (#36297)
 		if err != nil {
 			return 0, true, err
 		}
@@ -2683,6 +2692,7 @@ func (b *builtinExtractDatetimeFromStringSig) evalInt(row chunk.Row) (int64, boo
 		}
 		return res, err != nil, err
 	}
+<<<<<<< HEAD
 	dt, err := types.ParseDatetime(sc, dtStr)
 	if err != nil {
 		if !terror.ErrorEqual(err, types.ErrWrongValue) {
@@ -2699,6 +2709,10 @@ func (b *builtinExtractDatetimeFromStringSig) evalInt(row chunk.Row) (int64, boo
 	}
 	res, err := types.ExtractDatetimeNum(&dt, unit)
 	return res, err != nil, err
+=======
+
+	panic("Unexpected unit for extract")
+>>>>>>> 51b8884fe... expression: fix the issue that extracting `day_microsecond/day_second/day_minute/day_hour` from `Time` type emits wrong result (#36297)
 }
 
 type builtinExtractDatetimeSig struct {
@@ -7075,19 +7089,6 @@ func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, erro
 		return types.ZeroTime, true, err
 	}
 	return result, false, nil
-}
-
-func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
-	// MySQL compatibility, #11203
-	// 0 | 0.0 should be converted to null without warnings
-	n, err := t.ToNumber().ToInt()
-	isOriginalIntOrDecimalZero := err == nil && n == 0
-	// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
-	isOriginalStringZero := t.Fsp() > 0
-	if isOriginalIntOrDecimalZero && !isOriginalStringZero {
-		return false, nil
-	}
-	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 }
 
 // tidbBoundedStalenessFunctionClass reads a time window [a, b] and compares it with the latest SafeTS
