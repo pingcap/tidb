@@ -2120,14 +2120,13 @@ type AdminStmt struct {
 	Tables    []*TableName
 	JobIDs    []int64
 	JobNumber int64
-	Limit     int64
-	Offset    int64
 
 	HandleRanges   []HandleRange
 	ShowSlow       *ShowSlow
 	Plugins        []string
 	Where          ExprNode
 	StatementScope StatementScope
+	LimitSimple    LimitSimple
 }
 
 // Restore implements Node interface.
@@ -2224,7 +2223,7 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		restoreJobIDs()
 	case AdminShowDDLJobQueriesWithRange:
 		ctx.WriteKeyWord("SHOW DDL JOB QUERIES LIMIT ")
-		ctx.WritePlainf("%d, %d", n.Offset, n.Limit)
+		ctx.WritePlainf("%d, %d", n.LimitSimple.Offset, n.LimitSimple.Count)
 	case AdminShowSlow:
 		ctx.WriteKeyWord("SHOW SLOW ")
 		if err := n.ShowSlow.Restore(ctx); err != nil {

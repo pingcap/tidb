@@ -2573,11 +2573,10 @@ type Limit struct {
 	Offset ExprNode
 }
 
+// LimitSimple is the simple version for Limit.
 type LimitSimple struct {
-	node
-
-	Count  int64
-	Offset int64
+	Count  uint64
+	Offset uint64
 }
 
 // Restore implements Node interface.

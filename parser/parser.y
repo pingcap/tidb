@@ -953,6 +953,7 @@ import (
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
+	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterTablePartitionOpt                 "Alter table partition option"
@@ -1151,7 +1152,6 @@ import (
 	SelectStmtSQLCache                     "SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
 	SelectStmtFieldList                    "SELECT statement field list"
 	SelectStmtLimit                        "SELECT statement LIMIT clause"
-	SelectStmtLimitSimple                  "SELECT statement LIMIT clause for ADMIN SHOW DDL JOBS"
 	SelectStmtLimitOpt                     "SELECT statement optional LIMIT clause"
 	SelectStmtOpt                          "Select statement option"
 	SelectStmtOpts                         "Select statement options"
@@ -9104,20 +9104,6 @@ SelectStmtLimit:
 		$$ = &ast.Limit{Count: $3.(ast.ExprNode)}
 	}
 
-SelectStmtLimitSimple:
-	"LIMIT" Int64Num
-	{
-		$$ = &ast.LimitSimple{Offset: 0, Count: $2.(int64)}
-	}
-|	"LIMIT" Int64Num ',' Int64Num
-	{
-		$$ = &ast.LimitSimple{Offset: $2.(int64), Count: $4.(int64)}
-	}
-|	"LIMIT" Int64Num "OFFSET" Int64Num
-	{
-		$$ = &ast.LimitSimple{Offset: $4.(int64), Count: $2.(int64)}
-	}
-
 SelectStmtLimitOpt:
 	{
 		$$ = nil
@@ -10142,6 +10128,20 @@ RolenameList:
 	}
 
 /****************************Admin Statement*******************************/
+AdminStmtLimitOpt:
+	"LIMIT" LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: 0, Count: $2.(uint64)}
+	}
+|	"LIMIT" LengthNum ',' LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: $2.(uint64), Count: $4.(uint64)}
+	}
+|	"LIMIT" LengthNum "OFFSET" LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: $4.(uint64), Count: $2.(uint64)}
+	}
+
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
@@ -10234,13 +10234,13 @@ AdminStmt:
 			JobIDs: $6.([]int64),
 		}
 	}
-|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" SelectStmtLimitSimple
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" AdminStmtLimitOpt
 	{
 		ret := &ast.AdminStmt{
 			Tp: ast.AdminShowDDLJobQueriesWithRange,
 		}
-		ret.Limit = $6.(*ast.LimitSimple).Count
-		ret.Offset = $6.(*ast.LimitSimple).Offset
+		ret.LimitSimple.Count = $6.(*ast.LimitSimple).Count
+		ret.LimitSimple.Offset = $6.(*ast.LimitSimple).Offset
 		$$ = ret
 	}
 |	"ADMIN" "SHOW" "SLOW" AdminShowSlow
