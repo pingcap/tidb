@@ -815,7 +815,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 			partExpr = ast.NewValueExpr(min, "", "")
 		}
 		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
-			Name: model.NewCIStr("SYS_P_NULL"),
+			Name: model.NewCIStr("P_NULL"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{partExpr},
 			},
@@ -830,7 +830,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 
 	if partOptions.Interval.MaxValPart {
 		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
-			Name: model.NewCIStr("SYS_P_MAXVALUE"),
+			Name: model.NewCIStr("P_MAXVALUE"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
 			},
@@ -988,7 +988,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		if len(valStr) == 0 || valStr[0:1] == "'" {
 			panic("Why?")
 		}
-		partName := "SYS_P_LT_" + valStr
+		partName := "P_LT_" + valStr
 		if timeUnit != ast.TimeUnitInvalid {
 			currExpr = ast.NewValueExpr(valStr, "", "")
 		} else {
