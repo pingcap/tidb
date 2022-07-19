@@ -575,6 +575,6 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1,  1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
 	tk.MustExec("analyze table t;")
 	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
-	// 2 IndexScan with cost 19/56, 2 TableReader with cost 24/48.
-	checkMetrics("select/* +USE_INDEX_MERGE(t) */ id from t use index(`idx_v_s1`) use index(idx_s2) where (s1 < 3 and v > 0) or s2 = 3;", 2, 2)
+	// 2 IndexScan with cost 19/56, 2 TableReader with cost 32.5/65.
+	checkMetrics("select/* +USE_INDEX_MERGE(t) */ id from t use index(`idx_v_s1`) use index(idx_s2) where (s1 < 3 and v > 0) or s2 = 3;", 3, 1)
 }
