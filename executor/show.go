@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	field_types "github.com/pingcap/tidb/parser/types"
 	"sort"
 	"strconv"
 	"strings"
@@ -957,7 +958,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(",\n")
 		}
 		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
-		if col.GetCharset() != "binary" {
+		if field_types.HasCharset(&col.FieldType) {
 			if col.GetCharset() != tblCharset {
 				fmt.Fprintf(buf, " CHARACTER SET %s", col.GetCharset())
 			}
