@@ -246,8 +246,7 @@
     "only_files": {
       "util/": "util code",
       "parser/": "parser code",
-      "meta/": "parser code",
-      "expression/": "expression code"
+      "meta/": "parser code"
     }
   },
   "shift": {
