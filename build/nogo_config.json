@@ -231,6 +231,25 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "revive": {
+    "exclude_files": {
+      "/external/": "no need to vet third party code",
+      "GOROOT/": "ignore code",
+      "/cgo/": "ignore cgo",
+      "tools/": "ignore tool code",
+      "parser/goyacc/": "ignore goyacc code",
+      "parser/ast/": "ignore parser/ast code",
+      "parser/test_driver/": "ignore parser/test_driver code",
+      ".*_test\\.go$": "ignore generated code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "telemetry/": "telemetry code",
+      "util/": "util code",
+      "parser/": "parser code",
+      "meta/": "parser code"
+    }
+  },
   "shift": {
     "exclude_files": {
       "/external/": "no need to vet third party code",

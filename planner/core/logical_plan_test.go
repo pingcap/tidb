@@ -506,7 +506,7 @@ func TestSubquery(t *testing.T) {
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		require.NoError(t, err)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, lp)
+			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagSemiJoinRewrite, lp)
 			require.NoError(t, err)
 		}
 		testdata.OnRecord(func() {

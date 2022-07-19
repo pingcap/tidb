@@ -30,7 +30,7 @@ require (
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.4
-	github.com/google/btree v1.0.1
+	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20211122183932-1daafda22083
 	github.com/google/uuid v1.1.2
 	github.com/gorilla/mux v1.8.0
@@ -46,11 +46,11 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20220705090230-a5d4ffd2ba33
+	github.com/pingcap/kvproto v0.0.0-20220711062932-08b02befd813
 	github.com/pingcap/log v1.1.0
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20220706024432-7be3cc83a7d5
+	github.com/pingcap/tipb v0.0.0-20220718022156-3e2483c20a9e
 	github.com/prometheus/client_golang v1.12.2
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.32.1
@@ -62,7 +62,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.1-0.20220627063500-947d923945fd
+	github.com/tikv/client-go/v2 v2.0.1-0.20220718080214-86d51ba7eb02
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -107,15 +107,19 @@ require (
 	github.com/gordonklaus/ineffassign v0.0.0-20210914165742-4cc7213b9bc8
 	github.com/kisielk/errcheck v1.6.1
 	github.com/kyoh86/exportloopref v0.1.8
+	github.com/mgechev/revive v1.2.1
 	github.com/nishanths/predeclared v0.2.2
 	github.com/tdakkota/asciicheck v0.1.1
 	honnef.co/go/tools v0.3.1
 )
 
 require (
+	github.com/chavacava/garif v0.0.0-20220316182200-5cad0b5181d4 // indirect
+	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/kisielk/gotool v1.0.0 // indirect
 	github.com/nbutton23/zxcvbn-go v0.0.0-20210217022336-fa2cb2858354 // indirect
+	github.com/olekukonko/tablewriter v0.0.5 // indirect
 )
 
 require (
