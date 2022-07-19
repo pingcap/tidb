@@ -67,7 +67,7 @@ When the Session Manager migrates a session, it needs to authenticate with the n
 
 It's unsafe to save user passwords in the Session Manager, so we use a token-based authentication:
 
-1. The administrator places a self-signed certificate on each TiDB server. The certificate path is defined by a global variable. The certificates on all the servers are the same so that a message encrypted by one server can be decrypted by another.
+1. The administrator places a self-signed certificate on each TiDB server. The certificate and key paths are defined by global variables `tidb_auth_signing_cert` and `tidb_auth_signing_key`. The certificates on all the servers are the same so that a message encrypted by one server can be decrypted by another.
 2. When the Session Manager is going to migrate a session from one TiDB instance to another, it queries the session token. The session token is composed by the username, token expiration time, and a signature. The signature is signed with the private key of the certificate.
 3. The Session Manager then authenticate with the new TiDB server with a new auth-plugin. The session token acts as the password. The new server checks the username, token expiration time, and the signature. The signature should be verified by the public key.
 
@@ -86,8 +86,8 @@ A MySQL connection is stateful. TiDB maintains a session state for each connecti
 The basic workflow is as follows:
 
 1. When the client queries from the Session Manager, the Session Manager forwards the commands to TiDB and then forwards the query result from TiDB to the client. The session states are only updated by TiDB.
-2. When the Session Manager is going to migrate a session from one TiDB instance to another, it queries the session states from the original TiDB instance and saves them.
-3. The Session Manager then connects to the new TiDB instance and replays the session states.
+2. When the Session Manager is going to migrate a session from one TiDB instance to another, it queries the session states from the original TiDB instance and saves them. Session Manager queries session states by sending `SHOW SESSION_STATES`, the result of which is in JSON type.
+3. The Session Manager then connects to the new TiDB instance and replays the session states by sending `SET SESSION_STATES '{...}'`, the parameter of which is just the result of `SHOW SESSION_STATES`.
 
 Session states include:
 
