@@ -97,6 +97,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
+	reqType := "null"
+	if req.ClosestReplicaReadAdjuster != nil {
+		reqType = "miss"
+		if req.ClosestReplicaReadAdjuster(req, len(tasks)) {
+			reqType = "hit"
+		}
+	}
+	tidbmetrics.DistSQLCoprClosestReadCounter.WithLabelValues(reqType).Inc()
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -779,18 +787,23 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
+	copResp := resp.Resp.(*coprocessor.Response)
+
 	if costTime > minLogCopTaskTime {
-		worker.logTimeCopTask(costTime, task, bo, resp)
+		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
+	if copResp != nil {
+		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
+	}
 
 	if worker.req.Paging {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, costTime)
+		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
 	}
 
 	// Handles the response for non-paging copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: resp.Resp.(*coprocessor.Response)}, cacheKey, cacheValue, task, ch, nil, costTime)
+	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
 }
 
 const (
@@ -798,24 +811,15 @@ const (
 	minLogKVProcessTime = 100
 )
 
-func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *tikvrpc.Response) {
+func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *copTask, bo *Backoffer, resp *coprocessor.Response) {
 	logStr := fmt.Sprintf("[TIME_COP_PROCESS] resp_time:%s txnStartTS:%d region_id:%d store_addr:%s", costTime, worker.req.StartTs, task.region.GetID(), task.storeAddr)
 	if bo.GetTotalSleep() > minLogBackoffTime {
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.TiKVBackoffer().GetTypes()), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
-	var detailV2 *kvrpcpb.ExecDetailsV2
-	var detail *kvrpcpb.ExecDetails
-	if resp.Resp != nil {
-		switch r := resp.Resp.(type) {
-		case *coprocessor.Response:
-			detailV2 = r.ExecDetailsV2
-			detail = r.ExecDetails
-		default:
-			panic("unreachable")
-		}
-	}
-
+	// resp might be nil, but it is safe to call resp.GetXXX here.
+	detailV2 := resp.GetExecDetailsV2()
+	detail := resp.GetExecDetails()
 	var timeDetail *kvrpcpb.TimeDetail
 	if detailV2 != nil && detailV2.TimeDetail != nil {
 		timeDetail = detailV2.TimeDetail
