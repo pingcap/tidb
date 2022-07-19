@@ -219,7 +219,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	recordProfileFiles := record.recordProfile()
 
 	if recordSQLFile != "" && len(recordProfileFiles) != 0 {
-		recordFiles := make([]string, len(recordProfileFiles)+1)
+		recordFiles := make([]string, 0, len(recordProfileFiles)+1)
 		recordFiles = append(recordFiles, recordSQLFile)
 		recordFiles = append(recordFiles, recordProfileFiles...)
 		record.uploadFileToS3(recordFiles)
