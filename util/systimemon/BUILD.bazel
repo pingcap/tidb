@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "systimemon_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "systime_mon_test.go",

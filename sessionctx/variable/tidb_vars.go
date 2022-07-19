@@ -50,6 +50,9 @@ const (
 	// TiDBOptDistinctAggPushDown is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
+	// TiDBOptSkewDistinctAgg is used to indicate the distinct agg has data skew
+	TiDBOptSkewDistinctAgg = "tidb_opt_skew_distinct_agg"
+
 	// TiDBBCJThresholdSize is used to limit the size of small table for mpp broadcast join.
 	// Its unit is bytes, if the size of small table is larger than it, we will not use bcj.
 	TiDBBCJThresholdSize = "tidb_broadcast_join_threshold_size"
@@ -435,9 +438,6 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBEnableChangeMultiSchema is used to control whether to enable the change multi schema.
-	TiDBEnableChangeMultiSchema = "tidb_enable_change_multi_schema"
-
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
@@ -757,6 +757,10 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
+	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
+	TiDBAuthSigningCert = "tidb_auth_signing_cert"
+	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
+	TiDBAuthSigningKey = "tidb_auth_signing_key"
 )
 
 // TiDB intentional limits
@@ -854,7 +858,6 @@ const (
 	DefTiDBDDLReorgBatchSize                       = 256
 	DefTiDBDDLErrorCountLimit                      = 512
 	DefTiDBMaxDeltaSchemaCount                     = 1024
-	DefTiDBChangeMultiSchema                       = false
 	DefTiDBPointGetCache                           = false
 	DefTiDBPlacementMode                           = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated          = false
@@ -940,6 +943,7 @@ const (
 	DefTiDBBatchPendingTiFlashCount                = 4000
 	DefRCReadCheckTS                               = false
 	DefTiDBRemoveOrderbyInSubquery                 = false
+	DefTiDBSkewDistinctAgg                         = false
 	DefTiDBReadStaleness                           = 0
 	DefTiDBGCMaxWaitTime                           = 24 * 60 * 60
 	DefMaxAllowedPacket                     uint64 = 67108864
@@ -992,7 +996,6 @@ var (
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
 	EnablePointGetCache                   = atomic.NewBool(DefTiDBPointGetCache)
-	EnableChangeMultiSchema               = atomic.NewBool(DefTiDBChangeMultiSchema)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	RestrictedReadOnly                    = atomic.NewBool(DefTiDBRestrictedReadOnly)

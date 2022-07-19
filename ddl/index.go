@@ -338,11 +338,16 @@ func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
-func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
-	if idx := tbl.FindIndexByName(indexName.L); idx == nil {
+func validateAlterIndexVisibility(ctx sessionctx.Context, indexName model.CIStr, invisible bool, tbl *model.TableInfo) (bool, error) {
+	var idx *model.IndexInfo
+	if idx = tbl.FindIndexByName(indexName.L); idx == nil || idx.State != model.StatePublic {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(indexName.O, tbl.Name))
-	} else if idx.Invisible == invisible {
-		return true, nil
+	}
+	if ctx == nil || ctx.GetSessionVars() == nil || ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
+		// Early return.
+		if idx.Invisible == invisible {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -352,14 +357,27 @@ func onAlterIndexVisibility(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64,
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
-	idx := tblInfo.FindIndexByName(from.L)
-	idx.Invisible = invisible
+
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return updateVersionAndTableInfo(d, t, job, tblInfo, false)
+	}
+
+	setIndexVisibility(tblInfo, from, invisible)
 	if ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func setIndexVisibility(tblInfo *model.TableInfo, name model.CIStr, invisible bool) {
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L == name.L || (isTempIdxInfo(idx, tblInfo) && getChangingIndexOriginName(idx) == name.O) {
+			idx.Invisible = invisible
+		}
+	}
 }
 
 func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, error) {
@@ -677,7 +695,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
 			job.Warning = toTError(err)
-			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.State = model.JobStateDone
 			return ver, nil
 		}
 		return ver, errors.Trace(err)
@@ -915,12 +933,13 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 
-	skip, err := validateAlterIndexVisibility(indexName, invisible, tblInfo)
+	skip, err := validateAlterIndexVisibility(nil, indexName, invisible, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, indexName, invisible, errors.Trace(err)
 	}
 	if skip {
+		job.State = model.JobStateDone
 		return nil, indexName, invisible, nil
 	}
 	return tblInfo, indexName, invisible, nil

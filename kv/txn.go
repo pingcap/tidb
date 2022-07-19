@@ -51,7 +51,6 @@ func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Lock()
 	ib.innerTxnStartTsMap[startTS] = struct{}{}
 	ib.innerTSLock.Unlock()
-
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {

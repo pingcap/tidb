@@ -38,7 +38,7 @@ run_sql "DROP DATABASE $DB;"
 
 # restore full
 echo "restore start..."
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 for i in $(seq $TABLE_COUNT) _Hash _List; do
     run_sql "SHOW CREATE TABLE $DB.$TABLE${i};" | grep 'PARTITION'
