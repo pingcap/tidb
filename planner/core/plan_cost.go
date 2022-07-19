@@ -280,6 +280,13 @@ func (p *PhysicalIndexReader) GetPlanCost(taskType property.TaskType, costFlag u
 	return p.planCost, nil
 }
 
+// GetNetDataSize calculates the cost of the plan in network data transfer.
+func (p *PhysicalIndexReader) GetNetDataSize() float64 {
+	tblStats := getTblStats(p.indexPlan)
+	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	return p.indexPlan.StatsCount() * rowSize
+}
+
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
@@ -348,6 +355,12 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType, costFlag u
 	return p.planCost, nil
 }
 
+// GetNetDataSize calculates the estimated total data size fetched from storage.
+func (p *PhysicalTableReader) GetNetDataSize() float64 {
+	rowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+	return p.tablePlan.StatsCount() * rowSize
+}
+
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
@@ -394,6 +407,12 @@ func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType, costF
 	return p.planCost, nil
 }
 
+// GetPartialReaderNetDataSize returns the estimated total response data size of a partial read.
+func (p *PhysicalIndexMergeReader) GetPartialReaderNetDataSize(plan PhysicalPlan) float64 {
+	_, isIdxScan := plan.(*PhysicalIndexScan)
+	return plan.StatsCount() * getTblStats(plan).GetAvgRowSize(p.ctx, plan.Schema().Columns, isIdxScan, false)
+}
+
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uint64) (float64, error) {
 	if p.planCostInit && !hasCostFlag(costFlag, CostFlagRecalculate) {
@@ -404,7 +423,7 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	switch p.ctx.GetSessionVars().CostModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-		if p.Desc {
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
@@ -441,7 +460,7 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType, costFlag uin
 	switch p.ctx.GetSessionVars().CostModelVersion {
 	case modelVer1: // scan cost: rows * row-size * scan-factor
 		scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
-		if p.Desc {
+		if p.Desc && p.prop != nil && p.prop.ExpectedCnt >= smallScanThreshold {
 			scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 		}
 		selfCost = getCardinality(p, costFlag) * p.getScanRowSize() * scanFactor
@@ -1153,6 +1172,18 @@ func (p *BatchPointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uin
 	return p.planCost, nil
 }
 
+// GetAvgRowSize return the average row size.
+func (p *BatchPointGetPlan) GetAvgRowSize() float64 {
+	cols := p.accessCols
+	if cols == nil {
+		return 0 // the cost of BatchGet generated in fast plan optimization is always 0
+	}
+	if p.IndexInfo == nil {
+		return p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
+	}
+	return p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
+}
+
 // GetCost returns cost of the PointGetPlan.
 func (p *PointGetPlan) GetCost() float64 {
 	cols := p.accessCols
@@ -1181,6 +1212,18 @@ func (p *PointGetPlan) GetPlanCost(taskType property.TaskType, costFlag uint64) 
 	p.planCost = p.GetCost()
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+// GetAvgRowSize return the average row size.
+func (p *PointGetPlan) GetAvgRowSize() float64 {
+	cols := p.accessCols
+	if cols == nil {
+		return 0 // the cost of PointGet generated in fast plan optimization is always 0
+	}
+	if p.IndexInfo == nil {
+		return p.stats.HistColl.GetTableAvgRowSize(p.ctx, cols, kv.TiKV, true)
+	}
+	return p.stats.HistColl.GetIndexAvgRowSize(p.ctx, cols, p.IndexInfo.Unique)
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.

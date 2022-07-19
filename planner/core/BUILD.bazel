@@ -39,6 +39,7 @@ go_library(
         "resolve_indices.go",
         "rule_aggregation_elimination.go",
         "rule_aggregation_push_down.go",
+        "rule_aggregation_skew_rewrite.go",
         "rule_build_key_info.go",
         "rule_column_pruning.go",
         "rule_decorrelate.go",
@@ -148,6 +149,7 @@ go_test(
     name = "core_test",
     timeout = "short",
     srcs = [
+        "binary_plan_test.go",
         "cache_test.go",
         "cacheable_checker_test.go",
         "cbo_test.go",
@@ -242,6 +244,7 @@ go_test(
         "//util/ranger",
         "//util/set",
         "//util/tracing",
+        "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
