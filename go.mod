@@ -11,7 +11,7 @@ require (
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/Shopify/sarama v1.29.0
 	github.com/aws/aws-sdk-go v1.35.3
-	github.com/blacktear23/go-proxyprotocol v1.0.0
+	github.com/blacktear23/go-proxyprotocol v1.0.1-0.20220719040454-ac0960cce33d
 	github.com/carlmjohnson/flagext v0.21.0
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1

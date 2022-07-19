@@ -37,6 +37,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http" //nolint:goimports
+
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
@@ -276,7 +277,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if proxyTarget == nil {
 			proxyTarget = s.socket
 		}
-		ppListener, err := proxyprotocol.NewListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
+		ppListener, err := proxyprotocol.NewLazyListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
 			int(s.cfg.ProxyProtocol.HeaderTimeout))
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
