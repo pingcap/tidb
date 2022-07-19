@@ -1009,6 +1009,8 @@ type Delete struct {
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice
+
+	FKTriggerPlans map[int64][]*ForeignKeyTriggerPlan
 }
 
 // AnalyzeInfo is used to store the database name, table name and partition name of analyze task.

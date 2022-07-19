@@ -48,6 +48,8 @@ type DeleteExec struct {
 	memTracker     *memory.Tracker
 
 	deleteRowFKCheckers map[int64][]*foreignKeyChecker
+	fkTriggerExecs      map[int64][]*ForeignKeyTriggerExec
+	executorBuilder     *executorBuilder
 }
 
 // Next implements the Executor Next interface.
@@ -286,13 +288,20 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 		return err
 	}
 
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	deleteRowFKCheckers := e.deleteRowFKCheckers[t.Meta().ID]
 	for _, fkc := range deleteRowFKCheckers {
-		err = fkc.addRowNeedToCheck(ctx.GetSessionVars().StmtCtx, data)
+		err = fkc.addRowNeedToCheck(stmtCtx, data)
 		if err != nil {
 			return err
 		}
 	}
+
+	fkTriggerExecs := e.fkTriggerExecs[t.Meta().ID]
+	for _, fkt := range fkTriggerExecs {
+		err = fkt.addRowNeedToTrigger(data)
+	}
+
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return nil

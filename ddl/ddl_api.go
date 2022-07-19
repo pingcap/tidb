@@ -5943,10 +5943,13 @@ func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *
 	}
 
 	fkInfo := &model.FKInfo{
+		ID:        allocateIndexID(tbInfo),
 		Name:      fkName,
 		RefSchema: refer.Table.Schema,
 		RefTable:  refer.Table.Name,
 		Cols:      make([]model.CIStr, len(keys)),
+		// add session variable key to control it.
+		Version: 1,
 	}
 
 	for i, key := range keys {

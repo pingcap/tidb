@@ -2,11 +2,13 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
@@ -14,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/ranger"
 )
 
 func initAddRowForeignKeyChecker(ctx sessionctx.Context, is infoschema.InfoSchema, tbInfo *model.TableInfo, dbName string) ([]*foreignKeyChecker, error) {
@@ -373,4 +376,69 @@ func (fkc *foreignKeyChecker) fetchFKValues(row []types.Datum) ([]types.Datum, e
 		vals[i] = row[offset]
 	}
 	return vals, nil
+}
+
+type ForeignKeyTriggerExec struct {
+	p *plannercore.ForeignKeyTriggerPlan
+
+	*foreignKeyChecker
+	fkValues [][]types.Datum
+}
+
+func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
+	vals, err := fkt.fetchFKValues(row)
+	if err != nil || vals == nil {
+		return err
+	}
+	fkt.fkValues = append(fkt.fkValues, vals)
+	return nil
+}
+
+func (fkt *ForeignKeyTriggerExec) buildRange() []*ranger.Range {
+	ranges := make([]*ranger.Range, 0, len(fkt.fkValues))
+	for _, vals := range fkt.fkValues {
+		ranges = append(ranges, &ranger.Range{
+			LowVal:      vals,
+			HighVal:     vals,
+			LowExclude:  false,
+			HighExclude: false,
+		})
+	}
+	return ranges
+}
+
+func buildForeignKeyTriggerExecs(ctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKTriggerPlans map[int64][]*plannercore.ForeignKeyTriggerPlan) (map[int64][]*ForeignKeyTriggerExec, error) {
+	if !ctx.GetSessionVars().ForeignKeyChecks {
+		logutil.BgLogger().Warn("----- foreign key check disabled")
+		return nil, nil
+	}
+	fkTriggerExecs := make(map[int64][]*ForeignKeyTriggerExec)
+	for tid, tbl := range tblID2Table {
+		fkTriggerPlans := tblID2FKTriggerPlans[tid]
+		for _, fkTriggerPlan := range fkTriggerPlans {
+			fkTriggerExec, err := buildForeignKeyTriggerExec(tbl.Meta(), fkTriggerPlan)
+			if err != nil {
+				return nil, err
+			}
+			fkTriggerExecs[tid] = append(fkTriggerExecs[tid], fkTriggerExec)
+		}
+	}
+	return fkTriggerExecs, nil
+}
+
+func buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fkTriggerPlan *plannercore.ForeignKeyTriggerPlan) (*ForeignKeyTriggerExec, error) {
+	fk := fkTriggerPlan.FK
+	colsOffsets, err := getForeignKeyColumnsOffsets(tbInfo, fk.RefCols)
+	if err != nil {
+		return nil, err
+	}
+
+	fkChecker, err := buildForeignKeyChecker(fkTriggerPlan.ChildTable, fk.Cols, colsOffsets, errors.New("fix this error"))
+	if err != nil {
+		return nil, err
+	}
+	return &ForeignKeyTriggerExec{
+		p:                 fkTriggerPlan,
+		foreignKeyChecker: fkChecker,
+	}, nil
 }

@@ -5606,20 +5606,36 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
-	for _, tbl := range tblID2table {
-		if len(tbl.Meta().ForeignKeys) == 0 {
+	del.FKTriggerPlans = make(map[int64][]*ForeignKeyTriggerPlan)
+	for tid, tbl := range tblID2table {
+		if len(tbl.Meta().ReferredForeignKeys) == 0 {
 			continue
+		}
+		triggerPlans, err := b.buildForeignKeyOnDeleteTriggerPlan(ctx, tbl)
+		if err != nil {
+			return nil, err
+		}
+		if len(triggerPlans) > 0 {
+			del.FKTriggerPlans[tid] = triggerPlans
 		}
 	}
 	return del, err
 }
 
-func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]Plan, error) {
+type ForeignKeyTriggerPlan struct {
+	Plan
+
+	IndexLookUpPlan PhysicalPlan
+	ChildTable      table.Table
+	FK              *model.FKInfo
+}
+
+func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]*ForeignKeyTriggerPlan, error) {
 	if !b.ctx.GetSessionVars().ForeignKeyChecks {
 		return nil, nil
 	}
 	tblInfo := tbl.Meta()
-	triggerPlans := make([]Plan, 0, len(tblInfo.ReferredForeignKeys))
+	triggerPlans := make([]*ForeignKeyTriggerPlan, 0, len(tblInfo.ReferredForeignKeys))
 	for _, referredFK := range tblInfo.ReferredForeignKeys {
 		childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
@@ -5627,16 +5643,21 @@ func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tb
 			continue
 		}
 		fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
-		if fk == nil || !fk.Enable {
+		if fk == nil || fk.Version == 0 {
 			continue
 		}
 		switch ast.ReferOptionType(fk.OnDelete) {
 		case ast.ReferOptionCascade:
-			p, err := b.buildForeignKeyCascadeDelete(ctx, childTable, fk)
+			p, indexLookUpPlan, err := b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
 			if err != nil {
 				return nil, err
 			}
-			triggerPlans = append(triggerPlans, p)
+			triggerPlans = append(triggerPlans, &ForeignKeyTriggerPlan{
+				Plan:            p,
+				IndexLookUpPlan: indexLookUpPlan,
+				ChildTable:      tbl,
+				FK:              fk,
+			})
 		case ast.ReferOptionSetNull:
 			// todo:
 			continue
@@ -5644,13 +5665,46 @@ func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tb
 			continue
 		}
 	}
-
-	return nil, nil
+	return triggerPlans, nil
 }
 
-func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, tbl table.Table, fk *model.FKInfo) (Plan, error) {
+func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (Plan, PhysicalPlan, error) {
+	del := Delete{}.Init(b.ctx)
+	tn := &ast.TableName{
+		Schema: dbName,
+		Name:   tbl.Meta().Name,
+	}
+	dsPlan, err := b.buildDataSource(ctx, tn, &model.CIStr{})
+	if err != nil {
+		return nil, nil, err
+	}
+	ds, ok := dsPlan.(*DataSource)
+	if !ok {
+		return nil, nil, errors.Errorf("expected datasource, but got %v", dsPlan)
+	}
 
-	return nil, nil
+	tblInfo := tbl.Meta()
+	idx := model.FindIndexByColumns(tblInfo.Indices, fk.Cols...)
+	if idx == nil {
+		return nil, nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
+	}
+
+	indexLookUpPlan, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, ds.schema, ds.Columns)
+	if err != nil {
+		return nil, nil, err
+	}
+	del.SelectPlan = indexLookUpPlan
+	del.names = ds.names
+
+	tblID2Handle := make(map[int64][]HandleCols)
+	tblID2Table := make(map[int64]table.Table)
+	tblID2Handle[tblInfo.ID] = []HandleCols{ds.handleCols}
+	tblID2Table[tblInfo.ID] = tbl
+	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2Table, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	return del, indexLookUpPlan, nil
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]HandleCols, schema *expression.Schema) (map[int64][]HandleCols, error) {

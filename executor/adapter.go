@@ -470,6 +470,26 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
+		//TODO: Add foreign key constrain check or cascade delete/update here.
+		switch x := e.(type) {
+		case *DeleteExec:
+			for _, fkts := range x.fkTriggerExecs {
+				for _, fkt := range fkts {
+					indexLookUpPlan := fkt.p.IndexLookUpPlan.(*plannercore.PhysicalIndexLookUpReader)
+					is := indexLookUpPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+					is.Ranges = fkt.buildRange()
+					e := x.executorBuilder.build(fkt.p.Plan)
+					if err = e.Open(ctx); err != nil {
+						terror.Call(e.Close)
+						return nil, err
+					}
+					_, _, err := a.handleNoDelay(ctx, e, isPessimistic)
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 		return result, err
 	}
 
