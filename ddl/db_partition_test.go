@@ -3637,6 +3637,7 @@ func checkCreateSyntax(t *testing.T, tk *testkit.TestKit, ok bool, sql, legacyOu
 		tk.MustExec("drop table t")
 	}
 }
+
 func TestCreateIntervalPartitionSyntax(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -4000,15 +4001,16 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
 			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
 			" PARTITION `SYS_P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
+	// TODO: also use single quotes around dates in short format (unless we remove the short output format?)
 	// Now we are stuck, since we will use the current FIRST PARTITION to check the INTERVAL!
 	// Should we check and limit FIRST PARTITION for QUARTER and MONTH to not have day part in (29,30,31)?
 	err = tk.ExecToErr("alter table t first partition less than ('2022-03-31')")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-03-31) not matching FIRST + n INTERVALs ('2022-02-28' + n * '1' MONTH)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-03-31) not matching FIRST + n INTERVALs ('2022-02-28' + n * 1 MONTH)", err.Error())
 	tk.MustExec("alter table t last partition less than ('2022-06-30')")
 	err = tk.ExecToErr("alter table t last partition less than ('2022-07-31')")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-07-31) not matching FIRST + n INTERVALs ('2022-06-30' + n * '1' MONTH)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-07-31) not matching FIRST + n INTERVALs ('2022-06-30' + n * 1 MONTH)", err.Error())
 	tk.MustExec("set tidb_extension_non_mysql_compatible = on")
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
@@ -4123,6 +4125,8 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `SYS_P_LT_1641070800` VALUES LESS THAN (1641070800),\n" +
 			" PARTITION `SYS_P_LT_1641074400` VALUES LESS THAN (1641074400),\n" +
 			" PARTITION `SYS_P_LT_1641078000` VALUES LESS THAN (1641078000))"))
+	tk.MustExec("alter table t drop partition SYS_P_LT_1640995200")
+
 	tk.MustExec("drop table t")
 
 	// OK with out-of-range partitions, see https://github.com/pingcap/tidb/issues/36022
@@ -4177,6 +4181,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 	// Test first and last set to NULL?
 	// Test normal DROP / ADD partition and try to see either if it will work with INTERVAL or not (if not issue a warning that interval partitioning has been removed!)
 	// Extra feature take a well ranged partitioned table and add INTERVAL?
+	// Test negative interval expr!
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {

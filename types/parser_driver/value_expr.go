@@ -167,9 +167,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 	case types.KindString, types.KindBytes:
 		// If sql_mode='ANSI_QUOTES', strings with double-quotes will be taken as an identifier.
 		// See #35281.
-		s = strings.ReplaceAll(n.GetString(), "\\", "\\\\")
-		s = strings.ReplaceAll(s, `'`, `''`)
-		s = fmt.Sprintf("'%s'", s)
+		s = WrapInSingleQuotes(n.GetString())
 	case types.KindMysqlDecimal:
 		s = n.GetMysqlDecimal().String()
 	case types.KindBinaryLiteral:
@@ -182,6 +180,20 @@ func (n *ValueExpr) Format(w io.Writer) {
 		panic("Can't format to string")
 	}
 	fmt.Fprint(w, s)
+}
+
+func WrapInSingleQuotes(inStr string) string {
+	s := strings.ReplaceAll(inStr, "\\", "\\\\")
+	s = strings.ReplaceAll(s, `'`, `''`)
+	return fmt.Sprintf("'%s'", s)
+}
+
+func UnwrapFromSingleQuotes(inStr string) string {
+	if inStr == "" || inStr[0:1] != "'" || inStr[len(inStr)-1:len(inStr)] != "'" {
+		return inStr
+	}
+	s := strings.ReplaceAll(inStr[1:len(inStr)-1], "\\\\", "\\")
+	return strings.ReplaceAll(s, `''`, `'`)
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
