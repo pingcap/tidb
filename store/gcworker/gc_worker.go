@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -78,6 +79,7 @@ type GCWorker struct {
 		batchResolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID, safepoint uint64) (ok bool, err error)
 		resolveLocks      func(locks []*txnlock.Lock, lowResolutionTS uint64) (int64, error)
 	}
+	logBackupEnabled bool
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -307,12 +309,31 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	ok, safePoint, err := w.prepare(ctx)
-	if err != nil || !ok {
-		if err != nil {
-			metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
-		}
+	concurrency, err := w.getGCConcurrency(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] failed to get gc concurrency.",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
 		return errors.Trace(err)
+	}
+
+	ok, safePoint, err := w.prepare(ctx)
+	if err != nil {
+		metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
+		return errors.Trace(err)
+	} else if !ok {
+		// If skip gc, it still needs to resolve locks with expired TTL, in order not to block log backup.
+		if w.logBackupEnabled {
+			tryResolveLocksTS, err := w.getTryResolveLocksTS()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// Set 0 to safepoint, which means resolving locks with expired TTL only.
+			if err = w.legacyResolveLocks(ctx, 0, tryResolveLocksTS, concurrency); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
@@ -320,14 +341,6 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		logutil.Logger(ctx).Info("[gc worker] another gc job has just finished, skipped.",
 			zap.String("leaderTick on ", w.uuid))
 		return nil
-	}
-
-	concurrency, err := w.getGCConcurrency(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Info("[gc worker] failed to get gc concurrency.",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		return errors.Trace(err)
 	}
 
 	w.gcIsRunning = true
@@ -1027,9 +1040,8 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64, concurren
 
 	if tryResolveLocksTS < safePoint {
 		tryResolveLocksTS = safePoint
-	} else {
-		// to do: add a switch for tryResolveLocksTS.
-		// if the config log-backup.enable is false in PiTR, set safePoint to tryResolveLocksTS directly.
+	} else if !w.logBackupEnabled {
+		tryResolveLocksTS = safePoint
 	}
 
 	if !usePhysical {
@@ -1778,6 +1790,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	se := createSession(w.store)
 	defer se.Close()
 
+	w.logBackupEnabled = utils.CheckLogBackupEnabled(se)
 	_, err := se.ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return false, errors.Trace(err)

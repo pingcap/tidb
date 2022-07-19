@@ -79,33 +79,33 @@ type Retriever interface {
 type EmptyIterator struct{}
 
 // Valid returns true if the current iterator is valid.
-func (i *EmptyIterator) Valid() bool { return false }
+func (*EmptyIterator) Valid() bool { return false }
 
 // Key returns the current key. Always return nil for this iterator
-func (i *EmptyIterator) Key() Key { return nil }
+func (*EmptyIterator) Key() Key { return nil }
 
 // Value returns the current value. Always return nil for this iterator
-func (i *EmptyIterator) Value() []byte { return nil }
+func (*EmptyIterator) Value() []byte { return nil }
 
 // Next goes the next position. Always return error for this iterator
-func (i *EmptyIterator) Next() error { return errors.New("iterator is invalid") }
+func (*EmptyIterator) Next() error { return errors.New("iterator is invalid") }
 
 // Close closes the iterator.
-func (i *EmptyIterator) Close() {}
+func (*EmptyIterator) Close() {}
 
 // EmptyRetriever is a retriever without any entry
 type EmptyRetriever struct{}
 
 // Get gets the value for key k from kv store. Always return nil for this retriever
-func (r *EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
+func (*EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
 	return nil, ErrNotExist
 }
 
 // Iter creates an Iterator. Always return EmptyIterator for this retriever
-func (r *EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
+func (*EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
 
 // IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
-func (r *EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+func (*EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
 	return &EmptyIterator{}, nil
 }
 
@@ -362,6 +362,8 @@ type Request struct {
 	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
+	// ClosestReplicaReadAdjuster used to adjust a copr request.
+	ClosestReplicaReadAdjuster CoprRequestAdjuster
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTagger indicates the kv request task group tagger.
@@ -373,6 +375,10 @@ type Request struct {
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
 }
+
+// CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
+// return true if the request is changed.
+type CoprRequestAdjuster func(*Request, int) bool
 
 // PartitionIDAndRanges used by PartitionTableScan in tiflash.
 type PartitionIDAndRanges struct {

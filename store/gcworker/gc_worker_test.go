@@ -1820,6 +1820,8 @@ func TestGCLabelRules(t *testing.T) {
 func TestGCWithPendingTxn(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
 	defer clean()
+	// set to false gc worker won't resolve locks after safepoint.
+	s.gcWorker.logBackupEnabled = false
 
 	ctx := gcContext()
 	gcSafePointCacheInterval = 0
@@ -1866,11 +1868,13 @@ func TestGCWithPendingTxn(t *testing.T) {
 	require.NoError(t, err)
 
 	err = txn.Commit(ctx)
-	require.Error(t, err)
+	require.NoError(t, err)
 }
 
 func TestGCWithPendingTxn2(t *testing.T) {
 	s, clean := createGCWorkerSuite(t)
+	// only when log backup enabled will scan locks after safepoint.
+	s.gcWorker.logBackupEnabled = true
 	defer clean()
 
 	ctx := gcContext()
@@ -1938,6 +1942,65 @@ func TestGCWithPendingTxn2(t *testing.T) {
 	require.Error(t, err)
 	err = txn2.Commit(ctx)
 	require.NoError(t, err)
+}
+
+func TestSkipGCAndOnlyResolveLock(t *testing.T) {
+	s, clean := createGCWorkerSuite(t)
+	// only when log backup enabled will scan locks after safepoint.
+	s.gcWorker.logBackupEnabled = true
+	defer clean()
+
+	ctx := gcContext()
+	gcSafePointCacheInterval = 0
+	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	require.NoError(t, err)
+	now, err := s.oracle.GetTimestamp(ctx, &oracle.Option{})
+	require.NoError(t, err)
+
+	// Prepare to run gc with txn's startTS as the safepoint ts.
+	spkv := s.tikvStore.GetSafePointKV()
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(now, 10))
+	require.NoError(t, err)
+	s.mustSetTiDBServiceSafePoint(t, now, now)
+	veryLong := gcDefaultLifeTime * 100
+	lastRunTime := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
+	newGcLifeTime := time.Hour * 24
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunTime)
+	require.NoError(t, err)
+	err = s.gcWorker.saveTime(gcSafePointKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-time.Minute*10))
+	require.NoError(t, err)
+	err = s.gcWorker.saveDuration(gcLifeTimeKey, newGcLifeTime)
+	require.NoError(t, err)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	require.NoError(t, err)
+
+	// lock the key1
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	txn, err := s.store.Begin(tikv.WithStartTS(now))
+	require.NoError(t, err)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+
+	err = txn.Set(k1, v1)
+	require.NoError(t, err)
+	err = txn.LockKeys(ctx, lockCtx, k1)
+	require.NoError(t, err)
+
+	// Trigger the tick let the gc job start.
+	s.oracle.AddOffset(time.Minute * 5)
+	err = s.gcWorker.leaderTick(ctx)
+	require.NoError(t, err)
+
+	// check the lock has been resolved.
+	err = txn.Commit(ctx)
+	require.Error(t, err)
+
+	// check gc is skipped
+	last, err := s.gcWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.Equal(t, last.Unix(), lastRunTime.Unix())
 }
 
 func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) (*domain.Domain, func()) {

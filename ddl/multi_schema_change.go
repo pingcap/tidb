@@ -76,7 +76,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				if err != nil {
 					return ver, err
 				}
-				sub.FromProxyJob(&proxyJob)
+				sub.FromProxyJob(&proxyJob, ver)
 				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
@@ -95,7 +95,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 			proxyJob := sub.ToProxyJob(job)
 			ver, err = w.runDDLJob(d, t, &proxyJob)
-			sub.FromProxyJob(&proxyJob)
+			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
 		}
@@ -106,16 +106,23 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		if err != nil {
 			return ver, err
 		}
+		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
+		// We only generate 1 schema version for these sub-job.
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if sub.IsFinished() {
 				continue
 			}
 			subJobs[i] = *sub
 			proxyJob := sub.ToProxyJob(job)
+			if schemaVersionGenerated {
+				proxyJob.MultiSchemaInfo.SkipVersion = true
+			} else {
+				schemaVersionGenerated = true
+			}
 			ver, err = w.runDDLJob(d, t, &proxyJob)
-			sub.FromProxyJob(&proxyJob)
+			sub.FromProxyJob(&proxyJob, ver)
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
@@ -137,11 +144,10 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		}
 		proxyJob := sub.ToProxyJob(job)
 		ver, err = w.runDDLJob(d, t, &proxyJob)
-		sub.FromProxyJob(&proxyJob)
+		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}
-	job.State = model.JobStateDone
-	return ver, err
+	return finishMultiSchemaJob(job, t)
 }
 
 func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror.Error) {
@@ -247,8 +253,12 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	case model.ActionSetDefaultValue:
 		col := job.Args[0].(*table.Column)
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
+	case model.ActionAlterIndexVisibility:
+		idxName := job.Args[0].(model.CIStr)
+		info.AlterIndexes = append(info.AlterIndexes, idxName)
+	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
 	default:
-		return dbterror.ErrRunMultiSchemaChanges
+		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
 	return nil
 }
@@ -353,4 +363,18 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 	}
 	job.State = model.JobStateRollingback
 	return dbterror.ErrCancelledDDLJob
+}
+
+func finishMultiSchemaJob(job *model.Job, t *meta.Meta) (ver int64, err error) {
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		if ver < sub.SchemaVer {
+			ver = sub.SchemaVer
+		}
+	}
+	tblInfo, err := t.GetTable(job.SchemaID, job.TableID)
+	if err != nil {
+		return ver, err
+	}
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	return ver, err
 }
