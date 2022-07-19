@@ -573,6 +573,23 @@
     ]
   },
   {
+    "name": "TestCTEMergeHint",
+    "cases": [
+      "with cte as (select /*+ MERGE()*/ * from tc where tc.a < 60) select * from cte where cte.a <18",
+      "with cte as (select * from tc where tc.a < 60) select * from cte where cte.a <18",
+      "WITH cte1 AS (SELECT /*+ MERGE()*/ a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+      "WITH cte1 AS (SELECT a FROM tc), cte2 AS (SELECT /*+ MERGE()*/ c FROM te) SELECT * FROM cte1 JOIN cte2 WHERE cte1.a = cte2.c;",
+      "with recursive cte1(c1) as (select 1 union select /*+ merge */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
+      "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
+      "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
+      "with cte1 as (select /*+ MERGE() */  * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
+      "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select /*+ MERGE() */ * from t4) select * from cte3,cte4) select * from cte1,cte2;",
+      "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select /*+ MERGE() */ * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
+      "with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;",
+      "with cte2 as (with cte4 as (select /*+ merge() */ * from tc) select * from te, cte4) select * from cte2;"
+    ]
+  },
+  {
     "name": "TestPushdownDistinctEnable",
     "cases": [
       "select /*+ HASH_AGG() */ avg(distinct a) from t;", // InjectProjBelowAgg
