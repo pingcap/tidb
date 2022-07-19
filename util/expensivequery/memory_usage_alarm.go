@@ -97,20 +97,18 @@ func (record *memoryUsageAlarm) uploadFileToS3(filenames []string) {
 				return
 			}
 
-			_, err = uploader.Upload(&s3manager.UploadInput{
+			if _, err = uploader.Upload(&s3manager.UploadInput{
 				Bucket: aws.String(record.s3Conf.bucketName),
 				Key:    aws.String(filename),
 				Body:   file,
-			})
-			if err != nil {
+			}); err != nil {
 				logutil.BgLogger().Error("upload to s3 fail", zap.Error(err))
 				return
 			}
 
 			//nolint: revive
 			defer func() {
-				err := file.Close()
-				if err != nil {
+				if err := file.Close(); err != nil {
 					logutil.BgLogger().Error("close record file fail", zap.Error(err))
 					return
 				}
