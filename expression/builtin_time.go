@@ -2658,9 +2658,9 @@ func (b *builtinExtractDatetimeFromStringSig) evalInt(row chunk.Row) (int64, boo
 			res, err = types.ExtractDatetimeNum(&dt, unit)
 		}
 		return res, err != nil, err
-	} else {
-		panic("Unexpected unit for extract")
 	}
+
+	panic("Unexpected unit for extract")
 }
 
 type builtinExtractDatetimeSig struct {
