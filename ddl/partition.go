@@ -640,15 +640,10 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 	a := pAst.Definitions
 	m := pModel.Definitions
 	if len(pAst.Definitions) != len(pModel.Definitions) {
-		// Hijacked error from below... TODO better error?
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: number of partitions generated != partition defined (%d != %d)", len(a), len(m))
 	}
 	for i := range pAst.Definitions {
-		// TODO: a[i].Options?
-		if m[i].PlacementPolicyRef != nil {
-			// TODO: support Placement Policies
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: does not support Placement Policies", len(a), len(m))
-		}
+		// Allow options to differ! (like Placement Rules)
 		// Allow names to differ!
 
 		// Check MAXVALUE
@@ -696,7 +691,6 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 		if len(b[i].Sub) > 0 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does have unsupported subpartitions", b[i].Name.O))
 		}
-		// TODO: Should we allow PLACEMENT POLICY in INTERVAL partitioning?
 		// TODO: We could extend the syntax to allow for table options too, like:
 		// CREATE TABLE t ... INTERVAL ... LAST PARTITION LESS THAN ('2015-01-01') PLACEMENT POLICY = 'cheapStorage'
 		// ALTER TABLE t LAST PARTITION LESS THAN ('2022-01-01') PLACEMENT POLICY 'defaultStorage'

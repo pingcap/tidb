@@ -3822,12 +3822,8 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, number of partition names does not match")
 		}
-		for i, part := range spec.Partition.Definitions {
-			if part.Name.L != meta.Partition.Definitions[i+pNullOffset].Name.L {
-				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-					"FIRST PARTITION, names does not match")
-			}
-			spec.PartitionNames = append(spec.PartitionNames, part.Name)
+		for i := range spec.Partition.Definitions {
+			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
 		}
 		// Use the last generated partition as First, i.e. do not drop the last name in the slice
 		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
