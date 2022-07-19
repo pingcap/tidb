@@ -973,6 +973,10 @@ func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
 	tk.MustExec("insert into local_temp_auto_id value(null)")
 	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
 	tk.MustQuery("select id from local_temp_auto_id").Check(testkit.Rows("100"))
+	tk.MustQuery("show create table local_temp_auto_id").Check(testkit.Rows("local_temp_auto_id CREATE TEMPORARY TABLE `local_temp_auto_id` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=101"))
 }
 
 func TestDDLJobErrorCount(t *testing.T) {
