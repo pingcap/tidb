@@ -4029,16 +4029,57 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		" last partition less than ('10000000') NULL PARTITION MAXVALUE PARTITION")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported INTERVAL partitioning, only supports Date, Datetime and INT types", err.Error())
-	// TODO:
-	// test unsigned and different ranges for INT type
-	// test unsigned and different ranges for things like TO_DAYS()/TO_SECONDS()
-	// Test other offsets, including when first and last have different offset vs INTERVAL
-	// Test out-of-range?
-	// Test non integer/Date column types in RANGE COLUMNS
-	// Test first and last set to NULL?
-	// Test normal DROP / ADD partition and try to see either if it will work with INTERVAL or not (if not issue a warning that interval partitioning has been removed!)
-	// Extra feature take a well ranged partitioned table and add INTERVAL?
-	// Test negative interval expr!
+
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range columns (id) interval (-1000 * 1000)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (0)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval ('1000000')" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	tk.MustExec("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (01000000)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) MAXVALUE PARTITION")
+	tk.MustExec("drop table t")
+
+	// Null partition and first partition collides
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (01000000)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition", err.Error())
+
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (NULL)" +
+		" first partition less than (0)" +
+		" last partition less than (10000000) NULL PARTITION MAXVALUE PARTITION")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL, should be a positive number", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (1000000)" +
+		" first partition less than (NULL)" +
+		" last partition less than (10000000)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL partitioning: Error when generating partition values", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (1000000)" +
+		" first partition less than (0)" +
+		" last partition less than (NULL)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr () not matching FIRST + n INTERVALs (0 + n * 1000000)", err.Error())
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {

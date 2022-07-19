@@ -881,6 +881,15 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	if partitionOptions == nil {
 		return nil
 	}
+	var sb strings.Builder
+	err := partitionOptions.Interval.IntervalExpr.Expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	if err != nil {
+		return err
+	}
+	intervalString := driver.UnwrapFromSingleQuotes(sb.String())
+	if len(intervalString) < 1 || intervalString[:1] < "1" || intervalString[:1] > "9" {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL, should be a positive number")
+	}
 	var currVal types.Datum
 	var startExpr, lastExpr, currExpr ast.ExprNode
 	var timeUnit ast.TimeUnitType
@@ -962,12 +971,6 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			if err != nil {
 				return err
 			}
-			var sb strings.Builder
-			err = partitionOptions.Interval.IntervalExpr.Expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
-			if err != nil {
-				return err
-			}
-			exprStr := sb.String()
 			sb.Reset()
 			err = startExpr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 			if err != nil {
@@ -975,7 +978,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			}
 			startStr := sb.String()
 			errStr := fmt.Sprintf("INTERVAL LAST PARTITION: LAST expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
-				lastStr, startStr, exprStr)
+				lastStr, startStr, intervalString)
 			if timeUnit != ast.TimeUnitInvalid {
 				errStr = errStr + " " + timeUnit.String()
 			}
@@ -986,7 +989,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 			return err
 		}
 		if len(valStr) == 0 || valStr[0:1] == "'" {
-			panic("Why?")
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
 		}
 		partName := "P_LT_" + valStr
 		if timeUnit != ast.TimeUnitInvalid {
