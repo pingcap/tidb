@@ -1058,12 +1058,13 @@ type PartitionInfo struct {
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
 	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
-	IntervalExpr        string                `json:"interval_expr"`
-	IntervalUnit        string                `json:"interval_unit"`
-	IntervalFirst       string                `json:"interval_first"`
-	IntervalLast        string                `json:"interval_last"`
-	IntervalNullPart    bool                  `json:"interval_null_part"`
-	IntervalMaxPart     bool                  `json:"interval_max_part"`
+	// Remove these, since they should not be stored?
+	IntervalExpr     string `json:"interval_expr"`
+	IntervalUnit     string `json:"interval_unit"`
+	IntervalFirst    string `json:"interval_first"`
+	IntervalLast     string `json:"interval_last"`
+	IntervalNullPart bool   `json:"interval_null_part"`
+	IntervalMaxPart  bool   `json:"interval_max_part"`
 }
 
 func (pi *PartitionInfo) Clone() *PartitionInfo {

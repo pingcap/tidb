@@ -3655,8 +3655,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 	}
 
 	cases := []testCase{
-		// Currently not supporting interpreting matching range partitioned tables as INTERVAL, unless
-		// they specifically was created with INTERVAL syntax.
+
 		{
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
@@ -3678,7 +3677,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-				"PARTITION BY RANGE (`id`)\n" +
+				"PARTITION BY RANGE (`id`) /*T![interval_partitioning] INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION */\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
 				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
@@ -3694,7 +3693,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
 				") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-				"PARTITION BY RANGE (`id`)\n" +
+				"PARTITION BY RANGE (`id`) INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-9223372036854775808),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
 				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
@@ -3730,7 +3729,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
 				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-				"PARTITION BY RANGE COLUMNS(`id`)\n" +
+				"PARTITION BY RANGE COLUMNS(`id`) /*T![interval_partitioning] INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION */\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-2147483648),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
 				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
@@ -3746,7 +3745,7 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 			"CREATE TABLE `t` (\n" +
 				"  `id` int(11) DEFAULT NULL\n" +
 				") DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-				"PARTITION BY RANGE COLUMNS(`id`)\n" +
+				"PARTITION BY RANGE COLUMNS(`id`) INTERVAL (10000000) FIRST PARTITION LESS THAN (0) LAST PARTITION LESS THAN (90000000) NULL PARTITION MAXVALUE PARTITION\n" +
 				"(PARTITION `pNull` VALUES LESS THAN (-2147483648),\n" +
 				" PARTITION `p_0` VALUES LESS THAN (0),\n" +
 				" PARTITION `p_10000000` VALUES LESS THAN (10000000),\n" +
@@ -3761,7 +3760,6 @@ func TestCreateIntervalPartitionSyntax(t *testing.T) {
 				" PARTITION `pMaxvalue` VALUES LESS THAN (MAXVALUE))",
 		},
 
-		// With INTERVAL syntax
 		{
 			"create table t (id int) partition by range (id) interval (10000000) first partition less than (0) last partition less than (90000000) NULL PARTITION maxvalue partition",
 			true,
