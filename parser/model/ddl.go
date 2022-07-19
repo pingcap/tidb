@@ -635,27 +635,6 @@ func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) 
 	return false, nil
 }
 
-func (job *Job) hasDependentSchemaForExchangePartition(other *Job) (bool, error) {
-	if job.Type == ActionExchangeTablePartition {
-		var (
-			// defID only for updateSchemaVersion
-			defID          int64
-			ptSchemaID     int64
-			ptID           int64
-			partName       string
-			withValidation bool
-		)
-
-		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
-			return false, errors.Trace(err)
-		}
-		if ptID == other.TableID || ptID == defID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // IsDependentOn returns whether the job depends on "other".
 // How to check the job depends on "other"?
 // 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
