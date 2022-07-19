@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt check-parallel unconvert lint tidy testSuite check-static vet errdoc
+check: fmt check-parallel lint tidy testSuite check-static vet errdoc
 
 fmt:
 	@echo "gofmt (simplify)"

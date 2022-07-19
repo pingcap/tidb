@@ -4361,7 +4361,6 @@ func TestGetResultRowsCount(t *testing.T) {
 		require.True(t, ok)
 		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
 		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
-		require.Equal(t, cnt, ca.row, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
 
@@ -6056,4 +6055,27 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestBinaryStrNumericOperator(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varbinary(10))")
+	tk.MustExec("insert into t values ('123.12')")
+	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
+		"124.12"))
+	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
+		"122.12"))
+	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
+		"-1231.2"))
+	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
+		"-61.56"))
+	// there should be no warning.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }

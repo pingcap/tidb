@@ -183,7 +183,7 @@ func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*Mvc
 		if len(curRegion.EndKey) == 0 {
 			return nil, nil
 		}
-		startKey = kv.Key(curRegion.EndKey)
+		startKey = curRegion.EndKey
 	}
 }
 
@@ -313,7 +313,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 }
 
 // FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
-func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
+func (*Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
 	for _, db := range allSchemas {
 		for _, tbl := range db.Tables {
 			if f := findRangeInTable(hotRange, db, tbl); f != nil {
@@ -608,12 +608,12 @@ func isBehind(x, y withKeyRange) bool {
 }
 
 // IsBefore returns true is x is before [startKey, endKey)
-func isBeforeKeyRange(x withKeyRange, startKey, endKey string) bool {
+func isBeforeKeyRange(x withKeyRange, startKey, _ string) bool {
 	return x.getEndKey() != "" && x.getEndKey() <= startKey
 }
 
 // IsBehind returns true is x is behind [startKey, endKey)
-func isBehindKeyRange(x withKeyRange, startKey, endKey string) bool {
+func isBehindKeyRange(x withKeyRange, _, endKey string) bool {
 	return endKey != "" && x.getStartKey() >= endKey
 }
 
@@ -689,7 +689,7 @@ func newPartitionTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, par
 }
 
 // FilterMemDBs filters memory databases in the input schemas.
-func (h *Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
+func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
 		if util.IsMemDB(dbInfo.Name.L) {
 			continue
@@ -715,7 +715,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
-func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
+func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
@@ -738,7 +738,7 @@ func (h *Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoW
 }
 
 // ParseRegionsTableInfos parses the tables or indices in regions according to key range.
-func (h *Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
+func (*Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
 	tableInfos := make(map[int64][]TableInfo, len(regionsInfo))
 
 	if len(tables) == 0 || len(regionsInfo) == 0 {
@@ -1166,7 +1166,7 @@ func GetTiFlashTableIDFromEndKey(endKey string) int64 {
 	e, _ := hex.DecodeString(endKey)
 	_, decodedEndKey, _ := codec.DecodeBytes(e, []byte{})
 	tableID := tablecodec.DecodeTableID(decodedEndKey)
-	tableID -= 1
+	tableID--
 	return tableID
 }
 
@@ -1195,7 +1195,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 		if s == "" {
 			continue
 		}
-		realN += 1
+		realN++
 		r, err := strconv.ParseInt(s, 10, 32)
 		if err != nil {
 			return errors.Trace(err)

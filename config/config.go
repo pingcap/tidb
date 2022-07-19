@@ -954,7 +954,7 @@ var defaultConf = Config{
 	TrxSummary:                           DefaultTrxSummary(),
 	LogBackup: LogBackup{
 		Advancer: logbackupconf.Default(),
-		Enabled:  false,
+		Enabled:  true,
 	},
 }
 
