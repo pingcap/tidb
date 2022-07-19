@@ -695,7 +695,6 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 		// CREATE TABLE t ... INTERVAL ... LAST PARTITION LESS THAN ('2015-01-01') PLACEMENT POLICY = 'cheapStorage'
 		// ALTER TABLE t LAST PARTITION LESS THAN ('2022-01-01') PLACEMENT POLICY 'defaultStorage'
 		// ALTER TABLE t LAST PARTITION LESS THAN ('2023-01-01') PLACEMENT POLICY 'fastStorage'
-		// But then it would be hard to still show it correctly in SHOW CREATE :(
 		if len(b[i].Options) > 0 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s does have unsupported options", b[i].Name.O))
 		}
@@ -725,7 +724,6 @@ func comparePartitionDefinitions(ctx sessionctx.Context, a, b []*ast.PartitionDe
 		if cmp.GetInt64() != 1 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("partition %s differs between generated and defined for expression", b[i].Name.O))
 		}
-		// TODO: check that this loop is tested!
 	}
 	return nil
 }
@@ -758,7 +756,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		if partCol == nil {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, could not find any RANGE COLUMNS")
 		}
-		// Only support Datetime, date and INT column types for RANGE INTERVAL! (TODO: list and check all!)
+		// Only support Datetime, date and INT column types for RANGE INTERVAL!
 		switch partCol.FieldType.EvalType() {
 		case types.ETInt, types.ETDatetime:
 		default:
@@ -800,11 +798,10 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 	if partOptions.Interval.NullPart {
 		var partExpr ast.ExprNode
 		if len(tbInfo.Partition.Columns) == 1 && partOptions.Interval.IntervalExpr.TimeUnit != ast.TimeUnitInvalid {
-			// Get col type from partition column, so we can get minimum date?
-			// First PoC try, just set LESS THAN ZeroTime
-			// TODO: Check compatibility with MySQL:
+			// Notice compatibility with MySQL, keyword here is 'supported range' but MySQL seems to work from 0000-01-01 too
 			// https://dev.mysql.com/doc/refman/8.0/en/datetime.html says range 1000-01-01 - 9999-12-31
 			// https://docs.pingcap.com/tidb/dev/data-type-date-and-time says The supported range is '0000-01-01' to '9999-12-31'
+			// set LESS THAN to ZeroTime
 			partExpr = ast.NewValueExpr("0000-01-01", "", "")
 		} else {
 			var min int64
