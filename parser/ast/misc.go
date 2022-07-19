@@ -2111,6 +2111,12 @@ func (n *ShowSlow) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// LimitSimple is the struct for Admin statement limit option.
+type LimitSimple struct {
+	Count  uint64
+	Offset uint64
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
