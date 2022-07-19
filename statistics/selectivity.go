@@ -331,6 +331,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			switch x := expr.(type) {
 			case *expression.Constant:
 				notCoveredConstants[i] = x
+				continue
 			case *expression.ScalarFunction:
 				switch x.FuncName.L {
 				case ast.LogicOr:
