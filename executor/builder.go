@@ -3590,8 +3590,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
-		idxNetDataSize:    v.GetIndexNetworkCost(),
-		avgRowSize:        v.GetDataAvgRowSize(),
+		idxNetDataSize:    v.GetAvgTableRowSize(),
+		avgRowSize:        v.GetAvgTableRowSize(),
 	}
 
 	if containsLimit(indexReq.Executors) {
@@ -4077,6 +4077,7 @@ func newClosestReadAdjuster(ctx sessionctx.Context, req *kv.Request, netDataSize
 		return nil
 	}
 	return func(req *kv.Request, copTaskCount int) bool {
+		// copTaskCount is the number of coprocessor requests
 		if int64(netDataSize/float64(copTaskCount)) >= ctx.GetSessionVars().ReplicaClosestReadThreshold {
 			req.MatchStoreLabels = append(req.MatchStoreLabels, &metapb.StoreLabel{
 				Key:   placement.DCLabelKey,

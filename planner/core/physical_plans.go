@@ -395,13 +395,13 @@ func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expressi
 	return corCols
 }
 
-// GetIndexNetworkCost return the network cost of index reader.
-func (p *PhysicalIndexLookUpReader) GetIndexNetworkCost() float64 {
+// GetIndexNetDataSize return the estimated total size in bytes via network transfer.
+func (p *PhysicalIndexLookUpReader) GetIndexNetDataSize() float64 {
 	return getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false) * p.indexPlan.StatsCount()
 }
 
-// GetDataAvgRowSize return the average row size of each final row.
-func (p *PhysicalIndexLookUpReader) GetDataAvgRowSize() float64 {
+// GetAvgTableRowSize return the average row size of each final row.
+func (p *PhysicalIndexLookUpReader) GetAvgTableRowSize() float64 {
 	return getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 }
 
