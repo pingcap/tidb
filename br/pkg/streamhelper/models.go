@@ -22,7 +22,7 @@ const (
 	taskInfoPath    = "/info"
 	// nolint:deadcode,varcheck
 	taskCheckpointPath   = "/checkpoint"
-	globalCheckPoint     = "/global-checkpoint"
+	storageCheckPoint    = "/storage-checkpoint"
 	taskRangesPath       = "/ranges"
 	taskPausePath        = "/pause"
 	taskLastErrorPath    = "/last-error"
@@ -87,9 +87,9 @@ func GlobalCheckpointOf(task string) string {
 	return path.Join(streamKeyPrefix, taskCheckpointPath, task, checkpointTypeGlobal)
 }
 
-// GlobalCheckpointStatusOf get the prefix path of the `global checkpoint status` of a task.
-func GlobalCheckpointStatusOf(task string) string {
-	return path.Join(streamKeyPrefix, globalCheckPoint, task)
+// StorageCheckpointOf get the prefix path of the `storage checkpoint status` of a task.
+func StorageCheckpointOf(task string) string {
+	return path.Join(streamKeyPrefix, storageCheckPoint, task)
 }
 
 // CheckpointOf returns the checkpoint prefix of some store.

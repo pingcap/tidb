@@ -353,15 +353,15 @@ func (t *Task) NextBackupTSList(ctx context.Context) ([]Checkpoint, error) {
 	return cps, nil
 }
 
-func (t *Task) GlobalCheckpointStatus(ctx context.Context) (uint64, error) {
-	prefix := GlobalCheckpointStatusOf(t.Info.Name)
+func (t *Task) GetStorageCheckpoint(ctx context.Context) (uint64, error) {
+	prefix := StorageCheckpointOf(t.Info.Name)
 	scanner := scanEtcdPrefix(t.cli.Client, prefix)
 	kvs, err := scanner.AllPages(ctx, 1024)
 	if err != nil {
 		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
 	}
 
-	var globalCheckpointStatus = t.Info.StartTs
+	var storageCheckpoint = t.Info.StartTs
 	for _, kv := range kvs {
 		if len(kv.Value) != 8 {
 			return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
@@ -370,10 +370,10 @@ func (t *Task) GlobalCheckpointStatus(ctx context.Context) (uint64, error) {
 				redact.Key(kv.Value))
 		}
 		ts := binary.BigEndian.Uint64(kv.Value)
-		globalCheckpointStatus = mathutil.Max(globalCheckpointStatus, ts)
+		storageCheckpoint = mathutil.Max(storageCheckpoint, ts)
 	}
 
-	return globalCheckpointStatus, nil
+	return storageCheckpoint, nil
 }
 
 // MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
