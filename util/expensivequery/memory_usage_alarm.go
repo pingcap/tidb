@@ -16,6 +16,10 @@ package expensivequery
 
 import (
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,6 +37,17 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+type s3Config struct {
+	accessKey        string
+	secretKey        string
+	endPoint         string
+	regionName       string
+	bucketName       string
+	disableSSL       bool
+	s3ForcePathStyle bool
+	recordToS3       bool
+}
+
 type memoryUsageAlarm struct {
 	err                    error
 	initialized            bool
@@ -44,9 +59,68 @@ type memoryUsageAlarm struct {
 	tmpDir              string
 	lastLogFileName     []string
 	lastProfileFileName [][]string // heap, goroutine
+
+	s3Conf s3Config
+}
+
+func (record *memoryUsageAlarm) initS3Config() {
+	if recordToS3 := config.GetGlobalConfig().S3.RecordToS3; recordToS3 {
+		record.s3Conf.accessKey = config.GetGlobalConfig().S3.AccessKey
+		record.s3Conf.secretKey = config.GetGlobalConfig().S3.SecretKey
+		record.s3Conf.endPoint = config.GetGlobalConfig().S3.EndPoint
+		record.s3Conf.bucketName = config.GetGlobalConfig().S3.BucketName
+		record.s3Conf.disableSSL = config.GetGlobalConfig().S3.DisableSSL
+		record.s3Conf.s3ForcePathStyle = config.GetGlobalConfig().S3.S3ForcePathStyle
+		record.s3Conf.recordToS3 = config.GetGlobalConfig().S3.RecordToS3
+	}
+}
+
+func (record *memoryUsageAlarm) uploadFileToS3(filenames []string) {
+	if record.s3Conf.recordToS3 && record.initialized && time.Since(record.lastCheckTime) > 600*time.Second {
+		sess, err := session.NewSession(&aws.Config{
+			Credentials:      credentials.NewStaticCredentials(record.s3Conf.accessKey, record.s3Conf.secretKey, ""),
+			Endpoint:         aws.String(record.s3Conf.endPoint),
+			Region:           aws.String(record.s3Conf.regionName),
+			DisableSSL:       aws.Bool(record.s3Conf.disableSSL),
+			S3ForcePathStyle: aws.Bool(record.s3Conf.s3ForcePathStyle),
+		})
+		if err != nil {
+			logutil.BgLogger().Error("create s3 new session fail", zap.Error(err))
+			return
+		}
+		uploader := s3manager.NewUploader(sess)
+
+		for _, filename := range filenames {
+			file, err := os.OpenFile(filename, os.O_RDONLY, 0666)
+			if err != nil {
+				logutil.BgLogger().Error("open record file fail", zap.Error(err))
+				return
+			}
+
+			_, err = uploader.Upload(&s3manager.UploadInput{
+				Bucket: aws.String(record.s3Conf.bucketName),
+				Key:    aws.String(filename),
+				Body:   file,
+			})
+			if err != nil {
+				logutil.BgLogger().Error("upload to s3 fail", zap.Error(err))
+				return
+			}
+
+			//nolint: revive
+			defer func() {
+				err := file.Close()
+				if err != nil {
+					logutil.BgLogger().Error("close record file fail", zap.Error(err))
+					return
+				}
+			}()
+		}
+	}
 }
 
 func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
+	record.initS3Config()
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
@@ -116,10 +190,10 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		interval := time.Since(record.lastCheckTime)
-		record.lastCheckTime = time.Now()
 		if interval > 10*time.Second {
 			record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
 		}
+		record.lastCheckTime = time.Now()
 	}
 }
 
@@ -142,8 +216,18 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
 		return
 	}
-	record.recordSQL(sm)
-	record.recordProfile()
+
+	recordSQLFile := record.recordSQL(sm)
+	recordProfileFiles := record.recordProfile()
+
+	if recordSQLFile != "" && len(recordProfileFiles) != 0 {
+		recordFiles := make([]string, len(recordProfileFiles)+1)
+		recordFiles = append(recordFiles, recordSQLFile)
+		recordFiles = append(recordFiles, recordProfileFiles...)
+		record.uploadFileToS3(recordFiles)
+	} else {
+		logutil.BgLogger().Error("get record file names fail")
+	}
 
 	tryRemove := func(filename *[]string) {
 		// Keep the last 5 files
@@ -161,7 +245,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 }
 
-func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
+func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) string {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -175,7 +259,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 	f, err := os.Create(fileName)
 	if err != nil {
 		logutil.BgLogger().Error("create oom record file fail", zap.Error(err))
-		return
+		return ""
 	}
 	defer func() {
 		err := f.Close()
@@ -218,9 +302,10 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 	printTop10(func(i, j *util.ProcessInfo) bool {
 		return i.Time.Before(j.Time)
 	})
+	return fileName
 }
 
-func (record *memoryUsageAlarm) recordProfile() {
+func (record *memoryUsageAlarm) recordProfile() []string {
 	items := []struct {
 		name  string
 		debug int
@@ -228,13 +313,15 @@ func (record *memoryUsageAlarm) recordProfile() {
 		{name: "heap"},
 		{name: "goroutine", debug: 2},
 	}
+	profileFileNames := make([]string, len(items))
 	for i, item := range items {
 		fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
+		profileFileNames = append(profileFileNames, fileName)
 		record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
 		f, err := os.Create(fileName)
 		if err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
-			return
+			return profileFileNames
 		}
 		//nolint: revive
 		defer func() {
@@ -247,7 +334,8 @@ func (record *memoryUsageAlarm) recordProfile() {
 		err = p.WriteTo(f, item.debug)
 		if err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
-			return
+			return profileFileNames
 		}
 	}
+	return profileFileNames
 }

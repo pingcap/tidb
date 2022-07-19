@@ -183,6 +183,7 @@ type Config struct {
 	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
+	S3                         S3                      `toml:"S3" json:"S3"`
 	Performance                Performance             `toml:"performance" json:"performance"`
 	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
@@ -612,6 +613,18 @@ type Status struct {
 	GRPCInitialWindowSize int `toml:"grpc-initial-window-size" json:"grpc-initial-window-size"`
 	// Set maximum message length in bytes that gRPC can send. `-1` means unlimited. The default value is 10MB.
 	GRPCMaxSendMsgSize int `toml:"grpc-max-send-msg-size" json:"grpc-max-send-msg-size"`
+}
+
+// S3 is the config of oom alarm upload to S3.
+type S3 struct {
+	AccessKey        string `toml:"access-key" json:"access-key"`
+	SecretKey        string `toml:"secret-key" json:"secret-key"`
+	EndPoint         string `toml:"end-point" json:"end-point"`
+	RegionName       string `toml:"region-name" json:"region-name"`
+	BucketName       string `toml:"bucket-name" json:"bucket-name"`
+	DisableSSL       bool   `toml:"disable-ssl" json:"disable-ssl"`
+	S3ForcePathStyle bool   `toml:"s3-force-path-style" json:"s3-force-path-style"`
+	RecordToS3       bool   `toml:"record-to-s3" json:"record-to-s3"`
 }
 
 // Performance is the performance section of the config.
