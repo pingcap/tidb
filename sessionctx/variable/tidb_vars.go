@@ -698,6 +698,11 @@ const (
 	TiDBMemoryDebugModeMinHeapInUse = "tidb_memory_debug_mode_min_heap_inuse"
 	// TiDBMemoryDebugModeAlarmRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
 	TiDBMemoryDebugModeAlarmRatio = "tidb_memory_debug_mode_alarm_ratio"
+
+	// TiDBEnableSimplifiedShowCreateTable changes output for SHOW CREATE TABLE etc. for TiDB enhancements
+	// that are not compatible with MySQL, like CLUSTERED index etc.
+	// as well as remove MySQL specific syntax that are not used by TiDB, like ENGINE = InnoDB
+	TiDBEnableSimplifiedShowCreateTable = "tidb_enable_simplified_show_create_table"
 )
 
 // TiDB vars that have only global scope
@@ -968,6 +973,7 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
+	DefTiDBEnableSimplifiedShowCreateTable         = false
 )
 
 // Process global variables.

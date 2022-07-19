@@ -1174,6 +1174,9 @@ type SessionVars struct {
 	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
 	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
 	MemoryDebugModeAlarmRatio int64
+
+	// EnableSimplifiedShowCreateTable allows output of SHOW CREATE TABLE etc. to be non-compatible with MySQL
+	EnableSimplifiedShowCreateTable bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
