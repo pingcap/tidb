@@ -193,7 +193,7 @@ func WrapInSingleQuotes(inStr string) string {
 // UnwrapFromSingleQuotes the reverse of WrapInSingleQuotes
 // but also allows non single quoted strings
 func UnwrapFromSingleQuotes(inStr string) string {
-	if inStr == "" || inStr[:1] != "'" || inStr[len(inStr)-1:] != "'" {
+	if len(inStr) < 2 || inStr[:1] != "'" || inStr[len(inStr)-1:] != "'" {
 		return inStr
 	}
 	s := strings.ReplaceAll(inStr[1:len(inStr)-1], "\\\\", "\\")
