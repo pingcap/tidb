@@ -14,10 +14,14 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 
+	"github.com/Masterminds/semver"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 type EBSVolumeType string
@@ -115,10 +119,43 @@ func (c *EBSBasedBRMeta) ConfigFromFile(path string) error {
 	return nil
 }
 
+func NewMetaFromStorage(ctx context.Context, s storage.ExternalStorage) (*EBSBasedBRMeta, error) {
+	metaInfo := &EBSBasedBRMeta{}
+	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return metaInfo, errors.Trace(err)
+	}
+	err = json.Unmarshal(metaBytes, metaInfo)
+	if err != nil {
+		return metaInfo, errors.Trace(err)
+	}
+	if err = metaInfo.checkEBSBRMeta(); err != nil {
+		return metaInfo, errors.Trace(err)
+	}
+
+	return metaInfo, nil
+}
+
 func (c *EBSBasedBRMeta) CheckClusterInfo() {
 	if c.ClusterInfo == nil {
 		c.ClusterInfo = &ClusterInfo{}
 	}
+}
+
+func (c *EBSBasedBRMeta) checkEBSBRMeta() error {
+	if c.ClusterInfo == nil {
+		return errors.New("no cluster info")
+	}
+	if _, err := semver.NewVersion(c.ClusterInfo.Version); err != nil {
+		return errors.Annotatef(err, "invalid cluster version")
+	}
+	if c.ClusterInfo.ResolvedTS == 0 {
+		return errors.New("invalid resolved ts")
+	}
+	if c.GetStoreCount() == 0 {
+		return errors.New("tikv info is empty")
+	}
+	return nil
 }
 
 func (c *EBSBasedBRMeta) SetAllocID(id uint64) {
@@ -129,6 +166,10 @@ func (c *EBSBasedBRMeta) SetAllocID(id uint64) {
 func (c *EBSBasedBRMeta) SetResolvedTS(id uint64) {
 	c.CheckClusterInfo()
 	c.ClusterInfo.ResolvedTS = id
+}
+
+func (c *EBSBasedBRMeta) GetResolvedTS() uint64 {
+	return c.ClusterInfo.ResolvedTS
 }
 
 func (c *EBSBasedBRMeta) SetClusterVersion(version string) {

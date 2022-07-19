@@ -1,12 +1,11 @@
-// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
 package task
 
 import (
 	"context"
-	"encoding/json"
+	"time"
 
-	"github.com/coreos/go-semver/semver"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -15,14 +14,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"go.uber.org/zap"
 )
 
 const (
@@ -33,7 +30,7 @@ const (
 	flagDumpRegionInfo = "dump-region-info"
 )
 
-// DefineRestoreEBSMetaFlags defines common flags for the backup command.
+// DefineRestoreDataFlags defines common flags for the restore command.
 func DefineRestoreDataFlags(command *cobra.Command) {
 	command.Flags().Bool(flagDryRun, false, "don't access to aws environment if set to true")
 	command.Flags().Bool(flagDumpRegionInfo, false, "dump all regions info")
@@ -60,55 +57,23 @@ func (cfg *RestoreDataConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return cfg.Config.ParseFromFlags(flags)
 }
 
-func checkEBSBRMeta(meta *config.EBSBasedBRMeta) error {
-	if meta.ClusterInfo == nil {
-		return errors.New("no cluster info")
-	}
-	if _, err := semver.NewVersion(meta.ClusterInfo.Version); err != nil {
-		return errors.Annotatef(err, "invalid cluster version")
-	}
-	if meta.ClusterInfo.ResolvedTS == 0 {
-		return errors.New("invalid resolved ts")
-	}
-	if meta.GetStoreCount() == 0 {
-		return errors.New("tikv info is empty")
-	}
-	return nil
-}
-
 func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64, int, error) {
-	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
+	metaInfo, err := config.NewMetaFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	metaInfo := &config.EBSBasedBRMeta{}
-	err = json.Unmarshal(metaBytes, metaInfo)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	if err = checkEBSBRMeta(metaInfo); err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-
-	return metaInfo.ClusterInfo.ResolvedTS, metaInfo.TiKVComponent.Replicas, nil
+	return metaInfo.GetResolvedTS(), int(metaInfo.GetStoreCount()), nil
 }
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *RestoreDataConfig) error {
-	var finished bool
-	var totalTiKV int
-	var totalRegions int
-	defer func() {
-		if finished {
-			summary.Log("EBS restore success", zap.Int("total TiKVs", totalTiKV), zap.Int("total regions", totalRegions))
-		} else {
-			summary.Log("EBS restore failed, please check the log for details.")
-		}
-	}()
+	startAll := time.Now()
+	defer summary.Summary(cmdName)
 
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 
+	// genenic work included opentrace, and restore client etc.
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("task.RunRestoreData", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -125,23 +90,25 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 
+	// read the backup meta resolved ts and total tikvs from backup storage
 	var resolveTs uint64
-	var numOfStores int
-
 	_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	resolveTs, numOfStores, err = ReadBackupMetaData(ctx, externStorage)
+	resolveTs, totalTiKVs, err := ReadBackupMetaData(ctx, externStorage)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	
+	summary.CollectUint("resolve-ts", resolveTs)
+
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// stop gc before restore tikv data
 	sp := utils.BRServiceSafePoint{
 		BackupTS: restoreTS,
 		TTL:      utils.DefaultBRGCSafePointTTL,
@@ -159,14 +126,14 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 		return errors.Trace(err)
 	}
 
-	if len(allStores) != numOfStores {
+	if len(allStores) != totalTiKVs {
 		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster")
 		return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
 			"number of tikvs mismatch")
 	}
 
-	totalTiKV = numOfStores
-
+	// restore tikv data from a snapshot volume
+	var totalRegions int
 	if cfg.DryRun {
 		totalRegions = 1024
 	} else {
@@ -174,14 +141,13 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}	
-
+	}
+	summary.CollectInt("total regions", totalRegions)
 	log.Info("unmark recovering to pd")
 	if err := mgr.UnmarkRecovering(ctx); err != nil {
 		return errors.Trace(err)
 	}
-
-	finished = true
+	summary.CollectDuration("restore duration", time.Since(startAll))
 	return nil
 
 }

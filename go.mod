@@ -112,6 +112,7 @@ require (
 )
 
 require (
+	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/kisielk/gotool v1.0.0 // indirect
 )
@@ -230,5 +231,3 @@ replace github.com/pingcap/tidb/parser => ./parser
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
 replace honnef.co/go/tools => honnef.co/go/tools v0.3.2
-
-replace github.com/pingcap/kvproto => ../../kvproto

@@ -226,7 +226,13 @@ func newRestoreDataCommand() *cobra.Command {
 		Short: "phase 2 - restore data from snapshot volume where tikv runing on, it requires phase 1 command 'restore ebs' run before.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runRestoreDataCommand(command, task.EBSRestoreCmd)
+			err := runRestoreDataCommand(command, task.EBSRestoreCmd)
+			if err != nil {
+				summary.SetSuccessStatus(false)
+				return errors.Trace(err)
+			}
+			summary.SetSuccessStatus(true)
+			return nil
 		},
 	}
 	task.DefineRestoreDataFlags(command)
