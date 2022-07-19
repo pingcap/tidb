@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -788,18 +787,18 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
-	// only upgrade from under version92 and this tidb is not owner set.
+	// Only upgrade from under version92 and this tidb is not owner set.
+	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
+	original := variable.EnableConcurrentDDL.Load()
 	if ver < version92 && !domain.GetDomain(s).DDL().OwnerManager().IsOwner() {
-		// set OldDDLStyle is true will make DDL job add into job queue.
-		s.SetValue(sessionctx.OldDDLStyle, true)
+		variable.EnableConcurrentDDL.Store(false)
 	}
 	// Do upgrade works then update bootstrap version.
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
 
-	// after upgrade DDL is finished, we can clear it.
-	s.ClearValue(sessionctx.OldDDLStyle)
+	variable.EnableConcurrentDDL.Store(original)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")

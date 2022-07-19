@@ -294,8 +294,7 @@ func (d *ddl) limitDDLJobs() {
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	var err error
-	// tasks[0].v != nil only happens when upgrading. The internal DDL job will always only one in a batch.
-	if variable.EnableConcurrentDDL.Load() && tasks[0].mustToQueue == nil {
+	if variable.EnableConcurrentDDL.Load() {
 		err = d.addBatchDDLJobs2Table(tasks)
 	} else {
 		err = d.addBatchDDLJobs2Queue(tasks)

@@ -209,9 +209,6 @@ type DDL interface {
 type limitJobTask struct {
 	job *model.Job
 	err chan error
-
-	// If mustToQueue is **NOT** nil, we must put the job to queue, only happen upgrade a multiple node cluster.
-	mustToQueue interface{}
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -903,15 +900,14 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	v := ctx.Value(sessionctx.OldDDLStyle)
-	task := &limitJobTask{job, make(chan error), v}
+	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error), v}
+			task1 := &limitJobTask{job, make(chan error)}
 			d.limitJobCh <- task1
 			<-task.err
 			// The second job result is used for test.

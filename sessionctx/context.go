@@ -197,8 +197,6 @@ const (
 	Initing basicCtxType = 2
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
-	// OldDDLStyle is the key for indicating if the DDL job should add into queue.
-	OldDDLStyle basicCtxType = 4
 )
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
