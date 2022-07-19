@@ -3795,17 +3795,22 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	var partInfo *model.PartitionInfo
 	if spec.Tp == ast.AlterTableDropFirstPartition {
-		partInfo = &model.PartitionInfo{}
+		intervalOptions := getPartitionIntervalFromTable(ctx, meta)
+		if intervalOptions == nil {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+				"FIRST PARTITION, does not seem like an INTERVAL partitioned table")
+		}
 		if len(spec.Partition.Definitions) != 0 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, table info already contains partition definitions")
 		}
+		spec.Partition.Interval = intervalOptions
 		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition, partInfo)
 		if err != nil {
 			return err
 		}
 		pNullOffset := 0
-		if meta.Partition.IntervalNullPart {
+		if intervalOptions.NullPart {
 			pNullOffset = 1
 		}
 		if len(spec.Partition.Definitions) == 0 ||
@@ -6322,9 +6327,20 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 }
 
 func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec, part *model.PartitionInfo) error {
-	if meta.Partition.IntervalMaxPart {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER LAST PARTITION: MAXVALUE partition exists")
+	partInterval := getPartitionIntervalFromTable(ctx, meta)
+	if partInterval == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
 	}
+	if partInterval.MaxValPart {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+	}
+
+	if spec.Partition.Interval != nil {
+		panic("humm?")
+	}
+	spec.Partition.Interval = partInterval
+
 	if len(spec.PartDefinitions) > 0 {
 		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}

@@ -3720,7 +3720,6 @@ type PartitionInterval struct {
 	LastRangeEnd  *ExprNode
 	MaxValPart    bool
 	NullPart      bool
-	Options       bool
 }
 
 // PartitionMethod describes how partitions or subpartitions are constructed.

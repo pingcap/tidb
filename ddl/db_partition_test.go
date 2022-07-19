@@ -3811,7 +3811,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 
 	err := tk.ExecToErr("alter table ipt LAST partition less than (100)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported ALTER LAST PARTITION: MAXVALUE partition exists", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION when MAXVALUE partition exists", err.Error())
 
 	tk.MustExec("alter table ipt first partition less than (30)")
 	tk.MustQuery("select count(*) from ipt").Check(testkit.Rows("27"))
@@ -3895,16 +3895,17 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
 			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
 			" PARTITION `SYS_P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
-	// TODO: also use single quotes around dates in short format (unless we remove the short output format?)
 	// Now we are stuck, since we will use the current FIRST PARTITION to check the INTERVAL!
 	// Should we check and limit FIRST PARTITION for QUARTER and MONTH to not have day part in (29,30,31)?
 	err = tk.ExecToErr("alter table t first partition less than ('2022-03-31')")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-03-31) not matching FIRST + n INTERVALs ('2022-02-28' + n * 1 MONTH)", err.Error())
-	tk.MustExec("alter table t last partition less than ('2022-06-30')")
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr("alter table t last partition less than ('2022-06-30')")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
 	err = tk.ExecToErr("alter table t last partition less than ('2022-07-31')")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (2022-07-31) not matching FIRST + n INTERVALs ('2022-06-30' + n * 1 MONTH)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `id` date NOT NULL,\n" +
@@ -3916,8 +3917,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			"(PARTITION `SYS_P_LT_2022-02-28` VALUES LESS THAN ('2022-02-28'),\n" +
 			" PARTITION `SYS_P_LT_2022-03-31` VALUES LESS THAN ('2022-03-31'),\n" +
 			" PARTITION `SYS_P_LT_2022-04-30` VALUES LESS THAN ('2022-04-30'),\n" +
-			" PARTITION `SYS_P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'),\n" +
-			" PARTITION `SYS_P_LT_2022-06-30` VALUES LESS THAN ('2022-06-30'))"))
+			" PARTITION `SYS_P_LT_2022-05-31` VALUES LESS THAN ('2022-05-31'))"))
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t2 (id bigint unsigned primary key, val varchar(255), key (val)) partition by range (id) INTERVAL (10) FIRST PARTITION LESS THAN (10) LAST PARTITION LESS THAN (90)")
