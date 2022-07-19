@@ -216,6 +216,12 @@ type ExecStmt struct {
 	retryCount        uint
 	retryStartTime    time.Time
 
+	// Phase durations are splited into two parts: 1. trying to lock keys (but
+	// failed); 2. the final iteration of the retry loop. Here we use
+	// [2]time.Duration to record such info for each phase. The first duration
+	// is increased only whithin the current iteration. When we meet a
+	// pessimistic lock error and decide to retry, we add the first duration to
+	// the second and reset the first to 0 by calling `resetPhaseDurations`.
 	phaseBuildDurations [2]time.Duration
 	phaseOpenDurations  [2]time.Duration
 	phaseNextDurations  [2]time.Duration
