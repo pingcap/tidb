@@ -14,6 +14,7 @@ go_library(
 
 go_test(
     name = "encrypt_test",
+    timeout = "short",
     srcs = [
         "aes_layer_test.go",
         "aes_test.go",

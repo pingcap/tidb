@@ -18,6 +18,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/telemetry",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/utils",
         "//config",
         "//domain/infosync",
         "//infoschema",
@@ -47,6 +48,7 @@ go_library(
 
 go_test(
     name = "telemetry_test",
+    timeout = "short",
     srcs = [
         "data_cluster_hardware_test.go",
         "data_feature_usage_test.go",

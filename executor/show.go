@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	field_types "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -957,7 +958,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(",\n")
 		}
 		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
-		if col.GetCharset() != "binary" {
+		if field_types.HasCharset(&col.FieldType) {
 			if col.GetCharset() != tblCharset {
 				fmt.Fprintf(buf, " CHARACTER SET %s", col.GetCharset())
 			}
@@ -2026,8 +2027,19 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if err = stateJSON.UnmarshalJSON(stateBytes); err != nil {
 		return err
 	}
-	// This will be implemented in future PRs.
-	tokenBytes, err := gjson.Marshal("")
+	// session token
+	var token *sessionstates.SessionToken
+	// In testing, user may be nil.
+	if user := e.ctx.GetSessionVars().User; user != nil {
+		// The token may be leaked without secure transport, so we enforce secure transport (TLS or Unix Socket).
+		if !e.ctx.GetSessionVars().ConnectionInfo.IsSecureTransport() {
+			return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("the token must be queried with secure transport")
+		}
+		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+			return err
+		}
+	}
+	tokenBytes, err := gjson.Marshal(token)
 	if err != nil {
 		return errors.Trace(err)
 	}

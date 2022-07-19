@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -36,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
@@ -129,15 +132,15 @@ type Client struct {
 
 	supportPolicy bool
 
-	// startTS and restoreTs are used for kv file restore.
+	// startTS and restoreTS are used for kv file restore.
 	// TiKV will filter the key space that don't belong to [startTS, restoreTS].
 	startTS   uint64
 	restoreTS uint64
 
-	// If the the commit-ts of txn-entry is belong [startTS, restoreTS],
-	// the start-ts of txn-entry may be smaller than startTS.
-	// We need maintain and restore more entries in default-cf
-	// (the start-ts in these entries is belong to [shiftStartTS, startTS]).
+	// If the commitTS of txn-entry belong to [startTS, restoreTS],
+	// the startTS of txn-entry may be smaller than startTS.
+	// We need maintain and restore more entries in default cf
+	// (the startTS in these entries belong to [shiftStartTS, startTS]).
 	shiftStartTS uint64
 
 	// currentTS is used for rewrite meta kv when restore stream.
@@ -145,6 +148,21 @@ type Client struct {
 	currentTS uint64
 
 	storage storage.ExternalStorage
+
+	// if fullClusterRestore = true:
+	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
+	//	without user database or table. and system tables about privileges is restored together with user data.
+	// - if there no system tables in the backup(backup data from br < 5.1.0), restore all user data just like
+	//	previous version did.
+	// if fullClusterRestore = false, restore all user data just like previous version did.
+	// fullClusterRestore = true when there is no explicit filter setting, and it's full restore or point command
+	// 	with a full backup data.
+	// todo: maybe change to an enum
+	fullClusterRestore bool
+	// the query to insert rows into table `gc_delete_range`, lack of ts.
+	deleteRangeQuery          []string
+	deleteRangeQueryCh        chan string
+	deleteRangeQueryWaitGroup sync.WaitGroup
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -155,11 +173,13 @@ func NewRestoreClient(
 	isRawKv bool,
 ) *Client {
 	return &Client{
-		pdClient:      pdClient,
-		toolClient:    NewSplitClient(pdClient, tlsConf, isRawKv),
-		tlsConf:       tlsConf,
-		keepaliveConf: keepaliveConf,
-		switchCh:      make(chan struct{}),
+		pdClient:           pdClient,
+		toolClient:         NewSplitClient(pdClient, tlsConf, isRawKv),
+		tlsConf:            tlsConf,
+		keepaliveConf:      keepaliveConf,
+		switchCh:           make(chan struct{}),
+		deleteRangeQuery:   make([]string, 0),
+		deleteRangeQueryCh: make(chan string, 10),
 	}
 }
 
@@ -297,6 +317,8 @@ func (rc *Client) SetRestoreRangeTS(startTs, restoreTS, shiftStartTS uint64) {
 	rc.startTS = startTs
 	rc.restoreTS = restoreTS
 	rc.shiftStartTS = shiftStartTS
+	log.Info("set restore range ts", zap.Uint64("shift-start-ts", shiftStartTS),
+		zap.Uint64("start-ts", startTs), zap.Uint64("restored-ts", restoreTS))
 }
 
 func (rc *Client) SetCurrentTS(ts uint64) {
@@ -420,6 +442,7 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
+	log.Debug("new worker pool", zap.Uint("currency-count", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
 }
 
@@ -481,6 +504,14 @@ func (rc *Client) GetDatabases() []*utils.Database {
 // GetDatabase returns a database by name.
 func (rc *Client) GetDatabase(name string) *utils.Database {
 	return rc.databases[name]
+}
+
+// HasBackedUpSysDB whether we have backed up system tables
+// br backs system tables up since 5.1.0
+func (rc *Client) HasBackedUpSysDB() bool {
+	temporaryDB := utils.TemporaryDBName(mysql.SystemDB)
+	_, backedUp := rc.databases[temporaryDB.O]
+	return backedUp
 }
 
 // GetPlacementPolicies returns policies.
@@ -821,6 +852,101 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 		})
 	}
 	return eg.Wait()
+}
+
+// CheckTargetClusterFresh check whether the target cluster is fresh or not
+// if there's no user dbs or tables, we take it as a fresh cluster, although
+// user may have created some users or made other changes.
+func (rc *Client) CheckTargetClusterFresh(ctx context.Context) error {
+	log.Info("checking whether target cluster is fresh")
+	userDBs := GetExistedUserDBs(rc.dom)
+	if len(userDBs) == 0 {
+		return nil
+	}
+
+	const maxPrintCount = 10
+	userTableOrDBNames := make([]string, 0, maxPrintCount+1)
+	addName := func(name string) bool {
+		if len(userTableOrDBNames) == maxPrintCount {
+			userTableOrDBNames = append(userTableOrDBNames, "...")
+			return false
+		}
+		userTableOrDBNames = append(userTableOrDBNames, name)
+		return true
+	}
+outer:
+	for _, db := range userDBs {
+		if !addName(db.Name.L) {
+			break outer
+		}
+		for _, tbl := range db.Tables {
+			if !addName(tbl.Name.L) {
+				break outer
+			}
+		}
+	}
+	log.Error("not fresh cluster", zap.Strings("user tables", userTableOrDBNames))
+	return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user db/tables: "+strings.Join(userTableOrDBNames, ", "))
+}
+
+func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
+	log.Info("checking target cluster system table compatibility with backed up data")
+	privilegeTablesInBackup := make([]*metautil.Table, 0)
+	for _, table := range tables {
+		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
+		}
+	}
+	sysDB := model.NewCIStr(mysql.SystemDB)
+	for _, table := range privilegeTablesInBackup {
+		ti, err := rc.GetTableSchema(dom, sysDB, table.Info.Name)
+		if err != nil {
+			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
+			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
+		}
+		backupTi := table.Info
+		if len(ti.Columns) != len(backupTi.Columns) {
+			log.Error("column count mismatch",
+				zap.Stringer("table", table.Info.Name),
+				zap.Int("col in cluster", len(ti.Columns)),
+				zap.Int("col in backup", len(backupTi.Columns)))
+			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
+				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
+		}
+		backupColMap := make(map[string]*model.ColumnInfo)
+		for i := range backupTi.Columns {
+			col := backupTi.Columns[i]
+			backupColMap[col.Name.L] = col
+		}
+		// order can be different but type must compatible
+		for i := range ti.Columns {
+			col := ti.Columns[i]
+			backupCol := backupColMap[col.Name.L]
+			if backupCol == nil {
+				log.Error("missing column in backup data",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in backup data, table: %s, col: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String())
+			}
+			if !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
+				log.Error("incompatible column",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
+					zap.String("col in backup", fmt.Sprintf("%s %s", backupCol.Name, backupCol.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column, table: %s, col in cluster: %s %s, col in backup: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String(),
+					backupCol.Name, backupCol.FieldType.String())
+			}
+		}
+	}
+	return nil
 }
 
 // ExecDDLs executes the queries of the ddl jobs.
@@ -1456,6 +1582,14 @@ func (rc *Client) getRuleID(tableID int64) string {
 	return "restore-t" + strconv.FormatInt(tableID, 10)
 }
 
+// IsFull returns whether this backup is full.
+func (rc *Client) IsFull() bool {
+	failpoint.Inject("mock-incr-backup-data", func() {
+		failpoint.Return(false)
+	})
+	return !rc.IsIncremental()
+}
+
 // IsIncremental returns whether this backup is incremental.
 func (rc *Client) IsIncremental() bool {
 	return !(rc.backupMeta.StartVersion == rc.backupMeta.EndVersion ||
@@ -1558,40 +1692,24 @@ func (rc *Client) PreCheckTableClusterIndex(
 	return nil
 }
 
-const (
-	streamBackupMetaPrefix = "v1/backupmeta"
-)
-
-func GetStreamBackupMetaPrefix() string {
-	return streamBackupMetaPrefix
-}
-
 // ReadStreamMetaByTS is used for streaming task. collect all meta file by TS.
 func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*backuppb.Metadata, error) {
-	streamBackupMetaFiles := make([]*backuppb.Metadata, 0)
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
-	err := rc.storage.WalkDir(ctx, opt, func(path string, size int64) error {
-		if strings.Contains(path, streamBackupMetaPrefix) {
-			m := &backuppb.Metadata{}
-			b, err := rc.storage.ReadFile(ctx, path)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = m.Unmarshal(b)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// TODO find a way to filter some unnecessary meta files.
-			log.Debug("backup stream collect meta file", zap.String("file", path))
-			streamBackupMetaFiles = append(streamBackupMetaFiles, m)
-		}
+	streamBackupMetaFiles := struct {
+		sync.Mutex
+		metas []*backuppb.Metadata
+	}{}
+	streamBackupMetaFiles.metas = make([]*backuppb.Metadata, 0, 128)
+
+	err := stream.FastUnmarshalMetaData(ctx, rc.storage, func(path string, metadata *backuppb.Metadata) error {
+		streamBackupMetaFiles.Lock()
+		streamBackupMetaFiles.metas = append(streamBackupMetaFiles.metas, metadata)
+		streamBackupMetaFiles.Unlock()
 		return nil
 	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	return streamBackupMetaFiles, nil
+	return streamBackupMetaFiles.metas, nil
 }
 
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
@@ -1620,6 +1738,15 @@ func (rc *Client) ReadStreamDataFiles(
 			log.Debug("backup stream collect data file", zap.String("file", d.Path))
 		}
 	}
+
+	// sort files firstly.
+	slices.SortFunc(mFiles, func(i, j *backuppb.DataFileInfo) bool {
+		if i.ResolvedTs > 0 && j.ResolvedTs > 0 {
+			return i.ResolvedTs < j.ResolvedTs
+		} else {
+			return i.MaxTs < j.MaxTs
+		}
+	})
 	return dFiles, mFiles, nil
 }
 
@@ -1686,6 +1813,7 @@ func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
 	files []*backuppb.DataFileInfo,
+	updateStats func(kvCount uint64, size uint64),
 	onProgress func(),
 ) error {
 	var err error
@@ -1727,6 +1855,7 @@ func (rc *Client) RestoreKVFiles(
 				fileStart := time.Now()
 				defer func() {
 					onProgress()
+					updateStats(uint64(file.NumberOfEntries), file.Length)
 					summary.CollectInt("File", 1)
 					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
 				}()
@@ -1836,7 +1965,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
+	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs, rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex), nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -1844,13 +1973,14 @@ func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
+	updateStats func(kvCount uint64, size uint64),
 	progressInc func(),
 ) error {
 	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
 	// The k-v events in default CF should be restored firstly. The reason is that:
-	// The error of transactions of meta will happen,
-	// if restore default CF events successfully, but failed to restore write CF events.
+	// The error of transactions of meta could happen if restore write CF events successfully,
+	// but failed to restore default CF events.
 	for _, f := range files {
 		if f.Cf == stream.WriteCF {
 			filesInWriteCF = append(filesInWriteCF, f)
@@ -1864,19 +1994,21 @@ func (rc *Client) RestoreMetaKVFiles(
 			continue
 		}
 
-		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		updateStats(kvCount, size)
 		progressInc()
 	}
 
 	// Restore files in write CF.
 	for _, f := range filesInWriteCF {
-		err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
+		kvCount, size, err := rc.RestoreMetaKVFile(ctx, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		updateStats(kvCount, size)
 		progressInc()
 	}
 
@@ -1892,18 +2024,22 @@ func (rc *Client) RestoreMetaKVFile(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
-) error {
+) (uint64, uint64, error) {
+	var (
+		kvCount uint64
+		size    uint64
+	)
 	log.Info("restore meta kv events", zap.String("file", file.Path),
-		zap.String("cf", file.Cf), zap.Int64(("kv-count"), file.NumberOfEntries),
+		zap.String("cf", file.Cf), zap.Int64("kv-count", file.NumberOfEntries),
 		zap.Uint64("min-ts", file.MinTs), zap.Uint64("max-ts", file.MaxTs))
 
 	rc.rawKVClient.SetColumnFamily(file.GetCf())
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
-		return errors.Annotatef(berrors.ErrInvalidMetaFile,
+		return 0, 0, errors.Annotatef(berrors.ErrInvalidMetaFile,
 			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
 	}
 
@@ -1911,13 +2047,13 @@ func (rc *Client) RestoreMetaKVFile(
 	for iter.Valid() {
 		iter.Next()
 		if iter.GetError() != nil {
-			return errors.Trace(iter.GetError())
+			return 0, 0, errors.Trace(iter.GetError())
 		}
 
 		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
 		ts, err := GetKeyTS(txnEntry.Key)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		}
 
 		// The commitTs in write CF need be limited on [startTs, restoreTs].
@@ -1943,7 +2079,7 @@ func (rc *Client) RestoreMetaKVFile(
 		if err != nil {
 			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
 				logutil.Key("txn-key", txnEntry.Key))
-			return errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		} else if newEntry == nil {
 			continue
 		}
@@ -1951,11 +2087,14 @@ func (rc *Client) RestoreMetaKVFile(
 			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, ts); err != nil {
-			return errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		}
+
+		kvCount += 1
+		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
 
-	return rc.rawKVClient.PutRest(ctx)
+	return kvCount, size, rc.rawKVClient.PutRest(ctx)
 }
 
 func transferBoolToValue(enable bool) string {
@@ -2041,6 +2180,111 @@ func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 	return nil
 }
 
+const (
+	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
+	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
+
+	batchInsertDeleteRangeSize = 256
+)
+
+// InsertDeleteRangeForTable generates query to insert table delete job into table `gc_delete_range`.
+func (rc *Client) InsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
+	var elementID int64 = 1
+	var tableID int64
+	for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
+		batchEnd := len(tableIDs)
+		if batchEnd > i+batchInsertDeleteRangeSize {
+			batchEnd = i + batchInsertDeleteRangeSize
+		}
+
+		var buf strings.Builder
+		buf.WriteString(insertDeleteRangeSQLPrefix)
+		for j := i; j < batchEnd; j++ {
+			tableID = tableIDs[j]
+			startKey := tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			startKeyEncoded := hex.EncodeToString(startKey)
+			endKeyEncoded := hex.EncodeToString(endKey)
+			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, elementID, startKeyEncoded, endKeyEncoded))
+			if j != batchEnd-1 {
+				buf.WriteString(",")
+			}
+			elementID += 1
+		}
+		rc.deleteRangeQueryCh <- buf.String()
+	}
+}
+
+// InsertDeleteRangeForIndex generates query to insert index delete job into table `gc_delete_range`.
+func (rc *Client) InsertDeleteRangeForIndex(jobID int64, elementID *int64, tableID int64, indexIDs []int64) {
+	var indexID int64
+	for i := 0; i < len(indexIDs); i += batchInsertDeleteRangeSize {
+		batchEnd := len(indexIDs)
+		if batchEnd > i+batchInsertDeleteRangeSize {
+			batchEnd = i + batchInsertDeleteRangeSize
+		}
+
+		var buf strings.Builder
+		buf.WriteString(insertDeleteRangeSQLPrefix)
+		for j := i; j < batchEnd; j++ {
+			indexID = indexIDs[j]
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			startKeyEncoded := hex.EncodeToString(startKey)
+			endKeyEncoded := hex.EncodeToString(endKey)
+			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, *elementID, startKeyEncoded, endKeyEncoded))
+			if j != batchEnd-1 {
+				buf.WriteString(",")
+			}
+			*elementID += 1
+		}
+		rc.deleteRangeQueryCh <- buf.String()
+	}
+}
+
+// use channel to save the delete-range query to make it thread-safety.
+func (rc *Client) RunGCRowsLoader(ctx context.Context) {
+	rc.deleteRangeQueryWaitGroup.Add(1)
+
+	go func() {
+		defer rc.deleteRangeQueryWaitGroup.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case query, ok := <-rc.deleteRangeQueryCh:
+				if !ok {
+					return
+				}
+				rc.deleteRangeQuery = append(rc.deleteRangeQuery, query)
+			}
+		}
+	}()
+}
+
+// InsertGCRows insert the querys into table `gc_delete_range`
+func (rc *Client) InsertGCRows(ctx context.Context) error {
+	close(rc.deleteRangeQueryCh)
+	rc.deleteRangeQueryWaitGroup.Wait()
+	ts, err := rc.GetTS(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, query := range rc.deleteRangeQuery {
+		if err := rc.db.se.ExecuteInternal(ctx, fmt.Sprintf(query, ts)); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// only for unit test
+func (rc *Client) GetGCRows() []string {
+	close(rc.deleteRangeQueryCh)
+	rc.deleteRangeQueryWaitGroup.Wait()
+	return rc.deleteRangeQuery
+}
+
 func (rc *Client) SaveSchemas(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
@@ -2054,7 +2298,7 @@ func (rc *Client) SaveSchemas(
 		m.StartVersion = logStartTS
 	})
 
-	schemas := sr.TidyOldSchemas()
+	schemas := TidyOldSchemas(sr)
 	schemasConcurrency := uint(mathutil.Min(64, schemas.Len()))
 	err := schemas.BackupSchemas(ctx, metaWriter, nil, nil, rc.restoreTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
@@ -2067,7 +2311,51 @@ func (rc *Client) SaveSchemas(
 	return nil
 }
 
+// InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
+func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
+	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
+
+	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
+
+	if rc.fullClusterRestore {
+		// have to skip grant table, in order to NotifyUpdatePrivilege
+		config.GetGlobalConfig().Security.SkipGrantTable = true
+	}
+}
+
+func (rc *Client) IsFullClusterRestore() bool {
+	return rc.fullClusterRestore
+}
+
 // MockClient create a fake client used to test.
 func MockClient(dbs map[string]*utils.Database) *Client {
 	return &Client{databases: dbs}
+}
+
+// TidyOldSchemas produces schemas information.
+func TidyOldSchemas(sr *stream.SchemasReplace) *backup.Schemas {
+	var schemaIsEmpty bool
+	schemas := backup.NewBackupSchemas()
+
+	for _, dr := range sr.DbMap {
+		if dr.OldDBInfo == nil {
+			continue
+		}
+
+		schemaIsEmpty = true
+		for _, tr := range dr.TableMap {
+			if tr.OldTableInfo == nil {
+				continue
+			}
+			schemas.AddSchema(dr.OldDBInfo, tr.OldTableInfo)
+			schemaIsEmpty = false
+		}
+
+		// backup this empty schema if it has nothing table.
+		if schemaIsEmpty {
+			schemas.AddSchema(dr.OldDBInfo, nil)
+		}
+	}
+	return schemas
+
 }

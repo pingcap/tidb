@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "parser_test",
+    timeout = "short",
     srcs = [
         "ast_test.go",
         "main_test.go",

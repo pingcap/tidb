@@ -266,6 +266,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.SetResourceGroupTagger(sv.StmtCtx.GetResourceGroupTagger())
 	if sv.EnablePaging {
 		builder.SetPaging(true)
+		builder.Request.MinPagingSize = uint64(sv.MinPagingSize)
 	}
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
@@ -364,6 +365,12 @@ func (builder *RequestBuilder) SetReadReplicaScope(scope string) *RequestBuilder
 // SetIsStaleness sets request IsStaleness
 func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 	builder.IsStaleness = is
+	return builder
+}
+
+// SetClosestReplicaReadAdjuster sets request CoprRequestAdjuster
+func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprRequestAdjuster) *RequestBuilder {
+	builder.ClosestReplicaReadAdjuster = chkFn
 	return builder
 }
 

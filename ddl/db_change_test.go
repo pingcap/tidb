@@ -1961,19 +1961,6 @@ func TestExpressionIndexDDLError(t *testing.T) {
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
 }
 
-func TestRestrainDropColumnWithIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, index(a))")
-	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=0")
-	tk.MustQuery("select @@tidb_enable_change_multi_schema").Check(testkit.Rows("0"))
-	tk.MustGetErrCode("alter table t drop column a", errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=1")
-	tk.MustExec("alter table t drop column a")
-}
-
 func TestParallelRenameTable(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()

@@ -69,7 +69,7 @@ const (
 	ActionDropSequence                  ActionType = 36
 	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionModifyTableAutoIdCache        ActionType = 39
+	ActionModifyTableAutoIdCache        ActionType = 39 //nolint:revive
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
 	ActionExchangeTablePartition        ActionType = 42
@@ -79,7 +79,7 @@ const (
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
-	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
+	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46 //nolint:revive
 
 	ActionRenameTables                  ActionType = 47
 	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
@@ -231,6 +231,7 @@ type TimeZoneLocation struct {
 	location *time.Location
 }
 
+// GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 	if tz.location != nil {
 		return tz.location, nil
@@ -254,10 +255,11 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
-	Warnings []*errors.Error
-
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
+
+	// SkipVersion is used to control whether generating a new schema version for a sub-job.
+	SkipVersion bool `json:"-"`
 
 	AddColumns    []CIStr `json:"-"`
 	DropColumns   []CIStr `json:"-"`
@@ -270,6 +272,7 @@ type MultiSchemaInfo struct {
 	PositionColumns []CIStr `json:"-"`
 }
 
+// NewMultiSchemaInfo new a MultiSchemaInfo.
 func NewMultiSchemaInfo() *MultiSchemaInfo {
 	return &MultiSchemaInfo{
 		SubJobs:    nil,
@@ -277,6 +280,7 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 	}
 }
 
+// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
 	Args        []interface{}   `json:"-"`
@@ -288,6 +292,7 @@ type SubJob struct {
 	RowCount    int64           `json:"row_count"`
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -340,7 +345,8 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 	}
 }
 
-func (sub *SubJob) FromProxyJob(proxyJob *Job) {
+// FromProxyJob converts a proxy job to a sub-job.
+func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
@@ -348,6 +354,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job) {
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
+	sub.SchemaVer = ver
 }
 
 // Job is for a DDL operation.
@@ -554,8 +561,12 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
+	}
+	return ret
 }
 
 func (job *Job) hasDependentSchema(other *Job) (bool, error) {
@@ -638,10 +649,12 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+// IsQueueing returns whether job is queuing or not.
 func (job *Job) IsQueueing() bool {
 	return job.State == JobStateQueueing
 }
 
+// NotStarted returns true if the job is never run by a worker.
 func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }
@@ -655,6 +668,14 @@ func (job *Job) MayNeedReorg() bool {
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
+		}
+		return false
+	case ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := Job{Type: sub.Type, CtxVars: sub.CtxVars}
+			if proxyJob.MayNeedReorg() {
+				return true
+			}
 		}
 		return false
 	default:

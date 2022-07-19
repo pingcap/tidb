@@ -183,6 +183,16 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.Greater(t, countFullStats(reader.Stats().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
+		{ // check idx(b)
+			sql: "select * from t USE INDEX(idx) where b >= 10",
+			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+				pr, ok := p.(*plannercore.PhysicalIndexLookUpReader)
+				require.True(t, ok)
+				pis, ok := pr.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+				require.True(t, ok)
+				require.True(t, pis.Stats().HistColl.Indices[1].IsEssentialStatsLoaded())
+			},
+		},
 	}
 	for _, testCase := range testCases {
 		if testCase.skip {
@@ -250,10 +260,10 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	neededColumn := model.TableColumnID{TableID: tableInfo.ID, ColumnID: tableInfo.Columns[0].ID}
-	resultCh := make(chan model.TableColumnID, 1)
+	neededColumn := model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}
+	resultCh := make(chan model.TableItemID, 1)
 	timeout := time.Duration(1<<63 - 1)
-	dom.StatsHandle().AppendNeededColumn(neededColumn, resultCh, timeout) // make channel queue full
+	dom.StatsHandle().AppendNeededItem(neededColumn, resultCh, timeout) // make channel queue full
 	stmt, err := p.ParseOneStmt("select * from t where c>1", "", "")
 	require.NoError(t, err)
 	tk.MustExec("set global tidb_stats_load_pseudo_timeout=false")

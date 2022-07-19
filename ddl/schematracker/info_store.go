@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package infoschema
+package schematracker
 
 import (
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -76,13 +77,13 @@ func (i *InfoStore) TableByName(schema, table model.CIStr) (*model.TableInfo, er
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
-		return nil, ErrDatabaseNotExists.GenWithStackByArgs(schema)
+		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema)
 	}
 
 	tableKey := i.ciStr2Key(table)
 	tbl, ok := tables[tableKey]
 	if !ok {
-		return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(schema, table)
 	}
 	return tbl, nil
 }
@@ -92,7 +93,7 @@ func (i *InfoStore) PutTable(schemaName model.CIStr, tblInfo *model.TableInfo) e
 	schemaKey := i.ciStr2Key(schemaName)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
-		return ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
 	}
 	tableKey := i.ciStr2Key(tblInfo.Name)
 	tables[tableKey] = tblInfo
@@ -105,13 +106,13 @@ func (i *InfoStore) DeleteTable(schema, table model.CIStr) error {
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
-		return ErrDatabaseNotExists.GenWithStackByArgs(schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema)
 	}
 
 	tableKey := i.ciStr2Key(table)
 	_, ok = tables[tableKey]
 	if !ok {
-		return ErrTableNotExists.GenWithStackByArgs(schema, table)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema, table)
 	}
 	delete(tables, tableKey)
 	return nil
@@ -121,7 +122,7 @@ func (i *InfoStore) DeleteTable(schema, table model.CIStr) error {
 // used by DDL interface.
 // nolint:unused
 type InfoStoreAdaptor struct {
-	InfoSchema
+	infoschema.InfoSchema
 	inner *InfoStore
 }
 

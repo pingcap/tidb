@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "format_test",
+    timeout = "short",
     srcs = [
         "format_test.go",
         "main_test.go",

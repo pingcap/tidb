@@ -2349,11 +2349,10 @@ func (n *PrivElem) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.Name)
 	} else {
 		str, ok := mysql.Priv2Str[n.Priv]
-		if ok {
-			ctx.WriteKeyWord(str)
-		} else {
+		if !ok {
 			return errors.New("Undefined privilege type")
 		}
+		ctx.WriteKeyWord(str)
 	}
 	if n.Cols != nil {
 		ctx.WritePlain(" (")
@@ -3535,7 +3534,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join":
+	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge":
 		ctx.WritePlain(")")
 		return nil
 	}

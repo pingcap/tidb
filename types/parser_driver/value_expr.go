@@ -243,7 +243,7 @@ type ParamMarkerExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ParamMarkerExpr) Restore(ctx *format.RestoreCtx) error {
+func (*ParamMarkerExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain("?")
 	return nil
 }
@@ -255,7 +255,7 @@ func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {
 }
 
 // Format the ExprNode into a Writer.
-func (n *ParamMarkerExpr) Format(w io.Writer) {
+func (*ParamMarkerExpr) Format(_ io.Writer) {
 	panic("Not implemented")
 }
 

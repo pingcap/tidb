@@ -443,6 +443,24 @@
           "                  └─TableFullScan_18 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain select row_number() over w2, row_number() over w1 from employee window w2 as (order by deptid), w1 as (partition by deptid);",
+        "Plan": [
+          "TableReader_37 10000.00 root  data:ExchangeSender_36",
+          "└─ExchangeSender_36 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_10 10000.00 mpp[tiflash]  Column#8, Column#7",
+          "    └─Window_35 10000.00 mpp[tiflash]  row_number()->Column#8 over(order by test.employee.deptid rows between current row and current row)",
+          "      └─Sort_20 10000.00 mpp[tiflash]  test.employee.deptid",
+          "        └─ExchangeReceiver_19 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "            └─Window_13 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "              └─Sort_17 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
+          "                └─ExchangeReceiver_16 10000.00 mpp[tiflash]  stream_count: 8",
+          "                  └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "                    └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   }

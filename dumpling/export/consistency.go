@@ -102,7 +102,7 @@ func (c *ConsistencyFlushTableWithReadLock) TearDown(ctx context.Context) error 
 		return nil
 	}
 	defer func() {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}()
 	return UnlockTables(ctx, c.conn)
@@ -159,7 +159,7 @@ func (c *ConsistencyLockDumpingTables) TearDown(ctx context.Context) error {
 		return nil
 	}
 	defer func() {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}()
 	return UnlockTables(ctx, c.conn)
