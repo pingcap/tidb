@@ -60,16 +60,42 @@ var (
 // performed with the / operator.
 const precIncrement = 4
 
+// isConstantBinaryLiteral return true if expr is constant binary literal
+func isConstantBinaryLiteral(expr Expression) bool {
+	if types.IsBinaryStr(expr.GetType()) {
+		if v, ok := expr.(*Constant); ok {
+			if k := v.Value.Kind(); k == types.KindBinaryLiteral {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // numericContextResultType returns types.EvalType for numeric function's parameters.
 // the returned types.EvalType should be one of: types.ETInt, types.ETDecimal, types.ETReal
+<<<<<<< HEAD
 func numericContextResultType(ft *types.FieldType) types.EvalType {
 	if types.IsTypeTemporal(ft.Tp) {
 		if ft.Decimal > 0 {
+=======
+func numericContextResultType(expr Expression) types.EvalType {
+	ft := expr.GetType()
+	if types.IsTypeTemporal(ft.GetType()) {
+		if ft.GetDecimal() > 0 {
+>>>>>>> f84554bd0... expression: fix binary str numeric result type (#36258)
 			return types.ETDecimal
 		}
 		return types.ETInt
 	}
+<<<<<<< HEAD
 	if types.IsBinaryStr(ft) {
+=======
+	// to solve https://github.com/pingcap/tidb/issues/27698
+	// if expression is constant binary literal, like `0x1234`, `0b00011`, cast to integer
+	// for other binary str column related expression, like varbinary, cast to float/double.
+	if isConstantBinaryLiteral(expr) || ft.GetType() == mysql.TypeBit {
+>>>>>>> f84554bd0... expression: fix binary str numeric result type (#36258)
 		return types.ETInt
 	}
 	evalTp4Ft := types.ETReal
@@ -158,8 +184,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -308,8 +333,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -493,7 +517,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -639,7 +663,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
@@ -730,9 +754,8 @@ func (c *arithmeticIntDivideFunctionClass) getFunction(ctx sessionctx.Context, a
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETInt && rhsEvalTp == types.ETInt {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 		if err != nil {
@@ -899,7 +922,7 @@ func (c *arithmeticModFunctionClass) getFunction(ctx sessionctx.Context, args []
 		return nil, err
 	}
 	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
-	lhsEvalTp, rhsEvalTp := numericContextResultType(lhsTp), numericContextResultType(rhsTp)
+	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
