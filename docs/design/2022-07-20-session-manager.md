@@ -69,7 +69,7 @@ It's unsafe to save user passwords in the Session Manager, so we use a token-bas
 
 1. The administrator places a self-signed certificate on each TiDB server. The certificate and key paths are defined by global variables `tidb_auth_signing_cert` and `tidb_auth_signing_key`. The certificates on all the servers are the same so that a message encrypted by one server can be decrypted by another.
 2. When the Session Manager is going to migrate a session from one TiDB instance to another, it queries the session token. The session token is composed by the username, token expiration time, and a signature. The signature is signed with the private key of the certificate.
-3. The Session Manager then authenticate with the new TiDB server with a new auth-plugin. The session token acts as the password. The new server checks the username, token expiration time, and the signature. The signature should be verified by the public key.
+3. The Session Manager then authenticates with the new TiDB server with a new auth-plugin. The session token acts as the password. The new server checks the username, token expiration time, and the signature. The signature should be verified by the public key.
 
 To ensure security, TiDB needs to guarantee that:
 
@@ -176,7 +176,7 @@ However, there are some drawbacks of this method:
 
 ## Future Work
 
-The most attracting scenario of routing client connections is multi-tenancy.
+The most attractive scenario of routing client connections is multi-tenancy.
 
 These are some scenarios where multi-tenancy is useful:
 
