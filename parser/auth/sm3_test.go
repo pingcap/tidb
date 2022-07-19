@@ -23,7 +23,7 @@ import (
 var foobarPwdSM3Hash, _ = hex.DecodeString("24422430303524031a69251c34295c4b35167c7f1e5a7b63091349536c72627066426a635061762e556e6c63533159414d7762317261324a5a3047756b4244664177434e3043")
 
 func TestSM3(t *testing.T) {
-	var testCases [][]string = [][]string{
+	testCases := [][]string{
 		{"abc", "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0"},
 		{"abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd", "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732"},
 	}
