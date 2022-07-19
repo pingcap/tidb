@@ -187,11 +187,11 @@ func TestCoalesce(t *testing.T) {
 		{[]interface{}{nil, duration}, duration, false, false},
 		{[]interface{}{nil, durationWithFsp}, durationWithFsp, false, false},
 		{[]interface{}{durationWithFsp, duration}, durationWithFsp, false, false},
-		{[]interface{}{duration, durationWithFsp}, durationWithFspAndZeroMicroseconds, false, false},
+		{[]interface{}{duration, durationWithFsp}, durationWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
 		{[]interface{}{nil, tmWithFsp, nil}, tmWithFsp, false, false},
 		{[]interface{}{tmWithFsp, tm, nil}, tmWithFsp, false, false},
-		{[]interface{}{tm, tmWithFsp, nil}, tmWithFspAndZeroMicroseconds, false, false},
+		{[]interface{}{tm, tmWithFsp, nil}, tmWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
