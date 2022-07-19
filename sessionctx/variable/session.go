@@ -689,6 +689,9 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
+	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
+	EnableSkewDistinctAgg bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -1428,6 +1431,7 @@ func NewSessionVars() *SessionVars {
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
