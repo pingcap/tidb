@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -936,127 +937,117 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 	}
 }
 
+const (
+	phaseBuildLocking       = "build:locking"
+	phaseOpenLocking        = "open:locking"
+	phaseNextLocking        = "next:locking"
+	phaseLockLocking        = "lock:locking"
+	phaseBuildFinal         = "build:final"
+	phaseOpenFinal          = "open:final"
+	phaseNextFinal          = "next:final"
+	phaseLockFinal          = "lock:final"
+	phaseCommitPrewrite     = "commit:prewrite"
+	phaseCommitCommit       = "commit:commit"
+	phaseCommitWaitCommitTS = "commit:wait:commit-ts"
+	phaseCommitWaitLatestTS = "commit:wait:latest-ts"
+	phaseCommitWaitLatch    = "commit:wait:local-latch"
+	phaseCommitWaitBinlog   = "commit:wait:prewrite-binlog"
+)
+
 var (
 	sessionExecuteRunDurationInternal = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteRunDurationGeneral  = metrics.SessionExecuteRunDuration.WithLabelValues(metrics.LblGeneral)
 	totalTiFlashQuerySuccCounter      = metrics.TiFlashQueryTotalCounter.WithLabelValues("", metrics.LblOK)
 
-	execBuildLocking = metrics.ExecPhaseDuration.WithLabelValues("build:locking", "0")
-	execOpenLocking  = metrics.ExecPhaseDuration.WithLabelValues("open:locking", "0")
-	execNextLocking  = metrics.ExecPhaseDuration.WithLabelValues("next:locking", "0")
-	execLockLocking  = metrics.ExecPhaseDuration.WithLabelValues("lock:locking", "0")
-	execBuildFinal   = metrics.ExecPhaseDuration.WithLabelValues("build:final", "0")
-	execOpenFinal    = metrics.ExecPhaseDuration.WithLabelValues("open:final", "0")
-	execNextFinal    = metrics.ExecPhaseDuration.WithLabelValues("next:final", "0")
-	execLockFinal    = metrics.ExecPhaseDuration.WithLabelValues("lock:final", "0")
-
-	execCommitPrewrite     = metrics.ExecPhaseDuration.WithLabelValues("commit:prewrite", "0")
-	execCommitCommit       = metrics.ExecPhaseDuration.WithLabelValues("commit:commit", "0")
-	execCommitWaitCommitTS = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:commit-ts", "0")
-	execCommitWaitLatestTS = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:latest-ts", "0")
-	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:local-latch", "0")
-	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues("commit:wait:prewrite-binlog", "0")
+	// pre-define observers for non-internal queries
+	execBuildLocking       = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildLocking, "0")
+	execOpenLocking        = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenLocking, "0")
+	execNextLocking        = metrics.ExecPhaseDuration.WithLabelValues(phaseNextLocking, "0")
+	execLockLocking        = metrics.ExecPhaseDuration.WithLabelValues(phaseLockLocking, "0")
+	execBuildFinal         = metrics.ExecPhaseDuration.WithLabelValues(phaseBuildFinal, "0")
+	execOpenFinal          = metrics.ExecPhaseDuration.WithLabelValues(phaseOpenFinal, "0")
+	execNextFinal          = metrics.ExecPhaseDuration.WithLabelValues(phaseNextFinal, "0")
+	execLockFinal          = metrics.ExecPhaseDuration.WithLabelValues(phaseLockFinal, "0")
+	execCommitPrewrite     = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitPrewrite, "0")
+	execCommitCommit       = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitCommit, "0")
+	execCommitWaitCommitTS = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitCommitTS, "0")
+	execCommitWaitLatestTS = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatestTS, "0")
+	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "0")
+	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "0")
 )
 
+func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
+	if internal {
+		return metrics.ExecPhaseDuration.WithLabelValues(phase, "1")
+	}
+	switch phase {
+	case phaseBuildLocking:
+		return execBuildLocking
+	case phaseOpenLocking:
+		return execOpenLocking
+	case phaseNextLocking:
+		return execNextLocking
+	case phaseLockLocking:
+		return execLockLocking
+	case phaseBuildFinal:
+		return execBuildFinal
+	case phaseOpenFinal:
+		return execOpenFinal
+	case phaseNextFinal:
+		return execNextFinal
+	case phaseLockFinal:
+		return execLockFinal
+	case phaseCommitPrewrite:
+		return execCommitPrewrite
+	case phaseCommitCommit:
+		return execCommitCommit
+	case phaseCommitWaitCommitTS:
+		return execCommitWaitCommitTS
+	case phaseCommitWaitLatestTS:
+		return execCommitWaitLatestTS
+	case phaseCommitWaitLatch:
+		return execCommitWaitLatch
+	case phaseCommitWaitBinlog:
+		return execCommitWaitBinlog
+	default:
+		return metrics.ExecPhaseDuration.WithLabelValues(phase, "0")
+	}
+}
+
 func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.CommitDetails) {
-	if d := a.phaseBuildDurations[0]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("build:final", "1").Observe(d.Seconds())
-		} else {
-			execBuildFinal.Observe(d.Seconds())
+	for _, it := range []struct {
+		duration time.Duration
+		phase    string
+	}{
+		{a.phaseBuildDurations[0], phaseBuildFinal},
+		{a.phaseBuildDurations[1], phaseBuildLocking},
+		{a.phaseOpenDurations[0], phaseOpenFinal},
+		{a.phaseOpenDurations[1], phaseOpenLocking},
+		{a.phaseNextDurations[0], phaseNextFinal},
+		{a.phaseNextDurations[1], phaseNextLocking},
+		{a.phaseLockDurations[0], phaseLockFinal},
+		{a.phaseLockDurations[1], phaseLockLocking},
+	} {
+		if it.duration > 0 {
+			getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
 		}
 	}
-	if d := a.phaseBuildDurations[1]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("build:locking", "1").Observe(d.Seconds())
-		} else {
-			execBuildLocking.Observe(d.Seconds())
-		}
+	if commitDetails == nil {
+		return
 	}
-	if d := a.phaseOpenDurations[0]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("open:final", "1").Observe(d.Seconds())
-		} else {
-			execOpenFinal.Observe(d.Seconds())
-		}
-	}
-	if d := a.phaseOpenDurations[1]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("open:locking", "1").Observe(d.Seconds())
-		} else {
-			execOpenLocking.Observe(d.Seconds())
-		}
-	}
-	if d := a.phaseNextDurations[0]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("next:final", "1").Observe(d.Seconds())
-		} else {
-			execNextFinal.Observe(d.Seconds())
-		}
-	}
-	if d := a.phaseNextDurations[1]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("next:locking", "1").Observe(d.Seconds())
-		} else {
-			execNextLocking.Observe(d.Seconds())
-		}
-	}
-	if d := a.phaseLockDurations[0]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("lock:final", "1").Observe(d.Seconds())
-		} else {
-			execLockFinal.Observe(d.Seconds())
-		}
-	}
-	if d := a.phaseLockDurations[1]; d > 0 {
-		if internal {
-			metrics.ExecPhaseDuration.WithLabelValues("lock:locking", "1").Observe(d.Seconds())
-		} else {
-			execLockLocking.Observe(d.Seconds())
-		}
-	}
-	if commitDetails != nil {
-		if d := commitDetails.PrewriteTime; d > 0 {
-			if internal {
-				metrics.ExecPhaseDuration.WithLabelValues("commit:prewrite", "1").Observe(d.Seconds())
-			} else {
-				execCommitPrewrite.Observe(d.Seconds())
-			}
-		}
-		if d := commitDetails.CommitTime; d > 0 {
-			if internal {
-				metrics.ExecPhaseDuration.WithLabelValues("commit:commit", "1").Observe(d.Seconds())
-			} else {
-				execCommitCommit.Observe(d.Seconds())
-			}
-		}
-		if d := commitDetails.GetCommitTsTime; d > 0 {
-			if internal {
-				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:commit-ts", "1").Observe(d.Seconds())
-			} else {
-				execCommitWaitCommitTS.Observe(d.Seconds())
-			}
-		}
-		if d := commitDetails.GetLatestTsTime; d > 0 {
-			if internal {
-				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:latest-ts", "1").Observe(d.Seconds())
-			} else {
-				execCommitWaitLatestTS.Observe(d.Seconds())
-			}
-		}
-		if d := commitDetails.LocalLatchTime; d > 0 {
-			if internal {
-				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:local-latch", "1").Observe(d.Seconds())
-			} else {
-				execCommitWaitLatch.Observe(d.Seconds())
-			}
-		}
-		if d := commitDetails.WaitPrewriteBinlogTime; d > 0 {
-			if internal {
-				metrics.ExecPhaseDuration.WithLabelValues("commit:wait:prewrite-binlog", "1").Observe(d.Seconds())
-			} else {
-				execCommitWaitBinlog.Observe(d.Seconds())
-			}
+	for _, it := range []struct {
+		duration time.Duration
+		phase    string
+	}{
+		{commitDetails.PrewriteTime, phaseCommitPrewrite},
+		{commitDetails.CommitTime, phaseCommitCommit},
+		{commitDetails.GetCommitTsTime, phaseCommitWaitCommitTS},
+		{commitDetails.GetLatestTsTime, phaseCommitWaitLatestTS},
+		{commitDetails.LocalLatchTime, phaseCommitWaitLatch},
+		{commitDetails.WaitPrewriteBinlogTime, phaseCommitWaitBinlog},
+	} {
+		if it.duration > 0 {
+			getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
 		}
 	}
 }
