@@ -311,7 +311,7 @@ func (record *memoryUsageAlarm) recordProfile() []string {
 		{name: "heap"},
 		{name: "goroutine", debug: 2},
 	}
-	profileFileNames := make([]string, len(items))
+	profileFileNames := make([]string, 0, len(items))
 	for i, item := range items {
 		fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
 		profileFileNames = append(profileFileNames, fileName)
