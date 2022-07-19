@@ -322,7 +322,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
 		return errors.Trace(err)
 	} else if !ok {
-		// If skip gc, it still need to resolve locks with timeout TTL.
+		// If skip gc, it still needs to resolve locks with expired TTL, in order not to block log backup.
 		if w.logBackupEnabled {
 			tryResolveLocksTS, err := w.getTryResolveLocksTS()
 			if err != nil {
