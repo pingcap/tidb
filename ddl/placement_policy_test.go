@@ -1115,6 +1115,18 @@ func TestPolicyInheritance(t *testing.T) {
 			" PARTITION `SYS_P_LT_300` VALUES LESS THAN (300),\n" +
 			" PARTITION `SYS_P_LT_400` VALUES LESS THAN (400))"))
 	tk.MustExec("drop table if exists t")
+	err = tk.ExecToErr("create table t (a int) placement policy = `p2` partition by range(a) INTERVAL (100) first partition less than (100) last partition less than (300) placement policy=`p1`")
+	require.Error(t, err)
+	require.Equal(t, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 156 near \"placement policy=`p1`\" ", err.Error())
+	tk.MustExec("create table t (a int) placement policy = `p2` partition by range(a) INTERVAL (100) first partition less than (100) last partition less than (300)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p2` */\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `SYS_P_LT_100` VALUES LESS THAN (100),\n" +
+			" PARTITION `SYS_P_LT_200` VALUES LESS THAN (200),\n" +
+			" PARTITION `SYS_P_LT_300` VALUES LESS THAN (300))"))
 
 	// test partition override table's placement rules.
 	tk.MustExec("drop table if exists t")
