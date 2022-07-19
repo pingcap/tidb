@@ -19,6 +19,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -3574,6 +3576,44 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	return errors.Trace(err)
 }
 
+// AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
+// as well as needed for generating the ADD PARTITION query for INTERVAL partitioning of ALTER TABLE t LAST PARTITION
+func AppendPartitionDefs(ctx sessionctx.Context, partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+	for i, def := range partitionInfo.Definitions {
+		if i > 0 {
+			fmt.Fprintf(buf, ",\n ")
+		}
+		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
+		// PartitionTypeHash does not have any VALUES definition
+		if partitionInfo.Type == model.PartitionTypeRange {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
+		} else if partitionInfo.Type == model.PartitionTypeList {
+			values := bytes.NewBuffer(nil)
+			for j, inValues := range def.InValues {
+				if j > 0 {
+					values.WriteString(",")
+				}
+				if len(inValues) > 1 {
+					values.WriteString("(")
+					values.WriteString(strings.Join(inValues, ","))
+					values.WriteString(")")
+				} else {
+					values.WriteString(strings.Join(inValues, ","))
+				}
+			}
+			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
+		}
+		if len(def.Comment) > 0 {
+			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
+		}
+		if def.PlacementPolicyRef != nil {
+			// add placement ref info here
+			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
+		}
+	}
+}
+
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
@@ -3628,6 +3668,19 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		Args:       []interface{}{partInfo},
 	}
 
+	if spec.Tp == ast.AlterTableAddLastPartition {
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(ctx, partInfo, &buf, sqlMode)
+
+			alterFirstPart := strings.Index(strings.ToLower(query), " last partition")
+			newQuery := query[:alterFirstPart] + "ADD PARTITION (" + buf.String() + ")"
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	err = d.DoDDLJob(ctx, job)
 	if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3747,8 +3800,8 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	var partInfo *model.PartitionInfo
 	if spec.Tp == ast.AlterTableDropFirstPartition {
+		var partInfo *model.PartitionInfo
 		intervalOptions := getPartitionIntervalFromTable(ctx, meta)
 		if intervalOptions == nil {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
@@ -3781,6 +3834,19 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		}
 		// Use the last generated partition as First, i.e. do not drop the last name in the slice
 		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			alterFirstPart := strings.Index(strings.ToLower(query), " first partition")
+			partNames := make([]string, 0, len(spec.PartitionNames))
+			sqlMode := ctx.GetSessionVars().SQLMode
+			for i := range spec.PartitionNames {
+				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
+			}
+			newQuery := query[:alterFirstPart] + "DROP PARTITION " + strings.Join(partNames, ", ")
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
 	}
 	partNames := make([]string, len(spec.PartitionNames))
 	for i, partCIName := range spec.PartitionNames {
@@ -3803,7 +3869,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		TableName:   meta.Name.L,
 		Type:        model.ActionDropTablePartition,
 		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []interface{}{partNames, partInfo},
+		Args:        []interface{}{partNames},
 	}
 
 	err = d.DoDDLJob(ctx, job)
