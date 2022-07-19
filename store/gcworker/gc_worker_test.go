@@ -1966,7 +1966,9 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 	lastRunTime := oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-veryLong)
 	newGcLifeTime := time.Hour * 24
 	err = s.gcWorker.saveTime(gcLastRunTimeKey, lastRunTime)
+	require.NoError(t, err)
 	err = s.gcWorker.saveTime(gcSafePointKey, oracle.GetTimeFromTS(s.mustAllocTs(t)).Add(-time.Minute*10))
+	require.NoError(t, err)
 	err = s.gcWorker.saveDuration(gcLifeTimeKey, newGcLifeTime)
 	require.NoError(t, err)
 	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
@@ -1995,7 +1997,7 @@ func TestSkipGCAndOnlyResolveLock(t *testing.T) {
 	err = txn.Commit(ctx)
 	require.Error(t, err)
 
-	// check gc is skiped
+	// check gc is skipped
 	last, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	require.NoError(t, err)
 	require.Equal(t, last.Unix(), lastRunTime.Unix())
