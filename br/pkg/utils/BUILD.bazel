@@ -32,10 +32,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
-<<<<<<< HEAD
-=======
         "//parser/types",
->>>>>>> de017e9eea670d050ae5dc7519da11baf632efa0
         "//sessionctx",
         "//util",
         "//util/sqlexec",
@@ -85,10 +82,7 @@ go_test(
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
-<<<<<<< HEAD
-=======
         "//parser/types",
->>>>>>> de017e9eea670d050ae5dc7519da11baf632efa0
         "//statistics/handle",
         "//tablecodec",
         "//testkit/testsetup",

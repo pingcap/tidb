@@ -24,6 +24,7 @@ go_library(
         "//br/pkg/lightning/web",
         "//br/pkg/redact",
         "//br/pkg/storage",
+        "//br/pkg/utils",
         "//br/pkg/version/build",
         "//util/promutil",
         "@com_github_pingcap_errors//:errors",

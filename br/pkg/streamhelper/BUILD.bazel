@@ -21,6 +21,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/streamhelper/config",
+        "//br/pkg/utils",
         "//config",
         "//kv",
         "//metrics",

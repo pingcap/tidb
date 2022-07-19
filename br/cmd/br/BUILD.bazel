@@ -27,6 +27,7 @@ go_library(
         "//br/pkg/summary",
         "//br/pkg/task",
         "//br/pkg/trace",
+        "//br/pkg/utils",
         "//br/pkg/version/build",
         "//config",
         "//ddl",
