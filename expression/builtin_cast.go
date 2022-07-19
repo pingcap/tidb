@@ -524,7 +524,6 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-
 	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()); !mysql.HasUnsignedFlag(b.tp.GetFlag()) && !unsignedArgs0 {
 		res = types.NewDecFromInt(val)
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
@@ -1774,7 +1773,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 // in special cast context that negative unsigned num will be zero.
 type inCastContext int
 
-func (i inCastContext) String() string {
+func (_ inCastContext) String() string {
 	return "__cast_ctx"
 }
 
