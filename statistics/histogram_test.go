@@ -487,5 +487,5 @@ func TestIndexQueryBytes(t *testing.T) {
 	// Count / NDV
 	require.Equal(t, idx.QueryBytes(low), uint64(1))
 	// Repeat
-	require.Equal(t, idx.QueryBytes(high), int64(10))
+	require.Equal(t, idx.QueryBytes(high), uint64(10))
 }
