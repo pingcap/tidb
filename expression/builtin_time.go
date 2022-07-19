@@ -6443,19 +6443,6 @@ func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, erro
 	return result, false, nil
 }
 
-func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
-	// MySQL compatibility, #11203
-	// 0 | 0.0 should be converted to null without warnings
-	n, err := t.ToNumber().ToInt()
-	isOriginalIntOrDecimalZero := err == nil && n == 0
-	// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
-	isOriginalStringZero := t.Fsp() > 0
-	if isOriginalIntOrDecimalZero && !isOriginalStringZero {
-		return false, nil
-	}
-	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
-}
-
 // tidbBoundedStalenessFunctionClass reads a time window [a, b] and compares it with the latest SafeTS
 // to determine which TS to use in a read only transaction.
 type tidbBoundedStalenessFunctionClass struct {
