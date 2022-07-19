@@ -89,6 +89,8 @@ const (
 	RequestSourceInternal
 	// RequestSourceType set request source type of the current statement.
 	RequestSourceType
+	// ReplicaReadAdjuster set the adjust function of cop requsts.
+	ReplicaReadAdjuster
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -103,6 +105,8 @@ const (
 	ReplicaReadMixed
 	// ReplicaReadClosest stands for 'read from leader and follower which locates with the same zone'
 	ReplicaReadClosest
+	// ReplicaReadClosestAdaptive stands for 'read from follower which locates in the same zone if the response size exceeds certain threshold'
+	ReplicaReadClosestAdaptive
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
