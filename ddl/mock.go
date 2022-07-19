@@ -120,13 +120,13 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 }
 
 // NotifyCleanExpiredPaths implements SchemaSyncer.NotifyCleanExpiredPaths interface.
-func (s *MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
+func (*MockSchemaSyncer) NotifyCleanExpiredPaths() bool { return true }
 
 // StartCleanWork implements SchemaSyncer.StartCleanWork interface.
-func (s *MockSchemaSyncer) StartCleanWork() {}
+func (*MockSchemaSyncer) StartCleanWork() {}
 
 // Close implements SchemaSyncer.Close interface.
-func (s *MockSchemaSyncer) Close() {}
+func (*MockSchemaSyncer) Close() {}
 
 type mockDelRange struct {
 }
@@ -137,12 +137,12 @@ func newMockDelRangeManager() delRangeManager {
 }
 
 // addDelRangeJob implements delRangeManager interface.
-func (dr *mockDelRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
+func (*mockDelRange) addDelRangeJob(_ context.Context, _ *model.Job) error {
 	return nil
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
-func (dr *mockDelRange) removeFromGCDeleteRange(ctx context.Context, jobID int64, tableIDs []int64) error {
+func (*mockDelRange) removeFromGCDeleteRange(_ context.Context, _ int64, _ []int64) error {
 	return nil
 }
 
@@ -159,7 +159,7 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tbl, err := buildTableInfo(ctx, stmt.Table.Name, cols, newConstraints, "", "")
+	tbl, err := BuildTableInfo(ctx, stmt.Table.Name, cols, newConstraints, "", "")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

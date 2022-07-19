@@ -82,14 +82,14 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 			}
 			rebuildCNF := expression.ComposeCNFCondition(sctx, columnCNFItems...)
 			accessConditions = append(accessConditions, rebuildCNF)
-		} else if checker.check(cond) {
+		} else if !checker.check(cond) {
+			return nil, true
+		} else {
 			accessConditions = append(accessConditions, cond)
 			if checker.shouldReserve {
 				hasResidualConditions = true
 				checker.shouldReserve = checker.length != types.UnspecifiedLength
 			}
-		} else {
-			return nil, true
 		}
 	}
 	return accessConditions, hasResidualConditions
@@ -662,7 +662,9 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 					}
 				}
 			}
-		} else if firstColumnChecker.check(item) {
+		} else if !firstColumnChecker.check(item) {
+			return FullRange(), nil, nil, true, nil
+		} else {
 			if firstColumnChecker.shouldReserve {
 				hasResidual = true
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
@@ -686,8 +688,6 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 					columnValues[0] = nil
 				}
 			}
-		} else {
-			return FullRange(), nil, nil, true, nil
 		}
 	}
 
@@ -894,7 +894,6 @@ func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-
 	if cond := accessesCond[1]; cond != nil {
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			switch f.FuncName.L {
@@ -916,7 +915,6 @@ func AddGcColumnCond(sctx sessionctx.Context,
 func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression) ([]expression.Expression, error) {
-
 	var errRes error
 	var newAccessCond []expression.Expression
 	record := make([]types.Datum, 1)
@@ -985,7 +983,6 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-
 	expr := cols[0].VirtualExpr.Clone()
 	record := make([]types.Datum, len(columnValues)-1)
 
@@ -1026,7 +1023,6 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 // @retval - the new condition after adding tidb_shard() prefix
 func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column) ([]expression.Expression, error) {
-
 	accesses := make([]expression.Expression, len(cols))
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
@@ -1096,7 +1092,6 @@ func NeedAddGcColumn4ShardIndex(
 	cols []*expression.Column,
 	accessCond []expression.Expression,
 	columnValues []*valueInfo) bool {
-
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
 	if len(accessCond) < 2 || len(cols) < 2 {

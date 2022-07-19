@@ -189,6 +189,8 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
 	tsExec.Desc = p.Desc
+	keepOrder := p.KeepOrder
+	tsExec.KeepOrder = &keepOrder
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
@@ -295,9 +297,11 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:             tipb.ExecType_TypeExchangeSender,
-		ExchangeSender: ecExec,
-		ExecutorId:     &executorID,
+		Tp:                            tipb.ExecType_TypeExchangeSender,
+		ExchangeSender:                ecExec,
+		ExecutorId:                    &executorID,
+		FineGrainedShuffleStreamCount: e.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
 	}, nil
 }
 
@@ -327,9 +331,11 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.Sto
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:               tipb.ExecType_TypeExchangeReceiver,
-		ExchangeReceiver: ecExec,
-		ExecutorId:       &executorID,
+		Tp:                            tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver:              ecExec,
+		ExecutorId:                    &executorID,
+		FineGrainedShuffleStreamCount: e.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
 	}, nil
 }
 
@@ -540,7 +546,13 @@ func (p *PhysicalWindow) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 		return nil, errors.Trace(err)
 	}
 	executorID := p.ExplainID().String()
-	return &tipb.Executor{Tp: tipb.ExecType_TypeWindow, Window: windowExec, ExecutorId: &executorID}, nil
+	return &tipb.Executor{
+		Tp:                            tipb.ExecType_TypeWindow,
+		Window:                        windowExec,
+		ExecutorId:                    &executorID,
+		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+	}, nil
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -565,7 +577,13 @@ func (p *PhysicalSort) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*ti
 		return nil, errors.Trace(err)
 	}
 	executorID := p.ExplainID().String()
-	return &tipb.Executor{Tp: tipb.ExecType_TypeSort, Sort: sortExec, ExecutorId: &executorID}, nil
+	return &tipb.Executor{
+		Tp:                            tipb.ExecType_TypeSort,
+		Sort:                          sortExec,
+		ExecutorId:                    &executorID,
+		FineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedShuffleBatchSize:   ctx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+	}, nil
 }
 
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.

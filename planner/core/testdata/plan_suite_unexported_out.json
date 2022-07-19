@@ -124,8 +124,20 @@
       "Join{DataScan(t1)->DataScan(t2)->Aggr(max(test.t.a),firstrow(test.t.b))}(test.t.b,test.t.b)->Projection->Sel([eq(test.t.b, Column#25)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)(test.t.b,test.t.b)->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
+      "Join{DataScan(t1)->DataScan(t2)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Projection",
+      "Join{DataScan(t)->DataScan(x)}->Projection",
+      "Join{DataScan(t)->DataScan(x)}(test.t.a,test.t.a)->Projection",
+      "Join{DataScan(t)->DataScan(x)}(test.t.a,test.t.a)->Sel([lt(test.t.a, 1)])->Projection",
+      "Join{Join{DataScan(t)->DataScan(x)}(test.t.a,test.t.a)->DataScan(x)}(test.t.a,test.t.a)->Projection",
+      "Join{DataScan(t)->DataScan(x)}->Projection",
+      "Join{DataScan(t)->DataScan(x)}(test.t.a,test.t.a)->Projection",
+      "Join{DataScan(t)->DataScan(x)->Sel([lt(test.t.a, 1)])->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Sel([lt(test.t.a, 1)])->Projection",
+      "Join{Join{DataScan(t)->DataScan(x)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->DataScan(x)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Projection",
+      "Join{Join{DataScan(t)->DataScan(x)}(test.t.a,test.t.a)->DataScan(x)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Projection",
+      "Join{Join{DataScan(t)->DataScan(x)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->DataScan(x)->Aggr(firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Projection",
       "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t.b, test.t.b)])->Projection",
-      "Apply{DataScan(t2)->DataScan(t1)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection"
+      "Apply{DataScan(t2)->DataScan(t1)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
+      "Join{DataScan(t2)->DataScan(t1)->Aggr(firstrow(test.t.c),count(1))}(test.t.c,test.t.c)->Projection->Aggr(count(1))->Projection"
     ]
   },
   {

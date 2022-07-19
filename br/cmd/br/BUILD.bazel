@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/cmd/br",
     visibility = ["//visibility:private"],
     deps = [
+        "//br/pkg/conn",
         "//br/pkg/errors",
         "//br/pkg/gluetidb",
         "//br/pkg/gluetikv",
@@ -22,6 +23,7 @@ go_library(
         "//br/pkg/redact",
         "//br/pkg/restore",
         "//br/pkg/rtree",
+        "//br/pkg/streamhelper/config",
         "//br/pkg/summary",
         "//br/pkg/task",
         "//br/pkg/trace",

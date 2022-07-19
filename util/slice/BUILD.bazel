@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "slice_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "slice_test.go",

@@ -1373,7 +1373,8 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	tk.MustExec("create database testoom")
+	tk.MustExec("use testoom")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
 	// create table for non keep-order case
 	tk.MustExec("drop table if exists t5")
@@ -1414,7 +1415,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		quota := 5*copr.MockResponseSizeForTest - 100
 		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-		tk.MustExec("use test")
+		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
@@ -1429,7 +1430,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
-		tk.MustExec("use test")
+		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err := tk.QueryToErr(sql)
@@ -1451,7 +1452,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		se.Close()
 	}
 	globaltk := testkit.NewTestKit(t, store)
-	globaltk.MustExec("use test")
+	globaltk.MustExec("use testoom")
 	globaltk.MustExec("set global tidb_enable_rate_limit_action= 0")
 	for _, testcase := range testcases {
 		se, err := session.CreateSession4Test(store)
@@ -1476,7 +1477,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		se, err := session.CreateSession4Test(store)
 		require.NoError(t, err)
 		tk.SetSession(se)
-		tk.MustExec("use test")
+		tk.MustExec("use testoom")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
@@ -3727,4 +3728,30 @@ func TestBinaryReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
 	tk.MustExec("commit")
+}
+
+func TestIndexMergeRuntimeStats(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge = 1")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	rows := tk.MustQuery("explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;").Rows()
+	require.Len(t, rows, 4)
+	explain := fmt.Sprintf("%v", rows[0])
+	pattern := ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*"
+	require.Regexp(t, pattern, explain)
+	tableRangeExplain := fmt.Sprintf("%v", rows[1])
+	indexExplain := fmt.Sprintf("%v", rows[2])
+	tableExplain := fmt.Sprintf("%v", rows[3])
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableRangeExplain)
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", indexExplain)
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
 }

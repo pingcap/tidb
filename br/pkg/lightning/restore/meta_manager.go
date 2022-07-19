@@ -7,17 +7,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -78,11 +77,6 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
 	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
-	// ReallocTableRowIDs reallocates the row IDs of a table.
-	// It returns new rowIDBase and maxRowID or any error it encounters.
-	// Note that noopTableMetaMgr has a noop implementation of this function.
-	// If maxRowID is 0, caller should maintain rowIDBase and maxRowID itself.
-	ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
@@ -165,56 +159,12 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	}
 }
 
-func (m *dbTableMetaMgr) ReallocTableRowIDs(ctx context.Context, newRowIDCount int64) (int64, int64, error) {
-	conn, err := m.session.Conn(ctx)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	defer conn.Close()
-	exec := &common.SQLWithRetry{
-		DB:     m.session,
-		Logger: m.tr.logger,
-	}
-	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
-	if err != nil {
-		return 0, 0, errors.Annotate(err, "enable pessimistic transaction failed")
-	}
-	var (
-		maxRowIDMax int64
-		newRowIDMax int64
-	)
-	err = exec.Transact(ctx, "realloc table rowID", func(ctx context.Context, tx *sql.Tx) error {
-		row := tx.QueryRowContext(
-			ctx,
-			fmt.Sprintf("SELECT MAX(row_id_max) from %s WHERE table_id = ? FOR UPDATE", m.tableName),
-			m.tr.tableInfo.ID,
-		)
-		if row.Err() != nil {
-			return errors.Trace(err)
-		}
-		if err := row.Scan(&maxRowIDMax); err != nil {
-			return errors.Trace(err)
-		}
-		newRowIDMax = maxRowIDMax + newRowIDCount
-		// nolint:gosec
-		query := fmt.Sprintf("UPDATE %s SET row_id_max = ? WHERE table_id = ? AND task_id = ?", m.tableName)
-		if _, err := tx.ExecContext(ctx, query, newRowIDMax, m.tr.tableInfo.ID, m.taskID); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	// newRowIDBase = maxRowIDMax + 1
-	return maxRowIDMax + 1, newRowIDMax, nil
-}
-
 func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -228,7 +178,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 	if err != nil {
 		return nil, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
-	needAutoID := common.TableHasAutoRowID(m.tr.tableInfo.Core) || m.tr.tableInfo.Core.GetAutoIncrementColInfo() != nil || m.tr.tableInfo.Core.ContainsAutoRandomBits()
+
+	needAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
 	err = exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(
 			ctx,
@@ -293,44 +244,21 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 
 		// no enough info are available, fetch row_id max for table
 		if curStatus == metaStatusInitial {
-			if needAutoID && maxRowIDMax == 0 {
-				// NOTE: currently, if a table contains auto_incremental unique key and _tidb_rowid,
-				// the `show table next_row_id` will returns the unique key field only.
-				var autoIDField string
-				for _, col := range m.tr.tableInfo.Core.Columns {
-					if mysql.HasAutoIncrementFlag(col.GetFlag()) {
-						autoIDField = col.Name.L
-						break
-					} else if mysql.HasPriKeyFlag(col.GetFlag()) && m.tr.tableInfo.Core.AutoRandomBits > 0 {
-						autoIDField = col.Name.L
-						break
-					}
+			if needAutoID {
+				// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
+				if err := rebaseGlobalAutoID(ctx, maxRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
+					return errors.Trace(err)
 				}
-				if len(autoIDField) == 0 && common.TableHasAutoRowID(m.tr.tableInfo.Core) {
-					autoIDField = model.ExtraHandleName.L
-				}
-				if len(autoIDField) == 0 {
-					return common.ErrAllocTableRowIDs.GenWithStack("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
-				}
-
-				autoIDInfos, err := tidb.FetchTableAutoIDInfos(ctx, tx, m.tr.tableName)
+				newRowIDBase, newRowIDMax, err = allocGlobalAutoID(ctx, rawRowIDMax, m.tr.kvStore, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				found := false
-				for _, info := range autoIDInfos {
-					if strings.ToLower(info.Column) == autoIDField {
-						maxRowIDMax = info.NextID - 1
-						found = true
-						break
-					}
-				}
-				if !found {
-					return common.ErrAllocTableRowIDs.GenWithStack("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
-				}
+			} else {
+				// Though we don't need auto ID, we still guarantee that the row ID is unique across all lightning instances.
+				newRowIDBase = maxRowIDMax
+				newRowIDMax = newRowIDBase + rawRowIDMax
 			}
-			newRowIDBase = maxRowIDMax
-			newRowIDMax = newRowIDBase + rawRowIDMax
+
 			// table contains no data, can skip checksum
 			if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
 				newStatus = metaStatusRestoreStarted
@@ -417,6 +345,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 	if err != nil {
 		return false, false, nil, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -688,6 +617,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -746,6 +676,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 		cancel()
 		return nil, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -881,6 +812,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 	if err != nil {
 		return false, false, errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
@@ -1097,12 +1029,6 @@ func (m noopTableMetaMgr) InitTableMeta(ctx context.Context) error {
 	return nil
 }
 
-func (m noopTableMetaMgr) ReallocTableRowIDs(ctx context.Context, _ int64) (int64, int64, error) {
-	// we don't need to reconcile rowIDs across all the instances
-	// barring using parallel import
-	return 0, 0, nil
-}
-
 func (m noopTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
 	return nil, 0, nil
 }
@@ -1203,4 +1129,52 @@ func (m *singleTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
 }
 
 func (m *singleTaskMetaMgr) Close() {
+}
+
+func allocGlobalAutoID(ctx context.Context, n int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoIDBase, autoIDMax int64, err error) {
+	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+	if err != nil {
+		return 0, 0, err
+	}
+	return alloc.Alloc(ctx, uint64(n), 1, 1)
+}
+
+func rebaseGlobalAutoID(ctx context.Context, newBase int64, store kv.Storage, dbID int64, tblInfo *model.TableInfo) error {
+	alloc, err := getGlobalAutoIDAlloc(store, dbID, tblInfo)
+	if err != nil {
+		return err
+	}
+	return alloc.Rebase(ctx, newBase, false)
+}
+
+func getGlobalAutoIDAlloc(store kv.Storage, dbID int64, tblInfo *model.TableInfo) (autoid.Allocator, error) {
+	if store == nil {
+		return nil, errors.New("internal error: kv store should not be nil")
+	}
+	if dbID == 0 {
+		return nil, errors.New("internal error: dbID should not be 0")
+	}
+
+	// We don't need the cache here because we allocate all IDs at once.
+	// The argument for CustomAutoIncCacheOption is the cache step. step 1 means no cache.
+	noCache := autoid.CustomAutoIncCacheOption(1)
+	tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
+
+	hasRowID := common.TableHasAutoRowID(tblInfo)
+	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
+
+	// Current TiDB has some limitations for auto ID.
+	// 1. Auto increment ID and auto row ID are using the same RowID allocator. See https://github.com/pingcap/tidb/issues/982.
+	// 2. Auto random column must be a clustered primary key. That is to say, there is no implicit row ID for tables with auto random column.
+	// 3. There is at most one auto column in a table.
+	// Therefore, we assume there is only one auto column in a table and use RowID allocator if possible.
+	switch {
+	case hasRowID || hasAutoIncID:
+		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, noCache, tblVer), nil
+	case hasAutoRandID:
+		return autoid.NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, noCache, tblVer), nil
+	default:
+		return nil, errors.Errorf("internal error: table %s has no auto ID", tblInfo.Name)
+	}
 }

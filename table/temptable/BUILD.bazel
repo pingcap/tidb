@@ -30,6 +30,7 @@ go_library(
 
 go_test(
     name = "temptable_test",
+    timeout = "short",
     srcs = [
         "ddl_test.go",
         "interceptor_test.go",
@@ -52,6 +53,7 @@ go_test(
         "//util/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_goleak//:goleak",
     ],
 )
