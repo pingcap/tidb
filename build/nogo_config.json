@@ -244,6 +244,9 @@
       ".*_generated\\.go$": "ignore generated code"
     },
     "only_files": {
+      "lock/": "lock file",
+      "errno/": "errno code",
+      "structure/": "structure code",
       "telemetry/": "telemetry code",
       "util/": "util code",
       "parser/": "parser code",
