@@ -3845,7 +3845,6 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	// TODO, what happens during upgrade/downgrade if there is a drop partition job in the queue?
 	job := &model.Job{
 		SchemaID:    schema.ID,
 		TableID:     meta.ID,

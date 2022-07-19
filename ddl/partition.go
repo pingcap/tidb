@@ -565,6 +565,9 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 	if colType == types.ETInt {
 		exprStr := fmt.Sprintf("((%s) - (%s)) DIV %d", lastPartLessThan, firstPartLessThan, endIdx-startIdx)
 		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
+		if err != nil {
+			return nil
+		}
 		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
 		if isNull || err != nil || val < 1 {
 			return nil
@@ -584,6 +587,9 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 	} else if colType == types.ETDatetime {
 		exprStr := fmt.Sprintf("TIMESTAMPDIFF(SECOND, '%s', '%s')", firstPartLessThan, lastPartLessThan)
 		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
+		if err != nil {
+			return nil
+		}
 		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
 		if isNull || err != nil || val < 1 {
 			return nil
