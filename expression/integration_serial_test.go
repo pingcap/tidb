@@ -2605,7 +2605,11 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select extract(day_hour from '2017-01-01 12:12:12'), extract(day_hour from '01 12:12:12'), extract(day_hour from '12:12:12'), extract(day_hour from '01 00:00:00.89')")
 	result.Check(testkit.Rows("112 36 12 24"))
 	result = tk.MustQuery("select extract(day_microsecond from cast('2017-01-01 12:12:12' as datetime)), extract(day_second from cast('2017-01-01 12:12:12' as datetime)), extract(day_minute from cast('2017-01-01 12:12:12' as datetime)), extract(day_hour from cast('2017-01-01 12:12:12' as datetime))")
-	result.Check(testkit.Rows("1121212000000 1121212 11212 112"))
+	result.Check(testkit.Rows("121212000000 121212 1212 12"))
+	result = tk.MustQuery("select extract(day_microsecond from cast(20010101020304.050607 as decimal(20,6))), extract(day_second from cast(20010101020304.050607 as decimal(20,6))), extract(day_minute from cast(20010101020304.050607 as decimal(20,6))), extract(day_hour from cast(20010101020304.050607 as decimal(20,6))), extract(day from cast(20010101020304.050607 as decimal(20,6)))")
+	result.Check(testkit.Rows("1020304050607 1020304 10203 102 1"))
+	result = tk.MustQuery("select extract(day_microsecond from cast(1020304.050607 as decimal(20,6))), extract(day_second from cast(1020304.050607 as decimal(20,6))), extract(day_minute from cast(1020304.050607 as decimal(20,6))), extract(day_hour from cast(1020304.050607 as decimal(20,6))), extract(day from cast(1020304.050607 as decimal(20,6)))")
+	result.Check(testkit.Rows("1020304050607 1020304 10203 102 4"))
 
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {

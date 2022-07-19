@@ -548,7 +548,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// ExtractDatetime: can be pushed
-	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, datetimeColumn)
+	extractDatetimeUnitCol := new(Constant)
+	extractDatetimeUnitCol.Value = types.NewStringDatum("day")
+	extractDatetimeUnitCol.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeUnitCol, datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -953,7 +956,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// ExtractDatetimeFromString: can not be pushed
-	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), stringColumn, stringColumn)
+	extractDatetimeFromStringUnitCol := new(Constant)
+	extractDatetimeFromStringUnitCol.Value = types.NewStringDatum("day_microsecond")
+	extractDatetimeFromStringUnitCol.RetType = types.NewFieldType(mysql.TypeString)
+	function, err = NewFunction(mock.NewContext(), ast.Extract, types.NewFieldType(mysql.TypeLonglong), extractDatetimeFromStringUnitCol, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
