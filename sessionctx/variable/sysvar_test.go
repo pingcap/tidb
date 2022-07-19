@@ -1058,7 +1058,6 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	require.NoError(t, err)
 }
 
-
 func TestDefaultMemoryDebugModeValue(t *testing.T) {
 	vars := NewSessionVars()
 	val, err := GetSessionOrGlobalSystemVar(vars, TiDBMemoryDebugModeMinHeapInUse)
@@ -1074,22 +1073,22 @@ func TestSetTIDBFastDDL(t *testing.T) {
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
-	fastDDL := GetSysVar(TiDBEnableFastDDL)
+	fastDDL := GetSysVar(TiDBDDLEnableFastReorg)
 
 	// Default off
 	require.Equal(t, fastDDL.Value, Off)
 
 	// Set to On
-	err := mock.SetGlobalSysVar(TiDBEnableFastDDL, On)
+	err := mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, On)
 	require.NoError(t, err)
-	val, err1 := mock.GetGlobalSysVar(TiDBEnableFastDDL)
+	val, err1 := mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
 	require.NoError(t, err1)
 	require.Equal(t, On, val)
 
 	// Set to off
-	err = mock.SetGlobalSysVar(TiDBEnableFastDDL, Off)
+	err = mock.SetGlobalSysVar(TiDBDDLEnableFastReorg, Off)
 	require.NoError(t, err)
-	val, err1 = mock.GetGlobalSysVar(TiDBEnableFastDDL)
+	val, err1 = mock.GetGlobalSysVar(TiDBDDLEnableFastReorg)
 	require.NoError(t, err1)
 	require.Equal(t, Off, val)
 }

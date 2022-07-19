@@ -1707,7 +1707,6 @@ var defaultSysVars = []*SysVar{
 		s.MemoryDebugModeAlarmRatio = TidbOptInt64(val, 0)
 		return nil
 	}},
-<<<<<<< HEAD
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
 		return nil
@@ -1720,15 +1719,11 @@ var defaultSysVars = []*SysVar{
 		SetSession: func(s *SessionVars, val string) error {
 			s.DefaultStrMatchSelectivity = tidbOptFloat64(val, DefTiDBDefaultStrMatchSelectivity)
 			return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBFastDDL, Value: BoolToOnOff(DefTiDBFastDDL), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
-		return BoolToOnOff(FastDDL.Load()), nil
-=======
-	{Scope: ScopeGlobal, Name: TiDBEnableFastDDL, Value: BoolToOnOff(DefTiDBEnableFastDDL), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
-		return BoolToOnOff(EnableFastDDL.Load()), nil
->>>>>>> 01d327f70 (Change the system variables name(#35983))
+		}},
+	{Scope: ScopeGlobal, Name: TiDBDDLEnableFastReorg, Value: BoolToOnOff(DefTiDBEnableFastReorg), Type: TypeBool, GetGlobal: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableFastReorg.Load()), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		EnableFastDDL.Store(TiDBOptOn(val))
+		EnableFastReorg.Store(TiDBOptOn(val))
 		return nil
 	}},
 	// This system var is set disk quota for lightning sort dir, from 100 GB to 1PB.

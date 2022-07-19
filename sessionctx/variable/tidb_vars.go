@@ -777,10 +777,6 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
-	// TiDBEnableFastDDL indicates whether use lighting to help acceleate adding index stmt.
-	TiDBEnableFastDDL = "tidb_enable_fast_ddl"
-	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
-	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBEnableConcurrentDDL indicates whether to enable the new DDL framework.
 	TiDBEnableConcurrentDDL = "tidb_enable_concurrent_ddl"
 	// TiDBAuthSigningCert indicates the path of the signing certificate to do token-based authentication.
@@ -791,6 +787,10 @@ const (
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
+	// TiDDDLBEnableFastReorg indicates whether use lighting to help acceleate adding index stmt.
+	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
+	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
+	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 )
 
 // TiDB intentional limits
@@ -999,18 +999,13 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
-<<<<<<< HEAD
 	DefAdaptiveClosestReadThreshold                = 4096
 	DefTiDBEnableAnalyzeSnapshot                   = false
 	DefTiDBGenerateBinaryPlan                      = true
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
-	DefTiDBFastDDL                                 = false
-	DefTiDBDiskQuota                               = 100 * 1024 * 1024 * 1024 // 100GB
-=======
-	DefTiDBEnableFastDDL                           = false
+	DefTiDBEnableFastReorg                         = false
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
->>>>>>> 01d327f70 (Change the system variables name(#35983))
 )
 
 // Process global variables.
@@ -1060,8 +1055,8 @@ var (
 	EnableConcurrentDDL               = atomic.NewBool(DefTiDBEnableConcurrentDDL)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
-	// EnableFastDDL indicates whether to use lightning to enhance DDL reorg performance.
-	EnableFastDDL = atomic.NewBool(false)
+	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
+	EnableFastReorg = atomic.NewBool(false)
 	// Temporary Variable for set dist quota for lightning add index, int type, GB as unit
 	DDLDiskQuota = atomic.NewInt64(DefTiDBDDLDiskQuota)
 )
