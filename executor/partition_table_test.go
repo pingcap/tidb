@@ -352,14 +352,67 @@ func TestOrderByandLimit(t *testing.T) {
 	// regular table
 	tk.MustExec("create table tregular(a int, b int, index idx_a(a))")
 
+	// range partition table with int pk
+	tk.MustExec(`create table trange_intpk(a int primary key, b int) partition by range(a) (
+		partition p0 values less than(300),
+		partition p1 values less than (500),
+		partition p2 values less than(1100));`)
+
+	// hash partition table with int pk
+	tk.MustExec("create table thash_intpk(a int primary key, b int) partition by hash(a) partitions 4;")
+
+	// regular table with int pk
+	tk.MustExec("create table tregular_intpk(a int primary key, b int)")
+
+	// range partition table with clustered index
+	tk.MustExec(`create table trange_clustered(a int, b int, primary key(a, b) clustered) partition by range(a) (
+		partition p0 values less than(300),
+		partition p1 values less than (500),
+		partition p2 values less than(1100));`)
+
+	// hash partition table with clustered index
+	tk.MustExec("create table thash_clustered(a int, b int, primary key(a, b) clustered) partition by hash(a) partitions 4;")
+
+	// regular table with clustered index
+	tk.MustExec("create table tregular_clustered(a int, b int, primary key(a, b) clustered)")
+
 	// generate some random data to be inserted
 	vals := make([]string, 0, 2000)
 	for i := 0; i < 2000; i++ {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000)))
 	}
+
+	dedupValsA := make([]string, 0, 2000)
+	dedupMapA := make(map[int]struct{}, 2000)
+	for i := 0; i < 2000; i++ {
+		valA := rand.Intn(1100)
+		if _, ok := dedupMapA[valA]; ok {
+			continue
+		}
+		dedupValsA = append(dedupValsA, fmt.Sprintf("(%v, %v)", valA, rand.Intn(2000)))
+		dedupMapA[valA] = struct{}{}
+	}
+
+	dedupValsAB := make([]string, 0, 2000)
+	dedupMapAB := make(map[string]struct{}, 2000)
+	for i := 0; i < 2000; i++ {
+		val := fmt.Sprintf("(%v, %v)", rand.Intn(1100), rand.Intn(2000))
+		if _, ok := dedupMapAB[val]; ok {
+			continue
+		}
+		dedupValsAB = append(dedupValsAB, val)
+		dedupMapAB[val] = struct{}{}
+	}
+
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into thash values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tregular values " + strings.Join(vals, ","))
+	tk.MustExec("insert into trange_intpk values " + strings.Join(dedupValsA, ","))
+	tk.MustExec("insert into thash_intpk values " + strings.Join(dedupValsA, ","))
+	tk.MustExec("insert into tregular_intpk values " + strings.Join(dedupValsA, ","))
+	tk.MustExec("insert into trange_clustered values " + strings.Join(dedupValsAB, ","))
+	tk.MustExec("insert into thash_clustered values " + strings.Join(dedupValsAB, ","))
+	tk.MustExec("insert into tregular_clustered values " + strings.Join(dedupValsAB, ","))
 
 	// test indexLookUp
 	for i := 0; i < 100; i++ {
@@ -389,6 +442,8 @@ func TestOrderByandLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "IndexLookUp"))
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "Limit"))
 		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
+		require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // but not fully pushed
+		require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
@@ -422,6 +477,33 @@ func TestOrderByandLimit(t *testing.T) {
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		tk.MustQuery(queryRangePartition).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartition).Sort().Check(regularResult)
+
+		// test int pk
+		// To be simplified, we only read column a.
+		queryRangePartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange_intpk use index(primary) where a > %v order by a limit %v", x, y)
+		queryHashPartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash_intpk use index(primary) where a > %v order by a limit %v", x, y)
+		queryRegular = fmt.Sprintf("select a from tregular_intpk where a > %v order by a limit %v", x, y)
+		require.True(t, tk.HasPlan(queryRangePartition, "TableReader"))
+		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
+		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is not pushed
+		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
+		regularResult = tk.MustQuery(queryRegular).Rows()
+		tk.MustQuery(queryRangePartition).Check(regularResult)
+		tk.MustQuery(queryHashPartition).Check(regularResult)
+
+		// test clustered index
+		queryRangePartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from trange_clustered use index(primary) where a > %v order by a, b limit %v;", x, y)
+		queryHashPartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash_clustered use index(primary) where a > %v order by a, b limit %v;", x, y)
+		queryRegular = fmt.Sprintf("select * from tregular_clustered where a > %v order by a, b limit %v;", x, y)
+		require.True(t, tk.HasPlan(queryRangePartition, "TableReader")) // check if tableReader is used
+		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
+		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
+		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
+		require.True(t, tk.HasPlan(queryRangePartition, "TopN")) // but not fully pushed
+		require.True(t, tk.HasPlan(queryHashPartition, "TopN"))
+		regularResult = tk.MustQuery(queryRegular).Rows()
+		tk.MustQuery(queryRangePartition).Check(regularResult)
+		tk.MustQuery(queryHashPartition).Check(regularResult)
 	}
 
 	// test indexReader
@@ -464,6 +546,7 @@ func TestOrderByandLimit(t *testing.T) {
 		require.True(t, tk.HasPlan(queryPartition, "IndexMerge")) // check if indexMerge is used
 		tk.MustQuery(queryPartition).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
+
 }
 
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
