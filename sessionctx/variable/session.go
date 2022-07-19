@@ -2727,10 +2727,8 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 //     0.8 (the default value) is also a special value. For backward compatability, when the variable is set to 0.8, we
 //   keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
-	if s.DefaultStrMatchSelectivity == 0 {
-		return 0.9
-	} else if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
+	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
-	return 1 - s.DefaultStrMatchSelectivity
+	return 1 - s.GetStrMatchDefaultSelectivity()
 }
