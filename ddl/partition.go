@@ -585,8 +585,8 @@ func NewPartitionInfoIfRangeIntervalPartitioned(ctx sessionctx.Context, tbInfo *
 		endExpr = ast.NewValueExpr(endVal, "", "")
 		interval.LastRangeEnd = &endExpr
 		exprStr := fmt.Sprintf("((%d) - (%d)) DIV %d", endVal, startVal, endIdx-startIdx)
-		//exprStr := fmt.Sprintf("(%d) - (%d)", endVal, startVal)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
+		var exprs []expression.Expression
+		exprs, err = expression.ParseSimpleExprsWithNames(ctx, exprStr, nil, nil)
 		val, isNull, err := exprs[0].EvalInt(ctx, chunk.Row{})
 		if isNull || err != nil {
 			return nil
