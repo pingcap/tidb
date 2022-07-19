@@ -617,14 +617,14 @@ type Status struct {
 
 // S3 is the config of oom alarm upload to S3.
 type S3 struct {
-	AccessKey        string `toml:"access-key" json:"access-key"`
-	SecretKey        string `toml:"secret-key" json:"secret-key"`
-	EndPoint         string `toml:"end-point" json:"end-point"`
-	RegionName       string `toml:"region-name" json:"region-name"`
-	BucketName       string `toml:"bucket-name" json:"bucket-name"`
-	DisableSSL       bool   `toml:"disable-ssl" json:"disable-ssl"`
-	S3ForcePathStyle bool   `toml:"s3-force-path-style" json:"s3-force-path-style"`
-	RecordToS3       bool   `toml:"record-to-s3" json:"record-to-s3"`
+	AccessKey             string `toml:"access-key" json:"access-key"`
+	SecretKey             string `toml:"secret-key" json:"secret-key"`
+	EndPoint              string `toml:"end-point" json:"end-point"`
+	RegionName            string `toml:"region-name" json:"region-name"`
+	BucketName            string `toml:"bucket-name" json:"bucket-name"`
+	DisableSSL            bool   `toml:"disable-ssl" json:"disable-ssl"`
+	S3ForcePathStyle      bool   `toml:"s3-force-path-style" json:"s3-force-path-style"`
+	EnableUploadOOMRecord bool   `toml:"enable-upload-oom-record" json:"enable-upload-oom-record"`
 }
 
 // Performance is the performance section of the config.
@@ -886,6 +886,16 @@ var defaultConf = Config{
 		GRPCConcurrentStreams: 1024,
 		GRPCInitialWindowSize: 2 * 1024 * 1024,
 		GRPCMaxSendMsgSize:    math.MaxInt32,
+	},
+	S3: S3{
+		AccessKey:             "",
+		SecretKey:             "",
+		EndPoint:              "",
+		RegionName:            "",
+		BucketName:            "",
+		DisableSSL:            true,
+		S3ForcePathStyle:      true,
+		EnableUploadOOMRecord: false,
 	},
 	Performance: Performance{
 		MaxMemory:             0,

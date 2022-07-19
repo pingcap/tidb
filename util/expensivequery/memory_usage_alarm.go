@@ -38,14 +38,14 @@ import (
 )
 
 type s3Config struct {
-	accessKey        string
-	secretKey        string
-	endPoint         string
-	regionName       string
-	bucketName       string
-	disableSSL       bool
-	s3ForcePathStyle bool
-	recordToS3       bool
+	accessKey             string
+	secretKey             string
+	endPoint              string
+	regionName            string
+	bucketName            string
+	disableSSL            bool
+	s3ForcePathStyle      bool
+	enableUploadOOMRecord bool
 }
 
 type memoryUsageAlarm struct {
@@ -64,19 +64,19 @@ type memoryUsageAlarm struct {
 }
 
 func (record *memoryUsageAlarm) initS3Config() {
-	if recordToS3 := config.GetGlobalConfig().S3.RecordToS3; recordToS3 {
+	if recordToS3 := config.GetGlobalConfig().S3.EnableUploadOOMRecord; recordToS3 {
 		record.s3Conf.accessKey = config.GetGlobalConfig().S3.AccessKey
 		record.s3Conf.secretKey = config.GetGlobalConfig().S3.SecretKey
 		record.s3Conf.endPoint = config.GetGlobalConfig().S3.EndPoint
 		record.s3Conf.bucketName = config.GetGlobalConfig().S3.BucketName
 		record.s3Conf.disableSSL = config.GetGlobalConfig().S3.DisableSSL
 		record.s3Conf.s3ForcePathStyle = config.GetGlobalConfig().S3.S3ForcePathStyle
-		record.s3Conf.recordToS3 = config.GetGlobalConfig().S3.RecordToS3
+		record.s3Conf.enableUploadOOMRecord = config.GetGlobalConfig().S3.EnableUploadOOMRecord
 	}
 }
 
 func (record *memoryUsageAlarm) uploadFileToS3(filenames []string) {
-	if record.s3Conf.recordToS3 && record.initialized && time.Since(record.lastCheckTime) > 600*time.Second {
+	if record.s3Conf.enableUploadOOMRecord && record.initialized && time.Since(record.lastCheckTime) > 600*time.Second {
 		sess, err := session.NewSession(&aws.Config{
 			Credentials:      credentials.NewStaticCredentials(record.s3Conf.accessKey, record.s3Conf.secretKey, ""),
 			Endpoint:         aws.String(record.s3Conf.endPoint),
