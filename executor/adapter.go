@@ -220,7 +220,7 @@ type ExecStmt struct {
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
 	// [2]time.Duration to record such info for each phase. The first duration
-	// is increased only whithin the current iteration. When we meet a
+	// is increased only within the current iteration. When we meet a
 	// pessimistic lock error and decide to retry, we add the first duration to
 	// the second and reset the first to 0 by calling `resetPhaseDurations`.
 	phaseBuildDurations [2]time.Duration
@@ -952,6 +952,7 @@ const (
 	phaseCommitWaitLatestTS = "commit:wait:latest-ts"
 	phaseCommitWaitLatch    = "commit:wait:local-latch"
 	phaseCommitWaitBinlog   = "commit:wait:prewrite-binlog"
+	phaseWriteResponse      = "write-response"
 )
 
 var (
@@ -974,6 +975,7 @@ var (
 	execCommitWaitLatestTS = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatestTS, "0")
 	execCommitWaitLatch    = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitLatch, "0")
 	execCommitWaitBinlog   = metrics.ExecPhaseDuration.WithLabelValues(phaseCommitWaitBinlog, "0")
+	execWriteResponse      = metrics.ExecPhaseDuration.WithLabelValues(phaseWriteResponse, "0")
 )
 
 func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
@@ -1009,6 +1011,8 @@ func getPhaseDurationObserver(phase string, internal bool) prometheus.Observer {
 		return execCommitWaitLatch
 	case phaseCommitWaitBinlog:
 		return execCommitWaitBinlog
+	case phaseWriteResponse:
+		return execWriteResponse
 	default:
 		return metrics.ExecPhaseDuration.WithLabelValues(phase, "0")
 	}
@@ -1032,22 +1036,27 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 			getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
 		}
 	}
-	if commitDetails == nil {
-		return
+	if commitDetails != nil {
+		for _, it := range []struct {
+			duration time.Duration
+			phase    string
+		}{
+			{commitDetails.PrewriteTime, phaseCommitPrewrite},
+			{commitDetails.CommitTime, phaseCommitCommit},
+			{commitDetails.GetCommitTsTime, phaseCommitWaitCommitTS},
+			{commitDetails.GetLatestTsTime, phaseCommitWaitLatestTS},
+			{commitDetails.LocalLatchTime, phaseCommitWaitLatch},
+			{commitDetails.WaitPrewriteBinlogTime, phaseCommitWaitBinlog},
+		} {
+			if it.duration > 0 {
+				getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
+			}
+		}
 	}
-	for _, it := range []struct {
-		duration time.Duration
-		phase    string
-	}{
-		{commitDetails.PrewriteTime, phaseCommitPrewrite},
-		{commitDetails.CommitTime, phaseCommitCommit},
-		{commitDetails.GetCommitTsTime, phaseCommitWaitCommitTS},
-		{commitDetails.GetLatestTsTime, phaseCommitWaitLatestTS},
-		{commitDetails.LocalLatchTime, phaseCommitWaitLatch},
-		{commitDetails.WaitPrewriteBinlogTime, phaseCommitWaitBinlog},
-	} {
-		if it.duration > 0 {
-			getPhaseDurationObserver(it.phase, internal).Observe(it.duration.Seconds())
+	if stmtDetailsRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey); stmtDetailsRaw != nil {
+		d := stmtDetailsRaw.(*execdetails.StmtExecDetails).WriteSQLRespDuration
+		if d > 0 {
+			getPhaseDurationObserver(phaseWriteResponse, internal).Observe(d.Seconds())
 		}
 	}
 }

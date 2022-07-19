@@ -1465,7 +1465,18 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
+	var (
+		stmtDetail *execdetails.StmtExecDetails
+		startTime  time.Time
+	)
+	if stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey); stmtDetailRaw != nil {
+		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
+		startTime = time.Now()
+	}
 	defer func() {
+		if stmtDetail != nil {
+			stmtDetail.WriteSQLRespDuration += time.Since(startTime)
+		}
 		trace.StartRegion(ctx, "FlushClientConn").End()
 		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
 			for _, err := range ctx.GetWarnings() {
@@ -2208,6 +2219,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	req := rs.NewChunk(cc.chunkAlloc)
 	gotColumnInfo := false
 	firstNext := true
+	var start time.Time
 	var stmtDetail *execdetails.StmtExecDetails
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
@@ -2234,8 +2246,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
+			if stmtDetail != nil {
+				start = time.Now()
+			}
 			if err = cc.writeColumnInfo(columns, serverStatus); err != nil {
 				return false, err
+			}
+			if stmtDetail != nil {
+				stmtDetail.WriteSQLRespDuration += time.Since(start)
 			}
 			gotColumnInfo = true
 		}
@@ -2244,7 +2262,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			break
 		}
 		reg := trace.StartRegion(ctx, "WriteClientConn")
-		start := time.Now()
+		if stmtDetail != nil {
+			start = time.Now()
+		}
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
@@ -2266,7 +2286,14 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-	return false, cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+	err := cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+	return false, err
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
@@ -2323,8 +2350,13 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-	start := time.Now()
-	var err error
+	var (
+		err   error
+		start time.Time
+	)
+	if stmtDetail != nil {
+		start = time.Now()
+	}
 	for _, row := range curRows {
 		data = data[0:4]
 		data, err = dumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
@@ -2341,7 +2373,14 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	return cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		start = time.Now()
+	}
+	err = cc.writeEOF(serverStatus)
+	if stmtDetail != nil {
+		stmtDetail.WriteSQLRespDuration += time.Since(start)
+	}
+	return err
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {
