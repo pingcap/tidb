@@ -276,6 +276,7 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"AGG_TO_COP()", "AGG_TO_COP()"},
 		{"AGG_TO_COP(@sel_1)", "AGG_TO_COP(@`sel_1`)"},
 		{"LIMIT_TO_COP()", "LIMIT_TO_COP()"},
+		{"MERGE()", "MERGE()"},
 		{"STRAIGHT_JOIN()", "STRAIGHT_JOIN()"},
 		{"NO_INDEX_MERGE()", "NO_INDEX_MERGE()"},
 		{"NO_INDEX_MERGE(@sel1)", "NO_INDEX_MERGE(@`sel1`)"},
