@@ -10305,3 +10305,14 @@ func (s *testIntegrationSuite) TestIssue29244(c *C) {
 	tk.MustExec("set tidb_enable_vectorized_expression = off;")
 	tk.MustQuery("select microsecond(a) from t;").Check(testkit.Rows("123500", "123500"))
 }
+
+func TestIssue34998(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `PK_S_MULTI_43`(`COL1` time(2) NOT NULL, `COL2` time(2) NOT NULL, `COL3` time(2) DEFAULT NULL, PRIMARY KEY(`COL1`,`COL2`))")
+	tk.MustExec("insert into PK_S_MULTI_43(col1, col2) values('-512:37:22.00', '-512:37:22.00')")
+	tk.MustQuery("select extract(day_microsecond from '-512:37:22.00')").Check(testkit.Rows("-5123722000000"))
+	tk.MustQuery("select extract(day_microsecond from col1) from PK_S_MULTI_43").Check(testkit.Rows("-5123722000000"))
+}
