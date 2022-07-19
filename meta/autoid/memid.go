@@ -65,7 +65,10 @@ func (alloc *inMemoryAllocator) GetType() AllocatorType {
 
 // NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
 func (alloc *inMemoryAllocator) NextGlobalAutoID() (int64, error) {
-	return alloc.base, nil
+	if alloc.isUnsigned {
+		return int64(uint64(alloc.base) + 1), nil
+	}
+	return alloc.base + 1, nil
 }
 
 func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {

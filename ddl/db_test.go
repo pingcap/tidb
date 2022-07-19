@@ -918,6 +918,63 @@ func TestShardRowIDBitsOnTemporaryTable(t *testing.T) {
 		dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE").Error())
 }
 
+func TestAutoIncrementIDOnTemporaryTable(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// global temporary table with auto_increment=0
+	tk.MustExec("drop table if exists global_temp_auto_id")
+	tk.MustExec("create global temporary table global_temp_auto_id(id int primary key auto_increment) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 1 AUTO_INCREMENT"))
+	tk.MustExec("insert into global_temp_auto_id value(null)")
+	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("1"))
+	tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 2 AUTO_INCREMENT"))
+	tk.MustExec("commit")
+	tk.MustExec("drop table global_temp_auto_id")
+
+	// global temporary table with auto_increment=100
+	tk.MustExec("create global temporary table global_temp_auto_id(id int primary key auto_increment) auto_increment=100 on commit delete rows")
+	// the result should be the same in each transaction
+	for i := 0; i < 2; i++ {
+		tk.MustQuery("show create table global_temp_auto_id").Check(testkit.Rows("global_temp_auto_id CREATE GLOBAL TEMPORARY TABLE `global_temp_auto_id` (\n" +
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 ON COMMIT DELETE ROWS"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 100 AUTO_INCREMENT"))
+		tk.MustExec("begin")
+		tk.MustExec("insert into global_temp_auto_id value(null)")
+		tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
+		tk.MustQuery("select id from global_temp_auto_id").Check(testkit.Rows("100"))
+		tk.MustQuery("show table global_temp_auto_id next_row_id").Check(testkit.Rows("test global_temp_auto_id id 101 AUTO_INCREMENT"))
+		tk.MustExec("commit")
+	}
+	tk.MustExec("drop table global_temp_auto_id")
+
+	// local temporary table with auto_increment=0
+	tk.MustExec("create temporary table local_temp_auto_id(id int primary key auto_increment)")
+	// It doesn't matter to report an error since `show next_row_id` is an extended syntax.
+	err := tk.QueryToErr("show table local_temp_auto_id next_row_id")
+	require.EqualError(t, err, "[schema:1146]Table 'test.local_temp_auto_id' doesn't exist")
+	tk.MustExec("insert into local_temp_auto_id value(null)")
+	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from local_temp_auto_id").Check(testkit.Rows("1"))
+	tk.MustExec("drop table local_temp_auto_id")
+
+	// local temporary table with auto_increment=100
+	tk.MustExec("create temporary table local_temp_auto_id(id int primary key auto_increment) auto_increment=100")
+	tk.MustQuery("show create table local_temp_auto_id").Check(testkit.Rows("local_temp_auto_id CREATE TEMPORARY TABLE `local_temp_auto_id` (\n" +
+		"  `id` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100"))
+	tk.MustExec("insert into local_temp_auto_id value(null)")
+	tk.MustQuery("select @@last_insert_id").Check(testkit.Rows("100"))
+	tk.MustQuery("select id from local_temp_auto_id").Check(testkit.Rows("100"))
+}
+
 func TestDDLJobErrorCount(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 	defer clean()

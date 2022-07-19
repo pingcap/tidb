@@ -180,6 +180,12 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
 	allocs := make([]autoid.Allocator, 0, 1)
 	if alloc != nil {
+		// Rebase the allocator if the base is specified.
+		if tbInfo.AutoIncID > 1 {
+			if err = alloc.Rebase(context.Background(), tbInfo.AutoIncID-1, false); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 		allocs = append(allocs, alloc)
 	}
 	return tables.TableFromMeta(allocs, tbInfo)
