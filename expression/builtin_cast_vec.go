@@ -63,7 +63,7 @@ func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	return nil
 }
 
-func (_ *builtinCastIntAsDurationSig) vectorized() bool {
+func (*builtinCastIntAsDurationSig) vectorized() bool {
 	return true
 }
 
@@ -84,7 +84,7 @@ func (b *builtinCastIntAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (_ *builtinCastIntAsIntSig) vectorized() bool {
+func (*builtinCastIntAsIntSig) vectorized() bool {
 	return true
 }
 
@@ -128,7 +128,7 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (_ *builtinCastIntAsRealSig) vectorized() bool {
+func (*builtinCastIntAsRealSig) vectorized() bool {
 	return true
 }
 
@@ -153,11 +153,11 @@ func (b *builtinCastRealAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastRealAsRealSig) vectorized() bool {
+func (*builtinCastRealAsRealSig) vectorized() bool {
 	return true
 }
 
-func (_ *builtinCastTimeAsJSONSig) vectorized() bool {
+func (*builtinCastTimeAsJSONSig) vectorized() bool {
 	return true
 }
 
@@ -189,7 +189,7 @@ func (b *builtinCastTimeAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastRealAsStringSig) vectorized() bool {
+func (*builtinCastRealAsStringSig) vectorized() bool {
 	return true
 }
 
@@ -239,7 +239,7 @@ func (b *builtinCastRealAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 	return nil
 }
 
-func (_ *builtinCastDecimalAsStringSig) vectorized() bool {
+func (*builtinCastDecimalAsStringSig) vectorized() bool {
 	return true
 }
 
@@ -279,7 +279,7 @@ func (b *builtinCastDecimalAsStringSig) vecEvalString(input *chunk.Chunk, result
 	return nil
 }
 
-func (_ *builtinCastTimeAsDecimalSig) vectorized() bool {
+func (*builtinCastTimeAsDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -315,7 +315,7 @@ func (b *builtinCastTimeAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	return nil
 }
 
-func (_ *builtinCastDurationAsIntSig) vectorized() bool {
+func (*builtinCastDurationAsIntSig) vectorized() bool {
 	return true
 }
 
@@ -355,7 +355,7 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (_ *builtinCastIntAsTimeSig) vectorized() bool {
+func (*builtinCastIntAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -405,7 +405,7 @@ func (b *builtinCastIntAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (_ *builtinCastRealAsJSONSig) vectorized() bool {
+func (*builtinCastRealAsJSONSig) vectorized() bool {
 	return true
 }
 
@@ -432,7 +432,7 @@ func (b *builtinCastRealAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastJSONAsRealSig) vectorized() bool {
+func (*builtinCastJSONAsRealSig) vectorized() bool {
 	return true
 }
 
@@ -463,7 +463,7 @@ func (b *builtinCastJSONAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastJSONAsTimeSig) vectorized() bool {
+func (*builtinCastJSONAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -508,7 +508,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastRealAsTimeSig) vectorized() bool {
+func (*builtinCastRealAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -555,7 +555,7 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastDecimalAsDecimalSig) vectorized() bool {
+func (*builtinCastDecimalAsDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -586,7 +586,7 @@ func (b *builtinCastDecimalAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resu
 	return nil
 }
 
-func (_ *builtinCastDurationAsTimeSig) vectorized() bool {
+func (*builtinCastDurationAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -633,7 +633,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 	return nil
 }
 
-func (_ *builtinCastIntAsStringSig) vectorized() bool {
+func (*builtinCastIntAsStringSig) vectorized() bool {
 	return true
 }
 
@@ -685,7 +685,7 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (_ *builtinCastRealAsIntSig) vectorized() bool {
+func (*builtinCastRealAsIntSig) vectorized() bool {
 	return true
 }
 
@@ -730,7 +730,7 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (_ *builtinCastTimeAsRealSig) vectorized() bool {
+func (*builtinCastTimeAsRealSig) vectorized() bool {
 	return true
 }
 
@@ -768,7 +768,7 @@ func (b *builtinCastTimeAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastStringAsJSONSig) vectorized() bool {
+func (*builtinCastStringAsJSONSig) vectorized() bool {
 	return true
 }
 
@@ -810,7 +810,7 @@ func (b *builtinCastStringAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (_ *builtinCastRealAsDecimalSig) vectorized() bool {
+func (*builtinCastRealAsDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -855,7 +855,7 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	return nil
 }
 
-func (_ *builtinCastStringAsIntSig) vectorized() bool {
+func (*builtinCastStringAsIntSig) vectorized() bool {
 	return true
 }
 
@@ -918,7 +918,7 @@ func (b *builtinCastStringAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastStringAsDurationSig) vectorized() bool {
+func (*builtinCastStringAsDurationSig) vectorized() bool {
 	return true
 }
 
@@ -957,7 +957,7 @@ func (b *builtinCastStringAsDurationSig) vecEvalDuration(input *chunk.Chunk, res
 	return nil
 }
 
-func (_ *builtinCastDurationAsDecimalSig) vectorized() bool {
+func (*builtinCastDurationAsDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -996,7 +996,7 @@ func (b *builtinCastDurationAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 	return nil
 }
 
-func (_ *builtinCastIntAsDecimalSig) vectorized() bool {
+func (*builtinCastIntAsDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -1042,7 +1042,7 @@ func (b *builtinCastIntAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *
 	return nil
 }
 
-func (_ *builtinCastIntAsJSONSig) vectorized() bool {
+func (*builtinCastIntAsJSONSig) vectorized() bool {
 	return true
 }
 
@@ -1087,7 +1087,7 @@ func (b *builtinCastIntAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 	return nil
 }
 
-func (_ *builtinCastJSONAsJSONSig) vectorized() bool {
+func (*builtinCastJSONAsJSONSig) vectorized() bool {
 	return true
 }
 
@@ -1095,7 +1095,7 @@ func (b *builtinCastJSONAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 	return b.args[0].VecEvalJSON(b.ctx, input, result)
 }
 
-func (_ *builtinCastJSONAsStringSig) vectorized() bool {
+func (*builtinCastJSONAsStringSig) vectorized() bool {
 	return true
 }
 
@@ -1121,7 +1121,7 @@ func (b *builtinCastJSONAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 	return nil
 }
 
-func (_ *builtinCastDurationAsRealSig) vectorized() bool {
+func (*builtinCastDurationAsRealSig) vectorized() bool {
 	return true
 }
 
@@ -1160,7 +1160,7 @@ func (b *builtinCastDurationAsRealSig) vecEvalReal(input *chunk.Chunk, result *c
 	return nil
 }
 
-func (_ *builtinCastJSONAsIntSig) vectorized() bool {
+func (*builtinCastJSONAsIntSig) vectorized() bool {
 	return true
 }
 
@@ -1191,7 +1191,7 @@ func (b *builtinCastJSONAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (_ *builtinCastRealAsDurationSig) vectorized() bool {
+func (*builtinCastRealAsDurationSig) vectorized() bool {
 	return true
 }
 
@@ -1231,7 +1231,7 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 	return nil
 }
 
-func (_ *builtinCastTimeAsDurationSig) vectorized() bool {
+func (*builtinCastTimeAsDurationSig) vectorized() bool {
 	return true
 }
 
@@ -1266,7 +1266,7 @@ func (b *builtinCastTimeAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 	return nil
 }
 
-func (_ *builtinCastDurationAsDurationSig) vectorized() bool {
+func (*builtinCastDurationAsDurationSig) vectorized() bool {
 	return true
 }
 
@@ -1295,7 +1295,7 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 	return nil
 }
 
-func (_ *builtinCastDurationAsStringSig) vectorized() bool {
+func (*builtinCastDurationAsStringSig) vectorized() bool {
 	return true
 }
 
@@ -1337,7 +1337,7 @@ func (b *builtinCastDurationAsStringSig) vecEvalString(input *chunk.Chunk, resul
 	return nil
 }
 
-func (_ *builtinCastDecimalAsRealSig) vectorized() bool {
+func (*builtinCastDecimalAsRealSig) vectorized() bool {
 	return true
 }
 
@@ -1383,7 +1383,7 @@ func (b *builtinCastDecimalAsRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (_ *builtinCastDecimalAsTimeSig) vectorized() bool {
+func (*builtinCastDecimalAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -1425,7 +1425,7 @@ func (b *builtinCastDecimalAsTimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (_ *builtinCastTimeAsIntSig) vectorized() bool {
+func (*builtinCastTimeAsIntSig) vectorized() bool {
 	return true
 }
 
@@ -1461,7 +1461,7 @@ func (b *builtinCastTimeAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (_ *builtinCastTimeAsTimeSig) vectorized() bool {
+func (*builtinCastTimeAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -1500,7 +1500,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 	return nil
 }
 
-func (_ *builtinCastTimeAsStringSig) vectorized() bool {
+func (*builtinCastTimeAsStringSig) vectorized() bool {
 	return true
 }
 
@@ -1542,7 +1542,7 @@ func (b *builtinCastTimeAsStringSig) vecEvalString(input *chunk.Chunk, result *c
 	return nil
 }
 
-func (_ *builtinCastJSONAsDecimalSig) vectorized() bool {
+func (*builtinCastJSONAsDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -1577,7 +1577,7 @@ func (b *builtinCastJSONAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	return nil
 }
 
-func (_ *builtinCastStringAsRealSig) vectorized() bool {
+func (*builtinCastStringAsRealSig) vectorized() bool {
 	return true
 }
 
@@ -1626,7 +1626,7 @@ func (b *builtinCastStringAsRealSig) vecEvalReal(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (_ *builtinCastStringAsDecimalSig) vectorized() bool {
+func (*builtinCastStringAsDecimalSig) vectorized() bool {
 	return true
 }
 
@@ -1668,7 +1668,7 @@ func (b *builtinCastStringAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, resul
 	return nil
 }
 
-func (_ *builtinCastStringAsTimeSig) vectorized() bool {
+func (*builtinCastStringAsTimeSig) vectorized() bool {
 	return true
 }
 
@@ -1717,7 +1717,7 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 	return nil
 }
 
-func (_ *builtinCastDecimalAsIntSig) vectorized() bool {
+func (*builtinCastDecimalAsIntSig) vectorized() bool {
 	return true
 }
 
@@ -1770,7 +1770,7 @@ func (b *builtinCastDecimalAsIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (_ *builtinCastDecimalAsDurationSig) vectorized() bool {
+func (*builtinCastDecimalAsDurationSig) vectorized() bool {
 	return true
 }
 
@@ -1811,7 +1811,7 @@ func (b *builtinCastDecimalAsDurationSig) vecEvalDuration(input *chunk.Chunk, re
 	return nil
 }
 
-func (_ *builtinCastStringAsStringSig) vectorized() bool {
+func (*builtinCastStringAsStringSig) vectorized() bool {
 	return true
 }
 
@@ -1852,7 +1852,7 @@ func (b *builtinCastStringAsStringSig) vecEvalString(input *chunk.Chunk, result 
 	return nil
 }
 
-func (_ *builtinCastJSONAsDurationSig) vectorized() bool {
+func (*builtinCastJSONAsDurationSig) vectorized() bool {
 	return true
 }
 
@@ -1892,7 +1892,7 @@ func (b *builtinCastJSONAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 	return nil
 }
 
-func (_ *builtinCastDecimalAsJSONSig) vectorized() bool {
+func (*builtinCastDecimalAsJSONSig) vectorized() bool {
 	return true
 }
 
@@ -1925,7 +1925,7 @@ func (b *builtinCastDecimalAsJSONSig) vecEvalJSON(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (_ *builtinCastDurationAsJSONSig) vectorized() bool {
+func (*builtinCastDurationAsJSONSig) vectorized() bool {
 	return true
 }
 

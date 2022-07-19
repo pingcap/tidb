@@ -1773,7 +1773,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 // in special cast context that negative unsigned num will be zero.
 type inCastContext int
 
-func (_ inCastContext) String() string {
+func (inCastContext) String() string {
 	return "__cast_ctx"
 }
 
