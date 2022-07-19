@@ -1000,6 +1000,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		partName := "SYS_P_LT_" + valStr
 		if timeUnit != ast.TimeUnitInvalid {
 			currExpr = ast.NewValueExpr(valStr, "", "")
+		} else {
+			if valStr[:1] == "-" {
+				currExpr = ast.NewValueExpr(currVal.GetInt64(), "", "")
+			} else {
+				currExpr = ast.NewValueExpr(currVal.GetUint64(), "", "")
+			}
 		}
 		partDefs = append(partDefs, &ast.PartitionDefinition{
 			Name: model.NewCIStr(partName),
