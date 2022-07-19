@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
-        "//br/pkg/utils",
         "//br/pkg/version/build",
         "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",

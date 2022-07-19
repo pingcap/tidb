@@ -257,6 +257,7 @@ const (
 	TiDBVersion          = "tidb_version"
 	TiDBIsDDLOwner       = "tidb_is_ddl_owner"
 	TiDBDecodePlan       = "tidb_decode_plan"
+	TiDBDecodeBinaryPlan = "tidb_decode_binary_plan"
 	TiDBDecodeSQLDigests = "tidb_decode_sql_digests"
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"

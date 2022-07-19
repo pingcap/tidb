@@ -11,6 +11,7 @@ go_library(
         "json.go",
         "key.go",
         "math.go",
+        "misc.go",
         "permission.go",
         "pprof.go",
         "progress.go",
@@ -31,6 +32,10 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
+<<<<<<< HEAD
+=======
+        "//parser/types",
+>>>>>>> de017e9eea670d050ae5dc7519da11baf632efa0
         "//sessionctx",
         "//util",
         "//util/sqlexec",
@@ -67,6 +72,7 @@ go_test(
         "key_test.go",
         "main_test.go",
         "math_test.go",
+        "misc_test.go",
         "progress_test.go",
         "safe_point_test.go",
         "schema_test.go",
@@ -79,6 +85,10 @@ go_test(
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
+<<<<<<< HEAD
+=======
+        "//parser/types",
+>>>>>>> de017e9eea670d050ae5dc7519da11baf632efa0
         "//statistics/handle",
         "//tablecodec",
         "//testkit/testsetup",

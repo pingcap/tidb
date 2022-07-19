@@ -36,7 +36,6 @@ go_library(
         "//br/pkg/pdutil",
         "//br/pkg/redact",
         "//br/pkg/storage",
-        "//br/pkg/utils",
         "//br/pkg/version",
         "//br/pkg/version/build",
         "//ddl",

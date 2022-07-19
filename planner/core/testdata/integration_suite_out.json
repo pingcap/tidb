@@ -1810,7 +1810,7 @@
         "SQL": "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)",
         "Plan": [
           "Selection_6 0.01 8.60 root  eq(test.t2.b, 2), in(test.t2.c, 1, 2, 3, 4, 5)",
-          "└─Point_Get_5 1.00 0.00 root table:t2, index:idx_a(a) "
+          "└─Point_Get_5 1.00 5.60 root table:t2, index:idx_a(a) "
         ],
         "Warnings": [
           "Note 1105 unique index idx_a of t2 is selected since the path only has point ranges with double scan"
@@ -1867,7 +1867,7 @@
         "Plan": [
           "Delete_4 N/A N/A root  N/A",
           "└─Selection_7 2.00 9.80 root  in(test.t1.g, 3, 4)",
-          "  └─Point_Get_6 1.00 0.00 root table:t1, index:f(f) "
+          "  └─Point_Get_6 1.00 6.80 root table:t1, index:f(f) "
         ],
         "Warnings": [
           "Note 1105 unique index f of t1 is selected since the path only has point ranges with double scan"
@@ -1903,9 +1903,9 @@
         "SQL": "select * from t where a > 1 order by f",
         "Plan": [
           "IndexLookUp_14 3333.33 136747.00 root  ",
-          "├─Selection_13(Build) 3333.33 0.00 cop[tikv]  gt(test.t.a, 1)",
+          "├─Selection_13(Build) 3333.33 585000.00 cop[tikv]  gt(test.t.a, 1)",
           "│ └─IndexFullScan_11 10000.00 555000.00 cop[tikv] table:t, index:f(f) keep order:true, stats:pseudo",
-          "└─TableRowIDScan_12(Probe) 3333.33 555000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan_12(Probe) 3333.33 370000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{test.t.f asc}], TaskTp: rootTask}"
@@ -1916,7 +1916,7 @@
         "Plan": [
           "IndexLookUp_10 3333.33 86674.83 root  ",
           "├─IndexRangeScan_8(Build) 3333.33 185000.00 cop[tikv] table:t, index:f(f) range:(1,+inf], keep order:false, stats:pseudo",
-          "└─TableRowIDScan_9(Probe) 3333.33 185000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan_9(Probe) 3333.33 370000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -1937,8 +1937,8 @@
         "Plan": [
           "IndexLookUp_15 3.33 206.74 root  ",
           "├─IndexRangeScan_12(Build) 10.00 570.00 cop[tikv] table:t, index:g(g) range:[5,5], keep order:false, stats:pseudo",
-          "└─Selection_14(Probe) 3.33 0.00 cop[tikv]  gt(test.t.f, 3)",
-          "  └─TableRowIDScan_13 10.00 570.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─Selection_14(Probe) 3.33 1140.00 cop[tikv]  gt(test.t.f, 3)",
+          "  └─TableRowIDScan_13 10.00 1110.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,f_g,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -1950,7 +1950,7 @@
           "Sort_5 10.00 353.68 root  test.t.f",
           "└─IndexLookUp_13 10.00 230.01 root  ",
           "  ├─IndexRangeScan_11(Build) 10.00 570.00 cop[tikv] table:t, index:g(g) range:[5,5], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_12(Probe) 10.00 570.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "  └─TableRowIDScan_12(Probe) 10.00 1110.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -1960,9 +1960,9 @@
         "SQL": "select * from t where d = 3 order by c, e",
         "Plan": [
           "IndexLookUp_15 10.00 57222.78 root  ",
-          "├─Selection_14(Build) 10.00 0.00 cop[tikv]  eq(test.t.d, 3)",
+          "├─Selection_14(Build) 10.00 855000.00 cop[tikv]  eq(test.t.d, 3)",
           "│ └─IndexFullScan_12 10000.00 825000.00 cop[tikv] table:t, index:c_d_e(c, d, e) keep order:true, stats:pseudo",
-          "└─TableRowIDScan_13(Probe) 10.00 825000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan_13(Probe) 10.00 1110.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{test.t.c asc} {test.t.e asc}], TaskTp: rootTask}"
@@ -2019,7 +2019,7 @@
         "Plan": [
           "IndexLookUp_7 3.00 57.91 root  ",
           "├─IndexRangeScan_5(Build) 3.00 171.00 cop[tikv] table:t, index:idx_b(b) range:(5,+inf], keep order:false",
-          "└─TableRowIDScan_6(Probe) 3.00 171.00 cop[tikv] table:t keep order:false"
+          "└─TableRowIDScan_6(Probe) 3.00 108.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
           "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -2460,7 +2460,7 @@
         "Plan": [
           "TopN_7 1.00 13.22 root  test.t3.a, offset:0, count:1",
           "└─TableReader_16 1.00 10.22 root  data:TopN_15",
-          "  └─TopN_15 1.00 0.00 cop[tikv]  test.t3.a, offset:0, count:1",
+          "  └─TopN_15 1.00 117.00 cop[tikv]  test.t3.a, offset:0, count:1",
           "    └─TableFullScan_14 3.00 108.00 cop[tikv] table:t3 keep order:false"
         ]
       },
@@ -2469,7 +2469,7 @@
         "Plan": [
           "TopN_7 1.00 13.22 root  test.t3.b, offset:0, count:1",
           "└─TableReader_16 1.00 10.22 root  data:TopN_15",
-          "  └─TopN_15 1.00 0.00 cop[tikv]  test.t3.b, offset:0, count:1",
+          "  └─TopN_15 1.00 117.00 cop[tikv]  test.t3.b, offset:0, count:1",
           "    └─TableFullScan_14 3.00 108.00 cop[tikv] table:t3 keep order:false"
         ]
       },
@@ -2481,7 +2481,7 @@
           "  └─Projection_22 3.00 76.80 mpp[tiflash]  Column#4",
           "    └─HashAgg_8 3.00 57.00 mpp[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
           "      └─ExchangeReceiver_21 3.00 48.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_20 3.00 48.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.a, collate: binary]",
+          "        └─ExchangeSender_20 3.00 45.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t2.a, collate: binary]",
           "          └─TableFullScan_19 3.00 45.00 mpp[tiflash] table:t2 keep order:false"
         ]
       },
@@ -2531,7 +2531,7 @@
           "  └─ExchangeSender_45 3.00 195.38 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashJoin_42 3.00 195.38 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "      ├─ExchangeReceiver_21(Build) 3.00 57.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender_20 3.00 57.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "      │ └─ExchangeSender_20 3.00 54.00 mpp[tiflash]  ExchangeType: Broadcast",
           "      │   └─Selection_19 3.00 54.00 mpp[tiflash]  not(isnull(test.t1.a))",
           "      │     └─TableFullScan_18 3.00 45.00 mpp[tiflash] table:t1 keep order:false",
           "      └─Selection_23(Probe) 3.00 54.00 mpp[tiflash]  not(isnull(test.t2.a))",
@@ -2549,7 +2549,7 @@
           "    └─ExchangeSender_38 3.00 204.38 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─HashJoin_29 3.00 204.38 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "        ├─ExchangeReceiver_35(Build) 3.00 66.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_34 3.00 66.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │ └─ExchangeSender_34 3.00 63.00 mpp[tiflash]  ExchangeType: Broadcast",
           "        │   └─Selection_33 3.00 63.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
           "        │     └─TableFullScan_32 3.00 54.00 mpp[tiflash] table:t1 keep order:false",
           "        └─Selection_37(Probe) 3.00 54.00 mpp[tiflash]  not(isnull(test.t2.a))",
@@ -2856,6 +2856,31 @@
           "  └─TableReader 1.00 root  data:Limit",
           "    └─Limit 1.00 cop[tiflash]  offset:0, count:1",
           "      └─TableFullScan 1.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushDownToTiFlashWithKeepOrderInFastMode",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select max(a) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:max(test.t.a)->Column#3",
+          "└─TopN 1.00 root  test.t.a:desc, offset:0, count:1",
+          "  └─TableReader 1.00 root  data:TopN",
+          "    └─TopN 1.00 batchCop[tiflash]  test.t.a:desc, offset:0, count:1",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select min(a) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:min(test.t.a)->Column#3",
+          "└─TopN 1.00 root  test.t.a, offset:0, count:1",
+          "  └─TableReader 1.00 root  data:TopN",
+          "    └─TopN 1.00 batchCop[tiflash]  test.t.a, offset:0, count:1",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]

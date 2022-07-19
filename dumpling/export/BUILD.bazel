@@ -28,7 +28,6 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//br/pkg/summary",
-        "//br/pkg/utils",
         "//br/pkg/version",
         "//config",
         "//dumpling/cli",

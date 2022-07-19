@@ -497,6 +497,13 @@
     ]
   },
   {
+    "name": "TestPushDownToTiFlashWithKeepOrderInFastMode",
+    "cases": [
+      "explain format = 'brief' select max(a) from t",
+      "explain format = 'brief' select min(a) from t"
+    ]
+  },
+  {
     "name": "TestMPPJoin",
     "cases": [
       "explain format = 'brief' select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",

@@ -14,7 +14,6 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/lightning/verification",
         "//br/pkg/redact",
-        "//br/pkg/utils",
         "//br/pkg/version",
         "//parser/model",
         "//parser/mysql",

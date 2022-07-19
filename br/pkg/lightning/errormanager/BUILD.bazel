@@ -10,7 +10,6 @@ go_library(
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
         "//br/pkg/redact",
-        "//br/pkg/utils",
         "@com_github_jedib0t_go_pretty_v6//table",
         "@com_github_jedib0t_go_pretty_v6//text",
         "@com_github_pingcap_errors//:errors",
@@ -27,7 +26,6 @@ go_test(
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
-        "//br/pkg/utils",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_atomic//:atomic",
