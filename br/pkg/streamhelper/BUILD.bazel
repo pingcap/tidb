@@ -43,6 +43,7 @@ go_library(
         "@org_golang_google_grpc//keepalive",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
@@ -52,12 +53,14 @@ go_test(
         "advancer_test.go",
         "basic_lib_for_test.go",
         "integration_test.go",
+        "regioniter_test.go",
         "tsheap_test.go",
     ],
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/redact",
         "//br/pkg/storage",
         "//br/pkg/streamhelper/config",
         "//kv",

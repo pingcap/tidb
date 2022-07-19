@@ -1878,7 +1878,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	ts, cost, _ := ds.getOriginalPhysicalTableScan(prop, candidate.path, candidate.isMatchProp)
-	if ts.KeepOrder && ts.Desc && ts.StoreType == kv.TiFlash {
+	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ts.Table.TiFlashMode == model.TiFlashModeFast) {
+		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return invalidTask, nil
 	}
 	if prop.TaskTp == property.MppTaskType {
