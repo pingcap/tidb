@@ -2724,7 +2724,7 @@ func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
 // GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
 // Note:
 //     0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
-//     0.8 (the default value) is also a special value. For backward compatability, when the variable is set to 0.8, we
+//     0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
 //   keep the default selectivity of like/regexp and not like/regexp all 0.8.
 func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
