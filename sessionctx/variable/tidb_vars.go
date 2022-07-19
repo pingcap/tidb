@@ -980,7 +980,7 @@ const (
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
 	DefAdaptiveClosestReadThreshold                = 4096
-  DefTiDBEnableAnalyzeSnapshot                   = false
+	DefTiDBEnableAnalyzeSnapshot                   = false
 )
 
 // Process global variables.
