@@ -309,12 +309,29 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	ok, safePoint, err := w.prepare(ctx)
-	if err != nil || !ok {
-		if err != nil {
-			metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
-		}
+	concurrency, err := w.getGCConcurrency(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Info("[gc worker] failed to get gc concurrency.",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
 		return errors.Trace(err)
+	}
+
+	ok, safePoint, err := w.prepare(ctx)
+	if err != nil {
+		metrics.GCJobFailureCounter.WithLabelValues("prepare").Inc()
+		return errors.Trace(err)
+	} else if !ok {
+		if w.logBackupEnabled {
+			tryResolveLocksTS, err := w.getTryResolveLocksTS()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if err = w.legacyResolveLocks(ctx, 0, tryResolveLocksTS, concurrency); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	}
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
@@ -322,14 +339,6 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		logutil.Logger(ctx).Info("[gc worker] another gc job has just finished, skipped.",
 			zap.String("leaderTick on ", w.uuid))
 		return nil
-	}
-
-	concurrency, err := w.getGCConcurrency(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Info("[gc worker] failed to get gc concurrency.",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		return errors.Trace(err)
 	}
 
 	w.gcIsRunning = true
