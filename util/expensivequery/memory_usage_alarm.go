@@ -311,15 +311,15 @@ func (record *memoryUsageAlarm) recordProfile() []string {
 		{name: "heap"},
 		{name: "goroutine", debug: 2},
 	}
-	profileFileNames := make([]string, 0, len(items))
+	profileFilenames := make([]string, 0, len(items))
 	for i, item := range items {
 		fileName := filepath.Join(record.tmpDir, item.name+record.lastCheckTime.Format(time.RFC3339))
-		profileFileNames = append(profileFileNames, fileName)
+		profileFilenames = append(profileFilenames, fileName)
 		record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
 		f, err := os.Create(fileName)
 		if err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
-			return profileFileNames
+			return profileFilenames
 		}
 		//nolint: revive
 		defer func() {
@@ -332,8 +332,8 @@ func (record *memoryUsageAlarm) recordProfile() []string {
 		err = p.WriteTo(f, item.debug)
 		if err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
-			return profileFileNames
+			return profileFilenames
 		}
 	}
-	return profileFileNames
+	return profileFilenames
 }
