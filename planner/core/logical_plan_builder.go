@@ -117,6 +117,8 @@ const (
 	HintIgnorePlanCache = "ignore_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
+	//HintMerge is a hint which can switch turning inline for the CTE.
+	HintMerge = "merge"
 	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
 	HintSemiJoinRewrite = "semi_join_rewrite"
 )
@@ -1763,7 +1765,6 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, aft
 	if err != nil {
 		return nil, err
 	}
-
 	unionDistinctPlan, err := b.buildUnionAll(ctx, distinctSelectPlans)
 	if err != nil {
 		return nil, err
@@ -3523,6 +3524,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		aggHints                                                                        aggHintInfo
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      limitHintInfo
+		MergeHints                                                                      MergeHintInfo
 		leadingJoinOrder                                                                []hintTableInfo
 		leadingHintCnt                                                                  int
 	)
@@ -3627,6 +3629,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case HintLimitToCop:
 			limitHints.preferLimitToCop = true
+		case HintMerge:
+			MergeHints.preferMerge = true
 		case HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
@@ -3663,6 +3667,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		indexMergeHintList:        indexMergeHintList,
 		timeRangeHint:             timeRangeHint,
 		limitHints:                limitHints,
+		MergeHints:                MergeHints,
 		leadingJoinOrder:          leadingJoinOrder,
 	})
 }
@@ -4004,6 +4009,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	if b.buildingCTE {
+		if hints := b.TableHints(); hints != nil {
+			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
+		}
+	}
+
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
@@ -4166,6 +4177,20 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+
+			if cte.isInline {
+				lp.MergeHints.preferMerge = cte.isInline
+				saveCte := b.outerCTEs[i:]
+				b.outerCTEs = b.outerCTEs[:i]
+				o := b.buildingCTE
+				b.buildingCTE = false
+				defer func() {
+					b.outerCTEs = append(b.outerCTEs, saveCte...)
+					b.buildingCTE = o
+				}()
+				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
+			}
+
 			for i, col := range lp.schema.Columns {
 				lp.cte.ColumnMap[string(col.HashCode(nil))] = prevSchema.Columns[i]
 			}
@@ -4186,6 +4211,29 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 	}
 
 	return nil, nil
+}
+
+func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (LogicalPlan, error) {
+	p, err := b.buildResultSetNode(ctx, cte.Query.Query)
+	if err != nil {
+		return nil, err
+	}
+	outPutNames := p.OutputNames()
+	for _, name := range outPutNames {
+		name.TblName = cte.Name
+		name.DBName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+
+	if len(cte.ColNameList) > 0 {
+		if len(cte.ColNameList) != len(p.OutputNames()) {
+			return nil, errors.New("CTE columns length is not consistent")
+		}
+		for i, n := range cte.ColNameList {
+			outPutNames[i].ColName = n
+		}
+	}
+	p.SetOutputNames(outPutNames)
+	return p, nil
 }
 
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
