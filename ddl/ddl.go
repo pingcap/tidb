@@ -1264,7 +1264,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 		info.Jobs = append(info.Jobs, reorgJob)
 	}
 
-	info.SchemaVer, err = t.GetSchemaVersion()
+	info.SchemaVer, err = t.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

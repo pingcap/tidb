@@ -357,6 +357,35 @@ func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 	return NewAutoIDAccessors(m, dbID, tableID)
 }
 
+// GetSchemaVersionWithNonEmptyDiff gets current global schema version, if diff is nil, we should return version - 1.
+// Consider the following scenario:
+//             t1            		t2			      t3             t4
+//             |					|				   |
+//    update schema version         |              set diff
+//                             stale read ts
+// At the first time, t2 reads the schema version v10, but the v10's diff is not set yet, so it loads v9 infoSchema.
+// But at t4 moment, v10's diff has been set and been cached in the memory, so stale read on t2 will get v10 schema from cache,
+// and inconsistency happen.
+// To solve this problem, we always check the schema diff at first, if the diff is empty, we know at t2 moment we can only see the v9 schema,
+// so make neededSchemaVersion = neededSchemaVersion - 1.
+// For `Reload`, we can also do this: if the newest version's diff is not set yet, it is ok to load the previous version's infoSchema, and wait for the next reload.
+func (m *Meta) GetSchemaVersionWithNonEmptyDiff() (int64, error) {
+	v, err := m.txn.GetInt64(mSchemaVersionKey)
+	if err != nil {
+		return 0, err
+	}
+	diff, err := m.GetSchemaDiff(v)
+	if err != nil {
+		return 0, err
+	}
+
+	if diff == nil && v > 0 {
+		// Although the diff of v is undetermined, the last version's diff is deterministic(this is guaranteed by schemaVersionManager).
+		v--
+	}
+	return v, err
+}
+
 // GetSchemaVersion gets current global schema version.
 func (m *Meta) GetSchemaVersion() (int64, error) {
 	return m.txn.GetInt64(mSchemaVersionKey)

@@ -478,37 +478,13 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, 
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
 	lastSnapMeta := meta.NewSnapshotMeta(lastSnapshot)
-	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersion()
+	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	backupSchemaVersion, err := snapMeta.GetSchemaVersion()
+	backupSchemaVersion, err := snapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	// we need use the version - 1 if the correlation diff is empty.
-	// consider the following case:
-	//           t1						t2				t3
-	//  		 |						|				|
-	//  schema version commit		    | 			diff commit
-	// 								 backupTS
-	// DDL job is not done at t2, but schema version can be seen at t2, so if we use the schema as the boundary, we may filter in
-	// the job which done at t3. So, we need make version -= 1.It is safe because at t2, we can not see the job.
-	diff, err := lastSnapMeta.GetSchemaDiff(lastSchemaVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if diff == nil {
-		lastSchemaVersion -= 1
-	}
-
-	diff, err = snapMeta.GetSchemaDiff(backupSchemaVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if diff == nil {
-		backupSchemaVersion -= 1
 	}
 
 	version, err := store.CurrentVersion(kv.GlobalTxnScope)

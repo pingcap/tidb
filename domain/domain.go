@@ -126,30 +126,9 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
-	neededSchemaVersion, err := m.GetSchemaVersion()
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
-	}
-
-	// Consider the following scenario:
-	//             t1            		t2			      t3             t4
-	//             |					|				   |
-	//    update schema version         |              set diff
-	//                             stale read ts
-	// At the first time, t2 reads the schema version v10, but the v10's diff is not set yet, so it loads v9 infoSchema.
-	// But at t4 moment, v10's diff has been set and been cached in the memory, so stale read on t2 will get v10 schema from cache,
-	// and inconsistency happen.
-	// To solve this problem, we always check the schema diff at first, if the diff is empty, we know at t2 moment we can only see the v9 schema,
-	// so make neededSchemaVersion = neededSchemaVersion - 1.
-	// For `Reload`, we can also do this: if the newest version's diff is not set yet, it is ok to load the previous version's infoSchema, and wait for the next reload.
-	diff, err := m.GetSchemaDiff(neededSchemaVersion)
-	if err != nil {
-		return nil, false, 0, nil, err
-	}
-
-	if diff == nil && neededSchemaVersion > 0 {
-		// Although the diff of neededSchemaVersion is undetermined, the last version's diff is deterministic(this is guaranteed by schemaVersionManager).
-		neededSchemaVersion -= 1
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
