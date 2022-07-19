@@ -328,7 +328,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// Set 0 to safepoint, which means resolving locks with timeout TTL only.
+			// Set 0 to safepoint, which means resolving locks with expired TTL only.
 			if err = w.legacyResolveLocks(ctx, 0, tryResolveLocksTS, concurrency); err != nil {
 				return errors.Trace(err)
 			}
