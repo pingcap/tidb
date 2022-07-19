@@ -182,14 +182,18 @@ func (n *ValueExpr) Format(w io.Writer) {
 	fmt.Fprint(w, s)
 }
 
+// WrapInSingleQuotes escapes single quotes and backslashs
+// and adds single quotes arond the string
 func WrapInSingleQuotes(inStr string) string {
 	s := strings.ReplaceAll(inStr, "\\", "\\\\")
 	s = strings.ReplaceAll(s, `'`, `''`)
 	return fmt.Sprintf("'%s'", s)
 }
 
+// UnwrapFromSingleQuotes the reverse of WrapInSingleQuotes
+// but also allows non single quoted strings
 func UnwrapFromSingleQuotes(inStr string) string {
-	if inStr == "" || inStr[0:1] != "'" || inStr[len(inStr)-1:len(inStr)] != "'" {
+	if inStr == "" || inStr[:1] != "'" || inStr[len(inStr)-1:] != "'" {
 		return inStr
 	}
 	s := strings.ReplaceAll(inStr[1:len(inStr)-1], "\\\\", "\\")
