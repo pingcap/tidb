@@ -288,7 +288,7 @@ type streamMgr struct {
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -307,10 +307,6 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if backend.GetS3() == nil {
-			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
-				"Only support s3 storage currently.")
 		}
 
 		opts := storage.ExternalStorageOptions{
@@ -767,7 +763,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false)
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return err
 	}
@@ -813,7 +809,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 		printer = stream.PrintTaskWithJSON(console)
 	}
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false)
+		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, err
 	}
@@ -1058,7 +1054,7 @@ func restoreStream(
 	}
 
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1534,7 +1530,7 @@ func buildPauseSafePointName(taskName string) string {
 
 func checkPiTRRequirements(ctx context.Context, g glue.Glue, cfg *RestoreConfig) error {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, true)
+		cfg.CheckRequirements, true, conn.StreamVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
