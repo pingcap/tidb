@@ -84,7 +84,7 @@ type TableReaderExecutor struct {
 	isStaleness      bool
 	// FIXME: in some cases the data size can be more accurate after get the handles count,
 	// but we keep things simple as it needn't to be that accurate for now.
-	netDataSize      float64
+	netDataSize float64
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 

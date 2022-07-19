@@ -488,6 +488,9 @@ func TestAdaptiveClosestRead(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	// the avg row size is more accurate in check_rpc mode when unistre is used.
+	// See: https://github.com/pingcap/tidb/issues/31744#issuecomment-1016309883
+	tk.MustExec("set @@tidb_enable_chunk_rpc = '1'")
 
 	readCounter := func(counter prometheus.Counter) float64 {
 		var metric dto.Metric
