@@ -192,7 +192,7 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 	}
 	txn.SetOption(kv.Priority, kv.PriorityLow)
 	isoLevel := kv.RC
-	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
 		isoLevel = kv.SI
 	}
 	txn.SetOption(kv.IsolationLevel, isoLevel)
@@ -394,7 +394,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 
 func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err error) {
 	var snapshot kv.Snapshot
-	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
 		snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	} else {
@@ -421,7 +421,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
 	var snapshot kv.Snapshot
-	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.NewVersion(e.snapshot))
 		snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	} else {

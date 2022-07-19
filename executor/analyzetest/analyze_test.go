@@ -591,9 +591,9 @@ func TestSnapshotAnalyzeAndMaxTSAnalyze(t *testing.T) {
 
 		tk.MustExec("use test")
 		if analyzeSnapshot {
-			tk.MustExec("set @@session.tidb_analyze_snapshot = on")
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = on")
 		} else {
-			tk.MustExec("set @@session.tidb_analyze_snapshot = off")
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = off")
 		}
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, index index_a(a))")
@@ -3111,9 +3111,9 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustQuery("select @@global.tidb_analyze_snapshot").Check(testkit.Rows("0"))
-	// We want to test that HandleAutoAnalyze is aware of setting @@global.tidb_analyze_snapshot to 1 and reads data from snapshot.
-	tk.MustExec("set @@global.tidb_analyze_snapshot = 1")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	// We want to test that HandleAutoAnalyze is aware of setting @@global.tidb_enable_analyze_snapshot to 1 and reads data from snapshot.
+	tk.MustExec("set @@global.tidb_enable_analyze_snapshot = 1")
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	tk.MustExec("create table t(a int)")
 	h := dom.StatsHandle()

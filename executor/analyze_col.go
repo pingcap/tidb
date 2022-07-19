@@ -109,7 +109,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	startTS := uint64(math.MaxUint64)
-	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
 		startTS = e.snapshot
 	}
 	// Always set KeepOrder of the request to be true, in order to compute

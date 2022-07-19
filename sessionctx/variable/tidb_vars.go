@@ -699,10 +699,10 @@ const (
 	// TiDBMemoryDebugModeAlarmRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
 	TiDBMemoryDebugModeAlarmRatio = "tidb_memory_debug_mode_alarm_ratio"
 
-	// TiDBAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// TiDBEnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
 	// When set to false, ANALYZE reads the latest data.
 	// When set to true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
-	TiDBAnalyzeSnapshot = "tidb_analyze_snapshot"
+	TiDBEnableAnalyzeSnapshot = "tidb_enable_analyze_snapshot"
 )
 
 // TiDB vars that have only global scope
@@ -973,7 +973,7 @@ const (
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
-	DefTiDBAnalyzeSnapshot                         = false
+	DefTiDBEnableAnalyzeSnapshot                   = false
 )
 
 // Process global variables.

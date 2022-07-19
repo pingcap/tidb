@@ -3239,9 +3239,9 @@ func TestIncrementalModifyCountUpdate(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		if analyzeSnapshot {
-			tk.MustExec("set @@session.tidb_analyze_snapshot = on")
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = on")
 		} else {
-			tk.MustExec("set @@session.tidb_analyze_snapshot = off")
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = off")
 		}
 		tk.MustExec("create table t(a int)")
 		tk.MustExec("set @@session.tidb_analyze_version = 2")

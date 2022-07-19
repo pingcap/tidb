@@ -1037,7 +1037,7 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 func (h *Handle) getAnalyzeSnapshot() (bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	analyzeSnapshot, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSnapshot)
+	analyzeSnapshot, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
 	if err != nil {
 		return false, err
 	}
@@ -1065,7 +1065,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	pruneMode := h.CurrentPruneMode()
 	analyzeSnapshot, err := h.getAnalyzeSnapshot()
 	if err != nil {
-		logutil.BgLogger().Error("[stats] load tidb_analyze_snapshot for auto analyze session failed", zap.Error(err))
+		logutil.BgLogger().Error("[stats] load tidb_enable_analyze_snapshot for auto analyze session failed", zap.Error(err))
 		return false
 	}
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404

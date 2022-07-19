@@ -1175,10 +1175,10 @@ type SessionVars struct {
 	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
 	MemoryDebugModeAlarmRatio int64
 
-	// AnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
-	AnalyzeSnapshot bool
+	EnableAnalyzeSnapshot bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

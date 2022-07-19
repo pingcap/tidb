@@ -144,7 +144,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	}
 	kvReqBuilder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	startTS := uint64(math.MaxUint64)
-	if e.ctx.GetSessionVars().AnalyzeSnapshot {
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
 		startTS = e.snapshot
 	}
 	kvReq, err := kvReqBuilder.
