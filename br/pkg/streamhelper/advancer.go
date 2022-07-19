@@ -264,13 +264,11 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpoint(ctx context.Context) (uin
 		nextRun []kv.KeyRange
 	)
 	defer c.recordTimeCost("record all")
-	cx, cancel := context.WithTimeout(ctx, c.cfg.MaxBackoffTime)
-	defer cancel()
 	for {
 		coll := NewClusterCollector(ctx, c.env)
 		coll.setOnSuccessHook(c.cache.InsertRange)
 		for _, u := range thisRun {
-			err := c.GetCheckpointInRange(cx, u.StartKey, u.EndKey, coll)
+			err := c.GetCheckpointInRange(ctx, u.StartKey, u.EndKey, coll)
 			if err != nil {
 				return 0, err
 			}

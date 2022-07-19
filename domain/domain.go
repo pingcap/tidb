@@ -903,24 +903,21 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	cfg := config.GetGlobalConfig()
-	if cfg.LogBackup.Enabled {
-		if pdClient == nil || do.etcdClient == nil {
-			log.Warn("pd / etcd client not provided, won't begin Advancer.")
-			return nil
-		}
-		env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
-		if err != nil {
-			return err
-		}
-		adv := streamhelper.NewCheckpointAdvancer(env)
-		adv.UpdateConfig(cfg.LogBackup.Advancer)
-		do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
-		loop, err := do.logBackupAdvancer.Begin(ctx)
-		if err != nil {
-			return err
-		}
-		do.wg.Run(loop)
+	if pdClient == nil || do.etcdClient == nil {
+		log.Warn("pd / etcd client not provided, won't begin Advancer.")
+		return nil
 	}
+	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	if err != nil {
+		return err
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	loop, err := do.logBackupAdvancer.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	do.wg.Run(loop)
 	return nil
 }
 
