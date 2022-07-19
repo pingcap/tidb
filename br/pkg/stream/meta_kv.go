@@ -179,6 +179,14 @@ func (v *RawWriteCFValue) UpdateShortValue(value []byte) {
 	v.shortValue = value
 }
 
+func (v *RawWriteCFValue) GetStartTs() uint64 {
+	return v.startTs
+}
+
+func (v *RawWriteCFValue) GetWriteType() byte {
+	return v.t
+}
+
 // EncodeTo encodes the RawWriteCFValue to get encoded value.
 func (v *RawWriteCFValue) EncodeTo() []byte {
 	data := make([]byte, 0, 9)

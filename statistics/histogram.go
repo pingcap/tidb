@@ -1106,6 +1106,11 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 		columnMemUsage.CMSketchMemUsage = cmSketchMemUsage
 		sum += cmSketchMemUsage
 	}
+	if c.TopN != nil {
+		topnMemUsage := c.TopN.MemoryUsage()
+		columnMemUsage.TopNMemUsage = topnMemUsage
+		sum += topnMemUsage
+	}
 	if c.FMSketch != nil {
 		fmSketchMemUsage := c.FMSketch.MemoryUsage()
 		columnMemUsage.FMSketchMemUsage = fmSketchMemUsage
@@ -1316,10 +1321,61 @@ func (c *Column) ItemID() int64 {
 // DropEvicted implements TableCacheItem
 // DropEvicted drops evicted structures
 func (c *Column) DropEvicted() {
-	if c.StatsVer < Version2 && c.IsStatsInitialized() {
-		c.CMSketch = nil
-		c.evictedStatus = onlyCmsEvicted
+	if !c.statsInitialized {
+		return
 	}
+	switch c.evictedStatus {
+	case allLoaded:
+		if c.CMSketch != nil && c.StatsVer < Version2 {
+			c.dropCMS()
+			return
+		}
+		// For stats version2, there is no cms thus we directly drop topn
+		c.dropTopN()
+		return
+	case onlyCmsEvicted:
+		c.dropTopN()
+		return
+	default:
+		return
+	}
+}
+
+func (c *Column) dropCMS() {
+	c.CMSketch = nil
+	c.evictedStatus = onlyCmsEvicted
+}
+
+func (c *Column) dropTopN() {
+	originTopNNum := int64(c.TopN.Num())
+	c.TopN = nil
+	if len(c.Histogram.Buckets) == 0 && originTopNNum >= c.Histogram.NDV {
+		// This indicates column has topn instead of histogram
+		c.evictedStatus = allEvicted
+	} else {
+		c.evictedStatus = onlyHistRemained
+	}
+}
+
+// IsAllEvicted indicates whether all stats evicted
+func (c *Column) IsAllEvicted() bool {
+	return c.statsInitialized && c.evictedStatus >= allEvicted
+}
+
+func (c *Column) getEvictedStatus() int {
+	return c.evictedStatus
+}
+
+func (c *Column) isStatsInitialized() bool {
+	return c.statsInitialized
+}
+
+func (c *Column) statsVer() int64 {
+	return c.StatsVer
+}
+
+func (c *Column) isCMSExist() bool {
+	return c.CMSketch != nil
 }
 
 // Index represents an index histogram.
@@ -1342,20 +1398,46 @@ func (idx *Index) ItemID() int64 {
 	return idx.Info.ID
 }
 
-// DropEvicted implements TableCacheItem
-// DropEvicted drops evicted structures
-func (idx *Index) DropEvicted() {
+// IsAllEvicted indicates whether all stats evicted
+func (idx *Index) IsAllEvicted() bool {
+	return idx.statsInitialized && idx.evictedStatus >= allEvicted
+}
+
+func (idx *Index) dropCMS() {
 	idx.CMSketch = nil
+	idx.evictedStatus = onlyCmsEvicted
+}
+
+func (idx *Index) dropTopN() {
+	originTopNNum := int64(idx.TopN.Num())
+	idx.TopN = nil
+	if len(idx.Histogram.Buckets) == 0 && originTopNNum >= idx.Histogram.NDV {
+		// This indicates index has topn instead of histogram
+		idx.evictedStatus = allEvicted
+	} else {
+		idx.evictedStatus = onlyHistRemained
+	}
+}
+
+func (idx *Index) getEvictedStatus() int {
+	return idx.evictedStatus
+}
+
+func (idx *Index) isStatsInitialized() bool {
+	return idx.statsInitialized
+}
+
+func (idx *Index) statsVer() int64 {
+	return idx.StatsVer
+}
+
+func (idx *Index) isCMSExist() bool {
+	return idx.CMSketch != nil
 }
 
 // IsEvicted returns whether index statistics got evicted
 func (idx *Index) IsEvicted() bool {
-	switch idx.StatsVer {
-	case Version1:
-		return idx.CMSketch == nil
-	default:
-		return false
-	}
+	return idx.evictedStatus != allLoaded
 }
 
 func (idx *Index) String() string {
@@ -1402,6 +1484,11 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 		cmSketchMemUsage := idx.CMSketch.MemoryUsage()
 		indexMemUsage.CMSketchMemUsage = cmSketchMemUsage
 		sum += cmSketchMemUsage
+	}
+	if idx.TopN != nil {
+		topnMemUsage := idx.TopN.MemoryUsage()
+		indexMemUsage.TopNMemUsage = topnMemUsage
+		sum += topnMemUsage
 	}
 	indexMemUsage.TotalMemUsage = sum
 	return indexMemUsage
@@ -1452,7 +1539,11 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 	if count, ok := idx.TopN.QueryTopN(d); ok {
 		return count
 	}
-	return idx.queryHashValue(h1, h2)
+	if idx.CMSketch != nil {
+		return idx.queryHashValue(h1, h2)
+	}
+	v, _ := idx.Histogram.equalRowCount(types.NewBytesDatum(d), idx.StatsVer >= Version2)
+	return uint64(v)
 }
 
 // GetRowCount returns the row count of the given ranges.
@@ -2157,6 +2248,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			if types.IsTypeTime(hists[0].Tp.GetType()) {
 				// handle datetime values specially since they are encoded to int and we'll get int values if using DecodeOne.
 				_, d, err = codec.DecodeAsDateTime(meta.Encoded, hists[0].Tp.GetType(), sc.TimeZone)
+			} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
+				_, d, err = codec.DecodeAsFloat32(meta.Encoded, hists[0].Tp.GetType())
 			} else {
 				_, d, err = codec.DecodeOne(meta.Encoded)
 			}
@@ -2301,7 +2394,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 const (
 	allLoaded = iota
 	onlyCmsEvicted
-	//onlyHistRemained
+	onlyHistRemained
 	allEvicted
 )
 
@@ -2343,6 +2436,11 @@ func (s StatsLoadedStatus) IsEssentialStatsLoaded() bool {
 // IsCMSEvicted indicates whether the cms got evicted now.
 func (s StatsLoadedStatus) IsCMSEvicted() bool {
 	return s.statsInitialized && s.evictedStatus >= onlyCmsEvicted
+}
+
+// IsTopNEvicted indicates whether the topn got evicted now.
+func (s StatsLoadedStatus) IsTopNEvicted() bool {
+	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
 }
 
 // IsFullLoad indicates whether the stats are full loaded

@@ -213,8 +213,11 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 	childIdxs := make([]int, 0)
 	var childIdx int
 	childCtx := &operatorCtx{
-		depth:  info.depth + 1,
-		indent: texttree.Indent4Child(info.indent, info.isLastChild),
+		depth:     info.depth + 1,
+		isRoot:    info.isRoot,
+		storeType: info.storeType,
+		reqType:   info.reqType,
+		indent:    texttree.Indent4Child(info.indent, info.isLastChild),
 	}
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
@@ -268,9 +271,6 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 		}
 
 		for i := range children {
-			childCtx.isRoot = info.isRoot
-			childCtx.storeType = info.storeType
-			childCtx.reqType = info.reqType
 			childCtx.label = label[i]
 			childCtx.isLastChild = i == len(children)-1
 			target, childIdx = f.flattenRecursively(children[i], childCtx, target)

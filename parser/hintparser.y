@@ -108,6 +108,7 @@ import (
 	hintForceIndex            "FORCE_INDEX"
 	hintStraightJoin          "STRAIGHT_JOIN"
 	hintLeading               "LEADING"
+	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -530,13 +531,13 @@ UnsupportedTableLevelOptimizerHintName:
 |	"NO_BNL"
 /* HASH_JOIN is supported by TiDB */
 |	"NO_HASH_JOIN"
-|	"MERGE"
 |	"NO_MERGE"
 
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
 |	"INL_JOIN"
+|	"MERGE"
 |	"INL_HASH_JOIN"
 |	"SWAP_JOIN_INPUTS"
 |	"NO_SWAP_JOIN_INPUTS"
@@ -585,6 +586,7 @@ NullaryHintName:
 |	"READ_CONSISTENT_REPLICA"
 |	"IGNORE_PLAN_CACHE"
 |	"STRAIGHT_JOIN"
+|	"SEMI_JOIN_REWRITE"
 
 HintQueryType:
 	"OLAP"
@@ -652,6 +654,7 @@ Identifier:
 |	"FORCE_INDEX"
 |	"STRAIGHT_JOIN"
 |	"LEADING"
+|	"SEMI_JOIN_REWRITE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

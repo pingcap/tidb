@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -104,6 +105,7 @@ func (t zapStreamBackupTaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) err
 	return nil
 }
 
+// StreamBackupTaskInfo makes the zap fields for a stream backup task info.
 func StreamBackupTaskInfo(t *backuppb.StreamBackupTaskInfo) zap.Field {
 	return zap.Object("streamTaskInfo", zapStreamBackupTaskInfo{t})
 }
@@ -268,4 +270,39 @@ func Redact(field zap.Field) zap.Field {
 		return zap.String(field.Key, "?")
 	}
 	return field
+}
+
+// StringifyKeys wraps the key range into a stringer.
+type StringifyKeys []kv.KeyRange
+
+func (kr StringifyKeys) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("{")
+	for i, rng := range kr {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(StringifyRange(rng).String())
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
+// StringifyRange is the wrapper for displaying a key range.
+type StringifyRange kv.KeyRange
+
+func (rng StringifyRange) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("[")
+	sb.WriteString(redact.Key(rng.StartKey))
+	sb.WriteString(", ")
+	var endKey string
+	if len(rng.EndKey) == 0 {
+		endKey = "inf"
+	} else {
+		endKey = redact.Key(rng.EndKey)
+	}
+	sb.WriteString(redact.String(endKey))
+	sb.WriteString(")")
+	return sb.String()
 }

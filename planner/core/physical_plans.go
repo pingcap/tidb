@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -222,6 +223,30 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
+}
+
+func (p *PhysicalTableReader) buildPlanTrace() *tracing.PlanTrace {
+	rp := p.basePhysicalPlan.buildPlanTrace()
+	if p.tablePlan != nil {
+		rp.Children = append(rp.Children, p.tablePlan.buildPlanTrace())
+	}
+	return rp
+}
+
+func (p *PhysicalTableReader) appendChildCandidate(op *physicalOptimizeOp) {
+	p.basePhysicalPlan.appendChildCandidate(op)
+	if p.tablePlan != nil {
+		candidate := &tracing.CandidatePlanTrace{
+			PlanTrace: &tracing.PlanTrace{
+				ID:          p.tablePlan.ID(),
+				TP:          p.tablePlan.TP(),
+				Cost:        p.tablePlan.Cost(),
+				ExplainInfo: p.tablePlan.ExplainInfo(),
+			},
+		}
+		op.tracer.AppendCandidate(candidate)
+		p.tablePlan.appendChildCandidate(op)
+	}
 }
 
 // PhysicalIndexReader is the index reader in tidb.
@@ -428,7 +453,7 @@ type PhysicalIndexScan struct {
 	// The index scan may be on a partition.
 	physicalTableID int64
 
-	GenExprs map[model.TableColumnID]expression.Expression
+	GenExprs map[model.TableItemID]expression.Expression
 
 	isPartition bool
 	Desc        bool
@@ -443,6 +468,7 @@ type PhysicalIndexScan struct {
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
+	prop          *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -544,6 +570,7 @@ type PhysicalTableScan struct {
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
+	prop        *property.PhysicalProperty
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1270,6 +1297,11 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+
+	// The flag indicates whether this Selection is from a DataSource.
+	// The flag is only used by cost model for compatibility and will be removed later.
+	// Please see https://github.com/pingcap/tidb/issues/36243 for more details.
+	fromDataSource bool
 }
 
 // Clone implements PhysicalPlan interface.

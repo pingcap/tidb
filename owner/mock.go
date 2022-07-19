@@ -70,7 +70,7 @@ func (m *mockManager) Cancel() {
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
-func (m *mockManager) GetOwnerID(ctx context.Context) (string, error) {
+func (m *mockManager) GetOwnerID(_ context.Context) (string, error) {
 	if m.IsOwner() {
 		return m.ID(), nil
 	}
@@ -84,7 +84,7 @@ func (m *mockManager) CampaignOwner() error {
 }
 
 // ResignOwner lets the owner start a new election.
-func (m *mockManager) ResignOwner(ctx context.Context) error {
+func (m *mockManager) ResignOwner(_ context.Context) error {
 	if m.IsOwner() {
 		m.RetireOwner()
 	}
@@ -92,7 +92,7 @@ func (m *mockManager) ResignOwner(ctx context.Context) error {
 }
 
 // RequireOwner implements Manager.RequireOwner interface.
-func (m *mockManager) RequireOwner(context.Context) error {
+func (*mockManager) RequireOwner(context.Context) error {
 	return nil
 }
 
