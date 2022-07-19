@@ -17,6 +17,8 @@ package memory
 import (
 	"errors"
 	"math/rand"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,6 +82,85 @@ func TestConsume(t *testing.T) {
 
 	waitGroup.Wait()
 	require.Equal(t, int64(100), tracker.BytesConsumed())
+}
+
+func TestRelease(t *testing.T) {
+	debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(100)
+	parentTracker := NewGlobalTracker(LabelForGlobalAnalyzeMemory, -1)
+	tracker := NewTracker(1, -1)
+	tracker.AttachToGlobalTracker(parentTracker)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	GCAwareMemoryTrack.Store(false)
+	tracker.Consume(100)
+	require.Equal(t, int64(100), tracker.BytesConsumed())
+	require.Equal(t, int64(100), parentTracker.BytesConsumed())
+	tracker.Release(100)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), tracker.BytesReleased())
+	require.Equal(t, int64(0), parentTracker.BytesReleased())
+
+	GCAwareMemoryTrack.Store(true)
+	tracker.Consume(100)
+	require.Equal(t, int64(100), tracker.BytesConsumed())
+	require.Equal(t, int64(100), parentTracker.BytesConsumed())
+	tracker.Release(100)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), tracker.BytesReleased())
+	require.Equal(t, int64(100), parentTracker.BytesReleased())
+	runtime.GC()
+	runtime.GC() // TODO one call cannot work
+	require.Equal(t, int64(0), parentTracker.BytesReleased())
+
+	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer waitGroup.Done()
+			tracker.Consume(10)
+		}()
+	}
+	waitGroup.Add(10)
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer waitGroup.Done()
+			tracker.Release(10)
+		}()
+	}
+	waitGroup.Wait()
+	runtime.GC()
+	runtime.GC() // TODO one call cannot work
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), tracker.BytesReleased())
+	require.Equal(t, int64(0), parentTracker.BytesReleased())
+}
+
+func TestBufferedConsumeAndRelease(t *testing.T) {
+	debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(100)
+	parentTracker := NewGlobalTracker(LabelForGlobalAnalyzeMemory, -1)
+	tracker := NewTracker(1, -1)
+	tracker.AttachToGlobalTracker(parentTracker)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	GCAwareMemoryTrack.Store(true)
+	bufferedMemSize := int64(0)
+	tracker.BufferedConsume(&bufferedMemSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	tracker.BufferedConsume(&bufferedMemSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(TrackMemWhenExceeds), tracker.BytesConsumed())
+	bufferedReleaseSize := int64(0)
+	tracker.BufferedRelease(&bufferedReleaseSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(TrackMemWhenExceeds), parentTracker.BytesConsumed())
+	require.Equal(t, int64(0), parentTracker.BytesReleased())
+	tracker.BufferedRelease(&bufferedReleaseSize, int64(TrackMemWhenExceeds)/2)
+	require.Equal(t, int64(0), parentTracker.BytesConsumed())
+	require.Equal(t, int64(TrackMemWhenExceeds), parentTracker.BytesReleased())
+	runtime.GC()
+	runtime.GC() // TODO one call cannot work
+	require.Equal(t, int64(0), parentTracker.BytesReleased())
 }
 
 func TestOOMAction(t *testing.T) {

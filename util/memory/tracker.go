@@ -400,15 +400,17 @@ func (t *Tracker) Consume(bs int64) {
 }
 
 // BufferedConsume is used to buffer memory usage and do late consume
+// not thread-safe, should be called in one goroutine
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
-	if *bufferedMemSize > int64(TrackMemWhenExceeds) {
+	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
-		*bufferedMemSize = int64(0)
+		*bufferedMemSize = *bufferedMemSize - TrackMemWhenExceeds
 	}
 }
 
 // Release is used to release memory tracked, track the released memory until GC triggered if needed
+// Please pass the memory size of the real object
 func (t *Tracker) Release(bytes int64) {
 	if bytes == 0 {
 		return
@@ -428,11 +430,12 @@ func (t *Tracker) Release(bytes int64) {
 }
 
 // BufferedRelease is used to buffer memory release and do late release
+// not thread-safe, should be called in one goroutine
 func (t *Tracker) BufferedRelease(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
-	if *bufferedMemSize > int64(TrackMemWhenExceeds) {
+	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
 		t.Release(*bufferedMemSize)
-		*bufferedMemSize = int64(0)
+		*bufferedMemSize = *bufferedMemSize - TrackMemWhenExceeds
 	}
 }
 
