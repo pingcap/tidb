@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 )
 
 type skewDistinctAggRewriter struct {
@@ -87,6 +88,19 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	// output schema for bottom aggregate
 	bottomAggSchema := expression.NewSchema(make([]*expression.Column, 0, agg.schema.Len())...)
 
+	// columns used by group by items in the original aggregate
+	groupCols := make([]*expression.Column, 0, 3)
+	// columns that should be used by firstrow(), which will be appended to
+	// bottomAgg schema and aggregate functions
+	firstRowCols := fd.NewFastIntSet()
+	for _, groupByItem := range agg.GroupByItems {
+		usedCols := expression.ExtractColumns(groupByItem)
+		groupCols = append(groupCols, usedCols...)
+		for _, col := range usedCols {
+			firstRowCols.Insert(int(col.UniqueID))
+		}
+	}
+
 	// we only care about non-distinct count() agg function
 	cntIndexes := make([]int, 0, 3)
 
@@ -121,10 +135,14 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 			// cast to Column, if failed, we know it is Constant, ignore the error message,
 			// we will later create a new schema column
-			aggCol, _ := newAggFunc.Args[0].(*expression.Column)
+			aggCol, ok := newAggFunc.Args[0].(*expression.Column)
 
 			// firstrow() doesn't change the input value and type
-			if newAggFunc.Name != ast.AggFuncFirstRow {
+			if newAggFunc.Name == ast.AggFuncFirstRow {
+				if ok {
+					firstRowCols.Remove(int(aggCol.UniqueID))
+				}
+			} else {
 				aggCol = &expression.Column{
 					UniqueID: agg.ctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  newAggFunc.RetTp,
@@ -150,6 +168,21 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 				topAggFunc.Args = append(topAggFunc.Args, aggCol)
 				topAggFuncs = append(topAggFuncs, topAggFunc)
 			}
+		}
+	}
+
+	for _, col := range groupCols {
+		// the col is used by GROUP BY clause, but not in the output schema, e.g.
+		// SELECT count(DISTINCT a) FROM t GROUP BY b;
+		// column b is not in the output schema, we have to add it to the bottom agg schema
+		if firstRowCols.Has(int(col.UniqueID)) {
+			firstRow, err := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow,
+				[]expression.Expression{col}, false)
+			if err != nil {
+				return nil
+			}
+			bottomAggFuncs = append(bottomAggFuncs, firstRow)
+			bottomAggSchema.Append(col)
 		}
 	}
 
