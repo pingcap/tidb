@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -107,11 +108,15 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
+	startTS := uint64(math.MaxUint64)
+	if e.ctx.GetSessionVars().EnableAnalyzeSnapshot {
+		startTS = e.snapshot
+	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
-		SetStartTS(e.snapshot).
+		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
