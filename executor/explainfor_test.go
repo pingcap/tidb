@@ -1179,18 +1179,6 @@ func TestIgnorePlanCacheWithPrepare(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
-	orgEnable := core.PreparedPlanCacheEnabled()
-	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-	}()
-	core.SetPreparedPlanCache(true)
-
-	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
-		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
-	})
-	require.NoError(t, err)
-	tk.SetSession(se)
-
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
