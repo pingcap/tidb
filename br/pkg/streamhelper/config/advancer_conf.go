@@ -41,7 +41,7 @@ type Config struct {
 
 func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	f.Duration(flagBackoffTime, DefaultBackOffTime, "The gap between two retries.")
-	f.Duration(flagTickInterval, DefaultTickInterval, "From how log we trigger the tick (advancing the checkpoint).")
+	f.Duration(flagTickInterval, DefaultTickInterval, "From how long we trigger the tick (advancing the checkpoint).")
 	f.Bool(flagAdvancingByCache, DefaultAdvanceByCache, "Whether enable the optimization -- use a cached heap to advancing the global checkpoint.")
 	f.Int(flagFullScanDiffTick, DefaultFullScanTick, "The backoff of full scan.")
 }
