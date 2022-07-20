@@ -5032,7 +5032,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 }
 
 func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executor {
-	if v.ReplicaKind != ast.CompactReplicaKindTiFlash {
+	if v.ReplicaKind != ast.CompactReplicaKindTiFlash && v.ReplicaKind != ast.CompactReplicaKindAll {
 		b.err = errors.Errorf("compact %v replica is not supported", strings.ToLower(string(v.ReplicaKind)))
 		return nil
 	}
