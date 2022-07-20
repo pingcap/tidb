@@ -1607,7 +1607,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	ts, _ := getStmtTimestamp(b.ctx)
-	res, err = val.ConvertToTimeWithSysTimestamp(sc, b.tp.GetType(), ts)
+	res, err = val.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}

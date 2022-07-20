@@ -616,7 +616,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		tm, err := duration.ConvertToTimeWithSysTimestamp(stmtCtx, b.tp.GetType(), ts)
+		tm, err := duration.ConvertToTimeWithTimestamp(stmtCtx, b.tp.GetType(), ts)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
