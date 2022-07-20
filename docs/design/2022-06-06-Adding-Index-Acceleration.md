@@ -95,5 +95,5 @@ As an optimization, this proposal does not lead to any semantic change so theore
 2. Use tidb_ddl_disk_quota to set a threshold of local disk max usage by new backfiller, the range of this variable is from 100 GB to 1 PB, default value is 100 GB.
 ```TiDB> set global tidb_ddl_disk_quota = 107374182400;```
 
-3. Use one config parameter lightning-sort-path to specify the sort path for lightning. The default value is /tmp/tidb, please change it to your own disk path for the new backfiller could work properly.
-```lightning-sort-path = “/tmp/tidb”```
+3. Use one config parameter fast-reorg-local-path to specify the sort path for lightning when it used in add index reorg stage. The default value is /tmp/tidb, please change it to your own disk path for the new backfiller could work properly.
+```fast-reorg-local-path = “/tmp/tidb”```
