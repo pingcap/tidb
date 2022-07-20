@@ -895,9 +895,7 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
-
 	sctx := tk.Session()
-	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -914,24 +912,30 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	sqlInsertId2, _, _, _ := tk.Session().PrepareStmt("insert into t3 values(?, ?)")
 
 	tk.MustExec("insert into t1 values (1, 1, 1)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
 		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectId, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
-		_, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateId, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateId, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
+		require.Nil(t, stmt)
+
 		val := i * 10
-		_, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertId1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertId1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
 		require.NoError(t, err)
-		_, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertId2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertId2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
 		require.NoError(t, err)
+		require.Nil(t, stmt)
 		tk.MustExec("commit")
 	}
-
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(117), count)
+	require.Equal(t, uint64(99), count)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 }
 
 func TestTSOCmdCountForTextSql(t *testing.T) {
@@ -944,9 +948,7 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-
 	sctx := tk.Session()
-	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -956,8 +958,9 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	tk.MustExec("create table t1(id int, v int, v2 int, primary key (id), unique key uk (v))")
 	tk.MustExec("create table t2(id int, v int, unique key i1(v))")
 	tk.MustExec("create table t3(id int, v int, key i1(v))")
-	tk.MustExec("insert into t1 values (1, 1, 1)")
 
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
 		tk.MustQuery("select * from t1 where id = 1 for update")
@@ -967,7 +970,8 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t3 values(%v, %v)", val, val))
 		tk.MustExec("commit")
 	}
-
 	count := sctx.Value(sessiontxn.TsoRequestCount)
-	require.Equal(t, uint64(113), count)
+	require.Equal(t, uint64(99), count)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 }
