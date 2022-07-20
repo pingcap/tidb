@@ -461,6 +461,8 @@ func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
 		if tidbutil.IsMemOrSysDB(dbName) {
 			continue
 		} else if dbName == "test" && len(db.Tables) == 0 {
+			// tidb create test db on fresh cluster
+			// if it's empty we don't take it as user db
 			continue
 		} else {
 			existedDatabases = append(existedDatabases, db)

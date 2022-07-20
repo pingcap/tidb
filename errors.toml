@@ -181,6 +181,11 @@ error = '''
 restore checksum mismatch
 '''
 
+["BR:Restore:ErrRestoreIncompatibleSys"]
+error = '''
+incompatible system table
+'''
+
 ["BR:Restore:ErrRestoreInvalidBackup"]
 error = '''
 invalid backup
@@ -204,6 +209,11 @@ restore mode mismatch
 ["BR:Restore:ErrRestoreNoPeer"]
 error = '''
 region does not have peer
+'''
+
+["BR:Restore:ErrRestoreNotFreshCluster"]
+error = '''
+cluster is not fresh
 '''
 
 ["BR:Restore:ErrRestoreRangeMismatch"]

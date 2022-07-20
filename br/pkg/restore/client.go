@@ -37,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/config"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/tablecodec"
@@ -147,6 +149,16 @@ type Client struct {
 
 	storage storage.ExternalStorage
 
+	// if fullClusterRestore = true:
+	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
+	//	without user database or table. and system tables about privileges is restored together with user data.
+	// - if there no system tables in the backup(backup data from br < 5.1.0), restore all user data just like
+	//	previous version did.
+	// if fullClusterRestore = false, restore all user data just like previous version did.
+	// fullClusterRestore = true when there is no explicit filter setting, and it's full restore or point command
+	// 	with a full backup data.
+	// todo: maybe change to an enum
+	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []string
 	deleteRangeQueryCh        chan string
@@ -494,6 +506,14 @@ func (rc *Client) GetDatabase(name string) *utils.Database {
 	return rc.databases[name]
 }
 
+// HasBackedUpSysDB whether we have backed up system tables
+// br backs system tables up since 5.1.0
+func (rc *Client) HasBackedUpSysDB() bool {
+	temporaryDB := utils.TemporaryDBName(mysql.SystemDB)
+	_, backedUp := rc.databases[temporaryDB.O]
+	return backedUp
+}
+
 // GetPlacementPolicies returns policies.
 func (rc *Client) GetPlacementPolicies() (*sync.Map, error) {
 	policies := &sync.Map{}
@@ -832,6 +852,101 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 		})
 	}
 	return eg.Wait()
+}
+
+// CheckTargetClusterFresh check whether the target cluster is fresh or not
+// if there's no user dbs or tables, we take it as a fresh cluster, although
+// user may have created some users or made other changes.
+func (rc *Client) CheckTargetClusterFresh(ctx context.Context) error {
+	log.Info("checking whether target cluster is fresh")
+	userDBs := GetExistedUserDBs(rc.dom)
+	if len(userDBs) == 0 {
+		return nil
+	}
+
+	const maxPrintCount = 10
+	userTableOrDBNames := make([]string, 0, maxPrintCount+1)
+	addName := func(name string) bool {
+		if len(userTableOrDBNames) == maxPrintCount {
+			userTableOrDBNames = append(userTableOrDBNames, "...")
+			return false
+		}
+		userTableOrDBNames = append(userTableOrDBNames, name)
+		return true
+	}
+outer:
+	for _, db := range userDBs {
+		if !addName(db.Name.L) {
+			break outer
+		}
+		for _, tbl := range db.Tables {
+			if !addName(tbl.Name.L) {
+				break outer
+			}
+		}
+	}
+	log.Error("not fresh cluster", zap.Strings("user tables", userTableOrDBNames))
+	return errors.Annotate(berrors.ErrRestoreNotFreshCluster, "user db/tables: "+strings.Join(userTableOrDBNames, ", "))
+}
+
+func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
+	log.Info("checking target cluster system table compatibility with backed up data")
+	privilegeTablesInBackup := make([]*metautil.Table, 0)
+	for _, table := range tables {
+		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
+		if ok && utils.IsSysDB(decodedSysDBName.L) && sysPrivilegeTableSet[table.Info.Name.L] {
+			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
+		}
+	}
+	sysDB := model.NewCIStr(mysql.SystemDB)
+	for _, table := range privilegeTablesInBackup {
+		ti, err := rc.GetTableSchema(dom, sysDB, table.Info.Name)
+		if err != nil {
+			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
+			return errors.Annotate(berrors.ErrRestoreIncompatibleSys, "missed system table: "+table.Info.Name.O)
+		}
+		backupTi := table.Info
+		if len(ti.Columns) != len(backupTi.Columns) {
+			log.Error("column count mismatch",
+				zap.Stringer("table", table.Info.Name),
+				zap.Int("col in cluster", len(ti.Columns)),
+				zap.Int("col in backup", len(backupTi.Columns)))
+			return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+				"column count mismatch, table: %s, col in cluster: %d, col in backup: %d",
+				table.Info.Name.O, len(ti.Columns), len(backupTi.Columns))
+		}
+		backupColMap := make(map[string]*model.ColumnInfo)
+		for i := range backupTi.Columns {
+			col := backupTi.Columns[i]
+			backupColMap[col.Name.L] = col
+		}
+		// order can be different but type must compatible
+		for i := range ti.Columns {
+			col := ti.Columns[i]
+			backupCol := backupColMap[col.Name.L]
+			if backupCol == nil {
+				log.Error("missing column in backup data",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"missing column in backup data, table: %s, col: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String())
+			}
+			if !utils.IsTypeCompatible(backupCol.FieldType, col.FieldType) {
+				log.Error("incompatible column",
+					zap.Stringer("table", table.Info.Name),
+					zap.String("col in cluster", fmt.Sprintf("%s %s", col.Name, col.FieldType.String())),
+					zap.String("col in backup", fmt.Sprintf("%s %s", backupCol.Name, backupCol.FieldType.String())))
+				return errors.Annotatef(berrors.ErrRestoreIncompatibleSys,
+					"incompatible column, table: %s, col in cluster: %s %s, col in backup: %s %s",
+					table.Info.Name.O,
+					col.Name, col.FieldType.String(),
+					backupCol.Name, backupCol.FieldType.String())
+			}
+		}
+	}
+	return nil
 }
 
 // ExecDDLs executes the queries of the ddl jobs.
@@ -1465,6 +1580,14 @@ func (rc *Client) ResetPlacementRules(ctx context.Context, tables []*model.Table
 
 func (rc *Client) getRuleID(tableID int64) string {
 	return "restore-t" + strconv.FormatInt(tableID, 10)
+}
+
+// IsFull returns whether this backup is full.
+func (rc *Client) IsFull() bool {
+	failpoint.Inject("mock-incr-backup-data", func() {
+		failpoint.Return(false)
+	})
+	return !rc.IsIncremental()
 }
 
 // IsIncremental returns whether this backup is incremental.
@@ -2186,6 +2309,22 @@ func (rc *Client) SaveSchemas(
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
+func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
+	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
+
+	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
+
+	if rc.fullClusterRestore {
+		// have to skip grant table, in order to NotifyUpdatePrivilege
+		config.GetGlobalConfig().Security.SkipGrantTable = true
+	}
+}
+
+func (rc *Client) IsFullClusterRestore() bool {
+	return rc.fullClusterRestore
 }
 
 // MockClient create a fake client used to test.
