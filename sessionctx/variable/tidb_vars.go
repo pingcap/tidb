@@ -772,6 +772,8 @@ const (
 	TiDBAuthSigningCert = "tidb_auth_signing_cert"
 	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
 	TiDBAuthSigningKey = "tidb_auth_signing_key"
+	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
+	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 )
 
 // TiDB intentional limits
@@ -981,6 +983,7 @@ const (
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
 	DefAdaptiveClosestReadThreshold                = 4096
 	DefTiDBEnableAnalyzeSnapshot                   = false
+	DefTiDBGenerateBinaryPlan                      = true
 )
 
 // Process global variables.
