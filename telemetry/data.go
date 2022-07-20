@@ -63,5 +63,5 @@ func postReportTelemetryData() {
 	postReportMultiSchemaChangeUsage()
 	postReportSlowQueryStats()
 	postReportNonTransactionalCounter()
-	postSavepointCount()
+	PostSavepointCount()
 }

@@ -255,7 +255,8 @@ func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
 
-func postSavepointCount() {
+// PostSavepointCount exports for testing.
+func PostSavepointCount() {
 	initialSavepointStmtCounter = m.GetSavepointStmtCounter()
 }
 
