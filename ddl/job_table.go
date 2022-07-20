@@ -130,6 +130,8 @@ func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where find_in_set(%s, schema_ids) != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
 			return d.checkJobIsRunnable(sess, sql)
 		}
+		// For general job, there is only 1 general worker to handle it, so at this moment the processing job must be reorg job and the reorg job must only contain one table id.
+		// So it's not possible the find_in_set("1,2", "1,2,3") occurs.
 		sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job t1, (select table_ids from mysql.tidb_ddl_job where job_id = %d) t2 where processing and find_in_set(t1.table_ids, t2.table_ids) != 0", job.ID)
 		return d.checkJobIsRunnable(sess, sql)
 	})
