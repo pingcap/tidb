@@ -20,10 +20,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 const (
-	EBSRestoreCmd = "EBS Restore"
+	RestoreDataCmd = "Restore Data"
 )
 
 const (
@@ -62,7 +63,7 @@ func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64,
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	return metaInfo.GetResolvedTS(), int(metaInfo.GetStoreCount()), nil
+	return metaInfo.GetResolvedTS(), metaInfo.TiKVComponent.Replicas, nil
 }
 
 // RunRestore starts a restore task inside the current goroutine.
@@ -127,7 +128,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 	}
 
 	if len(allStores) != totalTiKVs {
-		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster")
+		log.Error("the restore meta contains the number of tikvs inconsist with the resore cluster", zap.Int("current stores", len(allStores)), zap.Int("backup stores", totalTiKVs))
 		return errors.Annotatef(berrors.ErrRestoreTotalKVMismatch,
 			"number of tikvs mismatch")
 	}
@@ -148,6 +149,7 @@ func RunRestoreData(c context.Context, g glue.Glue, cmdName string, cfg *Restore
 		return errors.Trace(err)
 	}
 	summary.CollectDuration("restore duration", time.Since(startAll))
+	summary.SetSuccessStatus(true)
 	return nil
 
 }

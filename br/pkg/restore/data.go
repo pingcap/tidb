@@ -50,9 +50,6 @@ func RecoverData(ctx context.Context, resolvedTs uint64, allStores []*metapb.Sto
 		return totalRegions, errors.Trace(err)
 	}
 
-	// TODO Sleep is workaround for sync last index, it will be removed when TiKV part of work been done
-	time.Sleep(time.Second * 3)
-
 	err = recovery.ResolveData(ctx, allStores, resolvedTs)
 	if err != nil {
 		return totalRegions, errors.Trace(err)
@@ -114,14 +111,14 @@ func (recovery *Recovery) newTiKVRecoveryClient(ctx context.Context, tikvAddr st
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:    time.Duration(10) * time.Second,
-			Timeout: time.Duration(3) * time.Second,
+			Timeout: time.Duration(300) * time.Second,
 		}),
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	defer conn.Close()
+	//defer conn.Close()
 
 	client := recovpb.NewRecoverDataClient(conn)
 
@@ -159,7 +156,7 @@ func (recovery *Recovery) ReadRegionMeta(ctx context.Context, totalTiKVs int, al
 			log.Error("create tikv client failied", zap.Uint64("storeID", storeId))
 			return errors.Trace(err)
 		}
-
+		log.Debug("read meta from tikv", zap.String("tikv address", allStores[i].GetAddress()))
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			stream, err := tikvClient.ReadRegionMeta(ectx, &recovpb.ReadRegionMetaRequest{StoreId: storeId})
 			if err != nil {
@@ -431,7 +428,7 @@ func (recovery *Recovery) makeRecoveryPlan() {
 			}
 		} else {
 			// Generate normal commands.
-			log.Info("valid peer", zap.Uint64("peer", r))
+			log.Debug("valid peer", zap.Uint64("peer", r))
 			var maxTerm uint64 = 0
 			for _, m := range x {
 				if m.LastLogTerm > maxTerm {
@@ -439,11 +436,11 @@ func (recovery *Recovery) makeRecoveryPlan() {
 				}
 			}
 			for i, m := range x {
-				log.Info("make plan", zap.Uint64("storeid", m.storeId), zap.Uint64("regionid", m.RegionId))
+				log.Debug("make plan", zap.Uint64("storeid", m.storeId), zap.Uint64("regionid", m.RegionId))
 				plan := &recovpb.RecoverCmdRequest{RegionId: m.RegionId, AsLeader: (i == 0)}
 				// max last index as a leader
 				if plan.AsLeader {
-					log.Info("as leader peer", zap.Uint64("storeid", m.storeId), zap.Uint64("regionid", m.RegionId))
+					log.Debug("as leader peer", zap.Uint64("storeid", m.storeId), zap.Uint64("regionid", m.RegionId))
 					recovery.recoveryPlan[m.storeId] = append(recovery.recoveryPlan[m.storeId], plan)
 				}
 			}
