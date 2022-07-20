@@ -208,6 +208,14 @@
         ]
       },
       {
+        "SQL": "explain format = 'brief' select * from t where b like '%test%' is true",
+        "Result": [
+          "TableReader 8000.00 root  data:Selection",
+          "└─Selection 8000.00 cop[tikv]  istrue(like(test.t.b, \"%test%\", 92))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "explain format = 'brief' select * from t where b not like '%test%'",
         "Result": [
           "TableReader 9000.00 root  data:Selection",

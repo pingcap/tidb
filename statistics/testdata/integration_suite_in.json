@@ -41,6 +41,7 @@
       "set @@tidb_default_string_match_selectivity = 0.1",
       "explain format = 'brief' select * from t where a + 10 > 100",
       "explain format = 'brief' select * from t where b like '%test%'",
+      "explain format = 'brief' select * from t where b like '%test%' is true",
       "explain format = 'brief' select * from t where b not like '%test%'",
       "explain format = 'brief' select * from t where b regexp '.*test.*'",
       "explain format = 'brief' select * from t where b rlike '.*test.*'",
