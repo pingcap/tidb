@@ -765,6 +765,8 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) error {
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
+	// reset the SQL digest to make topsql work right.
+	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.commit()
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {

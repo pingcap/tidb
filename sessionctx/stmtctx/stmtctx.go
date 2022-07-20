@@ -386,6 +386,11 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 	})
 }
 
+// ResetSQLDigest sets the normalized and digest for sql anyway, **DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING NOW**.
+func (sc *StatementContext) ResetSQLDigest(s string) {
+	sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(s)
+}
+
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
