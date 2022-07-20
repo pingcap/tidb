@@ -66,6 +66,11 @@ func TestCompactTableNoTiFlashReplica(t *testing.T) {
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
 		`Warning 1105 compact skipped: no tiflash replica in the table`,
 	))
+
+	tk.MustExec(`alter table t compact;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 1105 compact skipped: no tiflash replica in the table`,
+	))
 }
 
 func TestCompactTableTooBusy(t *testing.T) {
@@ -134,7 +139,6 @@ func TestCompactTableInternalError(t *testing.T) {
 // TestCompactTableNoRemaining: Returns NoRemaining for request #1.
 func TestCompactTableNoRemaining(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
-	defer mocker.RequireAllHandlersHit()
 	store, do, clean := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -150,12 +154,27 @@ func TestCompactTableNoRemaining(t *testing.T) {
 			CompactedEndKey:   []byte{0xFF},
 		}, nil
 	})
-
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec(`alter table t set tiflash replica 1;`)
 	tk.MustExec(`alter table t compact tiflash replica;`)
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
+	mocker.RequireAllHandlersHit()
+
+	mocker.MockFrom(`tiflash0/#2`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
+		tableID := do.MustGetTableID(t, "test", "t")
+		require.Empty(t, req.StartKey)
+		require.EqualValues(t, req.PhysicalTableId, tableID)
+		require.EqualValues(t, req.LogicalTableId, tableID)
+		return &kvrpcpb.CompactResponse{
+			HasRemaining:      false,
+			CompactedStartKey: []byte{},
+			CompactedEndKey:   []byte{0xFF},
+		}, nil
+	})
+	tk.MustExec(`alter table t compact;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
+	mocker.RequireAllHandlersHit()
 }
 
 // TestCompactTableHasRemaining: Returns HasRemaining=true for request #1 and #2, returns HasRemaining=false for request #3.
