@@ -3793,6 +3793,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
+	if b.buildingCTE {
+		if hints := b.TableHints(); hints != nil {
+			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
+		}
+	}
+
 	if sel.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
@@ -4010,11 +4016,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	// Determines whether to use the Merge hint in a CTE query.
-	if b.buildingCTE {
-		if hints := b.TableHints(); hints != nil {
-			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
-		}
-	}
 
 	// If Merge hint is using in outer query, we will not apply this hint.
 	if hints := b.TableHints(); hints.MergeHints.preferMerge && !b.buildingCTE && len(b.tableHintInfo) == 1 {
