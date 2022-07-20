@@ -35,7 +35,7 @@ func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocator {
 	}
 	// Rebase the allocator if the base is specified.
 	if alloc != nil && tblInfo.AutoIncID > 1 {
-		// Actually, `inMemoryAllocator.Rebase` won't return an error.
+		// Actually, `inMemoryAllocator.Rebase` always returns nil.
 		if err := alloc.Rebase(context.Background(), tblInfo.AutoIncID-1, false); err != nil {
 			return nil
 		}
