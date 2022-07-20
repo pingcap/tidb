@@ -405,7 +405,7 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
 	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
-		*bufferedMemSize = *bufferedMemSize - TrackMemWhenExceeds
+		*bufferedMemSize = int64(0)
 	}
 }
 
@@ -435,7 +435,7 @@ func (t *Tracker) BufferedRelease(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
 	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
 		t.Release(*bufferedMemSize)
-		*bufferedMemSize = *bufferedMemSize - TrackMemWhenExceeds
+		*bufferedMemSize = int64(0)
 	}
 }
 
