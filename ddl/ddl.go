@@ -345,8 +345,8 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storag
 func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
-	// if they are the same job. jobID == 0 is a special one, it means we must get the lock.
-	if ownerID != jobID || jobID == 0 {
+	// if they are the same job.
+	if ownerID != jobID {
 		sv.schemaVersionMu.Lock()
 		sv.lockOwner.Store(jobID)
 	}
