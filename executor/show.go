@@ -1359,7 +1359,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 	}
 	// this if statement takes care of lists/range columns case
-	if partitionInfo.Columns != nil {
+	if len(partitionInfo.Columns) > 0 {
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
 		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
