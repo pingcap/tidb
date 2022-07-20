@@ -774,6 +774,8 @@ const (
 	TiDBAuthSigningKey = "tidb_auth_signing_key"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
+	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
+	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 )
 
 // TiDB intentional limits
@@ -984,6 +986,7 @@ const (
 	DefAdaptiveClosestReadThreshold                = 4096
 	DefTiDBEnableAnalyzeSnapshot                   = false
 	DefTiDBGenerateBinaryPlan                      = true
+	DefEnableTiDBGCAwareMemoryTrack                = true
 )
 
 // Process global variables.
