@@ -38,6 +38,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	gotime "time"
 )
 
 var (
@@ -1607,11 +1608,9 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 	sc := b.ctx.GetSessionVars().StmtCtx
 	ts, err := getStmtTimestamp(b.ctx)
 	if err != nil {
-		// It means that we get timestamp failed, this function will use current time to fill date.
-		res, err = val.ConvertToTime(sc, b.tp.GetType())
-	} else {
-		res, err = val.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+		ts = gotime.Now()
 	}
+	res, err = val.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}

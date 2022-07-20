@@ -18,6 +18,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	gotime "time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -607,7 +608,10 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 	ds := buf.GoDurations()
 	times := result.Times()
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
-	ts, _ := getStmtTimestamp(b.ctx)
+	ts, err := getStmtTimestamp(b.ctx)
+	if err != nil {
+		ts = gotime.Now()
+	}
 	fsp := b.tp.GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
