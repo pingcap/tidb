@@ -1960,10 +1960,18 @@
             },
             {
               "expr": "tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
+              "hide": true,
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{type}}-{{instance}}",
+              "legendFormat": "{{module}}-{{type}}-{{instance}}",
               "refId": "H"
+            },
+            {
+              "expr": "sum(tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}) by (module, instance)",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{module}}-{{instance}}",
+              "refId": "I"
             }
           ],
           "thresholds": [],
