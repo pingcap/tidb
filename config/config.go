@@ -259,8 +259,6 @@ type Config struct {
 	// EnableGlobalKill indicates whether to enable global kill.
 	TrxSummary       TrxSummary `toml:"transaction-summary" json:"transaction-summary"`
 	EnableGlobalKill bool       `toml:"enable-global-kill" json:"enable-global-kill"`
-	// LogBackup controls the log backup related items.
-	LogBackup LogBackup `toml:"log-backup" json:"log-backup"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -952,10 +950,6 @@ var defaultConf = Config{
 	NewCollationsEnabledOnFirstBootstrap: true,
 	EnableGlobalKill:                     true,
 	TrxSummary:                           DefaultTrxSummary(),
-	LogBackup: LogBackup{
-		Advancer: logbackupconf.Default(),
-		Enabled:  true,
-	},
 }
 
 var (
