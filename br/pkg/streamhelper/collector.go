@@ -192,8 +192,16 @@ func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	for _, checkpoint := range cps.Checkpoints {
 		if checkpoint.Err != nil {
 			log.Debug("failed to get region checkpoint", zap.Stringer("err", checkpoint.Err))
+			if checkpoint.Err.EpochNotMatch != nil {
+				metrics.RegionCheckpointFailure.WithLabelValues("epoch-not-match").Inc()
+			}
+			if checkpoint.Err.NotLeader != nil {
+				metrics.RegionCheckpointFailure.WithLabelValues("not-leader").Inc()
+			}
+			metrics.RegionCheckpointRequest.WithLabelValues("fail").Inc()
 			c.inconsistent = append(c.inconsistent, c.regionMap[checkpoint.Region.Id])
 		} else {
+			metrics.RegionCheckpointRequest.WithLabelValues("success").Inc()
 			if c.onSuccess != nil {
 				c.onSuccess(checkpoint.Checkpoint, c.regionMap[checkpoint.Region.Id])
 			}

@@ -1334,7 +1334,7 @@ func updateVersionAndTableInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo 
 		default:
 		}
 	})
-	if shouldUpdateVer {
+	if shouldUpdateVer && (job.MultiSchemaInfo == nil || !job.MultiSchemaInfo.SkipVersion) {
 		ver, err = updateSchemaVersion(d, t, job)
 		if err != nil {
 			return 0, errors.Trace(err)

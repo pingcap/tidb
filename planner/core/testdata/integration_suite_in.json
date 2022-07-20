@@ -497,6 +497,13 @@
     ]
   },
   {
+    "name": "TestPushDownToTiFlashWithKeepOrderInFastMode",
+    "cases": [
+      "explain format = 'brief' select max(a) from t",
+      "explain format = 'brief' select min(a) from t"
+    ]
+  },
+  {
     "name": "TestMPPJoin",
     "cases": [
       "explain format = 'brief' select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
@@ -767,6 +774,13 @@
       "desc format = 'brief' select id from t as A where not exists (select 1 from t where t.id=A.id)",
       "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id",
       "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
+    ]
+  },
+  {
+    "name": "TestPushDownSelectionForMPP",
+    "cases": [
+      "desc format = 'brief' select /*+ hash_agg()*/ count(*) c, id from t group by id having id >c",
+      "desc format = 'brief' select * from t where id < 2"
     ]
   },
   {

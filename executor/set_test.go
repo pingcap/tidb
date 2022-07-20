@@ -676,11 +676,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show global variables like 'tidb_ignore_prepared_cache_close_stmt'").Check(testkit.Rows("tidb_ignore_prepared_cache_close_stmt OFF"))
 
 	// test for tidb_enable_new_cost_interface
-	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0")) // default value is 0
-	tk.MustExec("set global tidb_enable_new_cost_interface=1")
-	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1")) // default value is 1
 	tk.MustExec("set global tidb_enable_new_cost_interface=0")
 	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_new_cost_interface=1")
+	tk.MustQuery("select @@global.tidb_enable_new_cost_interface").Check(testkit.Rows("1"))
 
 	// test for tidb_remove_orderby_in_subquery
 	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
@@ -741,6 +741,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '0'"))
 	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("2"))
+
+	tk.MustQuery("select @@tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_analyze_snapshot = 1")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_analyze_snapshot = 0")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_enable_analyze_snapshot = 1")
+	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_enable_analyze_snapshot = 0")
+	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
 }
 
 func TestGetSetNoopVars(t *testing.T) {
