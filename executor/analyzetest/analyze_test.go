@@ -85,10 +85,10 @@ PARTITION BY RANGE ( a ) (
 			require.Len(t, statsTbl.Columns, 3)
 			require.Len(t, statsTbl.Indices, 1)
 			for _, col := range statsTbl.Columns {
-				require.Greater(t, col.Len()+col.Num(), 0)
+				require.Greater(t, col.Len()+col.TopN.Num(), 0)
 			}
 			for _, idx := range statsTbl.Indices {
-				require.Greater(t, idx.Len()+idx.Num(), 0)
+				require.Greater(t, idx.Len()+idx.TopN.Num(), 0)
 			}
 		}
 
