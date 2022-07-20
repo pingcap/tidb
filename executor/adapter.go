@@ -1032,6 +1032,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(stmtCtx)
 
+	binaryPlan := ""
+	if variable.GenerateBinaryPlan.Load() {
+		binaryPlan = getBinaryPlan(a.Ctx)
+		binaryPlan = variable.SlowLogBinaryPlanPrefix + binaryPlan + variable.SlowLogPlanSuffix
+	}
+
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
 	slowItems := &variable.SlowQueryLogItems{
@@ -1052,6 +1058,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		Succ:              succ,
 		Plan:              getPlanTree(stmtCtx),
 		PlanDigest:        planDigest.String(),
+		BinaryPlan:        binaryPlan,
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
@@ -1145,6 +1152,18 @@ func getFlatPlan(stmtCtx *stmtctx.StatementContext) *plannercore.FlatPhysicalPla
 		return flat
 	}
 	return nil
+}
+
+func getBinaryPlan(sCtx sessionctx.Context) string {
+	stmtCtx := sCtx.GetSessionVars().StmtCtx
+	binaryPlan := stmtCtx.GetBinaryPlan()
+	if len(binaryPlan) > 0 {
+		return binaryPlan
+	}
+	flat := getFlatPlan(stmtCtx)
+	binaryPlan = plannercore.BinaryPlanStrFromFlatPlan(sCtx, flat)
+	stmtCtx.SetBinaryPlan(binaryPlan)
+	return binaryPlan
 }
 
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
@@ -1245,6 +1264,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	planGenerator := func() (string, string) {
 		return getEncodedPlan(stmtCtx, !sessVars.InRestrictedSQL)
 	}
+	var binPlanGen func() string
+	if variable.GenerateBinaryPlan.Load() {
+		binPlanGen = func() string {
+			binPlan := getBinaryPlan(a.Ctx)
+			return binPlan
+		}
+	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
 	// is enough to distinguish different plans in this case.
@@ -1288,36 +1314,37 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	resultRows := GetResultRowsCount(stmtCtx, a.Plan)
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
-		SchemaName:      strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:     sql,
-		Charset:         charset,
-		Collation:       collation,
-		NormalizedSQL:   normalizedSQL,
-		Digest:          digest.String(),
-		PrevSQL:         prevSQL,
-		PrevSQLDigest:   prevSQLDigest,
-		PlanGenerator:   planGenerator,
-		PlanDigest:      planDigest,
-		PlanDigestGen:   planDigestGen,
-		User:            userString,
-		TotalLatency:    costTime,
-		ParseLatency:    sessVars.DurationParse,
-		CompileLatency:  sessVars.DurationCompile,
-		StmtCtx:         stmtCtx,
-		CopTasks:        copTaskInfo,
-		ExecDetail:      &execDetail,
-		MemMax:          memMax,
-		DiskMax:         diskMax,
-		StartTime:       sessVars.StartTime,
-		IsInternal:      sessVars.InRestrictedSQL,
-		Succeed:         succ,
-		PlanInCache:     sessVars.FoundInPlanCache,
-		PlanInBinding:   sessVars.FoundInBinding,
-		ExecRetryCount:  a.retryCount,
-		StmtExecDetails: stmtDetail,
-		ResultRows:      resultRows,
-		TiKVExecDetails: tikvExecDetail,
-		Prepared:        a.isPreparedStmt,
+		SchemaName:          strings.ToLower(sessVars.CurrentDB),
+		OriginalSQL:         sql,
+		Charset:             charset,
+		Collation:           collation,
+		NormalizedSQL:       normalizedSQL,
+		Digest:              digest.String(),
+		PrevSQL:             prevSQL,
+		PrevSQLDigest:       prevSQLDigest,
+		PlanGenerator:       planGenerator,
+		BinaryPlanGenerator: binPlanGen,
+		PlanDigest:          planDigest,
+		PlanDigestGen:       planDigestGen,
+		User:                userString,
+		TotalLatency:        costTime,
+		ParseLatency:        sessVars.DurationParse,
+		CompileLatency:      sessVars.DurationCompile,
+		StmtCtx:             stmtCtx,
+		CopTasks:            copTaskInfo,
+		ExecDetail:          &execDetail,
+		MemMax:              memMax,
+		DiskMax:             diskMax,
+		StartTime:           sessVars.StartTime,
+		IsInternal:          sessVars.InRestrictedSQL,
+		Succeed:             succ,
+		PlanInCache:         sessVars.FoundInPlanCache,
+		PlanInBinding:       sessVars.FoundInBinding,
+		ExecRetryCount:      a.retryCount,
+		StmtExecDetails:     stmtDetail,
+		ResultRows:          resultRows,
+		TiKVExecDetails:     tikvExecDetail,
+		Prepared:            a.isPreparedStmt,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
