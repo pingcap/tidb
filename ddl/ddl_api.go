@@ -3578,7 +3578,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 // AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
 // as well as needed for generating the ADD PARTITION query for INTERVAL partitioning of ALTER TABLE t LAST PARTITION
-func AppendPartitionDefs(ctx sessionctx.Context, partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	for i, def := range partitionInfo.Definitions {
 		if i > 0 {
 			fmt.Fprintf(buf, ",\n ")
@@ -3673,7 +3673,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		if ok {
 			sqlMode := ctx.GetSessionVars().SQLMode
 			var buf bytes.Buffer
-			AppendPartitionDefs(ctx, partInfo, &buf, sqlMode)
+			AppendPartitionDefs(partInfo, &buf, sqlMode)
 
 			alterFirstPart := strings.Index(strings.ToLower(query), " last partition")
 			newQuery := query[:alterFirstPart] + " ADD PARTITION (" + buf.String() + ")"

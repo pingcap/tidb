@@ -398,6 +398,7 @@ func RunRestoreTest(t *testing.T, sourceSQLs, expectSQLs string, enableWindowFun
 			restoreSQLs += "; "
 		}
 		restoreSQLs += restoreSQL
+
 	}
 	require.Equalf(t, expectSQLs, restoreSQLs, "restore %v; expect %v", restoreSQLs, expectSQLs)
 }

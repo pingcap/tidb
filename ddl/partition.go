@@ -502,7 +502,6 @@ func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
 }
 
 // getPartitionIntervalFromTable checks if a partitioned table matches a generated INTERVAL partitioned scheme
-// and will also update tbInfo.Partition
 func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableInfo) *ast.PartitionInterval {
 	if tbInfo.Partition == nil ||
 		tbInfo.Partition.Type != model.PartitionTypeRange {
@@ -621,7 +620,10 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 		return nil
 	}
 
-	partitionMethod := ast.PartitionMethod{Interval: &interval}
+	partitionMethod := ast.PartitionMethod{
+		Tp:       model.PartitionTypeRange,
+		Interval: &interval,
+	}
 	partOption := &ast.PartitionOptions{PartitionMethod: partitionMethod}
 	// Generate the definitions from interval, first and last
 	err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo)
@@ -1555,6 +1557,7 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 			newDefs = append(newDefs, oldDefs[i])
 		}
 	}
+
 	tblInfo.Partition.Definitions = newDefs
 	tblInfo.Partition.DroppingDefinitions = droppingDefs
 	return pids
@@ -1614,8 +1617,7 @@ func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string)
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
-	var partInfo *model.PartitionInfo
-	if err := job.DecodeArgs(&partNames, &partInfo); err != nil {
+	if err := job.DecodeArgs(&partNames); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}

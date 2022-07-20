@@ -1090,13 +1090,11 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
 		if idxInfo.Primary {
-			buf.WriteString(" /*T![clustered_index]")
 			if tableInfo.HasClusteredIndex() {
-				buf.WriteString(" CLUSTERED")
+				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
 			} else {
-				buf.WriteString(" NONCLUSTERED")
+				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
 			}
-			buf.WriteString(" */")
 		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
@@ -1126,7 +1124,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
-	buf.WriteString("\n) ENGINE=InnoDB")
+	buf.WriteString("\n")
+
+	buf.WriteString(") ENGINE=InnoDB")
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1199,7 +1199,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	// add partition info here.
-	appendPartitionInfo(ctx, tableInfo, buf, sqlMode)
+	appendPartitionInfo(ctx, tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -1332,8 +1332,7 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-func appendPartitionInfo(ctx sessionctx.Context, tbInfo *model.TableInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
-	partitionInfo := tbInfo.Partition
+func appendPartitionInfo(ctx sessionctx.Context, partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	if partitionInfo == nil {
 		return
 	}
@@ -1370,13 +1369,12 @@ func appendPartitionInfo(ctx sessionctx.Context, tbInfo *model.TableInfo, buf *b
 				buf.WriteString(",")
 			}
 		}
-		buf.WriteString(")")
+		buf.WriteString(")\n(")
 	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)", partitionInfo.Type.String(), partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITION BY %s (%s)\n(", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
 
-	buf.WriteString("\n(")
-	ddl.AppendPartitionDefs(ctx, partitionInfo, buf, sqlMode)
+	ddl.AppendPartitionDefs(partitionInfo, buf, sqlMode)
 	buf.WriteString(")")
 }
 
