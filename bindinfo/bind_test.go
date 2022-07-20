@@ -361,12 +361,9 @@ func TestBindCTEMerge(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(id int)")
-	tk.MustExec("create table t2(id int)")
-	require.True(t, tk.HasKeywordInOperatorInfo("with cte as (select * from t1) select * from cte", "cte"))
-	require.True(t, tk.NotHasKeywordInOperatorInfo("with cte as (select /*+ MERGE() */ * from t1) select * from cte", "cte"))
-
+	require.True(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
+	require.False(t, tk.HasPlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte", "CTEFullScan"))
 	tk.MustExec(`
 create global binding for
 	with cte as (select * from t1) select * from cte
@@ -374,7 +371,7 @@ using
 	with cte as (select /*+ MERGE() */ * from t1) select * from cte
 `)
 
-	require.True(t, tk.NotHasKeywordInOperatorInfo("with cte as (select * from t1) select * from cte", "cte"))
+	require.False(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
