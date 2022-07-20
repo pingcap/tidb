@@ -47,6 +47,7 @@ func testRenameTable(
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaID, tblInfo.Name, oldSchemaName},
+		CtxVars:    []interface{}{[]int64{oldSchemaID, newSchemaID}, []int64{tblInfo.ID}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
