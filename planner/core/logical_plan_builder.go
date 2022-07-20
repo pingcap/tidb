@@ -4017,7 +4017,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	// If Merge hint is using in outer query, we will not apply this hint.
-	if hints := b.TableHints(); hints.MergeHints.preferMerge && b.buildingCTE == false && len(b.tableHintInfo) == 1 {
+	if hints := b.TableHints(); hints.MergeHints.preferMerge && !b.buildingCTE && len(b.tableHintInfo) == 1 {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in outer query, you should use this hint in CTE inner query."))
 	}
 
