@@ -58,6 +58,7 @@ type ExecOption struct {
 	IgnoreWarning      bool
 	SnapshotTS         uint64
 	AnalyzeVer         int
+	AnalyzeSnapshot    *bool
 	PartitionPruneMode string
 	UseCurSession      bool
 	TrackSysProcID     uint64
@@ -87,6 +88,14 @@ var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 func GetPartitionPruneModeOption(pruneMode string) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.PartitionPruneMode = pruneMode
+	}
+}
+
+// GetAnalyzeSnapshotOption returns a function which tells ExecRestrictedStmt/SQL to run with analyzeSnapshot.
+func GetAnalyzeSnapshotOption(analyzeSnapshot bool) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.AnalyzeSnapshot = new(bool)
+		*option.AnalyzeSnapshot = analyzeSnapshot
 	}
 }
 

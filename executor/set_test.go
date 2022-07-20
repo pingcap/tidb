@@ -643,6 +643,53 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("60"))
 	tk.MustExec("set global tidb_max_auto_analyze_time = -1")
 	tk.MustQuery("select @@tidb_max_auto_analyze_time").Check(testkit.Rows("0"))
+<<<<<<< HEAD
+=======
+
+	// test variables for cost model ver2
+	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("1"))
+	tk.MustExec("set tidb_cost_model_version=3")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '3'"))
+	tk.MustExec("set tidb_cost_model_version=0")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_cost_model_version value: '0'"))
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustQuery("select @@tidb_cost_model_version").Check(testkit.Rows("2"))
+
+	tk.MustQuery("select @@tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_analyze_snapshot = 1")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_analyze_snapshot = 0")
+	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_enable_analyze_snapshot = 1")
+	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_enable_analyze_snapshot = 0")
+	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
+}
+
+func TestGetSetNoopVars(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// By default you can get/set noop sysvars without issue.
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("OFF"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'query_cache_type'").Check(testkit.Rows("query_cache_type OFF"))
+	tk.MustExec("SET query_cache_type=2")
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("DEMAND"))
+	// When tidb_enable_noop_variables is OFF, you can GET in @@ context
+	// and always SET. But you can't see in SHOW VARIABLES.
+	// Warnings are also returned.
+	tk.MustExec("SET GLOBAL tidb_enable_noop_variables = OFF")
+	defer tk.MustExec("SET GLOBAL tidb_enable_noop_variables = ON")
+	tk.MustQuery("SELECT @@global.tidb_enable_noop_variables").Check(testkit.Rows("OFF"))
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("DEMAND"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8145 variable query_cache_type has no effect in TiDB"))
+	tk.MustQuery("SHOW VARIABLES LIKE 'query_cache_type'").Check(testkit.Rows())
+	tk.MustExec("SET query_cache_type = OFF")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8144 setting query_cache_type has no effect in TiDB"))
+	// but the change is still effective.
+	tk.MustQuery("SELECT @@query_cache_type").Check(testkit.Rows("OFF"))
+>>>>>>> d00b984f4c (executor, statistics: analyze use MaxUint64 ts to read data (#35232))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {
