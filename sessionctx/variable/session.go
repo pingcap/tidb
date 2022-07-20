@@ -1182,6 +1182,11 @@ type SessionVars struct {
 	// When it is false, ANALYZE reads the latest data.
 	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
 	EnableAnalyzeSnapshot bool
+
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -2723,4 +2728,31 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		return s.seekFactorV2
 	}
 	return s.seekFactor
+}
+
+// EnableEvalTopNEstimationForStrMatch means if we need to evaluate expression with TopN to improve estimation.
+// Currently, it's only for string matching functions (like and regexp).
+func (s *SessionVars) EnableEvalTopNEstimationForStrMatch() bool {
+	return s.DefaultStrMatchSelectivity == 0
+}
+
+// GetStrMatchDefaultSelectivity means the default selectivity for like and regexp.
+// Note: 0 is a special value, which means the default selectivity is 0.1 and TopN assisted estimation is enabled.
+func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == 0 {
+		return 0.1
+	}
+	return s.DefaultStrMatchSelectivity
+}
+
+// GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
+// Note:
+//     0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
+//     0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//   keep the default selectivity of like/regexp and not like/regexp all 0.8.
+func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
+		return DefTiDBDefaultStrMatchSelectivity
+	}
+	return 1 - s.GetStrMatchDefaultSelectivity()
 }
