@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
 	"github.com/pingcap/tidb/util/paging"
 	"go.uber.org/atomic"
 )
@@ -774,6 +775,8 @@ const (
 	TiDBAuthSigningKey = "tidb_auth_signing_key"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
+	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
+	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 )
 
 // TiDB intentional limits
@@ -975,7 +978,7 @@ const (
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableConcurrentDDL                     = true
+	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
@@ -984,6 +987,7 @@ const (
 	DefAdaptiveClosestReadThreshold                = 4096
 	DefTiDBEnableAnalyzeSnapshot                   = false
 	DefTiDBGenerateBinaryPlan                      = true
+	DefEnableTiDBGCAwareMemoryTrack                = true
 )
 
 // Process global variables.
@@ -1041,4 +1045,6 @@ var (
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Value
+	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
+	SwitchConcurrentDDL func(bool) error = nil
 )
