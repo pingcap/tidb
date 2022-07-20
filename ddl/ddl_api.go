@@ -6343,16 +6343,16 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta)
-	if err != nil {
-		return nil, err
-	}
-
 	part := &model.PartitionInfo{
 		Type:    meta.Partition.Type,
 		Expr:    meta.Partition.Expr,
 		Columns: meta.Partition.Columns,
 		Enable:  meta.Partition.Enable,
+	}
+
+	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta)
+	if err != nil {
+		return nil, err
 	}
 
 	part.Definitions = defs
