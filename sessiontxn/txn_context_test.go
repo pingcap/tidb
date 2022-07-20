@@ -890,6 +890,7 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	// to reject future works that accidentally causes tso request increasing.
 	// Note, we do not record all tso requests but some typical requests.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -935,7 +936,6 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(99), count)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 }
 
 func TestTSOCmdCountForTextSql(t *testing.T) {
@@ -944,6 +944,7 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	// to reject future works that accidentally causes tso request increasing.
 	// Note, we do not record all tso requests but some typical requests.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -972,6 +973,4 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(99), count)
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
 }
