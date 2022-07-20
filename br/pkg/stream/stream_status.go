@@ -117,9 +117,9 @@ func (p *printByTable) AddTask(task TaskStatus) {
 	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
 	table.Add("status", task.colorfulStatusString())
-	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs)))
+	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs).Format("2006-01-02 15:04:05.999999999 -0700")))
 	if task.Info.EndTs > 0 {
-		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs)))
+		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs).Format("2006-01-02 15:04:05.999999999 -0700")))
 	}
 	s := storage.FormatBackendURL(task.Info.GetStorage())
 	table.Add("storage", s.String())
