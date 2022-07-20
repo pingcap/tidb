@@ -132,7 +132,7 @@ func (p *printByTable) AddTask(task TaskStatus) {
 		pTime := oracle.GetTimeFromTS(ts)
 		gap := now.Sub(pTime).Round(time.Second)
 		gapColor := color.New(color.FgGreen)
-		if gap > 5*time.Minute {
+		if gap > 10*time.Minute {
 			gapColor = color.New(color.FgRed)
 		}
 		info := fmt.Sprintf("%s; gap=%s", pTime, gapColor.Sprint(gap))
