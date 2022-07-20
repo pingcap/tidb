@@ -1156,53 +1156,45 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		//  t1 natural join (t3 cross join t4)
 		// t3 and t4 may generate the same name column from cross join.
 		// for every common column of natural join, the name from right or left should be exactly one.
-		checkAmbiguous := func(lnames, rnames types.NameSlice) error {
-			// step1: find the common names first
-			commonNames := make([]string, 0, len(lnames))
-			lNameMap := make(map[string]int, len(lnames))
-			rNameMap := make(map[string]int, len(rNames))
-			for _, name := range lnames {
-				// Natural join should ignore _tidb_rowid
-				if name.ColName.L == "_tidb_rowid" {
-					continue
-				}
-				// record left map
-				if cnt, ok := lNameMap[name.ColName.L]; ok {
-					lNameMap[name.ColName.L] = cnt + 1
-				} else {
-					lNameMap[name.ColName.L] = 1
-				}
+		commonNames := make([]string, 0, len(lNames))
+		lNameMap := make(map[string]int, len(lNames))
+		rNameMap := make(map[string]int, len(rNames))
+		for _, name := range lNames {
+			// Natural join should ignore _tidb_rowid
+			if name.ColName.L == "_tidb_rowid" {
+				continue
 			}
-			for _, name := range rnames {
-				// Natural join should ignore _tidb_rowid
-				if name.ColName.L == "_tidb_rowid" {
-					continue
-				}
-				// record right map
-				if cnt, ok := rNameMap[name.ColName.L]; ok {
-					rNameMap[name.ColName.L] = cnt + 1
-				} else {
-					rNameMap[name.ColName.L] = 1
-				}
-				// check left map
-				if cnt, ok := lNameMap[name.ColName.L]; ok {
-					if cnt > 1 {
-						return ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
-					}
-					commonNames = append(commonNames, name.ColName.L)
-				}
+			// record left map
+			if cnt, ok := lNameMap[name.ColName.L]; ok {
+				lNameMap[name.ColName.L] = cnt + 1
+			} else {
+				lNameMap[name.ColName.L] = 1
 			}
-			// check right map
-			for _, commonName := range commonNames {
-				if rNameMap[commonName] > 1 {
-					return ErrAmbiguous.GenWithStackByArgs(commonName, "from clause")
-				}
-			}
-			return nil
 		}
-		err := checkAmbiguous(lNames, rNames)
-		if err != nil {
-			return err
+		for _, name := range rNames {
+			// Natural join should ignore _tidb_rowid
+			if name.ColName.L == "_tidb_rowid" {
+				continue
+			}
+			// record right map
+			if cnt, ok := rNameMap[name.ColName.L]; ok {
+				rNameMap[name.ColName.L] = cnt + 1
+			} else {
+				rNameMap[name.ColName.L] = 1
+			}
+			// check left map
+			if cnt, ok := lNameMap[name.ColName.L]; ok {
+				if cnt > 1 {
+					return ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
+				}
+				commonNames = append(commonNames, name.ColName.L)
+			}
+		}
+		// check right map
+		for _, commonName := range commonNames {
+			if rNameMap[commonName] > 1 {
+				return ErrAmbiguous.GenWithStackByArgs(commonName, "from clause")
+			}
 		}
 	}
 
