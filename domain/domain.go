@@ -126,7 +126,7 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
-	neededSchemaVersion, err := m.GetSchemaVersion()
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
@@ -290,8 +290,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
+			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
