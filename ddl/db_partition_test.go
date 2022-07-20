@@ -1994,6 +1994,40 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustQuery("select * from e7").Check(testkit.Rows("1"))
 	tk.MustGetErrCode("alter table e6 exchange partition p1 with table e7", tmysql.ErrRowDoesNotMatchPartition)
 
+	// validation test for list partition
+	tk.MustExec("set @@tidb_enable_list_partition=true")
+	tk.MustExec(`CREATE TABLE t1 (store_id int)
+	PARTITION BY LIST (store_id) (
+		PARTITION pNorth VALUES IN (1, 2, 3, 4, 5),
+		PARTITION pEast VALUES IN (6, 7, 8, 9, 10),
+		PARTITION pWest VALUES IN (11, 12, 13, 14, 15),
+		PARTITION pCentral VALUES IN (16, 17, 18, 19, 20)
+	);`)
+	tk.MustExec(`create table t2 (store_id int);`)
+	tk.MustExec(`insert into t1 values (1);`)
+	tk.MustExec(`insert into t1 values (6);`)
+	tk.MustExec(`insert into t1 values (11);`)
+	tk.MustExec(`insert into t2 values (3);`)
+	tk.MustExec("alter table t1 exchange partition pNorth with table t2")
+
+	tk.MustQuery("select * from t1 partition(pNorth)").Check(testkit.Rows("3"))
+	tk.MustGetErrCode("alter table t1 exchange partition pEast with table t2", tmysql.ErrRowDoesNotMatchPartition)
+
+	// validation test for list columns partition
+	tk.MustExec(`CREATE TABLE t3 (id int, store_id int)
+	PARTITION BY LIST COLUMNS (id, store_id) (
+		PARTITION p0 VALUES IN ((1, 1), (2, 2)),
+		PARTITION p1 VALUES IN ((3, 3), (4, 4))
+	);`)
+	tk.MustExec(`create table t4 (id int, store_id int);`)
+	tk.MustExec(`insert into t3 values (1, 1);`)
+	tk.MustExec(`insert into t4 values (2, 2);`)
+	tk.MustExec("alter table t3 exchange partition p0 with table t4")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 after the exchange, please analyze related table of the exchange to update statistics"))
+
+	tk.MustQuery("select * from t3 partition(p0)").Check(testkit.Rows("2 2"))
+	tk.MustGetErrCode("alter table t3 exchange partition p1 with table t4", tmysql.ErrRowDoesNotMatchPartition)
+
 	// test exchange partition from different databases
 	tk.MustExec("create table e8 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("create database if not exists exchange_partition")
@@ -2292,6 +2326,38 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"alter table pt27 exchange partition p0 with table nt27;",
 			dbterror.ErrTablesDifferentMetadata,
 		},
+		{
+			"create table pt28 (a int primary key, b int, index(a)) partition by hash(a) partitions 1;",
+			"create table nt28 (a int not null, b int, index(a));",
+			"alter table pt28 exchange partition p0 with table nt28;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt29 (a int primary key, b int) partition by hash(a) partitions 1;",
+			"create table nt29 (a int not null, b int, index(a));",
+			"alter table pt29 exchange partition p0 with table nt29;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			"create table pt30 (a int primary key, b int) partition by hash(a) partitions 1;",
+			"create table nt30 (a int, b int, unique index(a));",
+			"alter table pt30 exchange partition p0 with table nt30;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			// auto_increment
+			"create table pt31 (id bigint not null primary key auto_increment) partition by hash(id) partitions 1;",
+			"create table nt31 (id bigint not null primary key);",
+			"alter table pt31 exchange partition p0 with table nt31;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
+		{
+			// auto_random
+			"create table pt32 (id bigint not null primary key AUTO_RANDOM) partition by hash(id) partitions 1;",
+			"create table nt32 (id bigint not null primary key);",
+			"alter table pt32 exchange partition p0 with table nt32;",
+			dbterror.ErrTablesDifferentMetadata,
+		},
 	}
 
 	tk := testkit.NewTestKit(t, store)
@@ -2313,6 +2379,43 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 	}
 	err = tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
 	require.NoError(t, err)
+}
+
+func TestExchangePartitionHook(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	// why use tkCancel, not tk.
+	tkCancel := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (a int) partition by range(a) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+        PARTITION p2 VALUES LESS THAN (9),
+        PARTITION p3 VALUES LESS THAN (MAXVALUE)
+		);`)
+	tk.MustExec(`create table nt(a int);`)
+
+	tk.MustExec(`insert into pt values (0), (4), (7)`)
+	tk.MustExec("insert into nt values (1)")
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	dom.DDL().SetHook(hook)
+
+	hookFunc := func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.SchemaState != model.StateNone {
+			tkCancel.MustExec("use test")
+			tkCancel.MustGetErrCode("insert into nt values (5)", tmysql.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+	}
+	hook.OnJobUpdatedExported = hookFunc
+
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
 }
 
 func TestExchangePartitionExpressIndex(t *testing.T) {
