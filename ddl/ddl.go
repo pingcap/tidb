@@ -489,13 +489,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.wg.Run(d.limitDDLJobs)
 	d.sessPool = newSessionPool(ctxPool, d.store)
-	d.ownerManager.SetBeOwnerHook(func() {
-		var err error
-		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-		if err != nil {
-			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
-		}
-	})
 
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
@@ -504,12 +497,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return err
 		}
 	}
-
-	if config.TableLockEnabled() {
-		d.wg.Add(1)
-		go d.startCleanDeadTableLock()
-	}
-	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 
 	variable.RegisterStatistics(d)
 
@@ -526,7 +513,18 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // we should make sure that before invoking EnableDDL(), ddl is DISABLE.
 func (d *ddl) EnableDDL() error {
 
+	d.ownerManager.SetBeOwnerHook(func() {
+		var err error
+		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+		if err != nil {
+			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+		}
+	})
+
 	err := d.ownerManager.CampaignOwner()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	d.workers = make(map[workerType]*worker, 2)
 	d.delRangeMgr = d.newDeleteRangeManager(d.sessPool.resPool == nil)
 	d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
@@ -544,6 +542,11 @@ func (d *ddl) EnableDDL() error {
 	}
 
 	go d.schemaSyncer.StartCleanWork()
+	if config.TableLockEnabled() {
+		d.wg.Add(1)
+		go d.startCleanDeadTableLock()
+	}
+	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	return errors.Trace(err)
 }
 
@@ -570,8 +573,6 @@ func (d *ddl) DisableDDL() error {
 		}
 	}
 
-	d.cancel()
-	d.wg.Wait()
 	d.schemaSyncer.Close()
 	for k, worker := range d.workers {
 		worker.Close()
@@ -614,6 +615,8 @@ func (d *ddl) close() {
 	if d.sessPool != nil {
 		d.sessPool.close()
 	}
+	d.cancel()
+	d.wg.Wait()
 
 	variable.UnregisterStatistics(d)
 
