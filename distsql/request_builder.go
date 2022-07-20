@@ -187,6 +187,12 @@ func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBui
 	return builder
 }
 
+// SetPartitionKeyRanges sets the "KeyRangesWithPartition" for "kv.Request".
+func (builder *RequestBuilder) SetPartitionKeyRanges(keyRanges [][]kv.KeyRange) *RequestBuilder {
+	builder.Request.KeyRangesWithPartition = keyRanges
+	return builder
+}
+
 // SetStartTS sets "StartTS" for "kv.Request".
 func (builder *RequestBuilder) SetStartTS(startTS uint64) *RequestBuilder {
 	builder.Request.StartTs = startTS
