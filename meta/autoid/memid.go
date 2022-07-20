@@ -25,14 +25,22 @@ import (
 func NewAllocatorFromTempTblInfo(tblInfo *model.TableInfo) Allocator {
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	var alloc Allocator
 	// Temporary tables don't support auto_random and sequence.
 	if hasRowID || hasAutoIncID {
-		return &inMemoryAllocator{
+		alloc = &inMemoryAllocator{
 			isUnsigned: tblInfo.IsAutoIncColUnsigned(),
 			allocType:  RowIDAllocType,
 		}
 	}
-	return nil
+	// Rebase the allocator if the base is specified.
+	if alloc != nil && tblInfo.AutoIncID > 1 {
+		// Actually, `inMemoryAllocator.Rebase` won't return an error.
+		if err := alloc.Rebase(context.Background(), tblInfo.AutoIncID-1, false); err != nil {
+			return nil
+		}
+	}
+	return alloc
 }
 
 // inMemoryAllocator is typically used for temporary tables.

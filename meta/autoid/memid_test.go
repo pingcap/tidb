@@ -115,4 +115,15 @@ func TestInMemoryAlloc(t *testing.T) {
 	require.Equal(t, int64(n+1), id)
 	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.True(t, terror.ErrorEqual(err, autoid.ErrAutoincReadFailed))
+
+	// test initial base
+	tblInfo.AutoIncID = 100
+	alloc = autoid.NewAllocatorFromTempTblInfo(tblInfo)
+	require.NotNil(t, alloc)
+	id, err = alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, int64(100), id)
+	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), id)
 }

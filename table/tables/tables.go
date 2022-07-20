@@ -1963,16 +1963,10 @@ type TemporaryTable struct {
 
 // TempTableFromMeta builds a TempTable from model.TableInfo.
 func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
-	alloc := autoid.NewAllocatorFromTempTblInfo(tblInfo)
-	// Rebase the allocator if the base is specified.
-	if tblInfo.AutoIncID > 1 {
-		// We can omit the error because it won't return an error.
-		_ = alloc.Rebase(context.Background(), tblInfo.AutoIncID-1, false)
-	}
 	return &TemporaryTable{
 		modified:        false,
 		stats:           statistics.PseudoTable(tblInfo),
-		autoIDAllocator: alloc,
+		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
 		meta:            tblInfo,
 	}
 }
