@@ -10,7 +10,6 @@ import (
 
 const (
 	flagBackoffTime      = "backoff-time"
-	flagMaxBackoffTime   = "max-backoff-time"
 	flagTickInterval     = "tick-interval"
 	flagFullScanDiffTick = "full-scan-tick"
 	flagAdvancingByCache = "advancing-by-cache"
