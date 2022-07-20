@@ -258,6 +258,9 @@ type MultiSchemaInfo struct {
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
+	// SkipVersion is used to control whether generating a new schema version for a sub-job.
+	SkipVersion bool `json:"-"`
+
 	AddColumns    []CIStr `json:"-"`
 	DropColumns   []CIStr `json:"-"`
 	ModifyColumns []CIStr `json:"-"`
@@ -289,6 +292,7 @@ type SubJob struct {
 	RowCount    int64           `json:"row_count"`
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -342,7 +346,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 }
 
 // FromProxyJob converts a proxy job to a sub-job.
-func (sub *SubJob) FromProxyJob(proxyJob *Job) {
+func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
@@ -350,6 +354,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job) {
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
+	sub.SchemaVer = ver
 }
 
 // Job is for a DDL operation.

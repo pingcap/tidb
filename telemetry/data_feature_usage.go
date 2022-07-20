@@ -48,7 +48,9 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
 	LogBackup             bool                             `json:"logBackup"`
+	EnablePaging          bool                             `json:"enablePaging"`
 }
 
 type placementPolicyUsage struct {
@@ -83,7 +85,11 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
 
+	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
+
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
+
+	usage.EnablePaging = getPagingUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -284,6 +290,41 @@ func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
 }
 
+// TiFlashModeStatistics records the usage info of Fast Mode
+type TiFlashModeStatistics struct {
+	FastModeTableCount   int64 `json:"fast_mode_table_count"`
+	NormalModeTableCount int64 `json:"normal_mode_table_count"`
+	AllTableCount        int64 `json:"all_table_count"`
+}
+
+func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
+	is := GetDomainInfoSchema(ctx)
+	var fastModeTableCount int64 = 0
+	var normalModeTableCount int64 = 0
+	var allTableCount int64 = 0
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			allTableCount++
+			if tbInfo.Meta().TiFlashReplica != nil {
+				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
+					fastModeTableCount++
+				} else {
+					normalModeTableCount++
+				}
+			}
+		}
+	}
+
+	return TiFlashModeStatistics{FastModeTableCount: fastModeTableCount, NormalModeTableCount: normalModeTableCount, AllTableCount: allTableCount}
+}
+
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
 	return utils.CheckLogBackupEnabled(ctx)
+}
+
+// getPagingUsageInfo gets the value of system variable `tidb_enable_paging`.
+// This variable is set to true as default since v6.2.0. We want to know many
+// users set it to false manually.
+func getPagingUsageInfo(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().EnablePaging
 }
