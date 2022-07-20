@@ -67,7 +67,7 @@ func TestCompactUnknownTable(t *testing.T) {
 	require.Equal(t, "[schema:1146]Table 'test.foo' doesn't exist", err.Error())
 
 	tk.MustExec("use test")
-	err = tk.ExecToErr(`alter table test.bar compact;`)
+	err = tk.ExecToErr(`alter table bar compact;`)
 	require.Equal(t, "[schema:1146]Table 'test.bar' doesn't exist", err.Error())
 }
 
@@ -194,7 +194,8 @@ func TestCompactTableNoRemaining(t *testing.T) {
 			CompactedEndKey:   []byte{0xFF},
 		}, nil
 	})
-	tk.MustExec(`alter table t compact;`)
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec(`alter table test.t compact;`)
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
 	mocker.RequireAllHandlersHit()
 }
