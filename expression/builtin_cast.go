@@ -23,6 +23,11 @@
 package expression
 
 import (
+	"math"
+	"strconv"
+	"strings"
+	gotime "time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -35,10 +40,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"math"
-	"strconv"
-	"strings"
-	gotime "time"
 )
 
 var (
