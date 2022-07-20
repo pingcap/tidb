@@ -1539,7 +1539,11 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 	if count, ok := idx.TopN.QueryTopN(d); ok {
 		return count
 	}
-	return idx.queryHashValue(h1, h2)
+	if idx.CMSketch != nil {
+		return idx.queryHashValue(h1, h2)
+	}
+	v, _ := idx.Histogram.equalRowCount(types.NewBytesDatum(d), idx.StatsVer >= Version2)
+	return uint64(v)
 }
 
 // GetRowCount returns the row count of the given ranges.
