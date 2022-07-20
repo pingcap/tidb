@@ -73,6 +73,9 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				TagSpecifications: []*ec2.TagSpecification{
 					{
 						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
+						Tags: []*ec2.Tag{
+							ec2Tag("TiDBCluster-BR", "old"),
+						},
 					},
 				},
 			})
@@ -153,7 +156,17 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
 func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType string, iops, throughput int64) (map[string]string, error) {
-	template := ec2.CreateVolumeInput{VolumeType: &volumeType}
+	template := ec2.CreateVolumeInput{
+		VolumeType: &volumeType,
+		TagSpecifications: []*ec2.TagSpecification{
+			{
+				ResourceType: aws.String(ec2.ResourceTypeVolume),
+				Tags: []*ec2.Tag{
+					ec2Tag("TiDBCluster-BR", "new"),
+				},
+			},
+		},
+	}
 	if iops > 0 {
 		template.SetIops(iops)
 	}
