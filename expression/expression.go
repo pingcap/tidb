@@ -182,6 +182,11 @@ type Expression interface {
 // CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
+type ColNamePair struct {
+	Col  Expression
+	Name *types.FieldName
+}
+
 // Clone clones itself.
 func (e CNFExprs) Clone() CNFExprs {
 	cnf := make(CNFExprs, 0, len(e))

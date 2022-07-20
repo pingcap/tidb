@@ -505,9 +505,10 @@ func (n *TableNameExpr) Accept(v Visitor) (Node, bool) {
 // ColumnName represents column name.
 type ColumnName struct {
 	node
-	Schema model.CIStr
-	Table  model.CIStr
-	Name   model.CIStr
+	Schema             model.CIStr
+	Table              model.CIStr
+	Name               model.CIStr
+	ResolveFieldsFirst bool
 }
 
 // Restore implements Node interface.

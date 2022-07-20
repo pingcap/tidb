@@ -109,16 +109,18 @@ type preBuiltSubQueryCacheItem struct {
 
 // ScopeSchema is used to resolve column and register basic agg in analyzing phase.
 type ScopeSchema struct {
-	scopeSchema  *expression.Schema
-	scopeNames   []*types.FieldName
-	selectFields []*ast.SelectField
+	scopeSchema     *expression.Schema
+	scopeNames      []*types.FieldName
+	selectFields    []*ast.SelectField
+	selectFieldsLen int
 
 	// agg group utility elements, aggFuncs are mapped to aggColumn and aggFuncExpr, and aggMapper is used to fast locate the offset in
 	// aggFuncs/aggColumn when an address of *AggregateFuncExpr is given.
-	aggFuncs     []*aggregation.AggFuncDesc
-	aggColumn    []*expression.Column
-	astAggFunc   []*ast.AggregateFuncExpr
-	aggMapper    map[*ast.AggregateFuncExpr]int
+	aggFuncs   []*aggregation.AggFuncDesc
+	aggColumn  []*expression.Column
+	astAggFunc []*ast.AggregateFuncExpr
+	aggMapper  map[*ast.AggregateFuncExpr]int
+
 	groupByItems []expression.Expression
 
 	// win group utility elements, windowFuncs are mapped to windowColumn, and windowMapper is used to fast locate the
@@ -148,6 +150,8 @@ type ScopeSchema struct {
 	reservedColsNames           []*types.FieldName
 	reservedCorrelatedCols      []*expression.CorrelatedColumn
 	projectionCol4CorrelatedAgg map[int64]*expression.Column
+
+	clauseWhere clauseCode
 }
 
 // FullScopeSchema returns current scope's basic column plus register agg columns.
@@ -234,7 +238,7 @@ func (s *ScopeSchema) AddColumn(column *expression.Column, name *types.FieldName
 //
 // ps: the innermost sub-query only refer the projected column as sum(t.a+t1.a) from second
 // select block rather than do the aggregation by itself.
-func (s *ScopeSchema) AddReservedCols(corCols []*expression.CorrelatedColumn, cnames []*types.FieldName, cols []*expression.Column, names []*types.FieldName) {
+func (s *ScopeSchema) AddReservedCols(column *expression.Column, name *types.FieldName) {
 	aggColumnCovered := func(id int64) bool {
 		for _, aggCol := range s.aggColumn {
 			if aggCol.UniqueID == id {
@@ -243,23 +247,26 @@ func (s *ScopeSchema) AddReservedCols(corCols []*expression.CorrelatedColumn, cn
 		}
 		return false
 	}
-	// reservation comes from sub-query's correlated column.
-	for i, cc := range corCols {
-		// background: in analyzing phase, the col set of scope contains all columns it can see.
-		// make sure the correlated column is from this scope, and hasn't been added before.
-		// reserved col may be the origin base col or be the currently seen appended agg col.
-		if (s.ColSet().Has(int(cc.Column.UniqueID)) || aggColumnCovered(cc.Column.UniqueID)) && !s.ReservedColSet().Has(int(cc.Column.UniqueID)) {
-			s.reservedCols = append(s.reservedCols, &cc.Column)
-			s.reservedColsNames = append(s.reservedColsNames, cnames[i])
+	projectColCovered := func(col *expression.Column, name *types.FieldName) int {
+		// if covered return the origin offset
+		projSchema := expression.NewSchema(s.projColumn...)
+		// check whether projection has already built the column from select.fields directly.
+		colIndex := projSchema.ColumnIndex(col)
+		if projSchema.Contains(col) && s.projNames[colIndex].String() == name.String() {
+			return colIndex
 		}
+		return -1
 	}
-	// reservation comes from current scope's having or order-by clause.
-	for i, c := range cols {
-		// reserved col may be the origin base col or be the currently seen appended agg col.
-		if (s.ColSet().Has(int(c.UniqueID)) || aggColumnCovered(c.UniqueID)) && !s.ReservedColSet().Has(int(c.UniqueID)) {
-			s.reservedCols = append(s.reservedCols, c)
-			s.reservedColsNames = append(s.reservedColsNames, names[i])
-		}
+	// reserved col may be the projected col which shouldn't be registered
+	// reserved col may be the agg col which has been registered.
+	offset := projectColCovered(column, name)
+	if offset != -1 {
+		return
+	}
+	// reserved col may be the origin base col
+	if (s.ColSet().Has(int(column.UniqueID)) || aggColumnCovered(column.UniqueID)) && !s.ReservedColSet().Has(int(column.UniqueID)) {
+		s.reservedCols = append(s.reservedCols, column)
+		s.reservedColsNames = append(s.reservedColsNames, name)
 	}
 }
 
@@ -353,12 +360,15 @@ func (er *expressionRewriter) initAggregateFunctionCheck(agg *ast.AggregateFuncE
 	// AggQueryBlock = x means this aggregate should be evaluated at sub-x select block.
 	if agg.Extra == nil {
 		agg.Extra = &struct {
+			InHavingAgg     bool
 			InAggFunc       *ast.AggregateFuncExpr
 			MaxAggLevel     int
 			MaxAggFuncLevel int
 			AggQueryBlock   int
 			BaseQueryBlock  int
 			InsideAggregate []*ast.AggregateFuncExpr
+			// this is for restore of order by paramMarker of GROUP_CONCAT.
+			OriginByItem []ast.ExprNode
 		}{MaxAggLevel: -1, MaxAggFuncLevel: -1, AggQueryBlock: -1, BaseQueryBlock: len(er.b.outerScopes)}
 	}
 	// agg.Extra.InAggFunc keep track of previous agg in current agg context.
@@ -369,8 +379,9 @@ func (er *expressionRewriter) initAggregateFunctionCheck(agg *ast.AggregateFuncE
 	agg.Extra.InAggFunc = er.b.inAggFunc
 	er.b.inAggFunc = agg
 
-	// adjustment to old logic of GROUP_CONCAT function.
+	// adjustment to old logic of GROUP_CONCAT function for visitor down.
 	if agg.Order != nil {
+		originOrderByExpr := make([]ast.ExprNode, 0, len(agg.Order.Items))
 		trueArgs := agg.Args[:len(agg.Args)-1] // the last argument is SEPARATOR, remote it.
 		resolver := &aggOrderByResolver{
 			ctx:  er.b.ctx,
@@ -383,9 +394,12 @@ func (er *expressionRewriter) initAggregateFunctionCheck(agg *ast.AggregateFuncE
 			if resolver.err != nil {
 				return errors.Trace(resolver.err)
 			}
+			originOrderByExpr = append(originOrderByExpr, byItem.Expr)
 			agg.Order.Items[i].Expr = retExpr.(ast.ExprNode)
 		}
+		agg.Extra.OriginByItem = originOrderByExpr
 	}
+	er.b.inAgg = true
 	return nil
 }
 
@@ -551,6 +565,15 @@ func (er *expressionRewriter) checkAggregateFunction(agg *ast.AggregateFuncExpr)
 		er.b.inAggFunc.Extra.InsideAggregate = append(er.b.inAggFunc.Extra.InsideAggregate, agg)
 	}
 	er.b.inAggFunc = agg.Extra.InAggFunc
+
+	// adjustment restore to origin order by of GROUP_CONCAT function for visitor up.
+	if agg.Order != nil {
+		for i, exprNode := range agg.Extra.OriginByItem {
+			agg.Order.Items[i].Expr = exprNode
+		}
+		agg.Extra.OriginByItem = nil
+	}
+	er.b.inAgg = false
 	return nil
 }
 
@@ -697,10 +720,10 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 		if !inCurrentScope {
 			// occupy a position in projection of current scope.
 			// b.curScope.AddReservedCorrelatedCols(&column)
-			b.outerScopes[scopeIndex].AddReservedCols(nil, nil, []*expression.Column{&column}, []*types.FieldName{types.EmptyName})
+			b.outerScopes[scopeIndex].AddReservedCols(&column, types.EmptyName)
 		} else {
 			// occupy a position in projection eg: select s.a from t3 s having sum(s.a); reserve sum(s.a) in projection.
-			b.curScope.AddReservedCols(nil, nil, []*expression.Column{&column}, []*types.FieldName{types.EmptyName})
+			b.curScope.AddReservedCols(&column, types.EmptyName)
 		}
 	}
 
@@ -773,15 +796,15 @@ func (b *PlanBuilder) analyzeProjectionList(ctx context.Context, p LogicalPlan, 
 // After we adopt the new aggregation building approach, for this case, we still need to recognize correlated
 // agg out and append them to outer scope as well before we build selection officially.
 func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, where ast.ExprNode) error {
+	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+	if where == nil {
+		return nil
+	}
 	originClause := b.curClause
 	b.curClause = whereClause
 	defer func() {
 		b.curClause = originClause
 	}()
-	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
-	if where == nil {
-		return nil
-	}
 	_, _, err := b.rewriteWithPreprocess(ctx, where, p, nil, nil, false, nil)
 	if err != nil {
 		return err
@@ -790,15 +813,15 @@ func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, w
 }
 
 func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) error {
+	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+	if gby == nil {
+		return nil
+	}
 	originClause := b.curClause
 	b.curClause = groupByClause
 	defer func() {
 		b.curClause = originClause
 	}()
-	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
-	if gby == nil {
-		return nil
-	}
 	resolver := &gbyResolver{
 		ctx:        b.ctx,
 		fields:     fields,
@@ -806,6 +829,7 @@ func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby
 		names:      P.OutputNames(),
 		skipAggMap: b.correlatedAggMapper,
 	}
+	exprs := make([]expression.Expression, 0, len(gby.Items))
 	for _, item := range gby.Items {
 		resolver.inExpr = false
 		resolver.exprDepth = 0
@@ -819,19 +843,23 @@ func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby
 		}
 
 		itemExpr := retExpr.(ast.ExprNode)
-		// change the item.Expr for later build group-by usage.
-		item.Expr = itemExpr
 		// ignore the np here, we won't want change the plan tree here.
-		_, _, err := b.rewrite(ctx, itemExpr, P, nil, true)
+		expr, _, err := b.rewrite(ctx, itemExpr, P, nil, true)
 		if err != nil {
 			return err
 		}
 		// we collect the group by expression in building phase rather here.
+		exprs = append(exprs, expr)
 	}
+	b.curScope.groupByItems = exprs
 	return nil
 }
 
-func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, having *ast.HavingClause) error {
+func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, having *ast.HavingClause, sel *ast.SelectStmt) error {
+	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
+	if having == nil {
+		return nil
+	}
 	originClause := b.curClause
 	b.curClause = havingClause
 	// set allow eval-context of agg func/correlated agg to true.
@@ -842,15 +870,39 @@ func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, havi
 	// set a flag to notify whether correlated column rewriting should register the
 	// column to corresponding outer scope.
 	b.needRegister |= 1 << nestLevel
+	b.inHavingCtx |= 1 << nestLevel
 	defer func() {
 		b.curClause = originClause
 		b.allowAggFunc &= ^(1 << nestLevel)
 		b.needRegister &= ^(1 << nestLevel)
+		b.inHavingCtx &= ^(1 << nestLevel)
 	}()
-	// we won't change the plan tree here, and we won't allocate new col for every expr here either.
-	if having == nil {
-		return nil
+	originLen := len(sel.Fields.Fields)
+	// we still need havingWindowAndOrderbyExprResolver to do some expression substitution.
+	// eg: select c as a from t group by d having sum(a) = 2, a in sum func will be changed as c.
+	extractor := &havingWindowAndOrderbyExprResolver{
+		p:            p,
+		selectFields: sel.Fields.Fields,
+		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
+		colMapper:    b.colMapper,
+		outerSchemas: b.outerSchemas,
+		outerNames:   b.outerNames,
 	}
+	if sel.GroupBy != nil {
+		extractor.gbyItems = sel.GroupBy.Items
+	}
+	// Extract agg funcs from having clause.
+	if sel.Having != nil {
+		extractor.curClause = havingClause
+		n, ok := sel.Having.Expr.Accept(extractor)
+		if !ok {
+			return errors.Trace(extractor.err)
+		}
+		sel.Having.Expr = n.(ast.ExprNode)
+	}
+	sel.Fields.Fields = sel.Fields.Fields[:originLen]
+	// ignore the col mapper.
+	b.colMapper = map[*ast.ColumnNameExpr]int{}
 	_, _, err := b.rewriteWithPreprocess(ctx, having.Expr, p, nil, nil, false, nil)
 	if err != nil {
 		return err
@@ -858,7 +910,7 @@ func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, havi
 	return nil
 }
 
-func (b *PlanBuilder) analyzeOrderByList(ctx context.Context, p LogicalPlan, orderBy *ast.OrderByClause) error {
+func (b *PlanBuilder) analyzeOrderByList(ctx context.Context, p LogicalPlan, orderBy *ast.OrderByClause, sel *ast.SelectStmt) error {
 	originClause := b.curClause
 	b.curClause = orderByClause
 	// set allow eval-context of agg func/correlated agg to true.
@@ -881,6 +933,37 @@ func (b *PlanBuilder) analyzeOrderByList(ctx context.Context, p LogicalPlan, ord
 	if orderBy == nil {
 		return nil
 	}
+	originLen := len(sel.Fields.Fields)
+	// we still need havingWindowAndOrderbyExprResolver to do some expression substitution.
+	// eg: select c as a from t group by d having sum(a) = 2, a in sum func will be changed as c.
+	extractor := &havingWindowAndOrderbyExprResolver{
+		p:            p,
+		selectFields: sel.Fields.Fields,
+		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
+		colMapper:    b.colMapper,
+		outerSchemas: b.outerSchemas,
+		outerNames:   b.outerNames,
+	}
+	if sel.GroupBy != nil {
+		extractor.gbyItems = sel.GroupBy.Items
+	}
+	// Extract agg funcs from order by clause.
+	if sel.OrderBy != nil {
+		extractor.curClause = orderByClause
+		for _, item := range sel.OrderBy.Items {
+			if ast.HasWindowFlag(item.Expr) {
+				continue
+			}
+			n, ok := item.Expr.Accept(extractor)
+			if !ok {
+				return errors.Trace(extractor.err)
+			}
+			item.Expr = n.(ast.ExprNode)
+		}
+	}
+	sel.Fields.Fields = sel.Fields.Fields[:originLen]
+	// ignore the col mapper.
+	b.colMapper = map[*ast.ColumnNameExpr]int{}
 	transformer := &itemTransformer{}
 	for _, byItem := range orderBy.Items {
 		newExpr, _ := byItem.Expr.Accept(transformer)
@@ -991,13 +1074,12 @@ func (b *PlanBuilder) buildGroupBy(ctx context.Context, p LogicalPlan, gby *ast.
 	// todo: consider the parameter.
 	for _, item := range gby.Items {
 		// ignore the np here, we won't want change the plan tree here.
-		expr, np, err := b.rewrite(ctx, item.Expr, p, nil, true)
+		_, np, err := b.rewrite(ctx, item.Expr, p, nil, true)
 		if err != nil {
 			return nil, err
 		}
 		// change the plan tree here.
 		p = np
-		b.curScope.groupByItems = append(b.curScope.groupByItems, expr)
 	}
 	return p, nil
 }

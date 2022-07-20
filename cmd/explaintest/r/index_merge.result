@@ -185,18 +185,18 @@ c1	c2	c3
 // SELECT FIELD
 explain select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	estRows	task	access object	operator info
-Sort_39	5542.21	root		test.t1.c1
-└─Projection_41	5542.21	root		test.t1.c1, 15->Column#25
-  └─HashJoin_43	5542.21	root		CARTESIAN inner join, other cond:or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), or(and(gt(test.t1.c3, Column#14), if(ne(Column#15, 0), NULL, 1)), or(eq(Column#16, 0), if(isnull(test.t1.c3), NULL, 0)))))
-    ├─StreamAgg_50(Build)	1.00	root		funcs:max(Column#13)->Column#14, funcs:sum(0)->Column#15, funcs:count(1)->Column#16
-    │ └─StreamAgg_70	1.00	root		funcs:count(Column#38)->Column#13
-    │   └─IndexReader_71	1.00	root		index:StreamAgg_54
-    │     └─StreamAgg_54	1.00	cop[tikv]		funcs:count(1)->Column#38
-    │       └─IndexFullScan_68	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
-    └─IndexMerge_48(Probe)	5542.21	root		
-      ├─IndexRangeScan_45(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-      ├─IndexRangeScan_46(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-      └─TableRowIDScan_47(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Sort_38	5542.21	root		test.t1.c1
+└─Projection_40	5542.21	root		test.t1.c1, 15->Column#12
+  └─HashJoin_42	5542.21	root		CARTESIAN inner join, other cond:or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), or(and(gt(test.t1.c3, Column#18), if(ne(Column#19, 0), NULL, 1)), or(eq(Column#20, 0), if(isnull(test.t1.c3), NULL, 0)))))
+    ├─StreamAgg_49(Build)	1.00	root		funcs:max(Column#17)->Column#18, funcs:sum(0)->Column#19, funcs:count(1)->Column#20
+    │ └─StreamAgg_69	1.00	root		funcs:count(Column#34)->Column#17
+    │   └─IndexReader_70	1.00	root		index:StreamAgg_53
+    │     └─StreamAgg_53	1.00	cop[tikv]		funcs:count(1)->Column#34
+    │       └─IndexFullScan_67	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+    └─IndexMerge_47(Probe)	5542.21	root		
+      ├─IndexRangeScan_44(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+      ├─IndexRangeScan_45(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+      └─TableRowIDScan_46(Probe)	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 c1	(select sum(c2) from t2)
 1	15

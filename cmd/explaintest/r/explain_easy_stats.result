@@ -102,7 +102,7 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:COLUMNS	
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
-Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
+Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#8
 └─Apply	1999.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false

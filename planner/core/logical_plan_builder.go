@@ -2272,6 +2272,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				}
 			}
 		}
+		v.Name.ResolveFieldsFirst = resolveFieldsFirst
 		var index int
 		if resolveFieldsFirst {
 			index, a.err = resolveFromSelectFields(v, a.selectFields, false)
@@ -2305,7 +2306,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				}
 			}
 		} else {
-			// We should ignore the err when resolving from schema. Because we could resolve successfully
+			// We should ignore the error when resolving from schema. Because we could resolve successfully
 			// when considering select fields.
 			var err error
 			index, err = a.resolveFromPlan(v, a.p)
@@ -3834,6 +3835,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "SELECT * FROM t1 dt WHERE EXISTS(   WITH RECURSIVE qn AS (SELECT a*0 AS b UNION ALL SELECT b+1 FROM qn WHERE b=0)   SELECT * FROM qn WHERE b=a )") {
+		fmt.Println(1)
+	}
+
 	if sel.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
@@ -3849,9 +3854,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain SELECT one.a FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b)") {
-		fmt.Println(1)
-	}
 	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain SELECT COUNT(*), a,(SELECT m FROM t2 WHERE m = count(*) LIMIT 1) FROM t1 GROUP BY a") {
 		fmt.Println(1)
 	}
@@ -3898,11 +3900,21 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		return nil
 	}
+	oldOnlyFullGroupByCheck := func() error {
+		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
+			err = b.checkOnlyFullGroupBy(p, sel)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 
 	if eNNR {
 		// analyzing phase.
 		b.analyzingPhase = true
 		b.curScope.selectFields = sel.Fields.Fields
+		b.curScope.selectFieldsLen = len(sel.Fields.Fields)
 		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b") {
 			fmt.Println(1)
 		}
@@ -3915,10 +3927,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err = b.analyzeGroupByList(ctx, p, sel.GroupBy, sel.Fields.Fields); err != nil {
 			return nil, err
 		}
-		if err = b.analyzeHavingList(ctx, p, sel.Having); err != nil {
+		if err := oldOnlyFullGroupByCheck(); err != nil {
 			return nil, err
 		}
-		if err = b.analyzeOrderByList(ctx, p, sel.OrderBy); err != nil {
+		if err = b.analyzeHavingList(ctx, p, sel.Having, sel); err != nil {
+			return nil, err
+		}
+		if err = b.analyzeOrderByList(ctx, p, sel.OrderBy, sel); err != nil {
 			return nil, err
 		}
 		b.analyzingPhase = false
@@ -3934,15 +3949,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 				return nil, err
 			}
 		}
-		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
-			err = b.checkOnlyFullGroupBy(p, sel)
-			if err != nil {
-				return nil, err
-			}
+		if err := oldOnlyFullGroupByCheck(); err != nil {
+			return nil, err
 		}
-
 		if err := resolveWindowFunc(); err != nil {
 			return nil, err
+		}
+		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select d, d*d as d from t having d = -1") {
+			fmt.Println(1)
 		}
 		// We must resolve having and order by clause before build projection,
 		// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
@@ -4026,6 +4040,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if needBuildAgg {
 		if !eNNR {
 			var aggIndexMap map[int]int
+			if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select c as a from t group by d having sum(a) = 2") {
+				fmt.Println(1)
+			}
 			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
 			if err != nil {
 				return nil, err
@@ -4048,10 +4065,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 				return nil, err
 			}
 		}
-	}
-
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select count(*) from e, lo where lo.a=e.a and e.b=22336") {
-		fmt.Println(1)
 	}
 
 	var oldLen int

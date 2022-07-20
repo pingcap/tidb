@@ -746,12 +746,14 @@ type AggregateFuncExpr struct {
 
 	// Extra is a structure to help with aggregate function check in the tree travel.
 	Extra *struct {
+		InHavingAgg     bool
 		InAggFunc       *AggregateFuncExpr
 		MaxAggLevel     int
 		MaxAggFuncLevel int
 		AggQueryBlock   int
 		BaseQueryBlock  int
 		InsideAggregate []*AggregateFuncExpr
+		OriginByItem    []ExprNode
 	}
 }
 

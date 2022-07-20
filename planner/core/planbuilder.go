@@ -485,11 +485,14 @@ type PlanBuilder struct {
 	// order-by clause, limit clause.
 	needRegister nestingMap
 
+	inHavingCtx nestingMap
+
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	outerCTEs    []*cteInfo
 	// colMapper stores the column that must be pre-resolved.
-	colMapper map[*ast.ColumnNameExpr]int
+	colMapper     map[*ast.ColumnNameExpr]int
+	eNNRColMapper map[*ast.ColumnName]*expression.ColNamePair
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
@@ -553,8 +556,11 @@ type PlanBuilder struct {
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
 
-	// inAggFunc is used to record newest agg we are in.
+	// inAggFunc is used to record newest agg we are in. Agg(select(xx)), xx can feel it is in Agg.
 	inAggFunc *ast.AggregateFuncExpr
+	// inHavingAgg indicate that whether we are in agg of having clause. Agg(select(xx)), xx cannot feel it is in Agg.
+	inAgg  bool
+	inExpr bool
 }
 
 type handleColHelper struct {
@@ -661,6 +667,7 @@ func NewPlanBuilder() *PlanBuilder {
 	return &PlanBuilder{
 		outerCTEs:           make([]*cteInfo, 0),
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
+		eNNRColMapper:       make(map[*ast.ColumnName]*expression.ColNamePair),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
@@ -692,8 +699,12 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	// Save some fields for reuse.
 	saveOuterCTEs := b.outerCTEs[:0]
 	saveColMapper := b.colMapper
+	saveENNRColMapper := b.eNNRColMapper
 	for k := range saveColMapper {
 		delete(saveColMapper, k)
+	}
+	for k := range saveENNRColMapper {
+		delete(saveENNRColMapper, k)
 	}
 	saveHandleHelper := b.handleHelper
 	saveHandleHelper.resetForReuse()
@@ -710,6 +721,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	// It's a bit conservative but easier to get right.
 	b.outerCTEs = saveOuterCTEs
 	b.colMapper = saveColMapper
+	b.eNNRColMapper = saveENNRColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
 
