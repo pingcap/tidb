@@ -410,7 +410,8 @@ func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 }
 
 // Release is used to release memory tracked, track the released memory until GC triggered if needed
-// If you want your track to be GC-aware, please use Release(bytes) instead of Consume(-bytes), and pass the memory size of the real object
+// If you want your track to be GC-aware, please use Release(bytes) instead of Consume(-bytes), and pass the memory size of the real object.
+// Only Analyze is integrated with Release so far.
 func (t *Tracker) Release(bytes int64) {
 	if bytes == 0 {
 		return
