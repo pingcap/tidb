@@ -720,6 +720,7 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	// Errors in this staged would be returned, but would not make this entire method fail.
 	c.Reset()
 	c.AppendNull(0)
+	selected = selected[:0]
 	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
 	if err != nil || len(selected) != 1 {
 		nullSel = defaultSelectivity * float64(nullCnt) / totalCnt
