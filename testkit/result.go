@@ -49,6 +49,7 @@ func (res *Result) Check(expected [][]interface{}) {
 	res.require.Equal(needBuff.String(), resBuff.String(), res.comment)
 }
 
+// AddComment adds the extra comment for the Result's output.
 func (res *Result) AddComment(c string) {
 	res.comment += "\n" + c
 }
