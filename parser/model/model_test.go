@@ -428,6 +428,21 @@ func TestJobCodec(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isDependent)
 
+	// test ActionDropTable and ActionExchangeTablePartition is dependent.
+	job14 := &Job{
+		ID:         15,
+		TableID:    15,
+		SchemaID:   15,
+		Type:       ActionExchangeTablePartition,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{16, 17, 12, "pt", true},
+	}
+	job14.RawArgs, err = json.Marshal(job14.Args)
+	require.NoError(t, err)
+	isDependent, err = job13.IsDependentOn(job14)
+	require.NoError(t, err)
+	require.True(t, isDependent)
+
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
 	require.NoError(t, err)
