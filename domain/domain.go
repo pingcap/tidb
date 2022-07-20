@@ -27,6 +27,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/config"
@@ -903,6 +904,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.LogBackup.Enabled {
+		if pdClient == nil || do.etcdClient == nil {
+			log.Warn("pd / etcd client not provided, won't begin Advancer.")
+			return nil
+		}
 		env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
 		if err != nil {
 			return err

@@ -48,10 +48,17 @@ run_br restore full --log-file $br_log_file --filter '*.*' --filter '!mysql.*' -
 run_sql "select count(*) from db2.t1"
 check_contains "count(*): 2"
 
-echo "--> incompatible system table: column count mismatch"
+echo "--> incompatible system table: more column on target cluster"
 restart_services
 # mock incompatible manually
 run_sql "alter table mysql.user add column xx int;"
+run_br restore full --log-file $br_log_file -s "local://$backup_dir" > $res_file 2>&1 || true
+check_contains "the target cluster is not compatible with the backup data"
+
+echo "--> incompatible system table: less column on target cluster"
+restart_services
+# mock incompatible manually
+run_sql "alter table mysql.user drop column Reload_priv"
 run_br restore full --log-file $br_log_file -s "local://$backup_dir" > $res_file 2>&1 || true
 check_contains "the target cluster is not compatible with the backup data"
 

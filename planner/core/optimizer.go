@@ -60,6 +60,7 @@ const (
 	flagDecorrelate
 	flagSemiJoinRewrite
 	flagEliminateAgg
+	flagSkewDistinctAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
@@ -81,6 +82,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&semiJoinRewriter{},
 	&aggregationEliminator{},
+	&skewDistinctAggRewriter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},

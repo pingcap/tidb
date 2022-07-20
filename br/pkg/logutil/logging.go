@@ -282,18 +282,27 @@ func (kr StringifyKeys) String() string {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString("[")
-		sb.WriteString(redact.Key(rng.StartKey))
-		sb.WriteString(", ")
-		var endKey string
-		if len(rng.EndKey) == 0 {
-			endKey = "inf"
-		} else {
-			endKey = redact.Key(rng.EndKey)
-		}
-		sb.WriteString(redact.String(endKey))
-		sb.WriteString(")")
+		sb.WriteString(StringifyRange(rng).String())
 	}
 	sb.WriteString("}")
+	return sb.String()
+}
+
+// StringifyRange is the wrapper for displaying a key range.
+type StringifyRange kv.KeyRange
+
+func (rng StringifyRange) String() string {
+	sb := new(strings.Builder)
+	sb.WriteString("[")
+	sb.WriteString(redact.Key(rng.StartKey))
+	sb.WriteString(", ")
+	var endKey string
+	if len(rng.EndKey) == 0 {
+		endKey = "inf"
+	} else {
+		endKey = redact.Key(rng.EndKey)
+	}
+	sb.WriteString(redact.String(endKey))
+	sb.WriteString(")")
 	return sb.String()
 }
