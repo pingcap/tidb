@@ -1174,6 +1174,43 @@ func TestHint4PlanCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 }
 
+func TestIgnorePlanCacheWithPrepare(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk.SetSession(se)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+
+	tk.MustExec("create binding for select * from t using select /*+ ignore_plan_cache() */ * from t;")
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop binding for select * from t;")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("create binding for select * from t using select /*+ ignore_plan_cache() */ * from t;")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
 func TestSelectView4PlanCache(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
