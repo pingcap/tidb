@@ -1388,6 +1388,18 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
+		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+			ExchangePartitionFlag:  true,
+			ExchangePartitionID:    ptID,
+			ExchangePartitionDefID: defID,
+		}
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
+	}
+
+	if d.lease > 0 {
+		delayForAsyncCommit()
+	}
 
 	if withValidation {
 		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
@@ -1471,6 +1483,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
 
@@ -1521,7 +1539,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
-	ver, err = updateSchemaVersion(d, t, job)
+	nt.ExchangePartitionInfo = nil
+	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1603,7 +1622,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	case model.PartitionTypeList:
 		if len(pi.Columns) == 0 {
 			sql, paramList = buildCheckSQLForListPartition(pi, index, schemaName, tableName)
-		} else if len(pi.Columns) == 1 {
+		} else {
 			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
@@ -1625,6 +1644,29 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	if rowCount != 0 {
 		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 	}
+	return nil
+}
+
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) error {
+	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
+		return nil
+	}
+	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
+		return dbterror.ErrTablesDifferentMetadata
+	}
+
+	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
+	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
+	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
+		return nil
+	}
+	if ntPlacementPolicyInfo == nil || ptPlacementPolicyInfo == nil {
+		return dbterror.ErrTablesDifferentMetadata
+	}
+	if ntPlacementPolicyInfo.Name.L != ptPlacementPolicyInfo.Name.L {
+		return dbterror.ErrTablesDifferentMetadata
+	}
+
 	return nil
 }
 
