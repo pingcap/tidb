@@ -4009,10 +4009,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	// Determines whether to use the Merge hint in a CTE query.
 	if b.buildingCTE {
 		if hints := b.TableHints(); hints != nil {
 			b.outerCTEs[len(b.outerCTEs)-1].isInline = hints.MergeHints.preferMerge
 		}
+	}
+
+	// If Merge hint is using in outer query, we will not apply this hint.
+	if hints := b.TableHints(); hints.MergeHints.preferMerge && b.buildingCTE == false && len(b.tableHintInfo) == 1 {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the hint is using in outer query, you should use this hint in CTE inner query."))
 	}
 
 	sel.Fields.Fields = originalFields
@@ -4178,7 +4184,10 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 
-			if cte.isInline {
+			if cte.recurLP != nil && cte.isInline {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Hint merge() is inapplicable. Please check whether the CTE use recursive."))
+			}
+			if cte.recurLP == nil && cte.isInline {
 				lp.MergeHints.preferMerge = cte.isInline
 				saveCte := b.outerCTEs[i:]
 				b.outerCTEs = b.outerCTEs[:i]

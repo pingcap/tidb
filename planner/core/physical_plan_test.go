@@ -1139,6 +1139,7 @@ func TestCTEMergeHint(t *testing.T) {
 	tk.MustExec("analyze table t2;")
 	tk.MustExec("analyze table t3;")
 	tk.MustExec("analyze table t4;")
+
 	var (
 		input  []string
 		output []struct {
