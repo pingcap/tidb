@@ -4116,6 +4116,31 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		" last partition less than (NULL)")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr () not matching FIRST + n INTERVALs (0 + n * 1000000)", err.Error())
+	tk.MustExec("create table t (id int, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (100)" +
+		" first partition less than (-1000)" +
+		" last partition less than (-1000)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) DEFAULT NULL,\n" +
+			"  `val` varchar(255) DEFAULT NULL,\n" +
+			"  `comment` varchar(255) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `P_LT_-1000` VALUES LESS THAN (-1000))"))
+	tk.MustExec("drop table t")
+	err = tk.ExecToErr("create table t (id int, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (100)" +
+		" first partition less than (-100)" +
+		" last partition less than (250)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (250) not matching FIRST + n INTERVALs (-100 + n * 100)", err.Error())
+	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
+		" partition by range (id) interval (33)" +
+		" first partition less than (100)" +
+		" last partition less than (67)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (67) not matching FIRST + n INTERVALs (100 + n * 33)", err.Error())
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {
