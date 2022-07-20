@@ -144,8 +144,37 @@ func (t *TableMemoryUsage) TotalTrackingMemUsage() int64 {
 // TableCacheItem indicates the unit item stored in statsCache, eg: Column/Index
 type TableCacheItem interface {
 	ItemID() int64
-	DropEvicted()
 	MemoryUsage() CacheItemMemoryUsage
+	IsAllEvicted() bool
+
+	dropCMS()
+	dropTopN()
+	isStatsInitialized() bool
+	getEvictedStatus() int
+	statsVer() int64
+	isCMSExist() bool
+}
+
+// DropEvicted drop stats for table column/index
+func DropEvicted(item TableCacheItem) {
+	if !item.isStatsInitialized() {
+		return
+	}
+	switch item.getEvictedStatus() {
+	case allLoaded:
+		if item.isCMSExist() && item.statsVer() < Version2 {
+			item.dropCMS()
+			return
+		}
+		// For stats version2, there is no cms thus we directly drop topn
+		item.dropTopN()
+		return
+	case onlyCmsEvicted:
+		item.dropTopN()
+		return
+	default:
+		return
+	}
 }
 
 // CacheItemMemoryUsage indicates the memory usage of TableCacheItem
@@ -161,6 +190,7 @@ type ColumnMemUsage struct {
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
 	FMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -176,7 +206,7 @@ func (c *ColumnMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *ColumnMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage
 }
 
 // IndexMemUsage records index memory usage
@@ -184,6 +214,7 @@ type IndexMemUsage struct {
 	IndexID           int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
+	TopNMemUsage      int64
 	TotalMemUsage     int64
 }
 
@@ -199,7 +230,7 @@ func (c *IndexMemUsage) ItemID() int64 {
 
 // TrackingMemUsage implements CacheItemMemoryUsage
 func (c *IndexMemUsage) TrackingMemUsage() int64 {
-	return c.CMSketchMemUsage
+	return c.CMSketchMemUsage + c.TopNMemUsage
 }
 
 // MemoryUsage returns the total memory usage of this Table.

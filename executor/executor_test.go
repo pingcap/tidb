@@ -68,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
@@ -1575,21 +1574,6 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	for _, file := range reader.File {
 		require.True(t, checkFileName(file.Name))
 	}
-}
-
-func TestDropColWithPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
-	tk.MustExec("set global tidb_enable_change_multi_schema = off")
-	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
-	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
-	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
-	tk.MustExec("set global tidb_enable_change_multi_schema = on")
-	tk.MustExec("alter table t drop column c3")
 }
 
 func TestUnsignedFeedback(t *testing.T) {
@@ -4375,8 +4359,8 @@ func TestGetResultRowsCount(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(plannercore.Plan)
 		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session(), p)
-		require.Equal(t, cnt, ca.row, fmt.Sprintf("sql: %v", ca.sql))
+		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
 
@@ -6092,4 +6076,27 @@ func TestUpdateStmtWhileSchemaChanged(t *testing.T) {
 	failpoint.Disable("github.com/pingcap/tidb/executor/injectAlterTable")
 	wg.Wait()
 	tk.MustQuery("select a,c from t where b = 1").Check(testkit.Rows("2 0"))
+}
+
+func TestBinaryStrNumericOperator(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varbinary(10))")
+	tk.MustExec("insert into t values ('123.12')")
+	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
+		"124.12"))
+	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
+		"122.12"))
+	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
+		"-1231.2"))
+	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
+		"-61.56"))
+	// there should be no warning.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }

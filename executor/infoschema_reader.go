@@ -1303,6 +1303,12 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
 			req.AppendString(12, e.runningJobs[i].Query)
+			if e.runningJobs[i].MultiSchemaInfo != nil {
+				for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
+					req.AppendString(12, e.runningJobs[i].Query)
+				}
+			}
+
 		}
 		e.cursor += num
 		count += num
@@ -1318,6 +1324,11 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for _, job := range e.cacheJobs {
 			e.appendJobToChunk(req, job, checker)
 			req.AppendString(12, job.Query)
+			if job.MultiSchemaInfo != nil {
+				for range job.MultiSchemaInfo.SubJobs {
+					req.AppendString(12, job.Query)
+				}
+			}
 		}
 		e.cursor += len(e.cacheJobs)
 	}

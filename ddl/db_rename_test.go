@@ -19,8 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -58,8 +60,14 @@ func TestRenameTableWithLocked(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = true
 	})
-	store, clean := testkit.CreateMockStore(t)
+
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database renamedb")
 	tk.MustExec("create database renamedb2")
@@ -93,8 +101,24 @@ func TestAlterTableRenameTable(t *testing.T) {
 }
 
 func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+	var (
+		store kv.Storage
+		clean func()
+	)
+
+	if isAlterTable {
+		store, clean = testkit.CreateMockStore(t)
+		defer clean()
+	} else {
+		var dom *domain.Domain
+		store, dom, clean = testkit.CreateMockStoreAndDomain(t)
+		defer clean()
+
+		ddlChecker := schematracker.NewChecker(dom.DDL())
+		dom.SetDDL(ddlChecker)
+		ddlChecker.CreateTestDB()
+	}
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustGetErrCode("rename table tb1 to tb2;", errno.ErrNoSuchTable)
@@ -197,8 +221,13 @@ func renameTableTest(t *testing.T, sql string, isAlterTable bool) {
 }
 
 func TestRenameMultiTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")

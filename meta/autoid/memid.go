@@ -53,7 +53,7 @@ func (alloc *inMemoryAllocator) Base() int64 {
 }
 
 // End implements autoid.Allocator End interface.
-func (alloc *inMemoryAllocator) End() int64 {
+func (*inMemoryAllocator) End() int64 {
 	// It doesn't matter.
 	return 0
 }
@@ -68,7 +68,7 @@ func (alloc *inMemoryAllocator) NextGlobalAutoID() (int64, error) {
 	return alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *inMemoryAllocator) Alloc(_ context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	if n == 0 {
 		return 0, 0, nil
 	}
@@ -86,7 +86,7 @@ func (alloc *inMemoryAllocator) Alloc(ctx context.Context, n uint64, increment, 
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
-func (alloc *inMemoryAllocator) Rebase(ctx context.Context, requiredBase int64, allocIDs bool) error {
+func (alloc *inMemoryAllocator) Rebase(_ context.Context, requiredBase int64, _ bool) error {
 	if alloc.isUnsigned {
 		if uint64(requiredBase) > uint64(alloc.base) {
 			alloc.base = requiredBase
@@ -105,7 +105,7 @@ func (alloc *inMemoryAllocator) ForceRebase(requiredBase int64) error {
 	return nil
 }
 
-func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		alloc.base = offset - 1
@@ -118,12 +118,12 @@ func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) 
 		return 0, 0, ErrAutoincReadFailed
 	}
 
-	min := alloc.base
+	min = alloc.base
 	alloc.base += n1
 	return min, alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset)-1 > uint64(alloc.base) {
 		alloc.base = int64(uint64(offset) - 1)
@@ -137,16 +137,16 @@ func (alloc *inMemoryAllocator) alloc4Unsigned(n uint64, increment, offset int64
 		return 0, 0, ErrAutoincReadFailed
 	}
 
-	min := alloc.base
+	min = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) AllocSeqCache() (int64, int64, int64, error) {
+func (*inMemoryAllocator) AllocSeqCache() (base int64, end int64, round int64, err error) {
 	return 0, 0, 0, errNotImplemented.GenWithStackByArgs()
 }
 
-func (alloc *inMemoryAllocator) RebaseSeq(requiredBase int64) (int64, bool, error) {
+func (*inMemoryAllocator) RebaseSeq(_ int64) (res int64, alreadySatisfied bool, err error) {
 	return 0, false, errNotImplemented.GenWithStackByArgs()
 }

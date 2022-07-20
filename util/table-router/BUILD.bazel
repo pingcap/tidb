@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "table-router_test",
+    timeout = "short",
     srcs = ["router_test.go"],
     embed = [":table-router"],
     deps = [

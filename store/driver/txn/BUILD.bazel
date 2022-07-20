@@ -36,6 +36,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
+        "@com_github_tikv_client_go_v2//txnkv",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
         "@com_github_tikv_client_go_v2//txnkv/txnutil",

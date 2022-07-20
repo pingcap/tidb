@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt check-parallel unconvert lint tidy testSuite check-static vet errdoc
+check: check-parallel lint tidy testSuite check-static errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -412,6 +412,7 @@ dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
 dumpling_bins:
 	@which bin/tidb-server
 	@which bin/minio
+	@which bin/mc
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
 

@@ -1071,6 +1071,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			Columns:         ds.Columns,
 			Table:           is.Table,
 			TableAsName:     ds.TableAsName,
+			DBName:          ds.DBName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
 			tblCols:         ds.TblCols,
@@ -2613,7 +2614,8 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// 1-phase agg
 		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
-		if len(partitionCols) != 0 {
+		// If this is a skew distinct group agg, skip generating 1-phase agg, because skew data will cause performance issue
+		if len(partitionCols) != 0 && !la.ctx.GetSessionVars().EnableSkewDistinctAgg {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
@@ -2750,11 +2752,37 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	newProps := make([]*property.PhysicalProperty, 0, 2)
 	childProp := prop.CloneEssentialFields()
-	sel := PhysicalSelection{
-		Conditions: p.Conditions,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
-	return []PhysicalPlan{sel}, true, nil
+	newProps = append(newProps, childProp)
+
+	if prop.TaskTp != property.MppTaskType &&
+		p.SCtx().GetSessionVars().IsMPPAllowed() &&
+		p.canPushDown(kv.TiFlash) {
+		childPropMpp := prop.CloneEssentialFields()
+		childPropMpp.TaskTp = property.MppTaskType
+		newProps = append(newProps, childPropMpp)
+	}
+
+	ret := make([]PhysicalPlan, 0, len(newProps))
+	for _, newProp := range newProps {
+		sel := PhysicalSelection{
+			Conditions: p.Conditions,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
+		ret = append(ret, sel)
+	}
+	return ret, true, nil
+}
+
+// utility function to check whether we can push down Selection to TiKV or TiFlash
+func (p *LogicalSelection) canPushDown(storeTp kv.StoreType) bool {
+	return !expression.ContainVirtualColumn(p.Conditions) &&
+		p.canPushToCop(storeTp) &&
+		expression.CanExprsPushDown(
+			p.SCtx().GetSessionVars().StmtCtx,
+			p.Conditions,
+			p.SCtx().GetClient(),
+			storeTp)
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {

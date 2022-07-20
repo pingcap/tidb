@@ -23,6 +23,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//sessiontxn/internal",
         "//table/temptable",
         "//types",
         "//util/dbterror",
