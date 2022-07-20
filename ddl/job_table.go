@@ -38,8 +38,7 @@ import (
 )
 
 var (
-	addingDDLJobGeneral = "/tidb/ddl/add_ddl_job_general"
-	addingDDLJobReorg   = "/tidb/ddl/add_ddl_job_reorg"
+	addingDDLJobConcurrent = "/tidb/ddl/add_ddl_job_general"
 )
 
 func (dc *ddlCtx) insertRunningDDLJobMap(id int64) {
@@ -156,11 +155,9 @@ func (d *ddl) startDispatchLoop() {
 	}
 	defer d.sessPool.put(se)
 	sess := newSession(se)
-	var notifyDDLJobByEtcdChGeneral clientv3.WatchChan
-	var notifyDDLJobByEtcdChReorg clientv3.WatchChan
+	var notifyDDLJobByEtcdCh clientv3.WatchChan
 	if d.etcdCli != nil {
-		notifyDDLJobByEtcdChGeneral = d.etcdCli.Watch(d.ctx, addingDDLJobGeneral)
-		notifyDDLJobByEtcdChReorg = d.etcdCli.Watch(d.ctx, addingDDLJobReorg)
+		notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 	}
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -176,17 +173,10 @@ func (d *ddl) startDispatchLoop() {
 		select {
 		case <-d.ddlJobCh:
 		case <-ticker.C:
-		case _, ok := <-notifyDDLJobByEtcdChGeneral:
+		case _, ok := <-notifyDDLJobByEtcdCh:
 			if !ok {
-				logutil.BgLogger().Warn("[ddl] start general worker watch channel closed", zap.String("watch key", addingDDLJobGeneral))
-				notifyDDLJobByEtcdChGeneral = d.etcdCli.Watch(d.ctx, addingDDLJobGeneral)
-				time.Sleep(time.Second)
-				continue
-			}
-		case _, ok := <-notifyDDLJobByEtcdChReorg:
-			if !ok {
-				logutil.BgLogger().Warn("[ddl] start reorg worker watch channel closed", zap.String("watch key", addingDDLJobReorg))
-				notifyDDLJobByEtcdChReorg = d.etcdCli.Watch(d.ctx, addingDDLJobReorg)
+				logutil.BgLogger().Warn("[ddl] start worker watch channel closed", zap.String("watch key", addingDDLJobConcurrent))
+				notifyDDLJobByEtcdCh = d.etcdCli.Watch(d.ctx, addingDDLJobConcurrent)
 				time.Sleep(time.Second)
 				continue
 			}

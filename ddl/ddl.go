@@ -839,11 +839,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 		if d.isOwner() {
 			asyncNotify(d.ddlJobCh)
 		} else {
-			key := addingDDLJobGeneral
-			if job.MayNeedReorg() {
-				key = addingDDLJobReorg
-			}
-			d.asyncNotifyByEtcd(key, job)
+			d.asyncNotifyByEtcd(addingDDLJobConcurrent, job)
 		}
 	} else {
 		var worker *worker
