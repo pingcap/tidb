@@ -110,8 +110,10 @@ func TestRelease(t *testing.T) {
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(0), tracker.BytesReleased())
 	require.Equal(t, int64(100), parentTracker.BytesReleased())
+	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
+	// https://github.com/golang/go/issues/45315
 	runtime.GC()
-	runtime.GC() // TODO one call cannot work
+	runtime.GC()
 	require.Equal(t, int64(0), parentTracker.BytesReleased())
 
 	waitGroup := sync.WaitGroup{}
@@ -130,8 +132,10 @@ func TestRelease(t *testing.T) {
 		}()
 	}
 	waitGroup.Wait()
+	// call GC() twice to workaround as the same way GO does due to GC() returns without finishing sweep
+	// https://github.com/golang/go/issues/45315
 	runtime.GC()
-	runtime.GC() // TODO one call cannot work
+	runtime.GC()
 	require.Equal(t, int64(0), tracker.BytesConsumed())
 	require.Equal(t, int64(0), parentTracker.BytesConsumed())
 	require.Equal(t, int64(0), tracker.BytesReleased())
