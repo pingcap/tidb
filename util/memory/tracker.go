@@ -84,8 +84,8 @@ type actionMu struct {
 	actionOnExceed ActionOnExceed
 }
 
-// GCAwareMemoryTrack is used to turn on/off the GC-aware memory track
-var GCAwareMemoryTrack = atomicutil.NewBool(false)
+// EnableGCAwareMemoryTrack is used to turn on/off the GC-aware memory track
+var EnableGCAwareMemoryTrack = atomicutil.NewBool(false)
 
 // https://golang.google.cn/pkg/runtime/#SetFinalizer
 // It is not guaranteed that a finalizer will run if the size of *obj is zero bytes.
@@ -440,7 +440,7 @@ func (t *Tracker) BufferedRelease(bufferedMemSize *int64, bytes int64) {
 }
 
 func (t *Tracker) shouldRecordRelease() bool {
-	return GCAwareMemoryTrack.Load() && t.label == LabelForGlobalAnalyzeMemory
+	return EnableGCAwareMemoryTrack.Load() && t.label == LabelForGlobalAnalyzeMemory
 }
 
 func (t *Tracker) recordRelease(bytes int64) {

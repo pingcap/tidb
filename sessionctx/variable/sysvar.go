@@ -827,11 +827,11 @@ var defaultSysVars = []*SysVar{
 		sessionstates.SetKeyPath(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBGCAwareMemoryTrack, Value: BoolToOnOff(DefTiDBGCAwareMemoryTrack), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
-		memory.GCAwareMemoryTrack.Store(TiDBOptOn(val))
+	{Scope: ScopeGlobal, Name: TiDBEnableGCAwareMemoryTrack, Value: BoolToOnOff(DefEnableTiDBGCAwareMemoryTrack), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		memory.EnableGCAwareMemoryTrack.Store(TiDBOptOn(val))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(memory.GCAwareMemoryTrack.Load()), nil
+		return BoolToOnOff(memory.EnableGCAwareMemoryTrack.Load()), nil
 	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */

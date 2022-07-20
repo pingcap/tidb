@@ -767,8 +767,8 @@ const (
 	TiDBAuthSigningCert = "tidb_auth_signing_cert"
 	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
 	TiDBAuthSigningKey = "tidb_auth_signing_key"
-	// TiDBGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
-	TiDBGCAwareMemoryTrack = "tidb_gc_aware_memory_track"
+	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
+	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 )
 
 // TiDB intentional limits
@@ -977,7 +977,7 @@ const (
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
 	DefAdaptiveClosestReadThreshold                = 4096
-	DefTiDBGCAwareMemoryTrack                      = true
+	DefEnableTiDBGCAwareMemoryTrack                = true
 )
 
 // Process global variables.
