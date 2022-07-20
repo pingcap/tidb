@@ -327,7 +327,6 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if mask&(1<<uint64(i)) == 0 {
 				continue
 			}
-			expr = expression.GetExprInsideIsTruth(expr)
 			switch x := expr.(type) {
 			case *expression.Constant:
 				notCoveredConstants[i] = x

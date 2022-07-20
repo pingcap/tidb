@@ -677,6 +677,9 @@ func (coll *HistColl) GetSelectivityByFilter(sctx sessionctx.Context,
 	var topNSel, histSel, nullSel float64
 
 	// Prepare for evaluation.
+
+	// For execution, we use Column.Index instead of Column.UniqueID to locate a column.
+	// We have only one column here, so we set it to 0.
 	originalIndex := col.Index
 	col.Index = 0
 	defer func() {
