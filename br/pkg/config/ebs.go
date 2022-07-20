@@ -44,6 +44,7 @@ type EBSVolume struct {
 	Type            string `json:"type" toml:"type"`
 	SnapshotID      string `json:"snapshot_id" toml:"snapshot_id"`
 	RestoreVolumeId string `json:"restore_volume_id" toml:"restore_volume_id"`
+	VolumeAZ        string `json:"volume_az" toml:"volume_az"`
 	Status          string `json:"status" toml:"status"`
 }
 
@@ -189,6 +190,14 @@ func (c *EBSBasedBRMeta) SetRestoreVolumeIDs(idMap map[string]string) {
 	for _, store := range c.TiKVComponent.Stores {
 		for _, volume := range store.Volumes {
 			volume.RestoreVolumeId = idMap[volume.ID]
+		}
+	}
+}
+
+func (c *EBSBasedBRMeta) SetVolumeAZs(idMap map[string]string) {
+	for _, store := range c.TiKVComponent.Stores {
+		for _, volume := range store.Volumes {
+			volume.VolumeAZ = idMap[volume.ID]
 		}
 	}
 }
