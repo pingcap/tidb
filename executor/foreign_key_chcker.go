@@ -378,7 +378,20 @@ func (fkc *foreignKeyChecker) fetchFKValues(row []types.Datum) ([]types.Datum, e
 	return vals, nil
 }
 
+func getForeignKeyTriggerExecs(e Executor) []*ForeignKeyTriggerExec {
+	switch x := e.(type) {
+	case *DeleteExec:
+		fkTriggerExecs := []*ForeignKeyTriggerExec{}
+		for _, fkts := range x.fkTriggerExecs {
+			fkTriggerExecs = append(fkTriggerExecs, fkts...)
+		}
+		return fkTriggerExecs
+	}
+	return nil
+}
+
 type ForeignKeyTriggerExec struct {
+	b *executorBuilder
 	p *plannercore.ForeignKeyTriggerPlan
 
 	*foreignKeyChecker
@@ -394,7 +407,7 @@ func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
 	return nil
 }
 
-func (fkt *ForeignKeyTriggerExec) buildRange() []*ranger.Range {
+func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() {
 	ranges := make([]*ranger.Range, 0, len(fkt.fkValues))
 	for _, vals := range fkt.fkValues {
 		ranges = append(ranges, &ranger.Range{
@@ -404,11 +417,17 @@ func (fkt *ForeignKeyTriggerExec) buildRange() []*ranger.Range {
 			HighExclude: false,
 		})
 	}
-	return ranges
+	indexLookUpPlan := fkt.p.IndexLookUpPlan.(*plannercore.PhysicalIndexLookUpReader)
+	is := indexLookUpPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	is.Ranges = ranges
 }
 
-func buildForeignKeyTriggerExecs(ctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKTriggerPlans map[int64][]*plannercore.ForeignKeyTriggerPlan) (map[int64][]*ForeignKeyTriggerExec, error) {
-	if !ctx.GetSessionVars().ForeignKeyChecks {
+func (fkt *ForeignKeyTriggerExec) buildExecutor() Executor {
+	return fkt.b.build(fkt.p.Plan)
+}
+
+func (b *executorBuilder) buildForeignKeyTriggerExecs(tblID2Table map[int64]table.Table, tblID2FKTriggerPlans map[int64][]*plannercore.ForeignKeyTriggerPlan) (map[int64][]*ForeignKeyTriggerExec, error) {
+	if !b.ctx.GetSessionVars().ForeignKeyChecks {
 		logutil.BgLogger().Warn("----- foreign key check disabled")
 		return nil, nil
 	}
@@ -416,7 +435,7 @@ func buildForeignKeyTriggerExecs(ctx sessionctx.Context, tblID2Table map[int64]t
 	for tid, tbl := range tblID2Table {
 		fkTriggerPlans := tblID2FKTriggerPlans[tid]
 		for _, fkTriggerPlan := range fkTriggerPlans {
-			fkTriggerExec, err := buildForeignKeyTriggerExec(tbl.Meta(), fkTriggerPlan)
+			fkTriggerExec, err := b.buildForeignKeyTriggerExec(tbl.Meta(), fkTriggerPlan)
 			if err != nil {
 				return nil, err
 			}
@@ -426,7 +445,7 @@ func buildForeignKeyTriggerExecs(ctx sessionctx.Context, tblID2Table map[int64]t
 	return fkTriggerExecs, nil
 }
 
-func buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fkTriggerPlan *plannercore.ForeignKeyTriggerPlan) (*ForeignKeyTriggerExec, error) {
+func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fkTriggerPlan *plannercore.ForeignKeyTriggerPlan) (*ForeignKeyTriggerExec, error) {
 	fk := fkTriggerPlan.FK
 	colsOffsets, err := getForeignKeyColumnsOffsets(tbInfo, fk.RefCols)
 	if err != nil {
@@ -438,6 +457,7 @@ func buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fkTriggerPlan *plannerc
 		return nil, err
 	}
 	return &ForeignKeyTriggerExec{
+		b:                 b,
 		p:                 fkTriggerPlan,
 		foreignKeyChecker: fkChecker,
 	}, nil

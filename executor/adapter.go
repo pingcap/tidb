@@ -471,25 +471,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled {
 		//TODO: Add foreign key constrain check or cascade delete/update here.
-		switch x := e.(type) {
-		case *DeleteExec:
-			for _, fkts := range x.fkTriggerExecs {
-				for _, fkt := range fkts {
-					indexLookUpPlan := fkt.p.IndexLookUpPlan.(*plannercore.PhysicalIndexLookUpReader)
-					is := indexLookUpPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-					is.Ranges = fkt.buildRange()
-					e := x.executorBuilder.build(fkt.p.Plan)
-					if err = e.Open(ctx); err != nil {
-						terror.Call(e.Close)
-						return nil, err
-					}
-					_, _, err := a.handleNoDelay(ctx, e, isPessimistic)
-					if err != nil {
-						return nil, err
-					}
-				}
-			}
+		if err != nil {
+			return result, err
 		}
+		err = a.handleForeignKeyTrigger(ctx, e, isPessimistic)
 		return result, err
 	}
 
@@ -507,6 +492,23 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool) error {
+	fkTriggerExecs := getForeignKeyTriggerExecs(e)
+	for _, fkt := range fkTriggerExecs {
+		fkt.buildIndexReaderRange()
+		e := fkt.buildExecutor()
+		if err := e.Open(ctx); err != nil {
+			terror.Call(e.Close)
+			return err
+		}
+		_, _, err := a.handleNoDelay(ctx, e, isPessimistic)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {

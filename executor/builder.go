@@ -2158,8 +2158,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
 	}
-	deleteExec.executorBuilder = b
-	deleteExec.fkTriggerExecs, b.err = buildForeignKeyTriggerExecs(b.ctx, tblID2table, v.FKTriggerPlans)
+	deleteExec.fkTriggerExecs, b.err = b.buildForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
 	if b.err != nil {
 		return nil
 	}

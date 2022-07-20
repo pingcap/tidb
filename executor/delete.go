@@ -49,7 +49,6 @@ type DeleteExec struct {
 
 	deleteRowFKCheckers map[int64][]*foreignKeyChecker
 	fkTriggerExecs      map[int64][]*ForeignKeyTriggerExec
-	executorBuilder     *executorBuilder
 }
 
 // Next implements the Executor Next interface.
