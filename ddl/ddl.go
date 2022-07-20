@@ -557,6 +557,7 @@ func (d *ddl) DisableDDL() error {
 		// If there is only one node, we should NOT disable ddl.
 		serverInfo, err := infosync.GetAllServerInfo(d.ctx)
 		if err != nil {
+			logutil.BgLogger().Error("[ddl] error when GetAllServerInfo", zap.Error(err))
 			return err
 		}
 		if len(serverInfo) <= 1 {
@@ -569,6 +570,7 @@ func (d *ddl) DisableDDL() error {
 		err = d.ownerManager.ResignOwner(d.ctx)
 
 		if err != nil {
+			logutil.BgLogger().Error("[ddl] error when ResignOwner", zap.Error(err))
 			return err
 		}
 	}
@@ -582,6 +584,8 @@ func (d *ddl) DisableDDL() error {
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
+	} else {
+		logutil.BgLogger().Warn("[ddl] d.delRangeMgr is <nil>")
 	}
 	// disable campaign by interrupting campaignLoop
 	d.ownerManager.CampaignCancel()
@@ -608,15 +612,22 @@ func (d *ddl) close() {
 	}
 
 	startTime := time.Now()
-	if err := d.DisableDDL(); err != nil {
-		logutil.BgLogger().Error("[ddl] error when closing DDL", zap.Error(err))
-	}
+	d.cancel()
+	d.wg.Wait()
 	d.ownerManager.Cancel()
+	d.schemaSyncer.Close()
+
+	for _, worker := range d.workers {
+		worker.Close()
+	}
+	// d.delRangeMgr using sessions from d.sessPool.
+	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
+	if d.delRangeMgr != nil {
+		d.delRangeMgr.clear()
+	}
 	if d.sessPool != nil {
 		d.sessPool.close()
 	}
-	d.cancel()
-	d.wg.Wait()
 
 	variable.UnregisterStatistics(d)
 
