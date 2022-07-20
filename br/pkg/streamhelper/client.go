@@ -300,6 +300,13 @@ type Task struct {
 	Info backuppb.StreamBackupTaskInfo
 }
 
+func NewTask(client *MetaDataClient, info backuppb.StreamBackupTaskInfo) *Task {
+	return &Task{
+		cli:  client,
+		Info: info,
+	}
+}
+
 // Pause is a shorthand for `metaCli.PauseTask`.
 func (t *Task) Pause(ctx context.Context) error {
 	return t.cli.PauseTask(ctx, t.Info.Name)

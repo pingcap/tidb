@@ -125,7 +125,7 @@ type TaskInfo struct {
 }
 
 // NewTask creates a new task with the name.
-func NewTask(name string) *TaskInfo {
+func NewTaskInfo(name string) *TaskInfo {
 	return &TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
 			Name: name,
