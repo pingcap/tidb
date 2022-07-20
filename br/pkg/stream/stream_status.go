@@ -133,7 +133,7 @@ func (p *printByTable) AddTask(task TaskStatus) {
 		if gap > 5*time.Minute {
 			gapColor = color.New(color.FgRed)
 		}
-		info := fmt.Sprintf("%s; gap=%s", pTime, gapColor.Sprint(gap))
+		info := fmt.Sprintf("%s; gap=%s", pTime.Format("2006-01-02 15:04:05.999999999 -0700"), gapColor.Sprint(gap))
 		return info
 	}
 	cp := task.GetMinStoreCheckpoint()
