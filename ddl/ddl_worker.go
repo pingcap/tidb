@@ -1414,10 +1414,12 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
 		var (
-			ptSchemaID int64
-			ptTableID  int64
+			ptSchemaID     int64
+			ptTableID      int64
+			partName       string
+			withValidation bool
 		)
-		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID)
+		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID, &partName, &withValidation)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
