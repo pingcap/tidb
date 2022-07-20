@@ -1883,7 +1883,7 @@ func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalTime(b.ctx, input, buf1)
-		fsp := b.args[j].GetType().GetDecimal()
+		fsp := b.tp.GetDecimal()
 		afterWarns := sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {

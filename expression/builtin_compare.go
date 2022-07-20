@@ -113,12 +113,6 @@ type coalesceFunctionClass struct {
 	baseFunctionClass
 }
 
-func setCoalesceFsp(args []Expression, fsp int) {
-	for _, arg := range args {
-		arg.GetType().SetDecimal(fsp)
-	}
-}
-
 func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
@@ -215,7 +209,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCoalesceStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case types.ETDatetime, types.ETTimestamp:
-		setCoalesceFsp(args, resultFieldType.GetDecimal())
+		bf.tp.SetDecimal(resultFieldType.GetDecimal())
 		sig = &builtinCoalesceTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case types.ETDuration:
@@ -331,9 +325,10 @@ func (b *builtinCoalesceTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinCoalesceTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
+	fsp := b.tp.GetDecimal()
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalTime(b.ctx, row)
-		res.SetFsp(a.GetType().GetDecimal())
+		res.SetFsp(fsp)
 		if err != nil || !isNull {
 			break
 		}

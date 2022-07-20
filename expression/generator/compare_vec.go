@@ -225,7 +225,7 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	for j := 0; j < len(b.args); j++{
 		err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1)
         {{- if eq .type.TypeName "Time" }}
-        fsp := b.args[j].GetType().GetDecimal()
+        fsp := b.tp.GetDecimal()
         {{- end }}
 		afterWarns := sc.WarningCount()
 		if err != nil || afterWarns > beforeWarns {
