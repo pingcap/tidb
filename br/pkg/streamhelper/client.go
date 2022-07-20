@@ -15,6 +15,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -299,6 +300,13 @@ type Task struct {
 	Info backuppb.StreamBackupTaskInfo
 }
 
+func NewTask(client *MetaDataClient, info backuppb.StreamBackupTaskInfo) *Task {
+	return &Task{
+		cli:  client,
+		Info: info,
+	}
+}
+
 // Pause is a shorthand for `metaCli.PauseTask`.
 func (t *Task) Pause(ctx context.Context) error {
 	return t.cli.PauseTask(ctx, t.Info.Name)
@@ -350,6 +358,29 @@ func (t *Task) NextBackupTSList(ctx context.Context) ([]Checkpoint, error) {
 		cps = append(cps, cp)
 	}
 	return cps, nil
+}
+
+func (t *Task) GetStorageCheckpoint(ctx context.Context) (uint64, error) {
+	prefix := StorageCheckpointOf(t.Info.Name)
+	scanner := scanEtcdPrefix(t.cli.Client, prefix)
+	kvs, err := scanner.AllPages(ctx, 1024)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
+	}
+
+	var storageCheckpoint = t.Info.StartTs
+	for _, kv := range kvs {
+		if len(kv.Value) != 8 {
+			return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"the value isn't 64bits (it is %d bytes, value = %s)",
+				len(kv.Value),
+				redact.Key(kv.Value))
+		}
+		ts := binary.BigEndian.Uint64(kv.Value)
+		storageCheckpoint = mathutil.Max(storageCheckpoint, ts)
+	}
+
+	return storageCheckpoint, nil
 }
 
 // MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
