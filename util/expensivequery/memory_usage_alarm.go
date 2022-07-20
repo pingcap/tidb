@@ -75,7 +75,7 @@ func (record *memoryUsageAlarm) initS3Config() {
 	}
 }
 
-func (record *memoryUsageAlarm) uploadFilesToS3(filename string, uploader *s3manager.Uploader) {
+func (record *memoryUsageAlarm) uploadFileToS3(filename string, uploader *s3manager.Uploader) {
 	file, err := os.OpenFile(filename, os.O_RDONLY, 0600)
 	if err != nil {
 		logutil.BgLogger().Error("open record file fail", zap.Error(err))
@@ -112,7 +112,7 @@ func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []stri
 		}
 		uploader := s3manager.NewUploader(sess)
 		for _, filename := range filenames {
-			record.uploadFilesToS3(filename, uploader)
+			record.uploadFileToS3(filename, uploader)
 		}
 	}
 }
