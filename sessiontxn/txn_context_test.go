@@ -906,28 +906,28 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	tk.MustExec("create table t2(id int, v int, unique key i1(v))")
 	tk.MustExec("create table t3(id int, v int, key i1(v))")
 
-	sqlSelectId, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id = ? for update")
-	sqlUpdateId, _, _, _ := tk.Session().PrepareStmt("update t1 set v = v + 10 where id = ?")
-	sqlInsertId1, _, _, _ := tk.Session().PrepareStmt("insert into t2 values(?, ?)")
-	sqlInsertId2, _, _, _ := tk.Session().PrepareStmt("insert into t3 values(?, ?)")
+	sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id = ? for update")
+	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set v = v + 10 where id = ?")
+	sqlInsertID1, _, _, _ := tk.Session().PrepareStmt("insert into t2 values(?, ?)")
+	sqlInsertID2, _, _, _ := tk.Session().PrepareStmt("insert into t3 values(?, ?)")
 
 	tk.MustExec("insert into t1 values (1, 1, 1)")
 	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	for i := 1; i < 100; i++ {
 		tk.MustExec("begin pessimistic")
-		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectId, []types.Datum{types.NewDatum(1)})
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
 		require.NoError(t, stmt.Close())
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateId, []types.Datum{types.NewDatum(1)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 
 		val := i * 10
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertId1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
 		require.NoError(t, err)
 		require.Nil(t, stmt)
-		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertId2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
 		require.NoError(t, err)
 		require.Nil(t, stmt)
 		tk.MustExec("commit")
