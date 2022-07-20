@@ -3801,7 +3801,6 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	if spec.Tp == ast.AlterTableDropFirstPartition {
-		var partInfo *model.PartitionInfo
 		intervalOptions := getPartitionIntervalFromTable(ctx, meta)
 		if intervalOptions == nil {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
@@ -3812,7 +3811,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 				"FIRST PARTITION, table info already contains partition definitions")
 		}
 		spec.Partition.Interval = intervalOptions
-		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition, partInfo)
+		err = GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 		if err != nil {
 			return err
 		}
@@ -6322,12 +6321,6 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 
 // buildAddedPartitionInfo build alter table add partition info
 func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
-	part := &model.PartitionInfo{
-		Type:    meta.Partition.Type,
-		Expr:    meta.Partition.Expr,
-		Columns: meta.Partition.Columns,
-		Enable:  meta.Partition.Enable,
-	}
 	switch meta.Partition.Type {
 	case model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
@@ -6335,7 +6328,7 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		}
 	case model.PartitionTypeRange:
 		if spec.Tp == ast.AlterTableAddLastPartition {
-			err := buildAddedPartitionDefs(ctx, meta, spec, part)
+			err := buildAddedPartitionDefs(ctx, meta, spec)
 			if err != nil {
 				return nil, err
 			}
@@ -6355,11 +6348,18 @@ func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec
 		return nil, err
 	}
 
+	part := &model.PartitionInfo{
+		Type:    meta.Partition.Type,
+		Expr:    meta.Partition.Expr,
+		Columns: meta.Partition.Columns,
+		Enable:  meta.Partition.Enable,
+	}
+
 	part.Definitions = defs
 	return part, nil
 }
 
-func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec, part *model.PartitionInfo) error {
+func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
 	partInterval := getPartitionIntervalFromTable(ctx, meta)
 	if partInterval == nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
@@ -6374,7 +6374,7 @@ func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec
 	if len(spec.PartDefinitions) > 0 {
 		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}
-	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition, part)
+	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
