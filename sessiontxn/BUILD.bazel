@@ -24,6 +24,7 @@ go_test(
         "txn_context_test.go",
         "txn_manager_test.go",
     ],
+    flaky = True,
     deps = [
         ":sessiontxn",
         "//domain",

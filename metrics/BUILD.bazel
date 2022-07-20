@@ -41,6 +41,7 @@ go_test(
         "metrics_test.go",
     ],
     embed = [":metrics"],
+    flaky = True,
     deps = [
         "//parser/terror",
         "//testkit/testsetup",

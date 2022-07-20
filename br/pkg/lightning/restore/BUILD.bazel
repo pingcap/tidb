@@ -91,6 +91,7 @@ go_test(
         "tidb_test.go",
     ],
     embed = [":restore"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",

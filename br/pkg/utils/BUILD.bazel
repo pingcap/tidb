@@ -75,6 +75,7 @@ go_test(
         "schema_test.go",
     ],
     embed = [":utils"],
+    flaky = True,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",

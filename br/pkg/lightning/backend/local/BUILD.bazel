@@ -88,6 +88,7 @@ go_test(
         "localhelper_test.go",
     ],
     embed = [":local"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",

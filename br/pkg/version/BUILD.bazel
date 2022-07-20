@@ -23,6 +23,7 @@ go_test(
     name = "version_test",
     srcs = ["version_test.go"],
     embed = [":version"],
+    flaky = True,
     deps = [
         "//br/pkg/version/build",
         "@com_github_coreos_go_semver//semver",

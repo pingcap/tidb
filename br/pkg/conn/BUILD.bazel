@@ -41,6 +41,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":conn"],
+    flaky = True,
     deps = [
         "//br/pkg/pdutil",
         "//br/pkg/utils",

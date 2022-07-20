@@ -47,6 +47,7 @@ go_test(
         "stream_misc_test.go",
     ],
     embed = [":stream"],
+    flaky = True,
     deps = [
         "//br/pkg/streamhelper",
         "//meta",
