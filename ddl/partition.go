@@ -193,7 +193,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 			}
 		}
 		// For normal and replica finished table, move the `addingDefinitions` into `Definitions`.
-		updatePartitionInfo(tblInfo, partInfo)
+		updatePartitionInfo(tblInfo)
 
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
@@ -265,12 +265,13 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 }
 
 // updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
-func updatePartitionInfo(tblInfo *model.TableInfo, partInfo *model.PartitionInfo) {
+func updatePartitionInfo(tblInfo *model.TableInfo) {
+	parInfo := &model.PartitionInfo{}
 	oldDefs, newDefs := tblInfo.Partition.Definitions, tblInfo.Partition.AddingDefinitions
-	defs := make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
-	defs = append(defs, oldDefs...)
-	defs = append(defs, newDefs...)
-	tblInfo.Partition.Definitions = defs
+	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
+	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
+	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
+	tblInfo.Partition.Definitions = parInfo.Definitions
 	tblInfo.Partition.AddingDefinitions = nil
 }
 
@@ -452,11 +453,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		Num:    s.Num,
 	}
 	tbInfo.Partition = pi
-	var partExpressionCols []*model.ColumnInfo
 	if s.Expr != nil {
-		var err error
-		partExpressionCols, err = checkPartitionFuncValid(ctx, tbInfo, s.Expr)
-		if err != nil {
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Expr); err != nil {
 			return errors.Trace(err)
 		}
 		buf := new(bytes.Buffer)
@@ -475,7 +473,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 	}
 
-	err := generatePartitionDefinitionsFromInterval(ctx, s, tbInfo, partExpressionCols)
+	err := generatePartitionDefinitionsFromInterval(ctx, s, tbInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -489,7 +487,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	return nil
 }
 
-// Similar to newPartitionExpr?
 func isPartExprUnsigned(ctx sessionctx.Context, tbInfo *model.TableInfo) bool {
 	expr, err := expression.ParseSimpleExprWithTableInfo(ctx, tbInfo.Partition.Expr, tbInfo)
 	if err != nil {
@@ -627,7 +624,7 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 	partitionMethod := ast.PartitionMethod{Interval: &interval}
 	partOption := &ast.PartitionOptions{PartitionMethod: partitionMethod}
 	// Generate the definitions from interval, first and last
-	err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo, nil)
+	err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo)
 	if err != nil {
 		return nil
 	}
@@ -740,7 +737,7 @@ func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
 }
 
 // generatePartitionDefinitionsFromInterval generates partition Definitions according to INTERVAL options on partOptions
-func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo, partExprCols []*model.ColumnInfo) error {
+func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo) error {
 	if partOptions.Interval == nil {
 		return nil
 	}
@@ -1294,19 +1291,19 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 }
 
 // checkPartitionFuncValid checks partition function validly.
-func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) ([]*model.ColumnInfo, error) {
+func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	if expr == nil {
-		return nil, nil
+		return nil
 	}
 	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed)
 	expr.Accept(exprChecker)
 	if exprChecker.err != nil {
-		return nil, errors.Trace(exprChecker.err)
+		return errors.Trace(exprChecker.err)
 	}
 	if len(exprChecker.columns) == 0 {
-		return nil, errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
+		return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
 	}
-	return exprChecker.columns, nil
+	return nil
 }
 
 // checkResultOK derives from https://github.com/mysql/mysql-server/blob/5.7/sql/item_timefunc

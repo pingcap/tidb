@@ -6369,9 +6369,6 @@ func buildAddedPartitionDefs(ctx sessionctx.Context, meta *model.TableInfo, spec
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
 	}
 
-	if spec.Partition.Interval != nil {
-		panic("humm?")
-	}
 	spec.Partition.Interval = partInterval
 
 	if len(spec.PartDefinitions) > 0 {
