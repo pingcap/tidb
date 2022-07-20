@@ -666,6 +666,10 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	if err != nil || isDependent {
 		return isDependent, errors.Trace(err)
 	}
+	isDependent, err = other.hasDependentTableForExchangePartition(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
 	return false, nil
 }
 
