@@ -3632,7 +3632,6 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case HintMerge:
 			if hint.Tables != nil {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("The MERGE hint is not used correctly, maybe it inputs a table name."))
-				MergeHints.preferMerge = false
 				continue
 			}
 			MergeHints.preferMerge = true
