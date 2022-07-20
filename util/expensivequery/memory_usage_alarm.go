@@ -75,7 +75,29 @@ func (record *memoryUsageAlarm) initS3Config() {
 	}
 }
 
-func (record *memoryUsageAlarm) uploadFileToS3(filenames []string) {
+func (record *memoryUsageAlarm) uploadFilesToS3(filename string, uploader *s3manager.Uploader) {
+	file, err := os.OpenFile(filename, os.O_RDONLY, 0600)
+	if err != nil {
+		logutil.BgLogger().Error("open record file fail", zap.Error(err))
+		return
+	}
+	if _, err = uploader.Upload(&s3manager.UploadInput{
+		Bucket: aws.String(record.s3Conf.bucketName),
+		Key:    aws.String(filename),
+		Body:   file,
+	}); err != nil {
+		logutil.BgLogger().Error("upload to s3 fail", zap.Error(err))
+		return
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			logutil.BgLogger().Error("close record file fail", zap.Error(err))
+			return
+		}
+	}()
+}
+
+func (record *memoryUsageAlarm) createSessionAndUploadFilesToS3(filenames []string) {
 	if record.s3Conf.enableUploadOOMRecord && record.initialized && time.Since(record.lastCheckTime) > 600*time.Second {
 		sess, err := session.NewSession(&aws.Config{
 			Credentials:      credentials.NewStaticCredentials(record.s3Conf.accessKey, record.s3Conf.secretKey, ""),
@@ -89,30 +111,8 @@ func (record *memoryUsageAlarm) uploadFileToS3(filenames []string) {
 			return
 		}
 		uploader := s3manager.NewUploader(sess)
-
 		for _, filename := range filenames {
-			file, err := os.OpenFile(filename, os.O_RDONLY, 0600)
-			if err != nil {
-				logutil.BgLogger().Error("open record file fail", zap.Error(err))
-				return
-			}
-
-			if _, err = uploader.Upload(&s3manager.UploadInput{
-				Bucket: aws.String(record.s3Conf.bucketName),
-				Key:    aws.String(filename),
-				Body:   file,
-			}); err != nil {
-				logutil.BgLogger().Error("upload to s3 fail", zap.Error(err))
-				return
-			}
-
-			//nolint: revive
-			defer func() {
-				if err := file.Close(); err != nil {
-					logutil.BgLogger().Error("close record file fail", zap.Error(err))
-					return
-				}
-			}()
+			record.uploadFilesToS3(filename, uploader)
 		}
 	}
 }
@@ -222,7 +222,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		recordFiles := make([]string, 0, len(recordProfileFiles)+1)
 		recordFiles = append(recordFiles, recordSQLFile)
 		recordFiles = append(recordFiles, recordProfileFiles...)
-		record.uploadFileToS3(recordFiles)
+		record.createSessionAndUploadFilesToS3(recordFiles)
 	} else {
 		logutil.BgLogger().Error("get record file names fail")
 	}
