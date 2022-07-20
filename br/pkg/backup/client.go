@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -472,21 +473,31 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
 	lastSnapMeta := meta.NewSnapshotMeta(lastSnapshot)
-	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersion()
+	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	allJobs, err := ddl.GetAllDDLJobs(snapMeta)
+	backupSchemaVersion, err := snapMeta.GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	version, err := store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
+	allJobs, err := ddl.GetAllDDLJobs(se, newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get all jobs", zap.Int("jobs", len(allJobs)))
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(snapMeta)
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -500,7 +511,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 		}
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
 			if job.BinlogInfo.DBInfo != nil {
 				// ignore all placement policy info during incremental backup for now.
 				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
