@@ -661,7 +661,7 @@ workLoop:
 						Ordinal: j,
 					})
 					// tmp memory usage
-					deltaSize := val.MemUsage() + 4
+					deltaSize := val.MemUsage() + 4 // content of SampleItem is copied
 					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
