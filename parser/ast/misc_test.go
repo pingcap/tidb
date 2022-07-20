@@ -346,6 +346,7 @@ func TestCompactTableStmtRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"alter table abc compact tiflash replica", "ALTER TABLE `abc` COMPACT TIFLASH REPLICA"},
 		{"alter table abc compact", "ALTER TABLE `abc` COMPACT"},
+		{"alter table test.abc compact", "ALTER TABLE `test`.`abc` COMPACT"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.CompactTableStmt)

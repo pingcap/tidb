@@ -55,6 +55,22 @@ func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 	)
 }
 
+func TestCompactUnknownTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	err := tk.ExecToErr(`alter table test compact tiflash replica;`)
+	require.Equal(t, "[planner:1046]No database selected", err.Error())
+
+	err = tk.ExecToErr(`alter table test.foo compact tiflash replica;`)
+	require.Equal(t, "[schema:1146]Table 'test.foo' doesn't exist", err.Error())
+
+	tk.MustExec("use test")
+	err = tk.ExecToErr(`alter table test.bar compact;`)
+	require.Equal(t, "[schema:1146]Table 'test.bar' doesn't exist", err.Error())
+}
+
 func TestCompactTableNoTiFlashReplica(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -67,7 +83,13 @@ func TestCompactTableNoTiFlashReplica(t *testing.T) {
 		`Warning 1105 compact skipped: no tiflash replica in the table`,
 	))
 
-	tk.MustExec(`alter table t compact;`)
+	tk.MustExec(`alter table test.t compact;`)
+	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
+		`Warning 1105 compact skipped: no tiflash replica in the table`,
+	))
+
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec(`alter table test.t compact;`)
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows(
 		`Warning 1105 compact skipped: no tiflash replica in the table`,
 	))
