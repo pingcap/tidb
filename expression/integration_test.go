@@ -9454,8 +9454,120 @@ func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 func (s *testIntegrationSuite) TestIssue29513(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+<<<<<<< HEAD
 	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
 	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
+=======
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(ts timestamp(6) not null default current_timestamp(6) on update current_timestamp(6))")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000000')")
+	tk.MustExec("insert into t values('1970-01-01 01:00:01.000001')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('1971-01-01 01:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 00:00:00.000001')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000000')")
+	tk.MustExec("insert into t values('2001-01-01 01:00:00.000001')")
+	tk.MustQuery("select date_add(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 01:01:01.000000"},
+		{"1970-01-01 01:01:01.000001"},
+		{"1971-01-01 01:01:00.000000"},
+		{"1971-01-01 01:01:00.000001"},
+		{"2001-01-01 00:01:00.000000"},
+		{"2001-01-01 00:01:00.000001"},
+		{"2001-01-01 01:01:00.000000"},
+		{"2001-01-01 01:01:00.000001"},
+	})
+	tk.MustQuery("select date_sub(ts, interval 1 minute) from t order by ts").Check([][]interface{}{
+		{"1970-01-01 00:59:01.000000"},
+		{"1970-01-01 00:59:01.000001"},
+		{"1971-01-01 00:59:00.000000"},
+		{"1971-01-01 00:59:00.000001"},
+		{"2000-12-31 23:59:00.000000"},
+		{"2000-12-31 23:59:00.000001"},
+		{"2001-01-01 00:59:00.000000"},
+		{"2001-01-01 00:59:00.000001"},
+	})
+	tk.MustExec("drop table t")
+}
+
+func TestIssue31600(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (tm_fsp0 time(0), tm_fsp1 time(1), tm_fsp3 time(3),tm_fsp6 time(6), d date, dt_fsp0 datetime(0), dt_fsp1 datetime(1), dt_fsp3 datetime(3), dt_fsp6 datetime(6))")
+	tk.MustExec("insert into t values(null, '12:12:01.1', '12:12:02.123', '12:12:03.123456', '20221212', null, '2020/12/11 12:12:11.1', '2020/12/12 12:12:12.123', '2020/12/13 12:12:13.123456')")
+	tk.MustExec("insert into t values('12:12:00', null, '12:12:02.123', '12:12:03.123456', '20221212', '2020/12/10 12:12:10', null, '2020/12/12 12:12:12.123', '2020/12/13 12:12:13.123456')")
+	tk.MustExec("insert into t values('12:12:00', '12:12:01.1', null, '12:12:03.123456', '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', null, '2020/12/13 12:12:13.123456')")
+	tk.MustExec("insert into t values('12:12:00', '12:12:01.1', '12:12:02.123', null, '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', '2020/12/12 12:12:12.123', null)")
+	tk.MustQuery("select coalesce(null, tm_fsp0, tm_fsp1, tm_fsp3, tm_fsp6) from t").Check([][]interface{}{
+		{"12:12:01.100000"},
+		{"12:12:00.000000"},
+		{"12:12:00.000000"},
+		{"12:12:00.000000"},
+	})
+	tk.MustQuery("select coalesce(tm_fsp1, tm_fsp0, tm_fsp3) from t").Check([][]interface{}{
+		{"12:12:01.100"},
+		{"12:12:00.000"},
+		{"12:12:01.100"},
+		{"12:12:01.100"},
+	})
+	tk.MustQuery("select coalesce(tm_fsp3, tm_fsp0) from t").Check([][]interface{}{
+		{"12:12:02.123"},
+		{"12:12:02.123"},
+		{"12:12:00.000"},
+		{"12:12:02.123"},
+	})
+	tk.MustQuery("select coalesce(tm_fsp6) from t").Check([][]interface{}{
+		{"12:12:03.123456"},
+		{"12:12:03.123456"},
+		{"12:12:03.123456"},
+		{"<nil>"},
+	})
+
+	tk.MustQuery("select coalesce(null, dt_fsp0, dt_fsp1, dt_fsp3, dt_fsp6) from t").Check([][]interface{}{
+		{"2020-12-11 12:12:11.100000"},
+		{"2020-12-10 12:12:10.000000"},
+		{"2020-12-10 12:12:10.000000"},
+		{"2020-12-10 12:12:10.000000"},
+	})
+	tk.MustQuery("select coalesce(dt_fsp0, dt_fsp1, dt_fsp3) from t").Check([][]interface{}{
+		{"2020-12-11 12:12:11.100"},
+		{"2020-12-10 12:12:10.000"},
+		{"2020-12-10 12:12:10.000"},
+		{"2020-12-10 12:12:10.000"},
+	})
+	tk.MustQuery("select coalesce(dt_fsp3, dt_fsp0) from t").Check([][]interface{}{
+		{"2020-12-12 12:12:12.123"},
+		{"2020-12-12 12:12:12.123"},
+		{"2020-12-10 12:12:10.000"},
+		{"2020-12-12 12:12:12.123"},
+	})
+	tk.MustQuery("select coalesce(dt_fsp6) from t").Check([][]interface{}{
+		{"2020-12-13 12:12:13.123456"},
+		{"2020-12-13 12:12:13.123456"},
+		{"2020-12-13 12:12:13.123456"},
+		{"<nil>"},
+	})
+
+	tk.MustQuery("select coalesce(null, d) from t").Check([][]interface{}{
+		{"2022-12-12"},
+		{"2022-12-12"},
+		{"2022-12-12"},
+		{"2022-12-12"},
+	})
+
+	tk.MustExec("drop table t")
+}
+
+func TestDateAddForNonExistingTimestamp(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+>>>>>>> a5ec60fce... expression: fix accuracy loss problem in function COALESCE (#36264)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int);")
