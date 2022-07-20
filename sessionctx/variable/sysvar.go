@@ -1697,6 +1697,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBGenerateBinaryPlan, Value: BoolToOnOff(DefTiDBGenerateBinaryPlan), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
+		GenerateBinaryPlan.Store(TiDBOptOn(val))
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
