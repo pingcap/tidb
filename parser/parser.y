@@ -712,6 +712,8 @@ import (
 	voter                 "VOTER"
 	voterConstraints      "VOTER_CONSTRAINTS"
 	voters                "VOTERS"
+	normal                "NORMAL"
+	fast                  "FAST"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1515,6 +1517,13 @@ AlterTableStmt:
 			AnalyzeOpts:    $10.([]ast.AnalyzeOpt),
 		}
 	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:       $4.(*ast.TableName),
+			ReplicaKind: ast.CompactReplicaKindAll,
+		}
+	}
 |	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "TIFLASH" "REPLICA"
 	{
 		$$ = &ast.CompactTableStmt{
@@ -1693,6 +1702,20 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableSetTiFlashReplica,
 			TiFlashReplica: tiflashReplicaSpec,
+		}
+	}
+|	"SET" "TIFLASH" "MODE" "NORMAL"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:          ast.AlterTableSetTiFlashMode,
+			TiFlashMode: model.TiFlashModeNormal,
+		}
+	}
+|	"SET" "TIFLASH" "MODE" "FAST"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:          ast.AlterTableSetTiFlashMode,
+			TiFlashMode: model.TiFlashModeFast,
 		}
 	}
 |	"CONVERT" "TO" CharsetKw CharsetName OptCollate
@@ -6289,6 +6312,8 @@ NotKeywordToken:
 |	"FOLLOWER_CONSTRAINTS"
 |	"LEARNER_CONSTRAINTS"
 |	"VOTER_CONSTRAINTS"
+|	"NORMAL"
+|	"FAST"
 
 /************************************************************************************
  *
@@ -11886,6 +11911,10 @@ StringType:
 	{
 		tp := $1.(*types.FieldType)
 		tp.SetCharset($2.(*ast.OptBinary).Charset)
+		if $2.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -11943,6 +11972,10 @@ StringType:
 	{
 		tp := types.NewFieldType(mysql.TypeMediumBlob)
 		tp.SetCharset($3.(*ast.OptBinary).Charset)
+		if $3.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $3.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -11952,6 +11985,10 @@ StringType:
 	{
 		tp := types.NewFieldType(mysql.TypeMediumBlob)
 		tp.SetCharset($2.(*ast.OptBinary).Charset)
+		if $2.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -12063,7 +12100,7 @@ OptCharsetWithOptBinary:
 	{
 		$$ = &ast.OptBinary{
 			IsBinary: false,
-			Charset:  "",
+			Charset:  charset.CharsetBin,
 		}
 	}
 

@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -239,11 +240,21 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 
 	labelExpires := make(map[string]time.Time)
 
+	var (
+		mu      sync.Mutex
+		deleted bool
+	)
+
 	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if deleted {
+			return
+		}
 		if r.Method == http.MethodDelete {
 			ruleID := strings.TrimPrefix(r.URL.Path, "/"+regionLabelPrefix+"/")
-			print(ruleID)
 			delete(labelExpires, ruleID)
+			deleted = true
 			return
 		}
 		var labelRule LabelRule

@@ -17,6 +17,7 @@ go_library(
 
 go_test(
     name = "dbterror_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "terror_test.go",

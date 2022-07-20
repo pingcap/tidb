@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testfork"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -41,6 +42,7 @@ func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializePessimisticSerializableProvider(t, tk)
 
@@ -74,6 +76,7 @@ func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializePessimisticSerializableProvider(t, tk)
 
@@ -110,62 +113,68 @@ func TestSerializableInitialize(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	tk.MustExec("set tidb_skip_isolation_level_check = 1")
-	tk.MustExec("set @@tx_isolation = 'SERIALIZABLE'")
-	tk.MustExec("set @@tidb_txn_mode='pessimistic'")
+	testfork.RunTest(t, func(t *testfork.T) {
+		clearScopeSettings := forkScopeSettings(t, store)
+		defer clearScopeSettings()
 
-	// begin outsize a txn
-	assert := activeSerializableAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
+		se := tk.Session()
+		tk.MustExec("set tidb_skip_isolation_level_check = 1")
+		tk.MustExec("set @@tx_isolation = 'SERIALIZABLE'")
+		tk.MustExec("set @@tidb_txn_mode='pessimistic'")
 
-	// begin outsize a txn
-	assert = activeSerializableAssert(t, se, true)
-	tk.MustExec("begin")
-	assert.Check(t)
+		// begin outsize a txn
+		assert := activeSerializableAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
-	assert = activeSerializableAssert(t, se, true)
-	assert.causalConsistencyOnly = true
-	tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
-	assert.Check(t)
+		// begin outsize a txn
+		assert = activeSerializableAssert(t, se, true)
+		tk.MustExec("begin")
+		assert.Check(t)
 
-	// EnterNewTxnDefault will create an active txn, but not explicit
-	assert = activeSerializableAssert(t, se, false)
-	require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-		Type:    sessiontxn.EnterNewTxnDefault,
-		TxnMode: ast.Pessimistic,
-	}))
-	assert.Check(t)
+		// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
+		assert = activeSerializableAssert(t, se, true)
+		assert.causalConsistencyOnly = true
+		tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
+		assert.Check(t)
 
-	// non-active txn and then active it
-	tk.MustExec("rollback")
-	tk.MustExec("set @@autocommit=0")
-	assert = inactiveSerializableAssert(se)
-	assertAfterActive := activeSerializableAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider := assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	ts, err := provider.GetStmtReadTS()
-	require.NoError(t, err)
-	assertAfterActive.Check(t)
-	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-	tk.MustExec("rollback")
+		// EnterNewTxnDefault will create an active txn, but not explicit
+		assert = activeSerializableAssert(t, se, false)
+		require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+			Type:    sessiontxn.EnterNewTxnDefault,
+			TxnMode: ast.Pessimistic,
+		}))
+		assert.Check(t)
 
-	// Case Pessimistic Autocommit
-	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
-	assert = inactiveSerializableAssert(se)
-	assertAfterActive = activeSerializableAssert(t, se, true)
-	require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-	provider = assert.CheckAndGetProvider(t)
-	require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-	ts, err = provider.GetStmtReadTS()
-	require.NoError(t, err)
-	assertAfterActive.Check(t)
-	require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-	tk.MustExec("rollback")
+		// non-active txn and then active it
+		tk.MustExec("rollback")
+		tk.MustExec("set @@autocommit=0")
+		assert = inactiveSerializableAssert(se)
+		assertAfterActive := activeSerializableAssert(t, se, true)
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		provider := assert.CheckAndGetProvider(t)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+		ts, err := provider.GetStmtReadTS()
+		require.NoError(t, err)
+		assertAfterActive.Check(t)
+		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+		tk.MustExec("rollback")
+
+		// Case Pessimistic Autocommit
+		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+		assert = inactiveSerializableAssert(se)
+		assertAfterActive = activeSerializableAssert(t, se, true)
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
+		provider = assert.CheckAndGetProvider(t)
+		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
+		ts, err = provider.GetStmtReadTS()
+		require.NoError(t, err)
+		assertAfterActive.Check(t)
+		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
+		tk.MustExec("rollback")
+	})
 }
 
 func TestTidbSnapshotVarInSerialize(t *testing.T) {
@@ -173,6 +182,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk.MustExec("set tidb_skip_isolation_level_check = 1")
 	tk.MustExec("set @@tx_isolation = 'SERIALIZABLE'")
@@ -257,7 +267,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	}
 }
 
-func activeSerializableAssert(t *testing.T, sctx sessionctx.Context,
+func activeSerializableAssert(t testing.TB, sctx sessionctx.Context,
 	inTxn bool) *txnAssert[*isolation.PessimisticSerializableTxnContextProvider] {
 	return &txnAssert[*isolation.PessimisticSerializableTxnContextProvider]{
 		sctx:         sctx,

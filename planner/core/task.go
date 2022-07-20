@@ -667,7 +667,7 @@ func calcPagingCost(ctx sessionctx.Context, indexPlan PhysicalPlan, expectCnt ui
 
 	// we want the diff between idxCst and pagingCst here,
 	// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
-	return pagingCst - sessVars.GetSeekFactor(nil)
+	return math.Max(pagingCst-sessVars.GetSeekFactor(nil), 0)
 }
 
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {
@@ -809,6 +809,7 @@ func (t *copTask) handleRootTaskConds(ctx sessionctx.Context, newTask *rootTask)
 			selectivity = SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo().Scale(selectivity), newTask.p.SelectBlockOffset())
+		sel.fromDataSource = true
 		sel.SetChildren(newTask.p)
 		newTask.p = sel
 		sel.cost = newTask.cost()

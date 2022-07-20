@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "arena_test",
+    timeout = "short",
     srcs = [
         "arena_test.go",
         "main_test.go",

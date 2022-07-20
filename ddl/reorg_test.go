@@ -35,7 +35,7 @@ func TestReorgOwner(t *testing.T) {
 
 	d1 := domain.DDL()
 
-	ctx := testkit.NewTestKit(t, store).Session()
+	sctx := testkit.NewTestKit(t, store).Session()
 
 	require.True(t, d1.OwnerManager().IsOwner())
 
@@ -49,7 +49,9 @@ func TestReorgOwner(t *testing.T) {
 	)
 
 	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
-		return testkit.NewTestKit(t, store).Session(), nil
+		session := testkit.NewTestKit(t, store).Session()
+		session.GetSessionVars().CommonGlobalLoaded = true
+		return session, nil
 	}, 20, 20, 5))
 	require.NoError(t, err)
 
@@ -60,23 +62,23 @@ func TestReorgOwner(t *testing.T) {
 
 	dbInfo, err := testSchemaInfo(store, "test_reorg")
 	require.NoError(t, err)
-	testCreateSchema(t, ctx, d1, dbInfo)
+	testCreateSchema(t, sctx, d1, dbInfo)
 
 	tblInfo, err := testTableInfo(store, "t", 3)
 	require.NoError(t, err)
-	testCreateTable(t, ctx, d1, dbInfo, tblInfo)
+	testCreateTable(t, sctx, d1, dbInfo, tblInfo)
 	tbl, err := testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 
 	num := 10
-	ctx = testkit.NewTestKit(t, store).Session()
-	err = sessiontxn.NewTxn(context.Background(), ctx)
+	sctx = testkit.NewTestKit(t, store).Session()
+	err = sessiontxn.NewTxn(context.Background(), sctx)
 	require.NoError(t, err)
 	for i := 0; i < num; i++ {
-		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		_, err := tbl.AddRecord(sctx, types.MakeDatums(i, i, i))
 		require.NoError(t, err)
 	}
-	require.NoError(t, ctx.CommitTxn(context.Background()))
+	require.NoError(t, sctx.CommitTxn(context.Background()))
 
 	tc := &ddl.TestDDLCallback{}
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
@@ -88,9 +90,9 @@ func TestReorgOwner(t *testing.T) {
 
 	d1.SetHook(tc)
 
-	testDropSchema(t, ctx, d1, dbInfo)
+	testDropSchema(t, sctx, d1, dbInfo)
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		db, err1 := m.GetDatabase(dbInfo.ID)
 		require.NoError(t, err1)

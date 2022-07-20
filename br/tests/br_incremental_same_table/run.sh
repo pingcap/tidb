@@ -62,7 +62,7 @@ done
 
 # full restore
 echo "full restore start..."
-run_br restore full -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR
 row_count_full=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 # check full restore
 if [ "${row_count_full}" != "${ROW_COUNT}" ];then

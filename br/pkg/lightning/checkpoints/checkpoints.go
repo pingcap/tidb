@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 type CheckpointStatus uint8
@@ -522,7 +523,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 		}
 		cpdb, err := NewMySQLCheckpointsDB(ctx, db, cfg.Checkpoint.Schema)
 		if err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, errors.Trace(err)
 		}
 		return cpdb, nil
@@ -549,12 +550,14 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer db.Close()
 		checkSQL := "SHOW DATABASES WHERE `DATABASE` = ?"
 		rows, err := db.QueryContext(ctx, checkSQL, cfg.Checkpoint.Schema)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer rows.Close()
 		result := rows.Next()
 		if err := rows.Err(); err != nil {
@@ -664,6 +667,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer taskStmt.Close()
 		_, err = taskStmt.ExecContext(ctx, cfg.TaskID, cfg.Mydumper.SourceDir, cfg.TikvImporter.Backend,
 			cfg.TikvImporter.Addr, cfg.TiDB.Host, cfg.TiDB.Port, cfg.TiDB.PdAddr, cfg.TikvImporter.SortedKVDir,
@@ -682,6 +686,7 @@ func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Conf
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer stmt.Close()
 
 		for _, db := range dbInfo {
@@ -745,6 +750,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer engineRows.Close()
 		for engineRows.Next() {
 			var (
@@ -769,6 +775,7 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer chunkRows.Close()
 		for chunkRows.Next() {
 			var (
@@ -831,12 +838,14 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer engineStmt.Close()
 
 		chunkStmt, err := tx.PrepareContext(c, fmt.Sprintf(ReplaceChunkTemplate, cpdb.schema, CheckpointTableNameChunk))
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer chunkStmt.Close()
 
 		for engineID, engine := range checkpoints {
@@ -883,26 +892,31 @@ func (cpdb *MySQLCheckpointsDB) Update(taskCtx context.Context, checkpointDiffs 
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer chunkStmt.Close()
 		rebaseStmt, e := tx.PrepareContext(c, rebaseQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer rebaseStmt.Close()
 		tableStatusStmt, e := tx.PrepareContext(c, tableStatusQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer tableStatusStmt.Close()
 		tableChecksumStmt, e := tx.PrepareContext(c, tableChecksumQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer tableChecksumStmt.Close()
 		engineStatusStmt, e := tx.PrepareContext(c, engineStatusQuery)
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer engineStatusStmt.Close()
 		for tableName, cpd := range checkpointDiffs {
 			if cpd.hasStatus {
@@ -1204,8 +1218,8 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 			})
 		}
 
-		sort.Slice(engine.Chunks, func(i, j int) bool {
-			return engine.Chunks[i].Key.less(&engine.Chunks[j].Key)
+		slices.SortFunc(engine.Chunks, func(i, j *ChunkCheckpoint) bool {
+			return i.Key.less(&j.Key)
 		})
 
 		cp.Engines[engineID] = engine
@@ -1408,6 +1422,7 @@ func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint: errcheck
 		defer rows.Close()
 		for rows.Next() {
 			var (
@@ -1519,6 +1534,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		if e != nil {
 			return errors.Trace(e)
 		}
+		//nolint: errcheck
 		defer rows.Close()
 		for rows.Next() {
 			var dtc DestroyedTableCheckpoint
@@ -1566,6 +1582,7 @@ func (cpdb *MySQLCheckpointsDB) DumpTables(ctx context.Context, writer io.Writer
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer rows.Close()
 
 	return errors.Trace(sqltocsv.Write(writer, rows))
@@ -1585,6 +1602,7 @@ func (cpdb *MySQLCheckpointsDB) DumpEngines(ctx context.Context, writer io.Write
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer rows.Close()
 
 	return errors.Trace(sqltocsv.Write(writer, rows))
@@ -1616,6 +1634,7 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 	if err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer rows.Close()
 
 	return errors.Trace(sqltocsv.Write(writer, rows))

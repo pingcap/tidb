@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -537,8 +538,12 @@ func TestAddConstraintCheck(t *testing.T) {
 }
 
 func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -643,7 +648,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
@@ -1270,6 +1275,8 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL", `return(true)`))
+			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL")) }()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}

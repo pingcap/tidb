@@ -17,7 +17,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	pdclient "github.com/tikv/pd/client"
+	"golang.org/x/exp/slices"
 )
 
 // MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.
@@ -400,8 +400,8 @@ func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpc
 	for _, rawKey := range req.SplitKeys {
 		splitKeys = append(splitKeys, codec.EncodeBytes(nil, rawKey))
 	}
-	sort.Slice(splitKeys, func(i, j int) bool {
-		return bytes.Compare(splitKeys[i], splitKeys[j]) < 0
+	slices.SortFunc(splitKeys, func(i, j []byte) bool {
+		return bytes.Compare(i, j) < 0
 	})
 
 	newRegions, err := rm.splitKeys(splitKeys)

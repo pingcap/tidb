@@ -61,6 +61,7 @@ go_library(
 
 go_test(
     name = "tables_test",
+    timeout = "short",
     srcs = [
         "cache_test.go",
         "index_test.go",

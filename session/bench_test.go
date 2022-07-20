@@ -1813,9 +1813,9 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	is := se.GetInfoSchema()
 
 	b.ResetTimer()
-	stmtExec := &ast.ExecuteStmt{ExecID: stmtID}
+	stmtExec := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema), 0, kv.GlobalTxnScope, args)
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
 		if err != nil {
 			b.Fatal(err)
 		}

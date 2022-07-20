@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -134,9 +135,10 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
 	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
 
 	if err != nil {
@@ -209,20 +211,21 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return
 	}
 
 	defer func() {
 		if err != nil {
-			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
 			terror.Log(err1)
 			return
 		}
 
-		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		_, err = exec.ExecuteInternal(ctx, "COMMIT")
 		if err != nil {
 			return
 		}
@@ -239,7 +242,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
 	updateTs := now.String()
-	_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+	_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
 		deleted, updateTs, record.OriginalSQL, updateTs)
 	if err != nil {
 		return err
@@ -250,7 +253,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		record.Bindings[i].UpdateTime = now
 
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(context.TODO(), `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?)`,
+		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?)`,
 			record.OriginalSQL,
 			record.Bindings[i].BindSQL,
 			record.Db,
@@ -296,20 +299,21 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return
 	}
 
 	defer func() {
 		if err != nil {
-			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
 			terror.Log(err1)
 			return
 		}
 
-		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		_, err = exec.ExecuteInternal(ctx, "COMMIT")
 		if err != nil {
 			return
 		}
@@ -322,7 +326,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		return err
 	}
 	if duplicateBinding != nil {
-		_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %?`, record.OriginalSQL, duplicateBinding.BindSQL)
+		_, err = exec.ExecuteInternal(ctx, `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %?`, record.OriginalSQL, duplicateBinding.BindSQL)
 		if err != nil {
 			return err
 		}
@@ -338,7 +342,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		record.Bindings[i].UpdateTime = now
 
 		// Insert the BindRecord to the storage.
-		_, err = exec.ExecuteInternal(context.TODO(), `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+		_, err = exec.ExecuteInternal(ctx, `INSERT INTO mysql.bind_info VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 			record.OriginalSQL,
 			record.Bindings[i].BindSQL,
 			record.Db,
@@ -365,20 +369,21 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return err
 	}
 	var deleteRows int
 	defer func() {
 		if err != nil {
-			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
 			terror.Log(err1)
 			return
 		}
 
-		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		_, err = exec.ExecuteInternal(ctx, "COMMIT")
 		if err != nil || deleteRows == 0 {
 			return
 		}
@@ -398,10 +403,10 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
+		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
 			deleted, updateTs, originalSQL, updateTs, deleted)
 	} else {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
+		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
 			deleted, updateTs, originalSQL, updateTs, binding.BindSQL, deleted)
 	}
 
@@ -417,8 +422,9 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, n
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return
 	}
@@ -439,12 +445,12 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, n
 	}
 	defer func() {
 		if err != nil {
-			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
 			terror.Log(err1)
 			return
 		}
 
-		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		_, err = exec.ExecuteInternal(ctx, "COMMIT")
 		if err != nil {
 			return
 		}
@@ -485,10 +491,10 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, n
 	updateTsStr := updateTs.String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
+		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
 	} else {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
+		_, err = exec.ExecuteInternal(ctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
 	}
 	affectRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
@@ -504,18 +510,19 @@ func (h *BindHandle) GCBindRecord() (err error) {
 		h.bindInfo.Unlock()
 	}()
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	_, err = exec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if err != nil {
-			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			_, err1 := exec.ExecuteInternal(ctx, "ROLLBACK")
 			terror.Log(err1)
 			return
 		}
 
-		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		_, err = exec.ExecuteInternal(ctx, "COMMIT")
 		if err != nil {
 			return
 		}
@@ -530,7 +537,7 @@ func (h *BindHandle) GCBindRecord() (err error) {
 	// we only garbage collect those records with update_time before 10 leases.
 	updateTime := time.Now().Add(-(10 * Lease))
 	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
-	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
+	_, err = exec.ExecuteInternal(ctx, `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 	return err
 }
 
@@ -542,8 +549,9 @@ func (h *BindHandle) GCBindRecord() (err error) {
 // even if they come from different tidb instances.
 func (h *BindHandle) lockBindInfoTable() error {
 	// h.sctx already locked.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(context.TODO(), h.LockBindInfoSQL())
+	_, err := exec.ExecuteInternal(ctx, h.LockBindInfoSQL())
 	return err
 }
 
@@ -790,9 +798,10 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		users:     make(map[string]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
 	if err != nil {
 		logutil.BgLogger().Warn("[sql-bind] failed to load mysql.capture_plan_baselines_blacklist", zap.Error(err))
 		return
@@ -898,7 +907,8 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
 	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
 	// the statement won't be able to "break out" from EXPLAIN.
-	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if rs != nil {
 		defer func() {
@@ -1018,9 +1028,10 @@ func (h *BindHandle) SaveEvolveTasksToStore() {
 	h.pendingVerifyBindRecordMap.flushToStore()
 }
 
-func getEvolveParameters(ctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(
-		context.TODO(),
+func getEvolveParameters(sctx sessionctx.Context) (time.Duration, time.Time, time.Time, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(
+		ctx,
 		nil,
 		"SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN (%?, %?, %?)",
 		variable.TiDBEvolvePlanTaskMaxTime,
@@ -1093,7 +1104,7 @@ func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
 }
 
 func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, maxTime time.Duration) (time.Duration, error) {
-	ctx := context.TODO()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	if db != "" {
 		_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "use %n", db)
 		if err != nil {

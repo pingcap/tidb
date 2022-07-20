@@ -17,18 +17,27 @@ package sessionstates
 import (
 	"time"
 
+	"github.com/pingcap/tidb/errno"
 	ptypes "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // SessionStateType is the type of session states.
 type SessionStateType int
 
+var (
+	// ErrCannotMigrateSession indicates the session cannot be migrated.
+	ErrCannotMigrateSession = dbterror.ClassSession.NewStd(errno.ErrCannotMigrateSession)
+)
+
 // These enums represents the types of session state handlers.
 const (
 	// StatePrepareStmt represents prepared statements.
 	StatePrepareStmt SessionStateType = iota
+	// StateBinding represents session SQL bindings.
+	StateBinding
 )
 
 // PreparedStmtInfo contains the information about prepared statements, both text and binary protocols.
@@ -74,4 +83,6 @@ type SessionStates struct {
 	LastAffectedRows     int64                        `json:"affected-rows,omitempty"`
 	LastInsertID         uint64                       `json:"last-insert-id,omitempty"`
 	Warnings             []stmtctx.SQLWarn            `json:"warnings,omitempty"`
+	// Define it as string to avoid cycle import.
+	Bindings string `json:"bindings,omitempty"`
 }

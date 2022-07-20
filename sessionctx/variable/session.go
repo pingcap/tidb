@@ -23,7 +23,6 @@ import (
 	"math"
 	"math/rand"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +58,7 @@ import (
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // PreparedStmtCount is exported for test.
@@ -689,6 +689,9 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
+	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
+	EnableSkewDistinctAgg bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -917,7 +920,7 @@ type SessionVars struct {
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
-	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
+	// ConnectionInfo indicates current connection info used by current session.
 	ConnectionInfo *ConnectionInfo
 
 	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
@@ -972,6 +975,9 @@ type SessionVars struct {
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
+	// ReplicaClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.
+	// this variable only take effect when `tidb_follower_read` = 'closest-adaptive'
+	ReplicaClosestReadThreshold int64
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -1158,6 +1164,24 @@ type SessionVars struct {
 
 	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
 	MaxAllowedPacket uint64
+
+	// TiFlash related optimization, only for MPP.
+	TiFlashFineGrainedShuffleStreamCount int64
+	TiFlashFineGrainedShuffleBatchSize   uint64
+
+	// RequestSourceType is the type of inner request.
+	RequestSourceType string
+
+	// MemoryDebugModeMinHeapInUse indicated the minimum heapInUse threshold that triggers the memoryDebugMode.
+	MemoryDebugModeMinHeapInUse int64
+	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
+	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
+	MemoryDebugModeAlarmRatio int64
+
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1283,7 +1307,7 @@ func (pps PreparedParams) String() string {
 	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
-// ConnectionInfo present connection used by audit.
+// ConnectionInfo presents the connection information, which is mainly used by audit logs.
 type ConnectionInfo struct {
 	ConnectionID      uint64
 	ConnectionType    string
@@ -1301,6 +1325,24 @@ type ConnectionInfo struct {
 	SSLVersion        string
 	PID               int
 	DB                string
+}
+
+const (
+	// ConnTypeSocket indicates socket without TLS.
+	ConnTypeSocket string = "Socket"
+	// ConnTypeUnixSocket indicates Unix Socket.
+	ConnTypeUnixSocket string = "UnixSocket"
+	// ConnTypeTLS indicates socket with TLS.
+	ConnTypeTLS string = "SSL/TLS"
+)
+
+// IsSecureTransport checks whether the connection is secure.
+func (connInfo *ConnectionInfo) IsSecureTransport() bool {
+	switch connInfo.ConnectionType {
+	case ConnTypeUnixSocket, ConnTypeTLS:
+		return true
+	}
+	return false
 }
 
 // NewSessionVars creates a session vars object.
@@ -1394,6 +1436,7 @@ func NewSessionVars() *SessionVars {
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
@@ -1420,6 +1463,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:    DefIndexLookupSize,
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
+		MinPagingSize:      DefMinPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -2160,6 +2204,9 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// MinPagingSize defines the min size used by the coprocessor paging protocol.
+	MinPagingSize int
 }
 
 const (
@@ -2251,8 +2298,12 @@ const (
 	SlowLogPlan = "Plan"
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
+	// SlowLogBinaryPlan is used to record the binary plan.
+	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogBinaryPlanPrefix is the prefix of the binary plan value.
+	SlowLogBinaryPlanPrefix = ast.TiDBDecodeBinaryPlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
@@ -2279,6 +2330,10 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
+// GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
+// It's controlled by the global variable `tidb_generate_binary_plan`.
+var GenerateBinaryPlan atomic2.Bool
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -2304,6 +2359,7 @@ type SlowQueryLogItems struct {
 	PrevStmt          string
 	Plan              string
 	PlanDigest        string
+	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
 	KVTotal           time.Duration
 	PDTotal           time.Duration
@@ -2419,7 +2475,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 			for backoff := range logItems.CopTasks.TotBackoffTimes {
 				backoffs = append(backoffs, backoff)
 			}
-			sort.Strings(backoffs)
+			slices.Sort(backoffs)
 
 			if logItems.CopTasks.NumCopTasks == 1 {
 				buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v %v%v%v",
@@ -2486,6 +2542,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if len(logItems.PlanDigest) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
+	}
+	if len(logItems.BinaryPlan) != 0 {
+		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
 
 	if logItems.PrevStmt != "" {

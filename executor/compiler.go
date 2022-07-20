@@ -90,17 +90,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
 	}
+	c.Ctx.GetSessionVars().StmtCtx.SetPlan(finalPlan)
 	return &ExecStmt{
-		GoCtx:            ctx,
-		ReplicaReadScope: ret.ReadReplicaScope,
-		InfoSchema:       is,
-		Plan:             finalPlan,
-		LowerPriority:    lowerPriority,
-		Text:             stmtNode.Text(),
-		StmtNode:         stmtNode,
-		Ctx:              c.Ctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
+		GoCtx:         ctx,
+		InfoSchema:    is,
+		Plan:          finalPlan,
+		LowerPriority: lowerPriority,
+		Text:          stmtNode.Text(),
+		StmtNode:      stmtNode,
+		Ctx:           c.Ctx,
+		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}, nil
 }
 

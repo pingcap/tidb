@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
@@ -37,15 +38,19 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex          *ClusterIndexUsage             `json:"clusterIndex"`
-	NewClusterIndex       *NewClusterIndexUsage          `json:"newClusterIndex"`
-	TemporaryTable        bool                           `json:"temporaryTable"`
-	CTE                   *m.CTEUsageCounter             `json:"cte"`
-	CachedTable           bool                           `json:"cachedTable"`
-	AutoCapture           bool                           `json:"autoCapture"`
-	PlacementPolicyUsage  *placementPolicyUsage          `json:"placementPolicy"`
-	NonTransactionalUsage *m.NonTransactionalStmtCounter `json:"nonTransactional"`
-	GlobalKill            bool                           `json:"globalKill"`
+	ClusterIndex          *ClusterIndexUsage               `json:"clusterIndex"`
+	NewClusterIndex       *NewClusterIndexUsage            `json:"newClusterIndex"`
+	TemporaryTable        bool                             `json:"temporaryTable"`
+	CTE                   *m.CTEUsageCounter               `json:"cte"`
+	CachedTable           bool                             `json:"cachedTable"`
+	AutoCapture           bool                             `json:"autoCapture"`
+	PlacementPolicyUsage  *placementPolicyUsage            `json:"placementPolicy"`
+	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
+	GlobalKill            bool                             `json:"globalKill"`
+	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
+	LogBackup             bool                             `json:"logBackup"`
+	EnablePaging          bool                             `json:"enablePaging"`
 }
 
 type placementPolicyUsage struct {
@@ -56,27 +61,35 @@ type placementPolicyUsage struct {
 	NumPartitionWithExplicitPolicies uint64 `json:"numPartitionWithExplicitPolicies"`
 }
 
-func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
+func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsage, error) {
 	var usage featureUsage
 	var err error
-	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx)
+	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
 
 	// transaction related feature
-	usage.Txn = getTxnUsageInfo(ctx)
+	usage.Txn = getTxnUsageInfo(sctx)
 
 	usage.CTE = getCTEUsageInfo()
 
-	usage.AutoCapture = getAutoCaptureUsageInfo(ctx)
+	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
-	collectFeatureUsageFromInfoschema(ctx, &usage)
+	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
+
+	collectFeatureUsageFromInfoschema(sctx, &usage)
 
 	usage.NonTransactionalUsage = getNonTransactionalUsage()
 
 	usage.GlobalKill = getGlobalKillUsageInfo()
+
+	usage.TiFlashModeStatistics = getTiFlashModeStatistics(sctx)
+
+	usage.LogBackup = getLogBackupUsageInfo(sctx)
+
+	usage.EnablePaging = getPagingUsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -142,12 +155,12 @@ type NewClusterIndexUsage struct {
 }
 
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
+func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
 	var newUsage NewClusterIndexUsage
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
-	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `
 		SELECT TIDB_PK_TYPE
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')`)
@@ -168,7 +181,7 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (ncu *NewClusterIndexUsage
 		}
 	}()
 
-	err = ctx.RefreshTxnCtx(context.TODO())
+	err = sctx.RefreshTxnCtx(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -201,6 +214,7 @@ type TxnUsage struct {
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
+var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -233,7 +247,6 @@ func postReportTxnUsage() {
 	initialTxnCommitCounter = metrics.GetTxnCommitCounter()
 }
 
-// ResetCTEUsage resets CTE usages.
 func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
@@ -242,6 +255,16 @@ func postReportCTEUsage() {
 func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
+	return &diff
+}
+
+func postReportMultiSchemaChangeUsage() {
+	initialMultiSchemaChangeCounter = m.GetMultiSchemaCounter()
+}
+
+func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
+	curr := m.GetMultiSchemaCounter()
+	diff := curr.Sub(initialMultiSchemaChangeCounter)
 	return &diff
 }
 
@@ -265,4 +288,43 @@ func postReportNonTransactionalCounter() {
 
 func getGlobalKillUsageInfo() bool {
 	return config.GetGlobalConfig().EnableGlobalKill
+}
+
+// TiFlashModeStatistics records the usage info of Fast Mode
+type TiFlashModeStatistics struct {
+	FastModeTableCount   int64 `json:"fast_mode_table_count"`
+	NormalModeTableCount int64 `json:"normal_mode_table_count"`
+	AllTableCount        int64 `json:"all_table_count"`
+}
+
+func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
+	is := GetDomainInfoSchema(ctx)
+	var fastModeTableCount int64 = 0
+	var normalModeTableCount int64 = 0
+	var allTableCount int64 = 0
+	for _, dbInfo := range is.AllSchemas() {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			allTableCount++
+			if tbInfo.Meta().TiFlashReplica != nil {
+				if tbInfo.Meta().TiFlashMode == model.TiFlashModeFast {
+					fastModeTableCount++
+				} else {
+					normalModeTableCount++
+				}
+			}
+		}
+	}
+
+	return TiFlashModeStatistics{FastModeTableCount: fastModeTableCount, NormalModeTableCount: normalModeTableCount, AllTableCount: allTableCount}
+}
+
+func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
+	return utils.CheckLogBackupEnabled(ctx)
+}
+
+// getPagingUsageInfo gets the value of system variable `tidb_enable_paging`.
+// This variable is set to true as default since v6.2.0. We want to know many
+// users set it to false manually.
+func getPagingUsageInfo(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().EnablePaging
 }

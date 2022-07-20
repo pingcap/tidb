@@ -24,6 +24,7 @@ go_library(
 
 go_test(
     name = "sessionctx_test",
+    timeout = "short",
     srcs = [
         "context_test.go",
         "main_test.go",

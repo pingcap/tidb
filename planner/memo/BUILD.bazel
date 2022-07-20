@@ -20,6 +20,7 @@ go_library(
 
 go_test(
     name = "memo_test",
+    timeout = "short",
     srcs = [
         "expr_iterator_test.go",
         "group_expr_test.go",

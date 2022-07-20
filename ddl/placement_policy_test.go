@@ -44,7 +44,8 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 	tblInfo, err := do.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
 	require.NoError(t, err)
 
-	require.NoError(t, kv.RunInNewTxn(context.TODO(), do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
 		checkTableBundlesInPD(t, do, tt, tblInfo.Meta())
 		return nil
@@ -321,7 +322,8 @@ func testGetPolicyByIDFromMeta(t *testing.T, store kv.Storage, policyID int64) *
 		policyInfo *model.PolicyInfo
 		err        error
 	)
-	err1 := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err1 := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		policyInfo, err = t.GetPolicy(policyID)
 		if err != nil {
@@ -870,7 +872,8 @@ func testGetPolicyByName(t *testing.T, ctx sessionctx.Context, name string, must
 
 func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 	ids := make([]int64, 0, 32)
-	err1 := kv.RunInNewTxn(context.Background(), storage, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err1 := kv.RunInNewTxn(ctx, storage, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		dbs, err := t.ListDatabases()
 		if err != nil {

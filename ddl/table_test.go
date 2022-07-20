@@ -47,6 +47,7 @@ func testRenameTable(
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaID, tblInfo.Name, oldSchemaName},
+		CtxVars:    []interface{}{[]int64{oldSchemaID, newSchemaID}, []int64{tblInfo.ID}},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
@@ -63,6 +64,7 @@ func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.DDL, oldSchema
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
+		CtxVars:    []interface{}{append(oldSchemaIDs, newSchemaIDs...), oldTableIDs},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.DoDDLJob(ctx, job))
@@ -97,7 +99,8 @@ func testLockTable(t *testing.T, ctx sessionctx.Context, d ddl.DDL, newSchemaID 
 }
 
 func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp model.TableLockType) {
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
 		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
@@ -138,7 +141,8 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 
 func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		tblInfo, err1 = t.GetTable(schemaID, tableID)
@@ -233,7 +237,8 @@ func TestTable(t *testing.T) {
 }
 
 func checkTableCacheTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
 		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
@@ -245,7 +250,8 @@ func checkTableCacheTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 }
 
 func checkTableNoCacheTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
 		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)

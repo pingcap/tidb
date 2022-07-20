@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "promutil_test",
+    timeout = "short",
     srcs = ["registry_test.go"],
     embed = [":promutil"],
     deps = [

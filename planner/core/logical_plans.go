@@ -117,6 +117,7 @@ const (
 	preferHashJoin
 	preferMergeJoin
 	preferBCJoin
+	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -1880,6 +1881,7 @@ type LogicalCTE struct {
 	cteAsName      model.CIStr
 	seedStat       *property.StatsInfo
 	isOuterMostCTE bool
+	MergeHints     MergeHintInfo
 }
 
 // LogicalCTETable is for CTE table

@@ -17,6 +17,7 @@ go_library(
     deps = [
         "//bindinfo",
         "//config",
+        "//ddl",
         "//ddl/placement",
         "//domain",
         "//errno",
@@ -100,6 +101,7 @@ go_library(
 
 go_test(
     name = "session_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
@@ -110,6 +112,7 @@ go_test(
         "nontransactional_test.go",
         "schema_amender_test.go",
         "schema_test.go",
+        "session_test.go",
         "tidb_test.go",
     ],
     data = glob(["testdata/**"]),
@@ -133,11 +136,13 @@ go_test(
         "//planner/core",
         "//sessionctx",
         "//sessionctx/variable",
+        "//sessiontxn",
         "//statistics",
         "//store/mockstore",
         "//table",
         "//tablecodec",
         "//testkit",
+        "//testkit/external",
         "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/stringutil"
+	"golang.org/x/exp/slices"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -858,8 +859,8 @@ func mergePatchBinary(target, patch *BinaryJSON) (result *BinaryJSON, err error)
 		for key := range keyValMap {
 			keys = append(keys, []byte(key))
 		}
-		sort.Slice(keys, func(i, j int) bool {
-			return bytes.Compare(keys[i], keys[j]) < 0
+		slices.SortFunc(keys, func(i, j []byte) bool {
+			return bytes.Compare(i, j) < 0
 		})
 		length = len(keys)
 		values := make([]BinaryJSON, 0, len(keys))
@@ -941,8 +942,8 @@ func mergeBinaryObject(objects []BinaryJSON) BinaryJSON {
 			}
 		}
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return bytes.Compare(keys[i], keys[j]) < 0
+	slices.SortFunc(keys, func(i, j []byte) bool {
+		return bytes.Compare(i, j) < 0
 	})
 	values := make([]BinaryJSON, len(keys))
 	for i, key := range keys {
@@ -1102,7 +1103,6 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 	default:
 		return CreateBinary(result), false, nil
 	}
-
 }
 
 // extractCallbackFn the type of CALLBACK function for extractToCallback

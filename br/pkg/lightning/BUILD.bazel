@@ -34,6 +34,7 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_golang//prometheus/promhttp",
         "@com_github_shurcool_httpgzip//:httpgzip",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -88,6 +89,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	e.done = true
 
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	// For each DDL, we should commit the previous transaction and create a new transaction.
 	// Following cases are exceptions
 	var localTempTablesToDrop []*ast.TableName
@@ -409,7 +411,8 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, dom *domain.Do
 	if err != nil {
 		return nil, nil, err
 	}
-	defer e.releaseSysSession(se)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	defer e.releaseSysSession(ctx, se)
 	job, err := ddl.GetHistoryJobByID(se, s.JobID)
 	if err != nil {
 		return nil, nil, err

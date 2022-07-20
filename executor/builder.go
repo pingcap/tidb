@@ -17,9 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +28,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -68,7 +68,11 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	clientkv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"golang.org/x/exp/slices"
 )
 
 var (
@@ -94,6 +98,7 @@ type executorBuilder struct {
 	Ti      *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
 	isStaleness      bool
+	txnScope         string
 	readReplicaScope string
 	inUpdateStmt     bool
 	inDeleteStmt     bool
@@ -116,13 +121,15 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
+	txnManager := sessiontxn.GetTxnManager(ctx)
 	return &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
 		isStaleness:      staleread.IsStmtStaleness(ctx),
-		readReplicaScope: replicaReadScope,
+		txnScope:         txnManager.GetTxnScope(),
+		readReplicaScope: txnManager.GetReadReplicaScope(),
 	}
 }
 
@@ -140,9 +147,9 @@ type MockExecutorBuilder struct {
 }
 
 // NewMockExecutorBuilderForTest is ONLY used in test.
-func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *MockExecutorBuilder {
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti, replicaReadScope)}
+		executorBuilder: newExecutorBuilder(ctx, is, ti)}
 }
 
 // Build builds an executor tree according to `p`.
@@ -346,13 +353,14 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		b.err = err
 		return nil
 	}
-	txn, err := e.ctx.Txn(true)
+
+	session, err := e.getSysSession()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-
-	ddlInfo, err := ddl.GetDDLInfo(txn)
+	ddlInfo, err := ddl.GetDDLInfoWithNewTxn(session)
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
 	if err != nil {
 		b.err = err
 		return nil
@@ -727,41 +735,9 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		outputNames:  v.OutputNames(),
 	}
 
-	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
-		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
-		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
-		if b.isStaleness != v.IsStaleness {
-			panic(fmt.Sprintf("%v != %v", b.isStaleness, v.IsStaleness))
-		}
-
-		if b.readReplicaScope != v.ReadReplicaScope {
-			panic(fmt.Sprintf("%s != %s", b.readReplicaScope, v.ReadReplicaScope))
-		}
-
-		if v.SnapshotTS != 0 {
-			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(v.SnapshotTS)
-			if err != nil {
-				panic(err)
-			}
-
-			if b.is.SchemaMetaVersion() != is.SchemaMetaVersion() {
-				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
-			}
-
-			ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
-			if err != nil {
-				panic(e)
-			}
-
-			if v.SnapshotTS != ts {
-				panic(fmt.Sprintf("%d != %d", ts, v.SnapshotTS))
-			}
-		}
-	})
-
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
-		assertTS, assertTxnScope := vs[0], vs[1]
+		assertTS, assertReadReplicaScope := vs[0], vs[1]
 		staleread.AssertStmtStaleness(b.ctx, true)
 		ts, err := sessiontxn.GetTxnManager(b.ctx).GetStmtReadTS()
 		if err != nil {
@@ -769,7 +745,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		}
 
 		if strconv.FormatUint(ts, 10) != assertTS ||
-			assertTxnScope != b.readReplicaScope {
+			assertReadReplicaScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
 	})
@@ -1009,6 +985,12 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
+	switch v.Statement.(type) {
+	case *ast.AlterTableStmt:
+		if len(v.Statement.(*ast.AlterTableStmt).Specs) > 1 && b.Ti != nil {
+			b.Ti.UseMultiSchemaChange = true
+		}
+	}
 	e := &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
@@ -1561,6 +1543,39 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	return txnManager.GetStmtReadTS()
 }
 
+// getSnapshot get the appropriate snapshot from txnManager and set
+// the relevant snapshot options before return.
+func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
+	var snapshot kv.Snapshot
+	var err error
+
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		snapshot, err = txnManager.GetSnapshotWithStmtForUpdateTS()
+	} else {
+		snapshot, err = txnManager.GetSnapshotWithStmtReadTS()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	sessVars := b.ctx.GetSessionVars()
+	replicaReadType := sessVars.GetReplicaRead()
+	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
+
+	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: b.readReplicaScope,
+			},
+		})
+	}
+
+	return snapshot, nil
+}
+
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
@@ -1715,6 +1730,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableAttributes),
 			strings.ToLower(infoschema.TablePlacementPolicies),
 			strings.ToLower(infoschema.TableTrxSummary),
+			strings.ToLower(infoschema.TableVariablesInfo),
 			strings.ToLower(infoschema.ClusterTableTrxSummary):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -2440,7 +2456,8 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	if task.PartitionName != "" {
 		sqlexec.MustFormatSQL(sql, " partition(%n)", task.PartitionName)
 	}
-	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(context.TODO(), nil, sql.String())
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	rows, _, err := b.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, nil, sql.String())
 	if err != nil {
 		return 0, false
 	}
@@ -3106,8 +3123,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
 		startTS:          startTS,
+		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
+		netDataSize:      v.GetNetDataSize(),
 		table:            tbl,
 		keepOrder:        ts.KeepOrder,
 		desc:             ts.Desc,
@@ -3173,7 +3192,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
-		if val.(bool) != useMPPExecution(b.ctx, v) {
+		if !b.ctx.GetSessionVars().InRestrictedSQL && val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
 				b.err = errors.New("expect mpp but not used")
 			} else {
@@ -3237,7 +3256,9 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	// Sort the partition is necessary to make the final multiple partition key ranges ordered.
-	sort.Sort(partitionSlice(partitions))
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
+		return i.GetPhysicalID() < j.GetPhysicalID()
+	})
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
 		partitions: partitions,
@@ -3359,7 +3380,9 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 	}
 
 	// To make the final key ranges involving multiple partitions ordered.
-	sort.Sort(partitionSlice(usedPartition))
+	slices.SortFunc(usedPartition, func(i, j table.PhysicalTable) bool {
+		return i.GetPhysicalID() < j.GetPhysicalID()
+	})
 	return usedPartition, true, contentPos, nil
 }
 
@@ -3386,8 +3409,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		dagPB:            dagReq,
 		startTS:          startTS,
+		txnScope:         b.txnScope,
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
+		netDataSize:      v.GetNetDataSize(),
 		physicalTableID:  physicalTableID,
 		table:            tbl,
 		index:            is.Index,
@@ -3565,6 +3590,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
+		idxNetDataSize:    v.GetAvgTableRowSize(),
+		avgRowSize:        v.GetAvgTableRowSize(),
 	}
 
 	if containsLimit(indexReq.Executors) {
@@ -3654,6 +3681,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
 	partialPlanCount := len(v.PartialPlans)
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
+	partialDataSizes := make([]float64, 0, partialPlanCount)
 	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
 	descs := make([]bool, 0, partialPlanCount)
 	feedbacks := make([]*statistics.QueryFeedback, 0, partialPlanCount)
@@ -3686,6 +3714,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		partialReqs = append(partialReqs, tempReq)
 		isCorColInPartialFilters = append(isCorColInPartialFilters, b.corColInDistPlan(v.PartialPlans[i]))
 		isCorColInPartialAccess = append(isCorColInPartialAccess, b.corColInAccess(v.PartialPlans[i][0]))
+		partialDataSizes = append(partialDataSizes, v.GetPartialReaderNetDataSize(v.PartialPlans[i][0]))
 	}
 	tableReq, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	isCorColInTableFilter := b.corColInDistPlan(v.TablePlans)
@@ -3714,6 +3743,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		columns:                  ts.Columns,
 		partialPlans:             v.PartialPlans,
 		tblPlans:                 v.TablePlans,
+		partialNetDataSizes:      partialDataSizes,
+		dataAvgRowSize:           v.GetAvgTableRowSize(),
 		dataReaderBuilder:        readerBuilder,
 		feedbacks:                feedbacks,
 		paging:                   paging,
@@ -3864,6 +3895,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
 	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool, memTracker *memory.Tracker, interruptSignal *atomic.Value) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
+	if !canReorderHandles {
+		// `canReorderHandles` is set to false only in IndexMergeJoin. IndexMergeJoin will trigger a dead loop problem
+		// when enabling paging(tidb/issues/35831). But IndexMergeJoin is not visible to the user and is deprecated
+		// for now. Thus, we disable paging here.
+		e.paging = false
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -3936,8 +3973,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 		}
 		// The key ranges should be ordered.
-		sort.Slice(kvRanges, func(i, j int) bool {
-			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
 		})
 		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
@@ -3971,8 +4008,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 
 	// The key ranges should be ordered.
-	sort.Slice(kvRanges, func(i, j int) bool {
-		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+	slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+		return bytes.Compare(i.StartKey, j.StartKey) < 0
 	})
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }
@@ -4000,21 +4037,6 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
-}
-
-// partitionSlice implement the sort interface.
-type partitionSlice []table.PhysicalTable
-
-func (s partitionSlice) Len() int {
-	return len(s)
-}
-
-func (s partitionSlice) Less(i, j int) bool {
-	return s[i].GetPhysicalID() < s[j].GetPhysicalID()
-}
-
-func (s partitionSlice) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
 }
 
 func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error) {
@@ -4048,6 +4070,27 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Rang
 	return ret, nil
 }
 
+// newClosestReadAdjuster let the request be sent to closest replica(within the same zone)
+// if response size exceeds certain threshold.
+func newClosestReadAdjuster(ctx sessionctx.Context, req *kv.Request, netDataSize float64) kv.CoprRequestAdjuster {
+	if req.ReplicaRead != kv.ReplicaReadClosestAdaptive {
+		return nil
+	}
+	return func(req *kv.Request, copTaskCount int) bool {
+		// copTaskCount is the number of coprocessor requests
+		if int64(netDataSize/float64(copTaskCount)) >= ctx.GetSessionVars().ReplicaClosestReadThreshold {
+			req.MatchStoreLabels = append(req.MatchStoreLabels, &metapb.StoreLabel{
+				Key:   placement.DCLabelKey,
+				Value: config.GetTxnScopeFromConfig(),
+			})
+			return true
+		}
+		// reset to read from leader when the data size is small.
+		req.ReplicaRead = kv.ReplicaReadLeader
+		return false
+	}
+}
+
 func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (*TableReaderExecutor, error) {
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
@@ -4058,10 +4101,13 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetStartTS(startTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilderWithRange.Request, e.netDataSize)).
+		SetPaging(e.paging).
 		Build()
 	if err != nil {
 		return nil, err
@@ -4078,8 +4124,8 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
 	if canReorderHandles {
-		sort.Slice(handles, func(i, j int) bool {
-			return handles[i].Compare(handles[j]) < 0
+		slices.SortFunc(handles, func(i, j kv.Handle) bool {
+			return i.Compare(j) < 0
 		})
 	}
 	var b distsql.RequestBuilder
@@ -4090,6 +4136,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 			b.SetTableHandles(getPhysicalTableID(e.table), handles)
 		}
 	}
+
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 
@@ -4324,8 +4371,8 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		memTracker.Consume(2 * int64(len(tmpDatumRanges)) * types.EstimatedMemUsage(tmpDatumRanges[0].LowVal, len(tmpDatumRanges)))
 	}
 	if cwc == nil {
-		sort.Slice(kvRanges, func(i, j int) bool {
-			return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
+		slices.SortFunc(kvRanges, func(i, j kv.KeyRange) bool {
+			return bytes.Compare(i.StartKey, j.StartKey) < 0
 		})
 		return kvRanges, nil
 	}
@@ -4582,7 +4629,8 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if err := b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
+	var err error
+	if err = b.validCanReadTemporaryOrCacheTable(plan.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -4594,34 +4642,56 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}()
 	}
 
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
+	e := &BatchPointGetExec{
+		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		tblInfo:      plan.TblInfo,
+		idxInfo:      plan.IndexInfo,
+		rowDecoder:   decoder,
+		keepOrder:    plan.KeepOrder,
+		desc:         plan.Desc,
+		lock:         plan.Lock,
+		waitTime:     plan.LockWaitTime,
+		partExpr:     plan.PartitionExpr,
+		partPos:      plan.PartitionColPos,
+		singlePart:   plan.SinglePart,
+		partTblID:    plan.PartTblID,
+		columns:      plan.Columns,
+	}
+
+	e.snapshot, err = b.getSnapshot()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if e.ctx.GetSessionVars().GetReplicaRead() == kv.ReplicaReadClosestAdaptive {
+		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, plan.GetAvgRowSize()))
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if e.ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != b.readReplicaScope {
+			panic("batch point get replica option fail")
+		}
+	})
+
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-
-	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
-	e := &BatchPointGetExec{
-		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:          plan.TblInfo,
-		idxInfo:          plan.IndexInfo,
-		rowDecoder:       decoder,
-		snapshotTS:       snapshotTS,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
-		keepOrder:        plan.KeepOrder,
-		desc:             plan.Desc,
-		lock:             plan.Lock,
-		waitTime:         plan.LockWaitTime,
-		partExpr:         plan.PartitionExpr,
-		partPos:          plan.PartitionColPos,
-		singlePart:       plan.SinglePart,
-		partTblID:        plan.PartTblID,
-		columns:          plan.Columns,
-	}
-
 	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
-		e.cacheTable = b.getCacheTable(plan.TblInfo, snapshotTS)
+		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
+			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
+		}
 	}
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {
@@ -4682,6 +4752,21 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	e.base().maxChunkSize = capacity
 	e.buildVirtualColumnInfo()
 	return e
+}
+
+func newReplicaReadAdjuster(ctx sessionctx.Context, avgRowSize float64) txnkv.ReplicaReadAdjuster {
+	return func(count int) (tikv.StoreSelectorOption, clientkv.ReplicaReadType) {
+		if int64(avgRowSize*float64(count)) >= ctx.GetSessionVars().ReplicaClosestReadThreshold {
+			return tikv.WithMatchLabels([]*metapb.StoreLabel{
+				{
+					Key:   placement.DCLabelKey,
+					Value: config.GetTxnScopeFromConfig(),
+				},
+			}), clientkv.ReplicaReadMixed
+		}
+		// fallback to read from leader if the request is small
+		return nil, clientkv.ReplicaReadLeader
+	}
 }
 
 func isCommonHandleRead(tbl *model.TableInfo, idx *model.IndexInfo) bool {
@@ -4947,7 +5032,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 }
 
 func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executor {
-	if v.ReplicaKind != ast.CompactReplicaKindTiFlash {
+	if v.ReplicaKind != ast.CompactReplicaKindTiFlash && v.ReplicaKind != ast.CompactReplicaKindAll {
 		b.err = errors.Errorf("compact %v replica is not supported", strings.ToLower(string(v.ReplicaKind)))
 		return nil
 	}

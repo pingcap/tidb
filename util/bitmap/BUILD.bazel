@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "bitmap_test",
+    timeout = "short",
     srcs = [
         "concurrent_test.go",
         "main_test.go",

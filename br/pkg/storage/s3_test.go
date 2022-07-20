@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -23,6 +25,8 @@ import (
 	. "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+const bucketRegionHeader = "X-Amz-Bucket-Region"
 
 type s3Suite struct {
 	controller *gomock.Controller
@@ -51,6 +55,15 @@ func createS3Suite(c gomock.TestReporter) (s *s3Suite, clean func()) {
 	}
 
 	return
+}
+
+func createGetBucketRegionServer(region string, statusCode int, incHeader bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if incHeader {
+			w.Header().Set(bucketRegionHeader, region)
+		}
+		w.WriteHeader(statusCode)
+	}))
 }
 
 func TestApply(t *testing.T) {
@@ -145,7 +158,7 @@ func TestApplyUpdate(t *testing.T) {
 				Endpoint: "",
 			},
 			s3: &backuppb.S3{
-				Region: "us-east-1",
+				Region: "",
 				Bucket: "bucket",
 				Prefix: "prefix",
 			},
@@ -167,7 +180,7 @@ func TestApplyUpdate(t *testing.T) {
 				Endpoint: "https://s3.us-west-2",
 			},
 			s3: &backuppb.S3{
-				Region:   "us-east-1",
+				Region:   "",
 				Endpoint: "https://s3.us-west-2",
 				Bucket:   "bucket",
 				Prefix:   "prefix",
@@ -179,7 +192,7 @@ func TestApplyUpdate(t *testing.T) {
 				Endpoint: "http://s3.us-west-2",
 			},
 			s3: &backuppb.S3{
-				Region:   "us-east-1",
+				Region:   "",
 				Endpoint: "http://s3.us-west-2",
 				Bucket:   "bucket",
 				Prefix:   "prefix",
@@ -271,6 +284,10 @@ func TestS3Storage(t *testing.T) {
 		hackPermission []Permission
 		sendCredential bool
 	}
+
+	s := createGetBucketRegionServer("us-west-2", 200, true)
+	defer s.Close()
+
 	testFn := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
 		ctx := aws.BackgroundContext()
@@ -295,46 +312,10 @@ func TestS3Storage(t *testing.T) {
 	}
 	tests := []testcase{
 		{
-			name: "no region and endpoint",
-			s3: &backuppb.S3{
-				Region:   "",
-				Endpoint: "",
-				Bucket:   "bucket",
-				Prefix:   "prefix",
-			},
-			errReturn:      true,
-			hackPermission: []Permission{AccessBuckets},
-			sendCredential: true,
-		},
-		{
 			name: "no region",
 			s3: &backuppb.S3{
 				Region:   "",
-				Endpoint: "http://10.1.2.3",
-				Bucket:   "bucket",
-				Prefix:   "prefix",
-			},
-			errReturn:      true,
-			hackPermission: []Permission{AccessBuckets},
-			sendCredential: true,
-		},
-		{
-			name: "no endpoint",
-			s3: &backuppb.S3{
-				Region:   "us-west-2",
-				Endpoint: "",
-				Bucket:   "bucket",
-				Prefix:   "prefix",
-			},
-			errReturn:      true,
-			hackPermission: []Permission{AccessBuckets},
-			sendCredential: true,
-		},
-		{
-			name: "no region",
-			s3: &backuppb.S3{
-				Region:   "",
-				Endpoint: "http://10.1.2.3",
+				Endpoint: s.URL,
 				Bucket:   "bucket",
 				Prefix:   "prefix",
 			},
@@ -342,10 +323,21 @@ func TestS3Storage(t *testing.T) {
 			sendCredential: true,
 		},
 		{
-			name: "normal region",
+			name: "wrong region",
+			s3: &backuppb.S3{
+				Region:   "us-east-2",
+				Endpoint: s.URL,
+				Bucket:   "bucket",
+				Prefix:   "prefix",
+			},
+			errReturn:      true,
+			sendCredential: true,
+		},
+		{
+			name: "right region",
 			s3: &backuppb.S3{
 				Region:   "us-west-2",
-				Endpoint: "",
+				Endpoint: s.URL,
 				Bucket:   "bucket",
 				Prefix:   "prefix",
 			},
@@ -356,6 +348,7 @@ func TestS3Storage(t *testing.T) {
 			name: "keys configured explicitly",
 			s3: &backuppb.S3{
 				Region:          "us-west-2",
+				Endpoint:        s.URL,
 				AccessKey:       "ab",
 				SecretAccessKey: "cd",
 				Bucket:          "bucket",
@@ -368,6 +361,7 @@ func TestS3Storage(t *testing.T) {
 			name: "no access key",
 			s3: &backuppb.S3{
 				Region:          "us-west-2",
+				Endpoint:        s.URL,
 				SecretAccessKey: "cd",
 				Bucket:          "bucket",
 				Prefix:          "prefix",
@@ -379,6 +373,7 @@ func TestS3Storage(t *testing.T) {
 			name: "no secret access key",
 			s3: &backuppb.S3{
 				Region:    "us-west-2",
+				Endpoint:  s.URL,
 				AccessKey: "ab",
 				Bucket:    "bucket",
 				Prefix:    "prefix",
@@ -390,6 +385,7 @@ func TestS3Storage(t *testing.T) {
 			name: "no secret access key",
 			s3: &backuppb.S3{
 				Region:    "us-west-2",
+				Endpoint:  s.URL,
 				AccessKey: "ab",
 				Bucket:    "bucket",
 				Prefix:    "prefix",
@@ -1120,4 +1116,44 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, 1, i)
+}
+
+func TestSendCreds(t *testing.T) {
+	accessKey := "ab"
+	secretAccessKey := "cd"
+	backendOpt := BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+		},
+	}
+	backend, err := ParseBackend("s3://bucket/prefix/", &backendOpt)
+	require.NoError(t, err)
+	opts := &ExternalStorageOptions{
+		SendCredentials: true,
+	}
+	_, err = New(context.TODO(), backend, opts)
+	require.NoError(t, err)
+	sentAccessKey := backend.GetS3().AccessKey
+	require.Equal(t, accessKey, sentAccessKey)
+	sentSecretAccessKey := backend.GetS3().SecretAccessKey
+	require.Equal(t, sentSecretAccessKey, sentSecretAccessKey)
+
+	backendOpt = BackendOptions{
+		S3: S3BackendOptions{
+			AccessKey:       accessKey,
+			SecretAccessKey: secretAccessKey,
+		},
+	}
+	backend, err = ParseBackend("s3://bucket/prefix/", &backendOpt)
+	require.NoError(t, err)
+	opts = &ExternalStorageOptions{
+		SendCredentials: false,
+	}
+	_, err = New(context.TODO(), backend, opts)
+	require.NoError(t, err)
+	sentAccessKey = backend.GetS3().AccessKey
+	require.Equal(t, "", sentAccessKey)
+	sentSecretAccessKey = backend.GetS3().SecretAccessKey
+	require.Equal(t, "", sentSecretAccessKey)
 }

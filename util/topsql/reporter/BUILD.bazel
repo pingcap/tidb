@@ -16,6 +16,7 @@ go_library(
         "//config",
         "//metrics",
         "//util",
+        "//util/hack",
         "//util/logutil",
         "//util/topsql/collector",
         "//util/topsql/state",
@@ -33,6 +34,7 @@ go_library(
 
 go_test(
     name = "reporter_test",
+    timeout = "short",
     srcs = [
         "datamodel_test.go",
         "datasink_test.go",

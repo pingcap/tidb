@@ -10,6 +10,7 @@ go_library(
 
 go_test(
     name = "vitess_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "vitess_hash_test.go",
