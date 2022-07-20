@@ -133,11 +133,6 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	fsp, err := getExpressionFsp(ctx, args[0])
-	if err != nil {
-		return nil, err
-	}
-
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
 	if err != nil {
 		return nil, err
@@ -209,10 +204,15 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCoalesceStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case types.ETDatetime, types.ETTimestamp:
+		bf.tp.SetDecimal(resultFieldType.GetDecimal())
 		sig = &builtinCoalesceTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case types.ETDuration:
+<<<<<<< HEAD
 		bf.tp.Decimal = fsp
+=======
+		bf.tp.SetDecimal(resultFieldType.GetDecimal())
+>>>>>>> a5ec60fce... expression: fix accuracy loss problem in function COALESCE (#36264)
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	case types.ETJson:
@@ -324,8 +324,10 @@ func (b *builtinCoalesceTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinCoalesceTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
+	fsp := b.tp.GetDecimal()
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalTime(b.ctx, row)
+		res.SetFsp(fsp)
 		if err != nil || !isNull {
 			break
 		}
@@ -348,6 +350,7 @@ func (b *builtinCoalesceDurationSig) Clone() builtinFunc {
 func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalDuration(b.ctx, row)
+		res.Fsp = b.tp.GetDecimal()
 		if err != nil || !isNull {
 			break
 		}
