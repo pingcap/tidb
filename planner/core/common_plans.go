@@ -318,7 +318,7 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt, ignore *bool) string {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
 		return ""
@@ -331,6 +331,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
+			*ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
 			return enabledBinding.BindSQL
 		}
 	}
@@ -342,6 +343,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
+			*ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
 			return enabledBinding.BindSQL
 		}
 	}
@@ -356,13 +358,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
+	var ignorePlanCache bool = false
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
 	if prepared.UseCache {
-		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
+		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt, &ignorePlanCache)
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
@@ -396,7 +399,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 
-	if prepared.UseCache && prepared.CachedPlan != nil { // short path for point-get plans
+	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // short path for point-get plans
 		// Rewriting the expression in the select.where condition  will convert its
 		// type from "paramMarker" to "Constant".When Point Select queries are executed,
 		// the expression in the where condition will not be evaluated,
@@ -419,7 +422,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		stmtCtx.PointExec = true
 		return nil
 	}
-	if prepared.UseCache { // for general plans
+	if prepared.UseCache && !ignorePlanCache { // for general plans
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
@@ -490,7 +493,7 @@ REBUILD:
 	if containTableDual(p) && varsNum > 0 {
 		stmtCtx.SkipPlanCache = true
 	}
-	if prepared.UseCache && !stmtCtx.SkipPlanCache {
+	if prepared.UseCache && !stmtCtx.SkipPlanCache && !ignorePlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
