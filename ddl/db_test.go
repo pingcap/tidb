@@ -647,7 +647,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
@@ -1274,6 +1274,8 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockCommitErrorInNewTxn")) }()
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL", `return(true)`))
+			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockCancelConcurencyDDL")) }()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
