@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	field_types "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
@@ -957,7 +958,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 			buf.WriteString(",\n")
 		}
 		fmt.Fprintf(buf, "  %s %s", stringutil.Escape(col.Name.O, sqlMode), col.GetTypeDesc())
-		if col.GetCharset() != "binary" {
+		if field_types.HasCharset(&col.FieldType) {
 			if col.GetCharset() != tblCharset {
 				fmt.Fprintf(buf, " CHARACTER SET %s", col.GetCharset())
 			}
@@ -1358,7 +1359,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 	}
 	// this if statement takes care of lists/range columns case
-	if partitionInfo.Columns != nil {
+	if len(partitionInfo.Columns) > 0 {
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
 		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())

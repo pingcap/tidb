@@ -1178,6 +1178,11 @@ type SessionVars struct {
 	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
 	MemoryDebugModeAlarmRatio int64
 
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
+
 	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
@@ -2298,8 +2303,12 @@ const (
 	SlowLogPlan = "Plan"
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
+	// SlowLogBinaryPlan is used to record the binary plan.
+	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogBinaryPlanPrefix is the prefix of the binary plan value.
+	SlowLogBinaryPlanPrefix = ast.TiDBDecodeBinaryPlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
@@ -2326,6 +2335,10 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
+// GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
+// It's controlled by the global variable `tidb_generate_binary_plan`.
+var GenerateBinaryPlan atomic2.Bool
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -2351,6 +2364,7 @@ type SlowQueryLogItems struct {
 	PrevStmt          string
 	Plan              string
 	PlanDigest        string
+	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
 	KVTotal           time.Duration
 	PDTotal           time.Duration
@@ -2533,6 +2547,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if len(logItems.PlanDigest) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
+	}
+	if len(logItems.BinaryPlan) != 0 {
+		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
 
 	if logItems.PrevStmt != "" {
