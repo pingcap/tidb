@@ -4193,7 +4193,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 			if cte.recurLP == nil && cte.isInline {
 				lp.MergeHints.preferMerge = cte.isInline
-				saveCte := b.outerCTEs[i:]
+				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
+				copy(saveCte, b.outerCTEs[i:])
 				b.outerCTEs = b.outerCTEs[:i]
 				o := b.buildingCTE
 				b.buildingCTE = false
