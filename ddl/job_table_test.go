@@ -192,7 +192,7 @@ func check(t *testing.T, record []int64, ids ...int64) {
 }
 
 func TestConcurrentDDLSwitch(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	type table struct {
