@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -391,11 +390,11 @@ func getForeignKeyTriggerExecs(e Executor) []*ForeignKeyTriggerExec {
 }
 
 type ForeignKeyTriggerExec struct {
-	b *executorBuilder
-	p *plannercore.ForeignKeyTriggerPlan
+	b             *executorBuilder
+	fkTriggerPlan plannercore.FKTriggerPlan
 
-	*foreignKeyChecker
-	fkValues [][]types.Datum
+	colsOffsets []int
+	fkValues    [][]types.Datum
 }
 
 func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
@@ -405,6 +404,38 @@ func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
 	}
 	fkt.fkValues = append(fkt.fkValues, vals)
 	return nil
+}
+
+func (fkt *ForeignKeyTriggerExec) fetchFKValues(row []types.Datum) ([]types.Datum, error) {
+	vals := make([]types.Datum, len(fkt.colsOffsets))
+	for i, offset := range fkt.colsOffsets {
+		if offset >= len(row) {
+			return nil, table.ErrIndexOutBound.GenWithStackByArgs("", offset, row)
+		}
+		// If any foreign key column value is null, no need to check this row.
+		// test case:
+		// create table t1 (id int key,a int, b int, index(a, b));
+		// create table t2 (id int key,a int, b int, foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);
+		// > insert into t2 values (2, null, 1);
+		// Query OK, 1 row affected
+		// > insert into t2 values (3, 1, null);
+		// Query OK, 1 row affected
+		// > insert into t2 values (4, null, null);
+		// Query OK, 1 row affected
+		// > select * from t2;
+		// 	+----+--------+--------+
+		// 	| id | a      | b      |
+		// 		+----+--------+--------+
+		// 	| 4  | <null> | <null> |
+		// 	| 2  | <null> | 1      |
+		// 	| 3  | 1      | <null> |
+		// 	+----+--------+--------+
+		if row[offset].IsNull() {
+			return nil, nil
+		}
+		vals[i] = row[offset]
+	}
+	return vals, nil
 }
 
 func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() error {
@@ -417,34 +448,14 @@ func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() error {
 			HighExclude: false,
 		})
 	}
-	var readerPlan plannercore.PhysicalPlan
-	switch p :=fkt.p.Plan.(type){
-	case *plannercore.Delete:
-		readerPlan = p.SelectPlan
-	case *plannercore.Update:
-		readerPlan = p.SelectPlan
-	default:
-		return errors.Errorf("unknown")
-	}
-	switch p := readerPlan.(type) {
-	case *plannercore.PhysicalIndexLookUpReader:
-		is :=p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		is.Ranges = ranges
-	default:
-		return errors.Errorf("unknown")
-	}
-	return nil
+	return fkt.fkTriggerPlan.SetRangeForSelectPlan(ranges)
 }
 
 func (fkt *ForeignKeyTriggerExec) buildExecutor() Executor {
-	return fkt.b.build(fkt.p.Plan)
+	return fkt.b.build(fkt.fkTriggerPlan.GetTriggerPlan())
 }
 
-func (b *executorBuilder) buildForeignKeyTriggerExecs(tblID2Table map[int64]table.Table, tblID2FKTriggerPlans map[int64][]*plannercore.ForeignKeyTriggerPlan) (map[int64][]*ForeignKeyTriggerExec, error) {
-	if !b.ctx.GetSessionVars().ForeignKeyChecks {
-		logutil.BgLogger().Warn("----- foreign key check disabled")
-		return nil, nil
-	}
+func (b *executorBuilder) buildForeignKeyTriggerExecs(tblID2Table map[int64]table.Table, tblID2FKTriggerPlans map[int64][]plannercore.FKTriggerPlan) (map[int64][]*ForeignKeyTriggerExec, error) {
 	fkTriggerExecs := make(map[int64][]*ForeignKeyTriggerExec)
 	for tid, tbl := range tblID2Table {
 		fkTriggerPlans := tblID2FKTriggerPlans[tid]
@@ -459,20 +470,16 @@ func (b *executorBuilder) buildForeignKeyTriggerExecs(tblID2Table map[int64]tabl
 	return fkTriggerExecs, nil
 }
 
-func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fkTriggerPlan *plannercore.ForeignKeyTriggerPlan) (*ForeignKeyTriggerExec, error) {
-	fk := fkTriggerPlan.FK
+func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fkTriggerPlan plannercore.FKTriggerPlan) (*ForeignKeyTriggerExec, error) {
+	fk := fkTriggerPlan.GetFKInfo()
 	colsOffsets, err := getForeignKeyColumnsOffsets(tbInfo, fk.RefCols)
 	if err != nil {
 		return nil, err
 	}
 
-	fkChecker, err := buildForeignKeyChecker(fkTriggerPlan.ChildTable, fk.Cols, colsOffsets, errors.New("fix this error"))
-	if err != nil {
-		return nil, err
-	}
 	return &ForeignKeyTriggerExec{
-		b:                 b,
-		p:                 fkTriggerPlan,
-		foreignKeyChecker: fkChecker,
+		b:             b,
+		fkTriggerPlan: fkTriggerPlan,
+		colsOffsets:   colsOffsets,
 	}, nil
 }

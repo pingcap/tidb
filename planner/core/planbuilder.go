@@ -1435,6 +1435,39 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	return ret, nil
 }
 
+func (b *PlanBuilder) buildPhysicalTableReader(ds *DataSource) (PhysicalPlan, error) {
+	tblInfo := ds.tableInfo
+	physicalID, isPartition := getPhysicalID(ds.table)
+	ts := PhysicalTableScan{
+		Columns:         tblInfo.Columns,
+		Table:           tblInfo,
+		TableAsName:     &tblInfo.Name,
+		physicalTableID: physicalID,
+		isPartition:     isPartition,
+		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
+	}.Init(b.ctx, b.getSelectOffset())
+	ts.SetSchema(ds.schema)
+	ts.Columns = ds.Columns
+	var extraCol *expression.Column
+	for _, col := range ds.schema.Columns {
+		if col.ID == model.ExtraHandleID {
+			extraCol = col
+		}
+	}
+	_, commonCols, _ := tryGetCommonHandleCols(ds.table, ds.schema)
+	cop := &copTask{
+		tablePlan:        ts,
+		tblColHists:      ts.tblColHists,
+		extraHandleCol:   extraCol,
+		commonHandleCols: commonCols,
+	}
+	rootT := cop.convertToRootTask(b.ctx)
+	if err := rootT.p.ResolveIndices(); err != nil {
+		return nil, err
+	}
+	return rootT.p, nil
+}
+
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, tblScanSchema *expression.Schema, tblScanColumns []*model.ColumnInfo) (PhysicalPlan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl)

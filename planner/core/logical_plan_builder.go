@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/ranger"
 	"math"
 	"math/bits"
 	"sort"
@@ -5613,8 +5614,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 	return del, err
 }
 
-func (b *PlanBuilder) buildDeleteForeignKeyTriggerPlan(ctx context.Context, tblID2table map[int64]table.Table) (map[int64][]*ForeignKeyTriggerPlan, error) {
-	fkTriggerPlans := make(map[int64][]*ForeignKeyTriggerPlan)
+func (b *PlanBuilder) buildDeleteForeignKeyTriggerPlan(ctx context.Context, tblID2table map[int64]table.Table) (map[int64][]FKTriggerPlan, error) {
+	fkTriggerPlans := make(map[int64][]FKTriggerPlan)
 	for tid, tbl := range tblID2table {
 		if len(tbl.Meta().ReferredForeignKeys) == 0 {
 			continue
@@ -5630,6 +5631,64 @@ func (b *PlanBuilder) buildDeleteForeignKeyTriggerPlan(ctx context.Context, tblI
 	return fkTriggerPlans, nil
 }
 
+// FKTriggerPlan is the foreign key trigger plan
+type FKTriggerPlan interface {
+	Plan
+
+	GetFKInfo() *model.FKInfo
+
+	GetTriggerPlan() Plan
+
+	SetRangeForSelectPlan([]*ranger.Range) error
+}
+
+type baseFKTriggerPlan struct {
+	fk *model.FKInfo
+}
+
+func (p *baseFKTriggerPlan) GetFKInfo() *model.FKInfo {
+	return p.fk
+}
+
+func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, ranges []*ranger.Range) error {
+	switch p := selectPlan.(type) {
+	case *PhysicalIndexLookUpReader:
+		is := p.IndexPlans[0].(*PhysicalIndexScan)
+		is.Ranges = ranges
+	default:
+		return errors.Errorf("unknown")
+	}
+	return nil
+}
+
+type FKOnDeleteCascadePlan struct {
+	baseFKTriggerPlan
+
+	*Delete
+}
+
+type FKOnDeleteSetNullPlan struct {
+	baseFKTriggerPlan
+
+	*Update
+}
+
+func (p *FKOnDeleteCascadePlan) GetTriggerPlan() Plan {
+	return p.Delete
+}
+
+func (p *FKOnDeleteCascadePlan) SetRangeForSelectPlan(ranges []*ranger.Range) error {
+	return p.setRangeForSelectPlan(p.SelectPlan, ranges)
+}
+
+func (p *FKOnDeleteSetNullPlan) GetTriggerPlan() Plan {
+	return p.Update
+}
+
+func (p *FKOnDeleteSetNullPlan) SetRangeForSelectPlan(ranges []*ranger.Range) error {
+	return p.setRangeForSelectPlan(p.SelectPlan, ranges)
+}
+
 type ForeignKeyTriggerPlan struct {
 	Plan
 
@@ -5637,12 +5696,12 @@ type ForeignKeyTriggerPlan struct {
 	FK         *model.FKInfo
 }
 
-func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]*ForeignKeyTriggerPlan, error) {
+func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]FKTriggerPlan, error) {
 	if !b.ctx.GetSessionVars().ForeignKeyChecks {
 		return nil, nil
 	}
 	tblInfo := tbl.Meta()
-	triggerPlans := make([]*ForeignKeyTriggerPlan, 0, len(tblInfo.ReferredForeignKeys))
+	triggerPlans := make([]FKTriggerPlan, 0, len(tblInfo.ReferredForeignKeys))
 	for _, referredFK := range tblInfo.ReferredForeignKeys {
 		childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
 		if err != nil {
@@ -5653,29 +5712,24 @@ func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tb
 		if fk == nil || fk.Version == 0 {
 			continue
 		}
-		var p Plan
+		var triggerPlan FKTriggerPlan
 		switch ast.ReferOptionType(fk.OnDelete) {
 		case ast.ReferOptionCascade:
-			p, err = b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
+			triggerPlan, err = b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
 		case ast.ReferOptionSetNull:
-			p, err = b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
+			triggerPlan, err = b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
 		default:
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		triggerPlans = append(triggerPlans, &ForeignKeyTriggerPlan{
-			Plan:       p,
-			ChildTable: tbl,
-			FK:         fk,
-		})
+		triggerPlans = append(triggerPlans, triggerPlan)
 	}
 	return triggerPlans, nil
 }
 
-func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (Plan, error) {
-	del := Delete{}.Init(b.ctx)
+func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
 	tn := &ast.TableName{
 		Schema: dbName,
 		Name:   tbl.Meta().Name,
@@ -5689,31 +5743,31 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName m
 		return nil, errors.Errorf("expected datasource, but got %v", dsPlan)
 	}
 
-	tblInfo := tbl.Meta()
-	idx := model.FindIndexByColumns(tblInfo.Indices, fk.Cols...)
-	if idx == nil {
-		return nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
-	}
-
-	indexLookUpPlan, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, ds.schema, ds.Columns)
+	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
 	if err != nil {
 		return nil, err
 	}
-	del.SelectPlan = indexLookUpPlan
+	del := Delete{
+		SelectPlan: tableReader,
+	}.Init(b.ctx)
 	del.names = ds.names
 
 	tblID2Handle := make(map[int64][]HandleCols)
 	tblID2Table := make(map[int64]table.Table)
-	tblID2Handle[tblInfo.ID] = []HandleCols{ds.handleCols}
-	tblID2Table[tblInfo.ID] = tbl
+	tid := ds.tableInfo.ID
+	tblID2Handle[tid] = []HandleCols{ds.handleCols}
+	tblID2Table[tid] = tbl
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2Table, false)
 	if err != nil {
 		return nil, err
 	}
-	return del, nil
+	return &FKOnDeleteCascadePlan{
+		Delete:            del,
+		baseFKTriggerPlan: baseFKTriggerPlan{fk: fk},
+	}, nil
 }
 
-func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (Plan, error) {
+func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
 	tn := &ast.TableName{
 		Schema: dbName,
 		Name:   tbl.Meta().Name,
@@ -5727,21 +5781,14 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 		return nil, errors.Errorf("expected datasource, but got %v", dsPlan)
 	}
 
-	tblInfo := tbl.Meta()
-	idx := model.FindIndexByColumns(tblInfo.Indices, fk.Cols...)
-	if idx == nil {
-		return nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
-	}
-
-	indexLookUpPlan, err := b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, ds.schema, ds.Columns)
+	tableReader, err := b.buildTableReaderForFK(ds, fk.Cols)
 	if err != nil {
 		return nil, err
 	}
-	schema := indexLookUpPlan.Schema()
-	names := ds.names
+	schema := tableReader.Schema()
 	orderedList := make([]*expression.Assignment, 0, len(fk.Cols))
 	for _, col := range fk.Cols {
-		idx := expression.FindFieldNameIdxByColName(names, col.L)
+		idx := expression.FindFieldNameIdxByColName(ds.names, col.L)
 		if idx < 0 {
 			return nil, ErrUnknownColumn
 		}
@@ -5761,7 +5808,7 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 		AllAssignmentsAreConstant: true,
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(b.ctx)
-	update.SelectPlan = indexLookUpPlan
+	update.SelectPlan = tableReader
 	update.names = ds.names
 	err = update.ResolveIndices()
 	if err != nil {
@@ -5770,14 +5817,34 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 
 	tblID2Handle := make(map[int64][]HandleCols)
 	tblID2Table := make(map[int64]table.Table)
-	tblID2Handle[tblInfo.ID] = []HandleCols{ds.handleCols}
-	tblID2Table[tblInfo.ID] = tbl
+	tid := ds.tableInfo.ID
+	tblID2Handle[tid] = []HandleCols{ds.handleCols}
+	tblID2Table[tid] = tbl
 	update.TblColPosInfos, err = buildColumns2Handle(update.names, tblID2Handle, tblID2Table, false)
 	update.tblID2Table = tblID2Table
 	if err != nil {
 		return nil, err
 	}
-	return update, nil
+	return &FKOnDeleteSetNullPlan{
+		Update:            update,
+		baseFKTriggerPlan: baseFKTriggerPlan{fk: fk},
+	}, nil
+}
+
+func (b *PlanBuilder) buildTableReaderForFK(ds *DataSource, cols []model.CIStr) (PhysicalPlan, error) {
+	tblInfo := ds.tableInfo
+	if tblInfo.PKIsHandle && len(cols) == 1 {
+		colInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
+		if colInfo != nil && mysql.HasPriKeyFlag(colInfo.GetFlag()) {
+			return b.buildPhysicalTableReader(ds)
+		}
+	}
+	idx := model.FindIndexByColumns(tblInfo.Indices, cols...)
+	if idx == nil {
+		return nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
+	}
+
+	return b.buildPhysicalIndexLookUpReader(ds.DBName, ds.table, idx, ds.schema, ds.Columns)
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]HandleCols, schema *expression.Schema) (map[int64][]HandleCols, error) {
