@@ -104,6 +104,7 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
+		a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
