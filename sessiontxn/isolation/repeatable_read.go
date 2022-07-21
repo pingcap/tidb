@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
@@ -106,6 +107,10 @@ func (p *PessimisticRRTxnContextProvider) updateForUpdateTS() (err error) {
 	if !txn.Valid() {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
+
+	failpoint.Inject("RequestTsoFromPD", func() {
+		sessiontxn.TsoRequestCountInc(sctx)
+	})
 
 	// Because the ForUpdateTS is used for the snapshot for reading data in DML.
 	// We can avoid allocating a global TSO here to speed it up by using the local TSO.
