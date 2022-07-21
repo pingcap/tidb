@@ -7396,6 +7396,79 @@ func TestIssue31867(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestIssue31600(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (tm_fsp0 time(0), tm_fsp1 time(1), tm_fsp3 time(3),tm_fsp6 time(6), d date, dt_fsp0 datetime(0), dt_fsp1 datetime(1), dt_fsp3 datetime(3), dt_fsp6 datetime(6))")
+	tk.MustExec("insert into t values(null, '12:12:01.1', '12:12:02.123', '12:12:03.123456', '20221212', null, '2020/12/11 12:12:11.1', '2020/12/12 12:12:12.123', '2020/12/13 12:12:13.123456')")
+	tk.MustExec("insert into t values('12:12:00', null, '12:12:02.123', '12:12:03.123456', '20221212', '2020/12/10 12:12:10', null, '2020/12/12 12:12:12.123', '2020/12/13 12:12:13.123456')")
+	tk.MustExec("insert into t values('12:12:00', '12:12:01.1', null, '12:12:03.123456', '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', null, '2020/12/13 12:12:13.123456')")
+	tk.MustExec("insert into t values('12:12:00', '12:12:01.1', '12:12:02.123', null, '20221212', '2020/12/10 12:12:10', '2020/12/11 12:12:11.1', '2020/12/12 12:12:12.123', null)")
+	tk.MustQuery("select coalesce(null, tm_fsp0, tm_fsp1, tm_fsp3, tm_fsp6) from t").Check([][]interface{}{
+		{"12:12:01.100000"},
+		{"12:12:00.000000"},
+		{"12:12:00.000000"},
+		{"12:12:00.000000"},
+	})
+	tk.MustQuery("select coalesce(tm_fsp1, tm_fsp0, tm_fsp3) from t").Check([][]interface{}{
+		{"12:12:01.100"},
+		{"12:12:00.000"},
+		{"12:12:01.100"},
+		{"12:12:01.100"},
+	})
+	tk.MustQuery("select coalesce(tm_fsp3, tm_fsp0) from t").Check([][]interface{}{
+		{"12:12:02.123"},
+		{"12:12:02.123"},
+		{"12:12:00.000"},
+		{"12:12:02.123"},
+	})
+	tk.MustQuery("select coalesce(tm_fsp6) from t").Check([][]interface{}{
+		{"12:12:03.123456"},
+		{"12:12:03.123456"},
+		{"12:12:03.123456"},
+		{"<nil>"},
+	})
+
+	tk.MustQuery("select coalesce(null, dt_fsp0, dt_fsp1, dt_fsp3, dt_fsp6) from t").Check([][]interface{}{
+		{"2020-12-11 12:12:11.100000"},
+		{"2020-12-10 12:12:10.000000"},
+		{"2020-12-10 12:12:10.000000"},
+		{"2020-12-10 12:12:10.000000"},
+	})
+	tk.MustQuery("select coalesce(dt_fsp0, dt_fsp1, dt_fsp3) from t").Check([][]interface{}{
+		{"2020-12-11 12:12:11.100"},
+		{"2020-12-10 12:12:10.000"},
+		{"2020-12-10 12:12:10.000"},
+		{"2020-12-10 12:12:10.000"},
+	})
+	tk.MustQuery("select coalesce(dt_fsp3, dt_fsp0) from t").Check([][]interface{}{
+		{"2020-12-12 12:12:12.123"},
+		{"2020-12-12 12:12:12.123"},
+		{"2020-12-10 12:12:10.000"},
+		{"2020-12-12 12:12:12.123"},
+	})
+	tk.MustQuery("select coalesce(dt_fsp6) from t").Check([][]interface{}{
+		{"2020-12-13 12:12:13.123456"},
+		{"2020-12-13 12:12:13.123456"},
+		{"2020-12-13 12:12:13.123456"},
+		{"<nil>"},
+	})
+
+	tk.MustQuery("select coalesce(null, d) from t").Check([][]interface{}{
+		{"2022-12-12"},
+		{"2022-12-12"},
+		{"2022-12-12"},
+		{"2022-12-12"},
+	})
+
+	tk.MustExec("drop table t")
+}
+
 func TestDateAddForNonExistingTimestamp(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -7449,6 +7522,23 @@ func TestImcompleteDateFunc(t *testing.T) {
 	tk.MustQuery("select YEARWEEK('1998-00-11')").Check(testkit.Rows("<nil>"))
 }
 
+func TestIssue36279(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET timestamp=UNIX_TIMESTAMP('2011-11-01 17:48:00')")
+
+	// test const
+	tk.MustQuery("SELECT cast(cast('12:12:12' as time) as datetime(6))").Check(testkit.Rows("2011-11-01 12:12:12.000000"))
+
+	// test vec
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (tm time(6))")
+	tk.MustExec("insert into t values('23:59:59')")
+	tk.MustQuery("SELECT cast(tm as datetime(6)) from t").Check(testkit.Rows("2011-11-01 23:59:59.000000"))
+}
+
 func TestIssue34998(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -7458,4 +7548,15 @@ func TestIssue34998(t *testing.T) {
 	tk.MustExec("insert into PK_S_MULTI_43(col1, col2) values('-512:37:22.00', '-512:37:22.00')")
 	tk.MustQuery("select extract(day_microsecond from '-512:37:22.00')").Check(testkit.Rows("-5123722000000"))
 	tk.MustQuery("select extract(day_microsecond from col1) from PK_S_MULTI_43").Check(testkit.Rows("-5123722000000"))
+}
+
+func TestIssue36358(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c datetime(6))")
+	tk.MustExec("insert into t values('2001-01-01 02:03:04.050607')")
+	tk.MustQuery("select extract(day_microsecond from cast('2001-01-01 02:03:04.050607' as datetime(6))) from t").Check(testkit.Rows("1020304050607"))
+	tk.MustQuery("select extract(day_microsecond from c) from t").Check(testkit.Rows("1020304050607"))
 }

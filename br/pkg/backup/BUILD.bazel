@@ -29,6 +29,7 @@ go_library(
         "//meta",
         "//meta/autoid",
         "//parser/model",
+        "//sessionctx",
         "//statistics/handle",
         "//util",
         "//util/codec",

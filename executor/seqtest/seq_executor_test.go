@@ -329,7 +329,7 @@ func TestShow(t *testing.T) {
 	))
 	testSQL = "show create database if not exists show_test_DB;"
 	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+		"show_test_DB|CREATE DATABASE IF NOT EXISTS `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
@@ -941,7 +941,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5600)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5700)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
