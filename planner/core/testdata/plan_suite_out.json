@@ -1649,7 +1649,7 @@
     "Warning": null
   },
   {
-    "SQL": "with recursive cte1(c1) as (select 1 union select /*+ merge */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
+    "SQL": "with recursive cte1(c1) as (select 1 union select /*+ MERGE() */ c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;",
     "Plan": [
       "CTEFullScan 2.00 root CTE:cte1 data:CTE_0",
       "CTE_0 2.00 root  Recursive CTE",
@@ -1660,7 +1660,26 @@
       "    └─CTETable 1.00 root  Scan on CTE_0"
     ],
     "Warning": [
-      "[parser:1064]Optimizer hint syntax error at line 1 column 87 near \"\" "
+      "[planner:1815]Hint merge() is inapplicable. Please check whether the CTE use recursive."
+    ]
+  },
+  {
+    "SQL": "WITH cte1 AS (SELECT * FROM t1) SELECT /*+ MERGE() */ * FROM cte1 join t2 on cte1.a = t2.b;",
+    "Plan": [
+      "Projection 4.48 root  test.t1.a, test.t2.b",
+      "└─HashJoin 4.48 root  inner join, equal:[eq(test.t2.b, test.t1.a)]",
+      "  ├─Selection(Build) 4.48 root  not(isnull(test.t1.a))",
+      "  │ └─CTEFullScan 5.60 root CTE:cte1 data:CTE_0",
+      "  └─TableReader(Probe) 7.00 root  data:Selection",
+      "    └─Selection 7.00 cop[tikv]  not(isnull(test.t2.b))",
+      "      └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false",
+      "CTE_0 5.60 root  Non-Recursive CTE",
+      "└─Selection(Seed Part) 5.60 root  not(isnull(test.t1.a))",
+      "  └─TableReader 7.00 root  data:TableFullScan",
+      "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
+    ],
+    "Warning": [
+      "[planner:1815]Hint merge() is inapplicable. Please check whether the hint is using in outer query, you should use this hint in CTE inner query."
     ]
   },
   {
@@ -1678,37 +1697,48 @@
     ],
     "Warning": null
   },
-      {
-        "SQL": "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
-        "Plan": [
-          "HashJoin 1920.80 root  CARTESIAN inner join",
-          "├─CTEFullScan(Build) 5.60 root CTE:cte1 data:CTE_0",
-          "└─CTEFullScan(Probe) 343.00 root CTE:cte2 data:CTE_1",
-          "CTE_0 5.60 root  Non-Recursive CTE",
-          "└─Selection(Seed Part) 5.60 root  1",
-          "  └─TableReader 7.00 root  data:TableFullScan",
-          "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
-          "CTE_1 343.00 root  Non-Recursive CTE",
-          "└─Projection(Seed Part) 343.00 root  test.t2.b, test.t3.c, test.t4.d",
-          "  └─HashJoin 343.00 root  CARTESIAN inner join",
-          "    ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_5",
-          "    └─CTEFullScan(Probe) 49.00 root CTE:cte3 data:CTE_2",
-          "CTE_5 7.00 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-          "  └─TableFullScan 7.00 cop[tikv] table:t4 keep order:false",
-          "CTE_2 49.00 root  Non-Recursive CTE",
-          "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
-          "  ├─CTEFullScan(Build) 7.00 root CTE:cte6 data:CTE_4",
-          "  └─CTEFullScan(Probe) 7.00 root CTE:cte5 data:CTE_3",
-          "CTE_4 7.00 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-          "  └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
-          "CTE_3 7.00 root  Non-Recursive CTE",
-          "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
-          "  └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
-        ],
-        "Warning": null
-      },
+ {
+   "SQL": "with cte1 as (with cte2 as (select /*+ MERGE() */ * from te) ,cte3 as (select /*+ MERGE() */ * from tc) select /*+ MERGE() */ * from cte2,cte3) select * from cte1;",
+   "Plan": [
+     "HashJoin 49.00 root  CARTESIAN inner join",
+     "├─TableReader(Build) 7.00 root  data:TableFullScan",
+     "│ └─TableFullScan 7.00 cop[tikv] table:tc keep order:false",
+     "└─TableReader(Probe) 7.00 root  data:TableFullScan",
+     "  └─TableFullScan 7.00 cop[tikv] table:te keep order:false"
+   ],
+   "Warning": null
+ },
+  {
+    "SQL": "with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
+    "Plan": [
+      "HashJoin 1920.80 root  CARTESIAN inner join",
+      "├─CTEFullScan(Build) 5.60 root CTE:cte1 data:CTE_0",
+      "└─CTEFullScan(Probe) 343.00 root CTE:cte2 data:CTE_1",
+      "CTE_0 5.60 root  Non-Recursive CTE",
+      "└─Selection(Seed Part) 5.60 root  1",
+      "  └─TableReader 7.00 root  data:TableFullScan",
+      "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false",
+      "CTE_1 343.00 root  Non-Recursive CTE",
+      "└─Projection(Seed Part) 343.00 root  test.t2.b, test.t3.c, test.t4.d",
+      "  └─HashJoin 343.00 root  CARTESIAN inner join",
+      "    ├─CTEFullScan(Build) 7.00 root CTE:cte4 data:CTE_5",
+      "    └─CTEFullScan(Probe) 49.00 root CTE:cte3 data:CTE_2",
+      "CTE_5 7.00 root  Non-Recursive CTE",
+      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+      "  └─TableFullScan 7.00 cop[tikv] table:t4 keep order:false",
+      "CTE_2 49.00 root  Non-Recursive CTE",
+      "└─HashJoin(Seed Part) 49.00 root  CARTESIAN inner join",
+      "  ├─CTEFullScan(Build) 7.00 root CTE:cte6 data:CTE_4",
+      "  └─CTEFullScan(Probe) 7.00 root CTE:cte5 data:CTE_3",
+      "CTE_4 7.00 root  Non-Recursive CTE",
+      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+      "  └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
+      "CTE_3 7.00 root  Non-Recursive CTE",
+      "└─TableReader(Seed Part) 7.00 root  data:TableFullScan",
+      "  └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false"
+    ],
+    "Warning": null
+  },
       {
         "SQL": "with cte1 as (select /*+ MERGE() */  * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;",
         "Plan": [
