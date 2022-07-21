@@ -169,7 +169,7 @@ func MakeTableRegions(
 					break
 				}
 				if err != nil {
-					log.L().Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
+					log.FromContext(ctx).Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 					break
 				}
 			}
@@ -239,7 +239,7 @@ func MakeTableRegions(
 		}
 	}
 
-	log.L().Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+	log.FromContext(ctx).Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
 		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
 		zap.Int("RegionsCount", len(filesRegions)),
 		zap.Float64("BatchSize", batchSize),
@@ -294,7 +294,7 @@ func makeSourceFileRegion(
 	}
 
 	if tableRegion.Size() > tableRegionSizeWarningThreshold {
-		log.L().Warn(
+		log.FromContext(ctx).Warn(
 			"file is too big to be processed efficiently; we suggest splitting it at 256 MB each",
 			zap.String("file", fi.FileMeta.Path),
 			zap.Int64("size", dataFileSize))
@@ -404,7 +404,7 @@ func SplitLargeFile(
 				if !errors.ErrorEqual(err, io.EOF) {
 					return 0, nil, nil, err
 				}
-				log.L().Warn("file contains no terminator at end",
+				log.FromContext(ctx).Warn("file contains no terminator at end",
 					zap.String("path", dataFile.FileMeta.Path),
 					zap.String("terminator", cfg.Mydumper.CSV.Terminator))
 				pos = dataFile.FileMeta.FileSize

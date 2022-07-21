@@ -613,6 +613,25 @@ func TestLoadStats(t *testing.T) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	require.Greater(t, hg.Len(), 0)
+
+	// assert index LoadNeededHistograms
+	idx := stat.Indices[tableInfo.Indices[0].ID]
+	idx.EvictAllStats()
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Equal(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.False(t, idx.IsEssentialStatsLoaded())
+	idx.IsInvalid(false)
+	require.NoError(t, h.LoadNeededHistograms())
+	stat = h.GetTableStats(tableInfo)
+	idx = stat.Indices[tableInfo.Indices[0].ID]
+	hg = idx.Histogram
+	cms = idx.CMSketch
+	topN = idx.TopN
+	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
+	require.True(t, idx.IsFullLoad())
+
 	// Following test tests whether the LoadNeededHistograms would panic.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`))
 	err = h.LoadNeededHistograms()
@@ -2554,18 +2573,6 @@ func TestHideIndexUsageSyncLease(t *testing.T) {
 	}
 }
 
-func TestHideExtendedStatsSwitch(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	// NOTICE: remove this test when this extended-stats reaches GA state.
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("show variables").Rows()
-	for _, r := range rs {
-		require.NotEqual(t, "tidb_enable_extended_stats", strings.ToLower(r[0].(string)))
-	}
-	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
-}
-
 func TestRepetitiveAddDropExtendedStats(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3226,56 +3233,75 @@ func TestColumnCountFromStorage(t *testing.T) {
 }
 
 func TestIncrementalModifyCountUpdate(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	tid := tblInfo.ID
+	for _, analyzeSnapshot := range []bool{true, false} {
+		store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+		defer clean()
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		if analyzeSnapshot {
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = on")
+		} else {
+			tk.MustExec("set @@session.tidb_enable_analyze_snapshot = off")
+		}
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("set @@session.tidb_analyze_version = 2")
+		h := dom.StatsHandle()
+		err := h.HandleDDLEvent(<-h.DDLEventCh())
+		require.NoError(t, err)
+		tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		tid := tblInfo.ID
 
-	tk.MustExec("insert into t values(1),(2),(3)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	err = h.Update(dom.InfoSchema())
-	require.NoError(t, err)
-	tk.MustExec("analyze table t")
-	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
-		"3 0",
-	))
+		tk.MustExec("insert into t values(1),(2),(3)")
+		require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		err = h.Update(dom.InfoSchema())
+		require.NoError(t, err)
+		tk.MustExec("analyze table t")
+		tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+			"3 0",
+		))
 
-	tk.MustExec("begin")
-	txn, err := tk.Session().Txn(false)
-	require.NoError(t, err)
-	startTS := txn.StartTS()
-	tk.MustExec("commit")
+		tk.MustExec("begin")
+		txn, err := tk.Session().Txn(false)
+		require.NoError(t, err)
+		startTS := txn.StartTS()
+		tk.MustExec("commit")
 
-	tk.MustExec("insert into t values(4),(5),(6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	err = h.Update(dom.InfoSchema())
-	require.NoError(t, err)
+		tk.MustExec("insert into t values(4),(5),(6)")
+		require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		err = h.Update(dom.InfoSchema())
+		require.NoError(t, err)
 
-	// Simulate that the analyze would start before and finish after the second insert.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseCount", "return(3)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"))
-	tk.MustExec("analyze table t")
-	// Check the count / modify_count changes during the analyze are not lost.
-	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
-		"6 3",
-	))
-	// Check the histogram is correct for the snapshot analyze.
-	tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
-		"3",
-	))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"))
+		// Simulate that the analyze would start before and finish after the second insert.
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseCount", "return(3)"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"))
+		tk.MustExec("analyze table t")
+		if analyzeSnapshot {
+			// Check the count / modify_count changes during the analyze are not lost.
+			tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+				"6 3",
+			))
+			// Check the histogram is correct for the snapshot analyze.
+			tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
+				"3",
+			))
+		} else {
+			// Since analyze use max ts to read data, count and modify_count are overestimated here. Analyze finds the row count is 6
+			// and the increment of count and modify_count is +3, +3. Hence, we see count is 9 and modify_count is 3.
+			tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+				"9 3",
+			))
+			// Check the histogram is collected from the latest data rather than the snapshot at startTS.
+			tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
+				"6",
+			))
+		}
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"))
+	}
 }
 
 func TestRecordHistoricalStatsToStorage(t *testing.T) {
@@ -3334,6 +3360,36 @@ func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertEvictIndex", `return(true)`))
 	tk.MustExec("analyze incremental table test.t index idx_b")
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertEvictIndex"))
+}
+
+func TestEvictedColumnLoadedStatus(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	dom.StatsHandle().SetLease(0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("analyze table test.t")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, err)
+	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
+	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+		require.True(t, col.IsCMSEvicted())
+	}
 }
 
 func TestAnalyzeTableLRUPut(t *testing.T) {

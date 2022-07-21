@@ -49,7 +49,7 @@ func (t *TxStructure) HGet(key []byte, field []byte) ([]byte, error) {
 	return value, errors.Trace(err)
 }
 
-func (t *TxStructure) hashFieldIntegerVal(val int64) []byte {
+func (*TxStructure) hashFieldIntegerVal(val int64) []byte {
 	return []byte(strconv.FormatInt(val, 10))
 }
 
@@ -284,8 +284,7 @@ func (i *ReverseHashIterator) Value() []byte {
 }
 
 // Close Implements the Iterator Close.
-func (i *ReverseHashIterator) Close() {
-}
+func (*ReverseHashIterator) Close() {}
 
 // NewHashReverseIter creates a reverse hash iterator.
 func NewHashReverseIter(t *TxStructure, key []byte) (*ReverseHashIterator, error) {

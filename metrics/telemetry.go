@@ -28,6 +28,13 @@ var (
 			Name:      "non_recursive_cte_usage",
 			Help:      "Counter of usage of CTE",
 		}, []string{LblCTEType})
+	TelemetryMultiSchemaChangeCnt = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "multi_schema_change_usage",
+			Help:      "Counter of usage of multi-schema change",
+		})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -68,6 +75,25 @@ func GetCTECounter() CTEUsageCounter {
 	}
 }
 
+// MultiSchemaChangeUsageCounter records the usages of multi-schema change.
+type MultiSchemaChangeUsageCounter struct {
+	MultiSchemaChangeUsed int64 `json:"multi_schema_change_used"`
+}
+
+// Sub returns the difference of two counters.
+func (c MultiSchemaChangeUsageCounter) Sub(rhs MultiSchemaChangeUsageCounter) MultiSchemaChangeUsageCounter {
+	return MultiSchemaChangeUsageCounter{
+		MultiSchemaChangeUsed: c.MultiSchemaChangeUsed - rhs.MultiSchemaChangeUsed,
+	}
+}
+
+// GetMultiSchemaCounter gets the TxnCommitCounter.
+func GetMultiSchemaCounter() MultiSchemaChangeUsageCounter {
+	return MultiSchemaChangeUsageCounter{
+		MultiSchemaChangeUsed: readCounter(TelemetryMultiSchemaChangeCnt),
+	}
+}
+
 // NonTransactionalStmtCounter records the usages of non-transactional statements.
 type NonTransactionalStmtCounter struct {
 	DeleteCount int64 `json:"delete"`
@@ -85,4 +111,9 @@ func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 	return NonTransactionalStmtCounter{
 		DeleteCount: readCounter(NonTransactionalDeleteCount),
 	}
+}
+
+// GetSavepointStmtCounter gets the savepoint statement executed counter.
+func GetSavepointStmtCounter() int64 {
+	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
 }

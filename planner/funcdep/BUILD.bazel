@@ -17,6 +17,7 @@ go_library(
 
 go_test(
     name = "funcdep_test",
+    timeout = "short",
     srcs = [
         "extract_fd_test.go",
         "fast_int_set_bench_test.go",

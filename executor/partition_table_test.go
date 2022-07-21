@@ -3468,8 +3468,8 @@ func TestPartitionTableExplain(t *testing.T) {
 		"PartitionUnion 2.00 root  ",
 		"├─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false",
 		"└─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false"))
-	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3,4)`).Check(testkit.Rows("Batch_Point_Get 3.00 root table:t handle:[2 3 4], keep order:false, desc:false"))
-	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3)`).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t handle:[2 3], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3,4)`).Check(testkit.Rows("Batch_Point_Get 3.00 root table:t, partition:P0,p1,P2 handle:[2 3 4], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3)`).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, partition:P0,P2 handle:[2 3], keep order:false, desc:false"))
 	// above ^^ is for completeness, the below vv is enough for Issue32719
 	tk.MustQuery(`explain format = 'brief' select * from t where b = 1`).Check(testkit.Rows(
 		"PartitionUnion 1.00 root  ",
@@ -3553,8 +3553,8 @@ func TestPartitionTableExplain(t *testing.T) {
 	tk.MustQuery(`explain format = 'brief' select * from t where a = 1 OR a = 2`).Check(testkit.Rows(
 		"TableReader 2.00 root partition:p1,P2 data:TableRangeScan",
 		"└─TableRangeScan 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"))
-	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3,4)`).Check(testkit.Rows("Batch_Point_Get 3.00 root table:t handle:[2 3 4], keep order:false, desc:false"))
-	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3)`).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t handle:[2 3], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3,4)`).Check(testkit.Rows("Batch_Point_Get 3.00 root table:t, partition:P0,p1,P2 handle:[2 3 4], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3)`).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t, partition:P0,P2 handle:[2 3], keep order:false, desc:false"))
 	tk.MustQuery(`explain format = 'brief' select * from t where b = 1`).Check(testkit.Rows(
 		"IndexReader 1.00 root partition:all index:IndexRangeScan",
 		"└─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false"))

@@ -39,6 +39,7 @@ go_test(
         "syncer_test.go",
     ],
     embed = [":util"],
+    flaky = True,
     deps = [
         "//ddl",
         "//infoschema",

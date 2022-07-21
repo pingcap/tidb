@@ -10,6 +10,7 @@ go_test(
     shard_count = 5,
     deps = [
         "//ddl",
+        "//domain/infosync",
         "//errno",
         "//parser/mysql",
         "//parser/terror",

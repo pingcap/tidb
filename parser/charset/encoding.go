@@ -86,8 +86,10 @@ type Encoding interface {
 	ToLower(src string) string
 }
 
+// EncodingTp is the type of the encoding.
 type EncodingTp int8
 
+//revive:disable
 const (
 	EncodingTpNone EncodingTp = iota
 	EncodingTpUTF8
@@ -97,6 +99,8 @@ const (
 	EncodingTpBin
 	EncodingTpGBK
 )
+
+//revive:enable
 
 // Op is used by Encoding.Transform.
 type Op int16
@@ -111,7 +115,9 @@ const (
 	opSkipError
 )
 
+//revive:disable
 const (
+	// OpReplaceNoErr is used to replace invalid bytes with '?'.
 	OpReplaceNoErr  = opFromUTF8 | opTruncateReplace | opCollectFrom | opSkipError
 	OpReplace       = opFromUTF8 | opTruncateReplace | opCollectFrom
 	OpEncode        = opFromUTF8 | opTruncateTrim | opCollectTo
@@ -121,6 +127,8 @@ const (
 	OpDecodeNoErr   = OpDecode | opSkipError
 	OpDecodeReplace = opToUTF8 | opTruncateReplace | opCollectTo
 )
+
+//revive:enable
 
 // CountValidBytes counts the first valid bytes in src that
 // can be encoded to the current encoding.

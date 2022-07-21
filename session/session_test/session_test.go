@@ -17,6 +17,7 @@ package session_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -243,16 +246,15 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	tk1.MustExec("update no_retry set id = 5")
 
 	// RestrictedSQL should retry.
-	tk1.Session().GetSessionVars().InRestrictedSQL = true
-	tk1.MustExec("begin")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	tk1.Session().ExecuteInternal(ctx, "begin")
 
 	tk2.MustExec("update no_retry set id = 6")
 
-	tk1.MustExec("update no_retry set id = 7")
-	tk1.MustExec("commit")
+	tk1.Session().ExecuteInternal(ctx, "update no_retry set id = 7")
+	tk1.Session().ExecuteInternal(ctx, "commit")
 
 	// test for disable transaction local latch
-	tk1.Session().GetSessionVars().InRestrictedSQL = false
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TxnLocalLatches.Enabled = false
@@ -300,6 +302,48 @@ func TestDisableTxnAutoRetry(t *testing.T) {
 	require.Contains(t, err.Error(), kv.TxnRetryableMark)
 	tk1.MustExec("rollback")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("13"))
+}
+
+// The Read-only flags are checked in the planning stage of queries,
+// but this test checks we check them again at commit time.
+// The main use case for this is a long-running auto-commit statement.
+func TestAutoCommitRespectsReadOnly(t *testing.T) {
+	store, clean := createMockStoreForSchemaTest(t)
+	defer clean()
+	var wg sync.WaitGroup
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk1.MustExec("create table test.auto_commit_test (a int)")
+	wg.Add(1)
+	go func() {
+		err := tk1.ExecToErr("INSERT INTO test.auto_commit_test VALUES (SLEEP(1))")
+		require.True(t, terror.ErrorEqual(err, plannercore.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
+		wg.Done()
+	}()
+	tk2.MustExec("SET GLOBAL tidb_restricted_read_only = 1")
+	err := tk2.ExecToErr("INSERT INTO test.auto_commit_test VALUES (0)") // should also be an error
+	require.True(t, terror.ErrorEqual(err, plannercore.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
+	// Reset and check with the privilege to ignore the readonly flag and continue to insert.
+	wg.Wait()
+	tk1.MustExec("SET GLOBAL tidb_restricted_read_only = 0")
+	tk1.MustExec("SET GLOBAL tidb_super_read_only = 0")
+	tk1.MustExec("GRANT RESTRICTED_REPLICA_WRITER_ADMIN on *.* to 'root'")
+
+	wg.Add(1)
+	go func() {
+		tk1.MustExec("INSERT INTO test.auto_commit_test VALUES (SLEEP(1))")
+		wg.Done()
+	}()
+	tk2.MustExec("SET GLOBAL tidb_restricted_read_only = 1")
+	tk2.MustExec("INSERT INTO test.auto_commit_test VALUES (0)")
+
+	// wait for go routines
+	wg.Wait()
+	tk1.MustExec("SET GLOBAL tidb_restricted_read_only = 0")
+	tk1.MustExec("SET GLOBAL tidb_super_read_only = 0")
 }
 
 func TestLoadSchemaFailed(t *testing.T) {

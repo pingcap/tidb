@@ -37,6 +37,7 @@ go_test(
     ],
     embed = [":plugin"],
     deps = [
+        "//kv",
         "//parser/mysql",
         "//server",
         "//session",

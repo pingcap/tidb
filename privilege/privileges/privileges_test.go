@@ -95,6 +95,37 @@ func TestCheckPointGetDBPrivilege(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
+func TestCheckExchangePartitionDBPrivilege(t *testing.T) {
+	store, clean := createStoreAndPrepareDB(t)
+	defer clean()
+	rootTk := testkit.NewTestKit(t, store)
+
+	rootTk.MustExec(`CREATE USER 'tester'@'localhost';`)
+	rootTk.MustExec(`GRANT SELECT ON test.* TO  'tester'@'localhost';`)
+	rootTk.MustExec("use test")
+	rootTk.MustExec(`create table pt (a varchar(3)) partition by range columns (a) (
+		partition p0 values less than ('3'),
+		partition p1 values less than ('6')
+	);`)
+	rootTk.MustExec(`create table nt (a varchar(3));`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil))
+	tk.MustExec("use test")
+
+	rootTk.MustExec(`GRANT CREATE ON test.* TO  'tester'@'localhost';`)
+	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
+
+	rootTk.MustExec(`GRANT ALTER ON test.* TO  'tester'@'localhost';`)
+	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
+
+	rootTk.MustExec(`GRANT INSERT ON test.* TO  'tester'@'localhost';`)
+	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
+
+	rootTk.MustExec(`GRANT DROP ON test.* TO  'tester'@'localhost';`)
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+}
+
 func TestIssue22946(t *testing.T) {
 	store, clean := createStoreAndPrepareDB(t)
 	defer clean()
@@ -1415,7 +1446,8 @@ func TestMetricsSchema(t *testing.T) {
 			Hostname: "localhost",
 		}, nil, nil)
 
-		rs, err := tk.Session().ExecuteInternal(context.Background(), test.stmt)
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+		rs, err := tk.Session().ExecuteInternal(ctx, test.stmt)
 		if err == nil {
 			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
 		}
@@ -1891,33 +1923,34 @@ func TestSecurityEnhancedLocalBackupRestore(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil)
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
-	_, err := tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	_, err := tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'Local:///tmp/test';")
 	require.EqualError(t, err, "BACKUP requires tikv store, not unistore")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "RESTORE requires tikv store, not unistore")
 
 	sem.Enable()
 	defer sem.Disable()
 
 	// With SEM enabled nolocal does not have permission, but yeslocal does.
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'local:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'local:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'file:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'file:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO '/tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO '/tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'local storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "BACKUP DATABASE * TO 'hdfs:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
 
-	_, err = tk.Session().ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
+	_, err = tk.Session().ExecuteInternal(ctx, "RESTORE DATABASE * FROM 'HDFS:///tmp/test';")
 	require.EqualError(t, err, "[planner:8132]Feature 'hdfs storage' is not supported when security enhanced mode is enabled")
 
 }

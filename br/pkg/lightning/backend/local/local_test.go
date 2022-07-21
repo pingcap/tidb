@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -331,6 +332,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
 	}
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -438,6 +440,7 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.R
 func TestIsIngestRetryable(t *testing.T) {
 	local := &local{
 		splitCli: &mockSplitClient{},
+		logger:   log.L(),
 	}
 
 	resp := &sst.IngestResponse{
@@ -567,6 +570,7 @@ func TestLocalIngestLoop(t *testing.T) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
@@ -784,6 +788,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -1182,6 +1187,7 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
+			logger: log.L(),
 		}
 		err := local.checkMultiIngestSupport(context.Background())
 		if err != nil {

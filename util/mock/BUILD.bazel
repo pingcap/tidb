@@ -16,6 +16,7 @@ go_library(
         "//parser/model",
         "//parser/terror",
         "//sessionctx",
+        "//sessionctx/sessionstates",
         "//sessionctx/variable",
         "//util",
         "//util/disk",
@@ -36,6 +37,7 @@ go_library(
 
 go_test(
     name = "mock_test",
+    timeout = "short",
     srcs = [
         "iter_test.go",
         "main_test.go",

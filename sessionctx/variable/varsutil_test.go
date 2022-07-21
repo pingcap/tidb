@@ -432,6 +432,14 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, TiDBTableCacheLease, "123")
 	require.Error(t, err)
 	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
+
+	val, err = GetSessionOrGlobalSystemVar(v, TiDBMinPagingSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.Itoa(DefMinPagingSize), val)
+
+	err = SetSessionSystemVar(v, TiDBMinPagingSize, "123")
+	require.NoError(t, err)
+	require.Equal(t, v.MinPagingSize, 123)
 }
 
 func TestValidate(t *testing.T) {
@@ -672,4 +680,23 @@ func TestStmtVars(t *testing.T) {
 	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'max_execution_time'", err.Error())
 	err = SetStmtVar(vars, MaxExecutionTime, "100")
 	require.NoError(t, err)
+}
+
+func TestSessionStatesSystemVar(t *testing.T) {
+	vars := NewSessionVars()
+	err := SetSessionSystemVar(vars, "autocommit", "1")
+	require.NoError(t, err)
+	val, keep, err := GetSessionStatesSystemVar(vars, "autocommit")
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+	require.Equal(t, true, keep)
+	_, keep, err = GetSessionStatesSystemVar(vars, Timestamp)
+	require.NoError(t, err)
+	require.Equal(t, false, keep)
+	err = SetSessionSystemVar(vars, MaxAllowedPacket, "1024")
+	require.NoError(t, err)
+	val, keep, err = GetSessionStatesSystemVar(vars, MaxAllowedPacket)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val)
+	require.Equal(t, true, keep)
 }

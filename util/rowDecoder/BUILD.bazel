@@ -16,11 +16,13 @@ go_library(
         "//types",
         "//util/chunk",
         "//util/rowcodec",
+        "@org_golang_x_exp//slices",
     ],
 )
 
 go_test(
     name = "rowDecoder_test",
+    timeout = "short",
     srcs = [
         "decoder_test.go",
         "main_test.go",

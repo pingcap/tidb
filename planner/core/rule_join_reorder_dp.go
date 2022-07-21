@@ -212,10 +212,11 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, join
 
 func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
-	var ( // nolint: prealloc
-		usedEqEdges []joinGroupEqEdge
-		otherConds  []expression.Expression
-	)
+	//nolint: prealloc
+	var usedEqEdges []joinGroupEqEdge
+	//nolint: prealloc
+	var otherConds []expression.Expression
+
 	for _, edge := range totalEqEdges {
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])

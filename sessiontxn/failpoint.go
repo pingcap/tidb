@@ -16,6 +16,7 @@ package sessiontxn
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,6 +34,18 @@ var AssertTxnInfoSchemaKey stringutil.StringerStr = "assertTxnInfoSchemaKey"
 // AssertTxnInfoSchemaAfterRetryKey is used to set the expected infoschema that should be check in failPoint after retry
 // Only for test
 var AssertTxnInfoSchemaAfterRetryKey stringutil.StringerStr = "assertTxnInfoSchemaAfterRetryKey"
+
+// BreakPointBeforeExecutorFirstRun is the key for the stop point where session stops before executor's first run
+// Only for test
+var BreakPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
+
+// BreakPointOnStmtRetryAfterLockError s the key for the stop point where session stops after OnStmtRetry when lock error happens
+// Only for test
+var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
+
+// AssertLockErr is used to record the lock errors we encountered
+// Only for test
+var AssertLockErr stringutil.StringerStr = "assertLockError"
 
 // RecordAssert is used only for test
 func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
@@ -82,5 +95,32 @@ func AssertTxnManagerReadTS(sctx sessionctx.Context, expected uint64) {
 
 	if actual != expected {
 		panic(fmt.Sprintf("Txn read ts not match, expect:%d, got:%d", expected, actual))
+	}
+}
+
+// AddAssertEntranceForLockError is used only for test
+func AddAssertEntranceForLockError(sctx sessionctx.Context, name string) {
+	records, ok := sctx.Value(AssertLockErr).(map[string]int)
+	if !ok {
+		records = make(map[string]int)
+		sctx.SetValue(AssertLockErr, records)
+	}
+	if v, ok := records[name]; ok {
+		records[name] = v + 1
+	} else {
+		records[name] = 1
+	}
+}
+
+// ExecTestHook is used only for test. It consumes hookKey in session wait do what it gets from it.
+func ExecTestHook(sctx sessionctx.Context, hookKey fmt.Stringer) {
+	c := sctx.Value(hookKey)
+	if ch, ok := c.(chan func()); ok {
+		select {
+		case fn := <-ch:
+			fn()
+		case <-time.After(time.Second * 10):
+			panic("timeout waiting for chan")
+		}
 	}
 }

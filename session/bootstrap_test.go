@@ -146,14 +146,14 @@ func TestBootstrapWithError(t *testing.T) {
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
 		se.SetValue(sessionctx.Initing, true)
-
+		err := InitDDLJobTables(store)
+		require.NoError(t, err)
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		domain.BindDomain(se, dom)
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
-
 		doDDLWorks(se)
 	}
 
@@ -443,8 +443,7 @@ func TestOldPasswordUpgrade(t *testing.T) {
 }
 
 func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+	store, _ := createStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1024,4 +1023,32 @@ func TestUpgradeToVer85(t *testing.T) {
 
 	require.NoError(t, r.Close())
 	mustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
+}
+
+func TestTiDBEnablePagingVariable(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	se := createSessionAndSetID(t, store)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	for _, sql := range []string{
+		"select @@global.tidb_enable_paging",
+		"select @@session.tidb_enable_paging",
+	} {
+		r := mustExec(t, se, sql)
+		require.NotNil(t, r)
+
+		req := r.NewChunk(nil)
+		err := r.Next(context.Background(), req)
+		require.NoError(t, err)
+		require.NotEqual(t, 0, req.NumRows())
+
+		rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
+		if variable.DefTiDBEnablePaging {
+			match(t, rows, "1")
+		} else {
+			match(t, rows, "0")
+		}
+		r.Close()
+	}
 }

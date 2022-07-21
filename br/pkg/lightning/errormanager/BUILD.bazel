@@ -26,6 +26,7 @@ go_test(
     embed = [":errormanager"],
     deps = [
         "//br/pkg/lightning/config",
+        "//br/pkg/lightning/log",
         "//br/pkg/utils",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_stretchr_testify//require",

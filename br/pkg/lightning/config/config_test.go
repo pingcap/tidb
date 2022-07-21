@@ -517,7 +517,7 @@ func TestInvalidTOML(t *testing.T) {
 		delimiter = '\'
 		backslash-escape = true
 	`))
-	require.EqualError(t, err, "Near line 0 (last key parsed ''): bare keys cannot contain '['")
+	require.EqualError(t, err, "toml: line 2: expected '.' or '=', but got '[' instead")
 }
 
 func TestTOMLUnusedKeys(t *testing.T) {
@@ -674,7 +674,7 @@ func TestLoadFromInvalidConfig(t *testing.T) {
 		ConfigFileContent: []byte("invalid toml"),
 	})
 	require.Error(t, err)
-	require.Regexp(t, "Near line 1.*", err.Error())
+	require.Regexp(t, "line 1.*", err.Error())
 }
 
 func TestTomlPostRestore(t *testing.T) {

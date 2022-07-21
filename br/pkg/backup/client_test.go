@@ -250,49 +250,6 @@ func TestOnBackupRegionErrorResponse(t *testing.T) {
 	}
 }
 
-func TestSendCreds(t *testing.T) {
-	s, clean := createBackupSuite(t)
-	defer clean()
-
-	accessKey := "ab"
-	secretAccessKey := "cd"
-	backendOpt := storage.BackendOptions{
-		S3: storage.S3BackendOptions{
-			AccessKey:       accessKey,
-			SecretAccessKey: secretAccessKey,
-		},
-	}
-	backend, err := storage.ParseBackend("s3://bucket/prefix/", &backendOpt)
-	require.NoError(t, err)
-	opts := &storage.ExternalStorageOptions{
-		SendCredentials: true,
-	}
-	_, err = storage.New(s.ctx, backend, opts)
-	require.NoError(t, err)
-	access_key := backend.GetS3().AccessKey
-	require.Equal(t, "ab", access_key)
-	secret_access_key := backend.GetS3().SecretAccessKey
-	require.Equal(t, "cd", secret_access_key)
-
-	backendOpt = storage.BackendOptions{
-		S3: storage.S3BackendOptions{
-			AccessKey:       accessKey,
-			SecretAccessKey: secretAccessKey,
-		},
-	}
-	backend, err = storage.ParseBackend("s3://bucket/prefix/", &backendOpt)
-	require.NoError(t, err)
-	opts = &storage.ExternalStorageOptions{
-		SendCredentials: false,
-	}
-	_, err = storage.New(s.ctx, backend, opts)
-	require.NoError(t, err)
-	access_key = backend.GetS3().AccessKey
-	require.Equal(t, "", access_key)
-	secret_access_key = backend.GetS3().SecretAccessKey
-	require.Equal(t, "", secret_access_key)
-}
-
 func TestSkipUnsupportedDDLJob(t *testing.T) {
 	s, clean := createBackupSuite(t)
 	defer clean()
@@ -323,7 +280,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-	err = backup.WriteBackupDDLJobs(metaWriter, s.cluster.Storage, lastTS, ts)
+	err = backup.WriteBackupDDLJobs(metaWriter, tk.Session(), s.cluster.Storage, lastTS, ts)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoError(t, err, "Flush failed", err)

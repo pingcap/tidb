@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "rowindexcodec_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "rowindexcodec_test.go",

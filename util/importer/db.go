@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func intRangeValue(column *column, min int64, max int64) (int64, int64) {
+func intRangeValue(column *column, min int64, max int64) (maxInt int64, minInt int64) {
 	var err error
 	if len(column.min) > 0 {
 		min, err = strconv.ParseInt(column.min, 10, 64)
@@ -78,7 +78,7 @@ func genRowDatas(table *table, count int) ([]string, error) {
 }
 
 func genRowData(table *table) (string, error) {
-	var values []byte // nolint: prealloc
+	var values []byte //nolint: prealloc
 	for _, column := range table.columns {
 		data, err := genColumnData(table, column)
 		if err != nil {

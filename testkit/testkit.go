@@ -186,6 +186,28 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
+// HasKeywordInOperatorInfo checks if the result execution plan contains specific keyword in the operator info.
+func (tk *TestKit) HasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// NotHasKeywordInOperatorInfo checks if the result execution plan doesn't contain specific keyword in the operator info.
+func (tk *TestKit) NotHasKeywordInOperatorInfo(sql string, keyword string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], keyword) {
+			return false
+		}
+	}
+	return true
+}
+
 // HasPlan4ExplainFor checks if the result execution plan contains specific plan.
 func (tk *TestKit) HasPlan4ExplainFor(result *Result, plan string) bool {
 	for i := range result.rows {

@@ -417,6 +417,11 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 			return predicates, child
 		}
 	}
+	if len(p.children) == 1 {
+		if _, isDual := p.children[0].(*LogicalTableDual); isDual {
+			return predicates, p
+		}
+	}
 	for _, cond := range predicates {
 		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
 		if !expression.HasGetSetVarFunc(newFilter) {

@@ -32,6 +32,7 @@ go_test(
     embed = [":meta"],
     flaky = True,
     deps = [
+        "//ddl",
         "//kv",
         "//parser/model",
         "//store/mockstore",

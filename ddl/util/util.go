@@ -56,17 +56,17 @@ func (t DelRangeTask) Range() (kv.Key, kv.Key) {
 }
 
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
-func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	return loadDeleteRangesFromTable(ctx, deleteRangesTable, safePoint)
+func LoadDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	return loadDeleteRangesFromTable(ctx, sctx, deleteRangesTable, safePoint)
 }
 
 // LoadDoneDeleteRanges loads deleted ranges from gc_delete_range_done table.
-func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	return loadDeleteRangesFromTable(ctx, doneDeleteRangesTable, safePoint)
+func LoadDoneDeleteRanges(ctx context.Context, sctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	return loadDeleteRangesFromTable(ctx, sctx, doneDeleteRangesTable, safePoint)
 }
 
-func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	rs, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), loadDeleteRangeSQL, table, safePoint)
+func loadDeleteRangesFromTable(ctx context.Context, sctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, loadDeleteRangeSQL, table, safePoint)
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
@@ -106,28 +106,30 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 }
 
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
-func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "BEGIN")
+func CompleteDeleteRange(sctx sessionctx.Context, dr DelRangeTask) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
+	err = RemoveFromGCDeleteRange(sctx, dr.JobID, dr.ElementID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "COMMIT")
+	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "COMMIT")
 	return errors.Trace(err)
 }
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
-func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), completeDeleteRangeSQL, jobID, elementID)
+func RemoveFromGCDeleteRange(sctx sessionctx.Context, jobID, elementID int64) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, completeDeleteRangeSQL, jobID, elementID)
 	return errors.Trace(err)
 }
 
@@ -150,16 +152,18 @@ func RemoveMultiFromGCDeleteRange(ctx context.Context, sctx sessionctx.Context, 
 }
 
 // DeleteDoneRecord removes a record from gc_delete_range_done table.
-func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+func DeleteDoneRecord(sctx sessionctx.Context, dr DelRangeTask) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, deleteDoneRecordSQL, dr.JobID, dr.ElementID)
 	return errors.Trace(err)
 }
 
 // UpdateDeleteRange is only for emulator.
-func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
+func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, oldStartKey kv.Key) error {
 	newStartKeyHex := hex.EncodeToString(newStartKey)
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	_, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	return errors.Trace(err)
 }
 
@@ -177,6 +181,7 @@ func LoadDDLVars(ctx sessionctx.Context) error {
 
 // LoadGlobalVars loads global variable from mysql.global_variables.
 func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
