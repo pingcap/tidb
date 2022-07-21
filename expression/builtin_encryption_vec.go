@@ -529,7 +529,7 @@ func (b *builtinSM3Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	result.ReserveString(n)
 	hasher := auth.NewSM3()

@@ -83,9 +83,6 @@ func (sm3 *sm3) pad() []byte {
 	msg = append(msg, uint8(sm3.length>>8&0xff))
 	msg = append(msg, uint8(sm3.length>>0&0xff))
 
-	if len(msg)%64 != 0 {
-		panic("------sm3 Pad: error msgLen =")
-	}
 	return msg
 }
 
