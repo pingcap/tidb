@@ -674,7 +674,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
 // we should make sure that before invoking EnableDDL(), ddl is DISABLE.
 func (d *ddl) EnableDDL() error {
-
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
 		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
