@@ -6066,7 +6066,7 @@ func TestUpdateStmtWhileSchemaChanged(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t(a,b) values(1,1), (3,3), (7,7)")
-	failpoint.Enable("github.com/pingcap/tidb/executor/injectAlterTable", `pause`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/injectAlterTable", `return(true)`)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		tk2 := testkit.NewTestKit(t, store)
@@ -6074,9 +6074,10 @@ func TestUpdateStmtWhileSchemaChanged(t *testing.T) {
 		tk2.MustExec("update t set a = 2 where b = 1;")
 	})
 	tk.MustExec("alter table t add column c int NOT NULL")
-	failpoint.Disable("github.com/pingcap/tidb/executor/injectAlterTable")
+	executor.InjectCH <- struct{}{}
 	wg.Wait()
 	tk.MustQuery("select a,c from t where b = 1").Check(testkit.Rows("2 0"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/injectAlterTable")
 }
 
 func TestBinaryStrNumericOperator(t *testing.T) {
