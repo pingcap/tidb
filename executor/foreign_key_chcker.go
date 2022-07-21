@@ -407,7 +407,7 @@ func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
 	return nil
 }
 
-func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() {
+func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() error {
 	ranges := make([]*ranger.Range, 0, len(fkt.fkValues))
 	for _, vals := range fkt.fkValues {
 		ranges = append(ranges, &ranger.Range{
@@ -417,9 +417,23 @@ func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() {
 			HighExclude: false,
 		})
 	}
-	indexLookUpPlan := fkt.p.IndexLookUpPlan.(*plannercore.PhysicalIndexLookUpReader)
-	is := indexLookUpPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	is.Ranges = ranges
+	var readerPlan plannercore.PhysicalPlan
+	switch p :=fkt.p.Plan.(type){
+	case *plannercore.Delete:
+		readerPlan = p.SelectPlan
+	case *plannercore.Update:
+		readerPlan = p.SelectPlan
+	default:
+		return errors.Errorf("unknown")
+	}
+	switch p := readerPlan.(type) {
+	case *plannercore.PhysicalIndexLookUpReader:
+		is :=p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+		is.Ranges = ranges
+	default:
+		return errors.Errorf("unknown")
+	}
+	return nil
 }
 
 func (fkt *ForeignKeyTriggerExec) buildExecutor() Executor {

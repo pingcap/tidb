@@ -6510,3 +6510,19 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 	tk.MustExec("delete from t1 where a=1 or a=3")
 	tk.MustQuery("select a from t2").Check(testkit.Rows("2", "4"))
 }
+
+func TestForeignKeyOnDeleteSetNull(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	// Case-1: test unique index only contain foreign key columns.
+	tk.MustExec("create table t1 (id int,a int, b int, unique index(a, b));")
+	tk.MustExec("create table t2 (id int,a int, b int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE SET NULL);")
+	tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2),(3, 3, 3), (4, 4, 4);")
+	tk.MustExec("insert into t2 values (1, 1, 1),(2, 2, 2),(3, 3, 3), (4, 4, 4);")
+	tk.MustExec("delete from t1 where a=1 or a=3")
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1 <nil> <nil>", "2 2 2", "3 <nil> <nil>", "4 4 4"))
+}

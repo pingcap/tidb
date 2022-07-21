@@ -16,7 +16,6 @@ package expression
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
