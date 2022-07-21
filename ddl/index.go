@@ -569,6 +569,17 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
+		// Determin whether the new backfiller will be used or not.
+		if IsEnableFastReorg() {
+			err = prepareBackend(w.ctx, indexInfo.Unique, job, job.ReorgMeta.SQLMode)
+			if err == nil {
+				setLightningEnabled(job.ID, true)
+			} else {
+				indexInfo.SubState = model.StatePublic
+			}
+		} else {
+			indexInfo.SubState = model.StatePublic
+		}
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
@@ -621,6 +632,16 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 
+		indexInfo.State = model.StatePublic
+		var tmpIndexID int64
+		if indexInfo.SubState != model.StatePublic {
+			// After merge data into TiKV, then the progress is set to 100.
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, job.SchemaName, tblInfo.Name.String()).Set(100)
+			// Set sub state to stateNone to stop double write
+			indexInfo.SubState = model.StatePublic
+			tmpIndexID = tablecodec.TempIndexPrefix | indexInfo.ID
+		}
+
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
 		if isPK {
@@ -635,6 +656,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		if tmpIndexID != 0 {
+			// Clean temp index if needed
+			job.Args = job.Args[:0]
+			job.Args = []interface{}{tmpIndexID, false, getPartitionIDs(tblInfo)}
+		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
 	}
@@ -655,8 +681,96 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 	return true, ver, err
 }
 
+func goFastDDLBackfill(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo,
+	elements []*meta.Element, rh *reorgHandler) (reorg bool, ver int64, err error) {
+	// When sub state is StatePublic means not go fast ddl path.
+	if indexInfo.SubState == model.StatePublic {
+		return false, 0, nil
+	}
+
+	// If enter this backfill flow，then need finished it。
+	switch indexInfo.SubState {
+	case model.StateNone:
+		logutil.BgLogger().Info("Lightning backfill start state none")
+		indexInfo.SubState = model.StateBackfillSync
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		return false, ver, nil
+	case model.StateBackfillSync:
+		logutil.BgLogger().Info("Lightning backfill state backfill Sync")
+		indexInfo.SubState = model.StateBackfill
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		return false, ver, nil
+	case model.StateBackfill:
+		logutil.BgLogger().Info("Lightning backfill state backfill")
+		// Restore reorg task if it interrupt during backfill state and TiDB owner is not changed or restarted.
+		if isLightningEnabled(job.ID) && needRestoreJob(job.ID) {
+			// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consist.
+			// ToDo：Should be changed after checkpoint.
+			if !canRestoreReorgTask(job, indexInfo.ID) {
+				reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+				if err != nil || reorgInfo.first {
+					return false, ver, errors.Trace(err)
+				}
+			}
+		} else if !isLightningEnabled(job.ID) && !needRestoreJob(job.ID) && indexInfo.SubState == model.StateBackfill {
+			// Be here, means the DDL Owner changed or restarted, the reorg state is re-entered.
+			job.SnapshotVer = 0
+			reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+		}
+
+		// Check and set up lightning Backend.
+		// Whether use lightning add index will depends on
+		// 1) One backend has been built before.
+		// 2) Restore lightning reorg task，here means DDL owner changed or restarted, need rebuild lightning environment.
+		if !isLightningEnabled(job.ID) {
+			// If it is an empty table, do not need start lightning backfiller.
+			if reorgInfo.StartKey == nil && reorgInfo.EndKey == nil {
+				return false, ver, nil
+			}
+
+			err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
+			if err == nil {
+				setLightningEnabled(job.ID, true)
+			}
+		}
+		return true, ver, nil
+	case model.StateMergeSync:
+		logutil.BgLogger().Info("Lightning backfill state merge Sync")
+		indexInfo.SubState = model.StateMerge
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		return false, ver, nil
+	case model.StateMerge:
+		logutil.BgLogger().Info("Lightning start merge the increment part of adding index")
+		err = w.runMergeJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+			defer util.Recover(metrics.LabelDDL, "onMergeIndex",
+				func() {
+					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("merge table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+				}, false)
+			return w.mergeTempIndex(tbl, indexInfo, reorgInfo)
+		})
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("Lightning finished merge the increment part of adding index")
+		return true, ver, nil
+	default:
+		return false, 0, errors.New("Lightning go fast path wrong sub states: should not happened")
+	}
+}
+
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	var doReorg bool
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
@@ -664,6 +778,18 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
+	}
+
+	doReorg, ver, err = goFastDDLBackfill(w, d, t, job, tbl, indexInfo, reorgInfo, elements, rh)
+	if indexInfo.SubState != model.StatePublic {
+		if err != nil {
+			logutil.BgLogger().Error("Lightning: Add index fast path processing:", zap.String("Error:", err.Error()))
+			return doReorg, ver, err
+		}
+		// Only when SubState is in BackFill state, then need start to start new backfill task.
+		if !doReorg || indexInfo.SubState == model.StateMerge {
+			return doReorg, ver, err
+		}
 	}
 
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
@@ -685,9 +811,50 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
 			}
 		}
+		// Clean job related lightning backend data, will handle both user cancel ddl job and
+		// others errors that occurs in reorg processing.
+		// For error that will rollback the add index statement, here only remove locale lightning
+		// files, other rollback process will follow add index roll back flow.
+		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
+
 		return false, ver, errors.Trace(err)
 	}
-	return true, ver, errors.Trace(err)
+	// Ingest data to TiKV
+	err = importIndexDataToStore(w.ctx, reorgInfo, indexInfo.ID, indexInfo.Unique, tbl)
+	if err != nil {
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.BgLogger().Warn("Lightning: [DDL] import index duplicate key, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
+			if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+			}
+		} else {
+			logutil.BgLogger().Warn("Lightning import error:", zap.Error(err))
+		}
+		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
+		return false, ver, errors.Trace(err)
+	}
+
+	// Go through new backfill path
+	if indexInfo.SubState != model.StatePublic {
+		indexInfo.SubState = model.StateMergeSync
+		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		if err != nil {
+			return false, ver, errors.Trace(err)
+		}
+		//Init merge reorgInfo for merge temp index task.
+		job.SnapshotVer = 0
+		_, err = getMergeReorgInfo(d.jobContext(job), d, rh, job, tbl, elements, indexInfo.ID)
+		if err != nil {
+			return done, ver, errors.Trace(err)
+		}
+	} else {
+		// Original backfill finished from here.
+		return true, ver, errors.Trace(err)
+	}
+	// Cleanup lightning environment
+	cleanUpLightningEnv(reorgInfo, false)
+	return false, ver, errors.Trace(err)
 }
 
 func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -755,7 +922,12 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = indexInfo.ID
+			if indexInfo.SubState == model.StatePublic {
+				job.Args[0] = indexInfo.ID
+			} else {
+				// If go through new backfill flow, set temp index id as index id.
+				job.Args[0] = tablecodec.TempIndexPrefix | indexInfo.ID
+			}
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 		} else {
@@ -980,8 +1152,8 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *addIndexWorker {
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext, newBF bool) *addIndexWorker {
+	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo, newBF)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
@@ -1270,11 +1442,14 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 				continue
 			}
 
-			// We need to add this lock to make sure pessimistic transaction can realize this operation.
-			// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-			if err != nil {
-				return errors.Trace(err)
+			// When backfill go new backfill path, but use original worker then no need to lock index key.
+			if !w.isNewBF {
+				// We need to add this lock to make sure pessimistic transaction can realize this operation.
+				// For the normal pessimistic transaction, it's ok. But if async commmit is used, it may lead to inconsistent data and index.
+				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 
 			// Create the index.

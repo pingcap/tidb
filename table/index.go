@@ -76,4 +76,6 @@ type Index interface {
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
 	FetchValues(row []types.Datum, columns []types.Datum) ([]types.Datum, error)
+	// Add one method for lightning create index
+	Create4SST(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) ([]byte, []byte, bool, error)
 }

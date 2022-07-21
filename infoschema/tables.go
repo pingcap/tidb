@@ -2115,8 +2115,18 @@ func (vt *VirtualTable) Indices() []table.Index {
 	return nil
 }
 
+// IndexPrefix implements table.Table RecordPrefix interface.
+func (vt *VirtualTable) IndexPrefix() kv.Key {
+	return nil
+}
+
 // RecordPrefix implements table.Table RecordPrefix interface.
 func (vt *VirtualTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+// IndexPrefix implements table.Table RecordPrefix interface.
+func (it *infoschemaTable) IndexPrefix() kv.Key {
 	return nil
 }
 

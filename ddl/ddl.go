@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	lit "github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -681,6 +682,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
+
+	// Init Lighting Global environment.
+	// If Create local lightning dir fail or the local available storage that the dir represented
+	// is less than disk quota(100 GB default)
+	lit.InitGolbalLightningBackendEnv()
 
 	return nil
 }
