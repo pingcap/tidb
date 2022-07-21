@@ -52,6 +52,7 @@ type featureUsage struct {
 	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
+	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
 }
 
 type placementPolicyUsage struct {
@@ -93,6 +94,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
 	usage.EnablePaging = getPagingUsageInfo(sctx)
+
+	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -343,6 +346,10 @@ func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
 	return utils.CheckLogBackupEnabled(ctx)
+}
+
+func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().CostModelVersion == 2
 }
 
 // getPagingUsageInfo gets the value of system variable `tidb_enable_paging`.
