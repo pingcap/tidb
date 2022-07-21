@@ -93,7 +93,7 @@ func TestStatementContext(t *testing.T) {
 	tk.MustGetErrCode("insert sc3 values (unhex('4040ffff'))", errno.ErrTruncatedWrongValueForField)
 
 	tk.MustExec("set @@tidb_skip_ascii_check = '1'")
-	tk.MustExecToErr("insert sc3 values (unhex('4040ffff'))")
+	tk.MustExec("insert sc3 values (unhex('4040ffff'))")
 	tk.MustQuery("select length(a) from sc3").Check(testkit.Rows("2", "4"))
 
 	// no placeholder in ASCII, so just insert '@@'...
