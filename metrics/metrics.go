@@ -41,7 +41,7 @@ var (
 			Subsystem: "server",
 			Name:      "memory_usage",
 			Help:      "Memory Usage",
-		}, []string{LblType})
+		}, []string{LblModule, LblType})
 )
 
 // metrics labels.
@@ -100,6 +100,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BackfillTotalCounter)
 	prometheus.MustRegister(BackfillProgressGauge)
 	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLJobTableDuration)
+	prometheus.MustRegister(DDLRunningJobCount)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
 	prometheus.MustRegister(DistSQLCoprCacheCounter)

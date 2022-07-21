@@ -187,4 +187,5 @@ const (
 	LblCommitting  = "committing"
 	LblRollingBack = "rolling_back"
 	LblHasLock     = "has_lock"
+	LblModule      = "module"
 )

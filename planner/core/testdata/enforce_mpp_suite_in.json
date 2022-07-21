@@ -99,6 +99,11 @@
     "name": "TestMPPSkewedGroupDistinctRewrite",
     "cases": [
       "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_opt_skew_distinct_agg=1;",
+      "EXPLAIN select count(distinct c) from t group by d;",
+      "EXPLAIN select count(distinct c), count(a) from t group by d;",
+      "EXPLAIN select count(distinct c) from t group by b+d;",
+      "EXPLAIN select count(distinct c) from t group by b+d, a+b;",
+      "EXPLAIN select count(distinct c), count(*) from t group by date_format(d,'%Y');",
       "EXPLAIN select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');",
       "EXPLAIN select d, count(distinct c), sum(a), max(b), count(*) from t group by d;",
       "EXPLAIN select date_format(d,'%Y') as df, count(distinct c) from t group by date_format(d,'%Y');",
