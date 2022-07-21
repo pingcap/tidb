@@ -480,7 +480,74 @@ create table log_message_1 (
 				"partition by range columns (a) (" +
 				"partition p0 values less than ('a'), " +
 				"partition p1 values less than ('G'));",
+<<<<<<< HEAD
 			ddl.ErrRangeNotIncreasing,
+=======
+			dbterror.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(a char(10) collate utf8mb4_bin) " +
+				"partition by range columns (a) (" +
+				"partition p0 values less than ('g'), " +
+				"partition p1 values less than ('A'));",
+			dbterror.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(d datetime)" +
+				"partition by range columns (d) (" +
+				"partition p0 values less than ('2022-01-01')," +
+				"partition p1 values less than (MAXVALUE), " +
+				"partition p2 values less than (MAXVALUE));",
+			dbterror.ErrRangeNotIncreasing,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
+			dbterror.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((!c0)) PARTITIONS 2;",
+			dbterror.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((NOT c0)) (partition p0 values in (0), partition p1 values in (1));",
+			dbterror.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((!c0)) (partition p0 values in (0), partition p1 values in (1));",
+			dbterror.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"CREATE TABLE t1 (a TIME, b DATE) PARTITION BY range(DATEDIFF(a, b)) (partition p1 values less than (20));",
+			dbterror.ErrWrongExprInPartitionFunc,
+		},
+		{
+			"CREATE TABLE t1 (a DATE, b VARCHAR(10)) PARTITION BY range(DATEDIFF(a, b)) (partition p1 values less than (20));",
+			dbterror.ErrWrongExprInPartitionFunc,
+		},
+		{
+			"create table t1 (a bigint unsigned) partition by list (a) (partition p0 values in (10, 20, 30, -1));",
+			dbterror.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a bigint unsigned) partition by range (a) (partition p0 values less than (-1));",
+			dbterror.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a int unsigned) partition by range (a) (partition p0 values less than (-1));",
+			dbterror.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a tinyint(20) unsigned) partition by range (a) (partition p0 values less than (-1));",
+			dbterror.ErrPartitionConstDomain,
+		},
+		{
+			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a % 2) (PARTITION p VALUES LESS THAN (20080819));",
+			dbterror.ErrWrongExprInPartitionFunc,
+		},
+		{
+			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a+2) (PARTITION p VALUES LESS THAN (20080819));",
+			dbterror.ErrWrongExprInPartitionFunc,
+>>>>>>> 121a6669a... ddl: invalid multiple MAXVALUE partitions (#36329) (#36345)
 		},
 	}
 	for i, t := range cases {
