@@ -188,4 +188,5 @@ const (
 	LblRollingBack = "rolling_back"
 	LblHasLock     = "has_lock"
 	LblPhase       = "phase"
+	LblModule      = "module"
 )

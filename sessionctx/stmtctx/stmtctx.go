@@ -220,6 +220,7 @@ type StatementContext struct {
 	encodedPlan    string
 	planHint       string
 	planHintSet    bool
+	binaryPlan     string
 	// To avoid cycle import, we use interface{} for the following two fields.
 	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
 	flatPlan interface{}
@@ -386,6 +387,11 @@ func (sc *StatementContext) InitSQLDigest(normalized string, digest *parser.Dige
 	})
 }
 
+// ResetSQLDigest sets the normalized and digest for sql anyway, **DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING NOW**.
+func (sc *StatementContext) ResetSQLDigest(s string) {
+	sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(s)
+}
+
 // GetPlanDigest gets the normalized plan and plan digest.
 func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *parser.Digest) {
 	return sc.planNormalized, sc.planDigest
@@ -409,6 +415,16 @@ func (sc *StatementContext) GetFlatPlan() interface{} {
 // SetFlatPlan sets the flatPlan field of stmtctx
 func (sc *StatementContext) SetFlatPlan(flat interface{}) {
 	sc.flatPlan = flat
+}
+
+// GetBinaryPlan gets the binaryPlan field of stmtctx
+func (sc *StatementContext) GetBinaryPlan() string {
+	return sc.binaryPlan
+}
+
+// SetBinaryPlan sets the binaryPlan field of stmtctx
+func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
+	sc.binaryPlan = binaryPlan
 }
 
 // GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
