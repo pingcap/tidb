@@ -112,3 +112,8 @@ func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 		DeleteCount: readCounter(NonTransactionalDeleteCount),
 	}
 }
+
+// GetSavepointStmtCounter gets the savepoint statement executed counter.
+func GetSavepointStmtCounter() int64 {
+	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
+}

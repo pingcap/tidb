@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
@@ -76,6 +77,24 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	for i, col := range t.Cols() {
 		var err error
 		if err = col.HandleBadNull(&newData[i], sc); err != nil {
+			return false, err
+		}
+	}
+
+	// Handle exchange partition
+	tbl := t.Meta()
+	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
+		if !tableFound {
+			return false, errors.Errorf("exchange partition process table by id failed")
+		}
+		p, ok := pt.(table.PartitionedTable)
+		if !ok {
+			return false, errors.Errorf("exchange partition process assert table partition failed")
+		}
+		err := p.CheckForExchangePartition(sctx, pt.Meta().Partition, newData, tbl.ExchangePartitionInfo.ExchangePartitionDefID)
+		if err != nil {
 			return false, err
 		}
 	}

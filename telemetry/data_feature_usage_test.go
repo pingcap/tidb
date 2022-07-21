@@ -394,3 +394,23 @@ func TestPagingUsageInfo(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, usage.EnablePaging)
 }
+
+func TestTxnSavepointUsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("savepoint sp1")
+	tk.MustExec("savepoint sp2")
+	txnUsage := telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(2), txnUsage.SavepointCounter)
+
+	tk.MustExec("savepoint sp3")
+	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(3), txnUsage.SavepointCounter)
+
+	telemetry.PostSavepointCount()
+	tk.MustExec("savepoint sp1")
+	txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+	require.Equal(t, int64(1), txnUsage.SavepointCounter)
+}
