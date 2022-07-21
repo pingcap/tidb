@@ -460,7 +460,7 @@ func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 			}
 			v := ver.Compare(minVersion)
 			if v < 0 {
-				return errors.New("TiKV version must greater than or equal to " + minVersion.String())
+				return nil
 			}
 		}
 	}
