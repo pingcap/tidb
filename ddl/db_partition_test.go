@@ -546,6 +546,24 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		{
+<<<<<<< HEAD
+=======
+			"create table t(a char(10) collate utf8mb4_bin) " +
+				"partition by range columns (a) (" +
+				"partition p0 values less than ('g'), " +
+				"partition p1 values less than ('A'));",
+			dbterror.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(d datetime)" +
+				"partition by range columns (d) (" +
+				"partition p0 values less than ('2022-01-01')," +
+				"partition p1 values less than (MAXVALUE), " +
+				"partition p2 values less than (MAXVALUE));",
+			dbterror.ErrRangeNotIncreasing,
+		},
+		{
+>>>>>>> 121a6669a... ddl: invalid multiple MAXVALUE partitions (#36329) (#36345)
 			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
 			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
