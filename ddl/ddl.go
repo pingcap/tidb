@@ -1123,7 +1123,9 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	} else {
 		err = d.MoveJobFromTable2Queue()
 	}
-	variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+	if err == nil {
+		variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+	}
 	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	return err
 }
