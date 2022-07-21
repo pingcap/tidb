@@ -2268,6 +2268,9 @@ func (s *session) preparedStmtExec(ctx context.Context, execStmt *ast.ExecuteStm
 
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 	st, tiFlashPushDown, tiFlashExchangePushDown, err := executor.CompileExecutePreparedStmt(ctx, s, execStmt, is)
+	if err == nil {
+		err = sessiontxn.OptimizeWithPlanAndThenWarmUp(s, st.Plan)
+	}
 	if err != nil {
 		return nil, err
 	}
