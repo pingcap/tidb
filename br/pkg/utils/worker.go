@@ -127,6 +127,6 @@ func PanicToErr(err *error) {
 	item := recover()
 	if item != nil {
 		*err = errors.Annotatef(berrors.ErrUnknown, "panicked when executing, message: %v", item)
-		log.Warn("checkpoint advancer panicked, recovering", zap.StackSkip("stack", 1), logutil.ShortError(*err))
+		log.Warn("PanicToErr: panicked, recovering and returning error", zap.StackSkip("stack", 1), logutil.ShortError(*err))
 	}
 }
