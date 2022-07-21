@@ -573,8 +573,8 @@ func RunStreamMetadata(
 		return errors.Trace(err)
 	}
 
-	logMinDate := oracle.GetTimeFromTS(logMinTS).Format("2006-01-02 15:04:05.999999999 -0700")
-	logMaxDate := oracle.GetTimeFromTS(logMaxTS).Format("2006-01-02 15:04:05.999999999 -0700")
+	logMinDate := stream.FormatDate(oracle.GetTimeFromTS(logMinTS))
+	logMaxDate := stream.FormatDate(oracle.GetTimeFromTS(logMaxTS))
 	summary.Log(cmdName, zap.Uint64("log-min-ts", logMinTS),
 		zap.String("log-min-date", logMinDate),
 		zap.Uint64("log-max-ts", logMaxTS),
