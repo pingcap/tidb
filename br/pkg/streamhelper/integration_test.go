@@ -139,7 +139,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("TestBasic", func(t *testing.T) { testBasic(t, metaCli, etcd) })
 	t.Run("TestForwardProgress", func(t *testing.T) { testForwardProgress(t, metaCli, etcd) })
 	t.Run("testGetStorageCheckpoint", func(t *testing.T) { testGetStorageCheckpoint(t, metaCli, etcd) })
-	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.TaskEventClient{MetaDataClient: metaCli}) })
+	t.Run("TestStreamListening", func(t *testing.T) { testStreamListening(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 }
 
 func TestChecking(t *testing.T) {
@@ -265,7 +265,7 @@ func testGetStorageCheckpoint(t *testing.T, metaCli streamhelper.MetaDataClient,
 	require.Equal(t, uint64(10002), ts)
 }
 
-func testStreamListening(t *testing.T, metaCli streamhelper.TaskEventClient) {
+func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx, cancel := context.WithCancel(context.Background())
 	taskName := "simple"
 	taskInfo := simpleTask(taskName, 4)
