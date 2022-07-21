@@ -395,6 +395,21 @@ func TestPagingUsageInfo(t *testing.T) {
 	require.False(t, usage.EnablePaging)
 }
 
+func TestCostModelVer2UsageInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.EnableCostModelVer2)
+
+	tk.Session().GetSessionVars().CostModelVersion = 2
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.EnableCostModelVer2)
+}
+
 func TestTxnSavepointUsageInfo(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
