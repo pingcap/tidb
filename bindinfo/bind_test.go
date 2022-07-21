@@ -354,6 +354,26 @@ using
 	require.True(t, tk.NotHasKeywordInOperatorInfo("select * from t1 where exists(select 1 from t2 where t1.id=t2.id)", "semi join"))
 }
 
+func TestBindCTEMerge(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int)")
+	require.True(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
+	require.False(t, tk.HasPlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte", "CTEFullScan"))
+	tk.MustExec(`
+create global binding for
+	with cte as (select * from t1) select * from cte
+using
+	with cte as (select /*+ MERGE() */ * from t1) select * from cte
+`)
+
+	require.False(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
+}
+
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
 func TestBindingSymbolList(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)

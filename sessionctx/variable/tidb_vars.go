@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable/featuretag/concurrencyddl"
 	"github.com/pingcap/tidb/util/paging"
 	"go.uber.org/atomic"
 )
@@ -704,6 +705,18 @@ const (
 	TiDBMemoryDebugModeMinHeapInUse = "tidb_memory_debug_mode_min_heap_inuse"
 	// TiDBMemoryDebugModeAlarmRatio is used set tidb memory debug mode bias ratio. Treat memory bias less than this ratio as noise.
 	TiDBMemoryDebugModeAlarmRatio = "tidb_memory_debug_mode_alarm_ratio"
+
+	// TiDBEnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When set to false, ANALYZE reads the latest data.
+	// When set to true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	TiDBEnableAnalyzeSnapshot = "tidb_enable_analyze_snapshot"
+
+	// TiDBDefaultStrMatchSelectivity controls some special cardinality estimation strategy for string match functions (like and regexp).
+	// When set to 0, Selectivity() will try to evaluate those functions with TopN and NULL in the stats to estimate,
+	// and the default selectivity and the selectivity for the histogram part will be 0.1.
+	// When set to (0, 1], Selectivity() will use the value of this variable as the default selectivity of those
+	// functions instead of the selectionFactor (0.8).
+	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
 )
 
 // TiDB vars that have only global scope
@@ -767,6 +780,10 @@ const (
 	TiDBAuthSigningCert = "tidb_auth_signing_cert"
 	// TiDBAuthSigningKey indicates the path of the signing key to do token-based authentication.
 	TiDBAuthSigningKey = "tidb_auth_signing_key"
+	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
+	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
+	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
+	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 )
 
 // TiDB intentional limits
@@ -968,13 +985,17 @@ const (
 	DefTiDBEnablePrepPlanCache                     = true
 	DefTiDBPrepPlanCacheSize                       = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
-	DefTiDBEnableConcurrentDDL                     = true
+	DefTiDBEnableConcurrentDDL                     = concurrencyddl.TiDBEnableConcurrentDDL
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = -1
 	DefStreamCountWhenMaxThreadsNotSet             = 8
 	DefTiFlashFineGrainedShuffleBatchSize          = 8192
 	DefAdaptiveClosestReadThreshold                = 4096
+	DefTiDBEnableAnalyzeSnapshot                   = false
+	DefTiDBGenerateBinaryPlan                      = true
+	DefEnableTiDBGCAwareMemoryTrack                = true
+	DefTiDBDefaultStrMatchSelectivity              = 0.8
 )
 
 // Process global variables.
@@ -1032,4 +1053,6 @@ var (
 	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Value
+	// SwitchConcurrentDDL is the func registered by DDL to switch concurrent DDL.
+	SwitchConcurrentDDL func(bool) error = nil
 )

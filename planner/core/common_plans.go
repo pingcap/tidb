@@ -1510,7 +1510,11 @@ func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *ti
 	}
 	if op.IsPhysicalPlan {
 		p := op.Origin.(PhysicalPlan)
-		out.Cost = p.Cost()
+		if p.SCtx().GetSessionVars().EnableNewCostInterface {
+			out.Cost, _ = p.GetPlanCost(property.RootTaskType, 0)
+		} else {
+			out.Cost = p.Cost()
+		}
 	}
 	if rootStats != nil {
 		basic, groups := rootStats.MergeStats()

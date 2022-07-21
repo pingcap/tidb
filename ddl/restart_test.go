@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -68,11 +67,7 @@ func runInterruptedJob(t *testing.T, store kv.Storage, d ddl.DDL, job *model.Job
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
 			// imitate DoDDLJob's logic, quit only find history
-			err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				history, err = meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
-				return err
-			})
-			require.NoError(t, err)
+			history, _ = ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 			if history != nil {
 				err = history.Error
 			}
