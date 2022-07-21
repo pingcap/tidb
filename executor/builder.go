@@ -2055,6 +2055,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 	}
 }
 
+// InjectCH is used to notice alter table signal in TestUpdateStmtWhileSchemaChanged
 var InjectCH = make(chan struct{})
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
