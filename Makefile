@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt check-parallel lint tidy testSuite check-static vet errdoc
+check: check-parallel lint tidy testSuite check-static errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -436,6 +436,9 @@ bazel_test: failpoint-enable bazel_ci_prepare
 
 bazel_coverage_test: failpoint-enable bazel_ci_prepare
 	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 

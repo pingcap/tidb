@@ -466,3 +466,13 @@ func (d Checker) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema
 func (d Checker) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	return d.realDDL.DoDDLJob(ctx, job)
 }
+
+// MoveJobFromQueue2Table implements the DDL interface.
+func (d Checker) MoveJobFromQueue2Table(bool) error {
+	panic("implement me")
+}
+
+// MoveJobFromTable2Queue implements the DDL interface.
+func (d Checker) MoveJobFromTable2Queue() error {
+	panic("implement me")
+}
