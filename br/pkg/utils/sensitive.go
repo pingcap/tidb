@@ -1,3 +1,5 @@
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
+
 package utils
 
 import (
@@ -5,7 +7,7 @@ import (
 )
 
 var (
-	passwordPatterns = `(password = (\\")?)(.*?)((\\")?\\n)`
+	passwordPatterns = `(password[\s]*=[\s]*(\\")?)(.*?)((\\")?\\n)`
 
 	passwordRegexp *regexp.Regexp
 )

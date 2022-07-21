@@ -1,3 +1,5 @@
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
+
 package utils
 
 import (
@@ -19,8 +21,21 @@ func TestHideSensitive(t *testing.T) {
 			`host = "127.0.0.1"\n  user = "root"\n  password = ""\n  port = 3306\n`,
 			`host = "127.0.0.1"\n  user = "root"\n  password = ******\n  port = 3306\n`,
 		},
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password= "/Q7B9DizNLLTTfiZHv9WoEAKamfpIUs="\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password= ******\n  port = 3306\n`,
+		},
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password =""\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password =******\n  port = 3306\n`,
+		},
+		{
+			`host = "127.0.0.1"\n  user = "root"\n  password=""\n  port = 3306\n`,
+			`host = "127.0.0.1"\n  user = "root"\n  password=******\n  port = 3306\n`,
+		},
 	}
-	for _, str := range strs {
+	for i, str := range strs {
+		t.Logf("case #%d\n", i)
 		require.Equal(t, str.new, HideSensitive(str.old))
 	}
 }
