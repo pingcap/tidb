@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 const (
@@ -46,6 +47,15 @@ var (
 	// PlanDiscardedEncoded indicates the discard plan because it is too long
 	PlanDiscardedEncoded = "[discard]"
 	planDiscardedDecoded = "(plan discarded because too long)"
+	// BinaryPlanDiscardedEncoded is a special binary plan that represents it's discarded because of too long.
+	BinaryPlanDiscardedEncoded = func() string {
+		binary := &tipb.ExplainData{DiscardedDueToTooLong: true}
+		proto, err := binary.Marshal()
+		if err != nil {
+			return ""
+		}
+		return Compress(proto)
+	}()
 )
 
 var decoderPool = sync.Pool{

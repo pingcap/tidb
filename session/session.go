@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -2714,7 +2715,62 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	return false, nil
 }
 
-var errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+var (
+	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+	// DDLJobTables is a list of tables definitions used in concurrent DDL.
+	DDLJobTables = []struct {
+		SQL string
+		id  int64
+	}{
+		{"create table tidb_ddl_job(job_id bigint not null, reorg int, schema_ids text(65535), table_ids text(65535), job_meta longblob, type int, processing int, primary key(job_id))", ddl.JobTableID},
+		{"create table tidb_ddl_reorg(job_id bigint not null, ele_id bigint, ele_type blob, start_key blob, end_key blob, physical_id bigint, reorg_meta longblob, unique key(job_id, ele_id, ele_type(20)))", ddl.ReorgTableID},
+		{"create table tidb_ddl_history(job_id bigint not null, job_meta longblob, db_name char(64), table_name char(64), schema_ids text(65535), table_ids text(65535), create_time datetime, primary key(job_id))", ddl.HistoryTableID},
+	}
+)
+
+// InitDDLJobTables is to create tidb_ddl_job, tidb_ddl_reorg and tidb_ddl_history.
+func InitDDLJobTables(store kv.Storage) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		exists, err := t.CheckDDLTableExists()
+		if err != nil || exists {
+			return errors.Trace(err)
+		}
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		p := parser.New()
+		for _, tbl := range DDLJobTables {
+			id, err := t.GetGlobalID()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if id >= meta.MaxGlobalID {
+				return errors.Errorf("It is unreasonable that the global ID grows such a big value: %d, please concat TiDB team", id)
+			}
+			stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo.State = model.StatePublic
+			tblInfo.ID = tbl.id
+			tblInfo.UpdateTS = t.StartTS
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = t.CreateTableOrView(dbID, tblInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return t.SetDDLTables()
+	})
+}
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
@@ -2728,6 +2784,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	err := InitDDLJobTables(store)
+	if err != nil {
+		return nil, err
 	}
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
