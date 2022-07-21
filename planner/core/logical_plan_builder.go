@@ -976,6 +976,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		}
 		conds = append(conds, cond)
 		if p.fullSchema != nil {
+			// since fullSchema is derived from left and right schema in upper layer, so rc must be in fullSchema.
 			p.fullNames[p.fullSchema.ColumnIndex(rc)].Redundant = true
 		}
 	}
