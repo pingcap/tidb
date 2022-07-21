@@ -1359,7 +1359,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, 
 		}
 	}
 	// this if statement takes care of lists/range columns case
-	if partitionInfo.Columns != nil {
+	if len(partitionInfo.Columns) > 0 {
 		// partitionInfo.Type == model.PartitionTypeRange || partitionInfo.Type == model.PartitionTypeList
 		// Notice that MySQL uses two spaces between LIST and COLUMNS...
 		fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS(", partitionInfo.Type.String())
@@ -1415,7 +1415,7 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	sqlMode := ctx.GetSessionVars().SQLMode
 	var ifNotExistsStr string
 	if ifNotExists {
-		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
+		ifNotExistsStr = "IF NOT EXISTS "
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
 	if dbInfo.Charset != "" {
