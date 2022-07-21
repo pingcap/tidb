@@ -48,7 +48,7 @@ func generateTelemetryData(sctx sessionctx.Context, trackingID string) telemetry
 	if f, err := getFeatureUsage(ctx, sctx); err == nil {
 		r.FeatureUsage = f
 	}
-	if s, err := getSlowQueryStats(ctx, sctx); err == nil {
+	if s, err := getSlowQueryStats(); err == nil {
 		r.SlowQueryStats = s
 	}
 
@@ -64,6 +64,7 @@ func postReportTelemetryData() {
 	postReportTablePartitionUsage()
 	postReportSlowQueryStats()
 	postReportNonTransactionalCounter()
+	PostSavepointCount()
 }
 
 // PostReportTelemetryDataForTest is for test.

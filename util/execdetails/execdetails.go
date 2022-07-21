@@ -86,6 +86,8 @@ const (
 	CommitBackoffTimeStr = "Commit_backoff_time"
 	// BackoffTypesStr means the backoff type.
 	BackoffTypesStr = "Backoff_types"
+	// SlowestCommitRPCDetailStr means the details of the slowest RPC during the transaction commit process.
+	SlowestCommitRPCDetailStr = "Slowest_commit_rpc_detail"
 	// ResolveLockTimeStr means the time of resolving lock.
 	ResolveLockTimeStr = "Resolve_lock_time"
 	// LocalLatchWaitTimeStr means the time of waiting in local latch.
@@ -98,6 +100,8 @@ const (
 	PrewriteRegionStr = "Prewrite_region"
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
+	// GetSnapshotTimeStr means the time spent on getting an engine snapshot.
+	GetSnapshotTimeStr = "Get_snapshot_time"
 	// RocksdbDeleteSkippedCountStr means the count of rocksdb delete skipped count.
 	RocksdbDeleteSkippedCountStr = "Rocksdb_delete_skipped_count"
 	// RocksdbKeySkippedCountStr means the count of rocksdb key skipped count.
@@ -108,6 +112,8 @@ const (
 	RocksdbBlockReadCountStr = "Rocksdb_block_read_count"
 	// RocksdbBlockReadByteStr means the bytes of rocksdb block read.
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
+	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
+	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
 )
 
 // String implements the fmt.Stringer interface.
@@ -156,6 +162,12 @@ func (d ExecDetails) String() string {
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
 			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
 		}
+		if commitDetails.Mu.SlowestReqTotalTime > 0 {
+			parts = append(parts, SlowestCommitRPCDetailStr+": {total:"+strconv.FormatFloat(commitDetails.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64)+
+				"s, region_id: "+strconv.FormatUint(commitDetails.Mu.SlowestRegion, 10)+
+				", store: "+commitDetails.Mu.SlowestStoreAddr+
+				", "+commitDetails.Mu.SlowestExecDetails.String()+"}")
+		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLock.ResolveLockTime)
 		if resolveLockTime > 0 {
@@ -186,6 +198,9 @@ func (d ExecDetails) String() string {
 		if scanDetail.TotalKeys > 0 {
 			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(scanDetail.TotalKeys, 10))
 		}
+		if scanDetail.GetSnapshotDuration > 0 {
+			parts = append(parts, GetSnapshotTimeStr+": "+strconv.FormatFloat(scanDetail.GetSnapshotDuration.Seconds(), 'f', 3, 64))
+		}
 		if scanDetail.RocksdbDeleteSkippedCount > 0 {
 			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(scanDetail.RocksdbDeleteSkippedCount, 10))
 		}
@@ -200,6 +215,9 @@ func (d ExecDetails) String() string {
 		}
 		if scanDetail.RocksdbBlockReadByte > 0 {
 			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(scanDetail.RocksdbBlockReadByte, 10))
+		}
+		if scanDetail.RocksdbBlockReadDuration > 0 {
+			parts = append(parts, RocksdbBlockReadTimeStr+": "+strconv.FormatFloat(scanDetail.RocksdbBlockReadDuration.Seconds(), 'f', 3, 64))
 		}
 	}
 	return strings.Join(parts, " ")
@@ -893,6 +911,17 @@ func (e *RuntimeStatsWithCommit) String() string {
 			}
 			buf.WriteString("}")
 		}
+		if e.Commit.Mu.SlowestReqTotalTime > 0 {
+			buf.WriteString(", slowest_commit_rpc: {total: ")
+			buf.WriteString(strconv.FormatFloat(e.Commit.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64))
+			buf.WriteString("s, region_id: ")
+			buf.WriteString(strconv.FormatUint(e.Commit.Mu.SlowestRegion, 10))
+			buf.WriteString(", store: ")
+			buf.WriteString(e.Commit.Mu.SlowestStoreAddr)
+			buf.WriteString(", ")
+			buf.WriteString(e.Commit.Mu.SlowestExecDetails.String())
+			buf.WriteString("}")
+		}
 		e.Commit.Mu.Unlock()
 		if e.Commit.ResolveLock.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
@@ -939,17 +968,28 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(", resolve_lock:")
 			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLock.ResolveLockTime)))
 		}
+		e.LockKeys.Mu.Lock()
 		if e.LockKeys.BackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
 			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
-			e.LockKeys.Mu.Lock()
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
 				buf.WriteString(e.formatBackoff(e.LockKeys.Mu.BackoffTypes))
 			}
-			e.LockKeys.Mu.Unlock()
 			buf.WriteString("}")
 		}
+		if e.LockKeys.Mu.SlowestReqTotalTime > 0 {
+			buf.WriteString(", slowest_rpc: {total: ")
+			buf.WriteString(strconv.FormatFloat(e.LockKeys.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64))
+			buf.WriteString("s, region_id: ")
+			buf.WriteString(strconv.FormatUint(e.LockKeys.Mu.SlowestRegion, 10))
+			buf.WriteString(", store: ")
+			buf.WriteString(e.LockKeys.Mu.SlowestStoreAddr)
+			buf.WriteString(", ")
+			buf.WriteString(e.LockKeys.Mu.SlowestExecDetails.String())
+			buf.WriteString("}")
+		}
+		e.LockKeys.Mu.Unlock()
 		if e.LockKeys.LockRPCTime > 0 {
 			buf.WriteString(", lock_rpc:")
 			buf.WriteString(time.Duration(e.LockKeys.LockRPCTime).String())
@@ -962,6 +1002,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(", retry_count:")
 			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RetryCount), 10))
 		}
+
 		buf.WriteString("}")
 	}
 	return buf.String()

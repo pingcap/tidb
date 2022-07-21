@@ -214,6 +214,9 @@ func TestJoinOrderHint4StaticPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
 	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
 	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
+	tk.MustExec(`create table t4(a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table t5(a int, b int) partition by hash(a) partitions 5`)
+	tk.MustExec(`create table t6(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="static"`)
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4StaticPartitionTable")
@@ -230,6 +233,9 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	tk.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
 	tk.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
 	tk.MustExec(`create table t3(a int, b int) partition by hash(b) partitions 3`)
+	tk.MustExec(`create table t4(a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table t5(a int, b int) partition by hash(a) partitions 5`)
+	tk.MustExec(`create table t6(a int, b int) partition by hash(b) partitions 3`)
 
 	tk.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4DynamicPartitionTable")
@@ -265,6 +271,9 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, key(a));")
 	tk.MustExec("create table t2(a int, b int, key(a));")
 	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	tk.MustExec("create table t5(a int, b int, key(a));")
+	tk.MustExec("create table t6(a int, b int, key(a));")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -273,7 +282,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		tableName := tblInfo.Name.L
-		if tableName == "t" || tableName == "t1" || tableName == "t2" || tableName == "t3" {
+		if tableName == "t" || tableName == "t1" || tableName == "t2" || tableName == "t3" || tableName == "t4" || tableName == "t5" || tableName == "t6" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
