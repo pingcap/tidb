@@ -723,7 +723,9 @@ func (d *ddl) close() {
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
 	}
-	d.sessPool.close()
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
 	variable.UnregisterStatistics(d)
 
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
