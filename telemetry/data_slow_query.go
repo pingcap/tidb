@@ -25,7 +25,6 @@ import (
 	pingcapErrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/zap"
@@ -62,8 +61,8 @@ var (
 	slowQueryLock  sync.Mutex
 )
 
-func getSlowQueryStats(ctx context.Context, sctx sessionctx.Context) (*slowQueryStats, error) {
-	slowQueryBucket, err := getSlowQueryBucket(sctx)
+func getSlowQueryStats() (*slowQueryStats, error) {
+	slowQueryBucket, err := getSlowQueryBucket()
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
@@ -73,9 +72,9 @@ func getSlowQueryStats(ctx context.Context, sctx sessionctx.Context) (*slowQuery
 }
 
 // getSlowQueryBucket generates the delta SlowQueryBucket to report
-func getSlowQueryBucket(sctx sessionctx.Context) (*SlowQueryBucket, error) {
+func getSlowQueryBucket() (*SlowQueryBucket, error) {
 	// update currentSQBInfo first, then gen delta
-	if err := updateCurrentSQB(sctx); err != nil {
+	if err := updateCurrentSQB(); err != nil {
 		return nil, err
 	}
 	delta := calculateDeltaSQB()
@@ -83,7 +82,7 @@ func getSlowQueryBucket(sctx sessionctx.Context) (*SlowQueryBucket, error) {
 }
 
 // updateCurrentSQB records current slow query buckets
-func updateCurrentSQB(sctx sessionctx.Context) (err error) {
+func updateCurrentSQB() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = pingcapErrors.Errorf(fmt.Sprintln(r))

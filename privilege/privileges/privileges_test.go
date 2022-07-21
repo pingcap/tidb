@@ -95,6 +95,37 @@ func TestCheckPointGetDBPrivilege(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
+func TestCheckExchangePartitionDBPrivilege(t *testing.T) {
+	store, clean := createStoreAndPrepareDB(t)
+	defer clean()
+	rootTk := testkit.NewTestKit(t, store)
+
+	rootTk.MustExec(`CREATE USER 'tester'@'localhost';`)
+	rootTk.MustExec(`GRANT SELECT ON test.* TO  'tester'@'localhost';`)
+	rootTk.MustExec("use test")
+	rootTk.MustExec(`create table pt (a varchar(3)) partition by range columns (a) (
+		partition p0 values less than ('3'),
+		partition p1 values less than ('6')
+	);`)
+	rootTk.MustExec(`create table nt (a varchar(3));`)
+
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil))
+	tk.MustExec("use test")
+
+	rootTk.MustExec(`GRANT CREATE ON test.* TO  'tester'@'localhost';`)
+	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
+
+	rootTk.MustExec(`GRANT ALTER ON test.* TO  'tester'@'localhost';`)
+	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
+
+	rootTk.MustExec(`GRANT INSERT ON test.* TO  'tester'@'localhost';`)
+	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
+
+	rootTk.MustExec(`GRANT DROP ON test.* TO  'tester'@'localhost';`)
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+}
+
 func TestIssue22946(t *testing.T) {
 	store, clean := createStoreAndPrepareDB(t)
 	defer clean()

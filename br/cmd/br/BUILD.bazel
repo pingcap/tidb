@@ -13,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/cmd/br",
     visibility = ["//visibility:private"],
     deps = [
+        "//br/pkg/conn",
         "//br/pkg/errors",
         "//br/pkg/gluetidb",
         "//br/pkg/gluetikv",

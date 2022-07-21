@@ -368,6 +368,12 @@ func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
 	return builder
 }
 
+// SetClosestReplicaReadAdjuster sets request CoprRequestAdjuster
+func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprRequestAdjuster) *RequestBuilder {
+	builder.ClosestReplicaReadAdjuster = chkFn
+	return builder
+}
+
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
 func TableHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
 	if !isCommonHandle {
