@@ -2272,7 +2272,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, s)
 }
 
 func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
@@ -2404,6 +2404,7 @@ func (d *ddl) CreateTableWithInfo(
 	dbName model.CIStr,
 	tbInfo *model.TableInfo,
 	onExist OnExist,
+	stmt *ast.CreateTableStmt,
 ) (err error) {
 	job, err := d.createTableWithInfoJob(ctx, dbName, tbInfo, onExist, false)
 	if err != nil {
@@ -2413,6 +2414,22 @@ func (d *ddl) CreateTableWithInfo(
 		return nil
 	}
 
+	if stmt != nil && stmt.Partition != nil && stmt.Partition.Interval != nil {
+		// Syntactic sugar for INTERVAL partitioning
+		// Generate the resulting CREATE TABLE as the query string
+		query, ok := ctx.Value(sessionctx.QueryString).(string)
+		if ok {
+			sqlMode := ctx.GetSessionVars().SQLMode
+			var buf bytes.Buffer
+			AppendPartitionDefs(tbInfo.Partition, &buf, sqlMode)
+
+			syntacticSugar := stmt.Partition.Interval.OriginalText()
+			syntacticStart := stmt.Partition.Interval.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "(" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
+			defer ctx.SetValue(sessionctx.QueryString, query)
+			ctx.SetValue(sessionctx.QueryString, newQuery)
+		}
+	}
 	err = d.DoDDLJob(ctx, job)
 	if err != nil {
 		// table exists, but if_not_exists flags is true, so we ignore this error.
@@ -2670,7 +2687,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		onExist = OnExistReplace
 	}
 
-	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist, nil)
 }
 
 // BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
@@ -3576,44 +3593,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	return errors.Trace(err)
 }
 
-// AppendPartitionDefs generates a list of partition definitions needed for SHOW CREATE TABLE (in executor/show.go)
-// as well as needed for generating the ADD PARTITION query for INTERVAL partitioning of ALTER TABLE t LAST PARTITION
-func AppendPartitionDefs(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
-	for i, def := range partitionInfo.Definitions {
-		if i > 0 {
-			fmt.Fprintf(buf, ",\n ")
-		}
-		fmt.Fprintf(buf, "PARTITION %s", stringutil.Escape(def.Name.O, sqlMode))
-		// PartitionTypeHash does not have any VALUES definition
-		if partitionInfo.Type == model.PartitionTypeRange {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, " VALUES LESS THAN (%s)", lessThans)
-		} else if partitionInfo.Type == model.PartitionTypeList {
-			values := bytes.NewBuffer(nil)
-			for j, inValues := range def.InValues {
-				if j > 0 {
-					values.WriteString(",")
-				}
-				if len(inValues) > 1 {
-					values.WriteString("(")
-					values.WriteString(strings.Join(inValues, ","))
-					values.WriteString(")")
-				} else {
-					values.WriteString(strings.Join(inValues, ","))
-				}
-			}
-			fmt.Fprintf(buf, " VALUES IN (%s)", values.String())
-		}
-		if len(def.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(def.Comment)))
-		}
-		if def.PlacementPolicyRef != nil {
-			// add placement ref info here
-			fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(def.PlacementPolicyRef.Name.O, sqlMode))
-		}
-	}
-}
-
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	is := d.infoCache.GetLatest()
@@ -3668,15 +3647,16 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		Args:       []interface{}{partInfo},
 	}
 
-	if spec.Tp == ast.AlterTableAddLastPartition {
+	if spec.Tp == ast.AlterTableAddLastPartition && spec.Partition != nil {
 		query, ok := ctx.Value(sessionctx.QueryString).(string)
 		if ok {
 			sqlMode := ctx.GetSessionVars().SQLMode
 			var buf bytes.Buffer
 			AppendPartitionDefs(partInfo, &buf, sqlMode)
 
-			alterFirstPart := strings.Index(strings.ToLower(query), " last partition")
-			newQuery := query[:alterFirstPart] + " ADD PARTITION (" + buf.String() + ")"
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
@@ -3836,13 +3816,14 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 
 		query, ok := ctx.Value(sessionctx.QueryString).(string)
 		if ok {
-			alterFirstPart := strings.Index(strings.ToLower(query), " first partition")
 			partNames := make([]string, 0, len(spec.PartitionNames))
 			sqlMode := ctx.GetSessionVars().SQLMode
 			for i := range spec.PartitionNames {
 				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
 			}
-			newQuery := query[:alterFirstPart] + " DROP PARTITION " + strings.Join(partNames, ", ")
+			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
+			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
@@ -6722,7 +6703,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		onExist = OnExistIgnore
 	}
 
-	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist)
+	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, nil)
 }
 
 func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {

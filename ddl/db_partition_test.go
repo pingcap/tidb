@@ -4128,6 +4128,13 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 			"PARTITION BY RANGE (`id`)\n" +
 			"(PARTITION `P_LT_-1000` VALUES LESS THAN (-1000))"))
+	err = tk.ExecToErr("alter table t last partition less than (0)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported LAST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	tk.MustExec("alter table t add partition (partition `P_LT_0` values less than (-900))")
+	err = tk.ExecToErr("alter table t last partition less than (0)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1517]Duplicate partition name P_LT_0", err.Error())
 	tk.MustExec("drop table t")
 	err = tk.ExecToErr("create table t (id int, val varchar(255), comment varchar(255))" +
 		" partition by range (id) interval (100)" +

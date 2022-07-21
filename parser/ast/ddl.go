@@ -3714,6 +3714,9 @@ type PartitionIntervalExpr struct {
 }
 
 type PartitionInterval struct {
+	// To be able to get original text and replace the syntactic sugar with generated
+	// partition definitions
+	node
 	IntervalExpr  PartitionIntervalExpr
 	FirstRangeEnd *ExprNode
 	LastRangeEnd  *ExprNode
@@ -3723,6 +3726,9 @@ type PartitionInterval struct {
 
 // PartitionMethod describes how partitions or subpartitions are constructed.
 type PartitionMethod struct {
+	// To be able to get original text and replace the syntactic sugar with generated
+	// partition definitions
+	node
 	// Tp is the type of the partition function
 	Tp model.PartitionType
 	// Linear is a modifier to the HASH and KEY type for choosing a different

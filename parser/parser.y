@@ -1667,6 +1667,10 @@ AlterTablePartitionOpt:
 |	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
 		partitionMethod := ast.PartitionMethod{Expr: $7}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -1675,6 +1679,11 @@ AlterTablePartitionOpt:
 |	"MERGE" "FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
 		partitionMethod := ast.PartitionMethod{Expr: $7}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -1840,6 +1849,11 @@ AlterTableSpec:
 			parser.lastErrorAsWarn()
 		}
 		partitionMethod := ast.PartitionMethod{Expr: $6}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
 			Tp:              ast.AlterTableAddLastPartition,
@@ -1923,6 +1937,11 @@ AlterTableSpec:
 |	"FIRST" "PARTITION" "LESS" "THAN" '(' BitExpr ')' IfExists
 	{
 		partitionMethod := ast.PartitionMethod{Expr: $6}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			IfExists:  $8.(bool),
 			Tp:        ast.AlterTableDropFirstPartition,
@@ -4018,13 +4037,19 @@ PartitionIntervalOpt:
 	}
 |	"INTERVAL" '(' IntervalExpr ')' FirstAndLastPartOpt NullPartOpt MaxValPartOpt
 	{
-		$$ = &ast.PartitionInterval{
+		partitionInterval := &ast.PartitionInterval{
 			IntervalExpr:  $3.(ast.PartitionIntervalExpr),
 			FirstRangeEnd: $5.(ast.PartitionInterval).FirstRangeEnd,
 			LastRangeEnd:  $5.(ast.PartitionInterval).LastRangeEnd,
 			NullPart:      $6.(bool),
 			MaxValPart:    $7.(bool),
 		}
+		startOffset := parser.yyVAL.offset
+		endOffset := parser.yylval.offset
+		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		// Needed for replacing syntactic sugar with generated partitioning definition string
+		partitionInterval.SetOriginTextPosition(startOffset)
+		$$ = partitionInterval
 	}
 
 IntervalExpr:

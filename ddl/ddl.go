@@ -143,7 +143,8 @@ type DDL interface {
 		ctx sessionctx.Context,
 		schema model.CIStr,
 		info *model.TableInfo,
-		onExist OnExist) error
+		onExist OnExist,
+		stmt *ast.CreateTableStmt) error
 
 	// BatchCreateTableWithInfo is like CreateTableWithInfo, but can handle multiple tables.
 	BatchCreateTableWithInfo(ctx sessionctx.Context,
