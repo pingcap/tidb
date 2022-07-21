@@ -51,7 +51,7 @@ type featureUsage struct {
 	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
-	CostModelVer2         bool                             `json:"costModelVer2"`
+	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
 }
 
 type placementPolicyUsage struct {
@@ -92,7 +92,7 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.EnablePaging = getPagingUsageInfo(sctx)
 
-	usage.CostModelVer2 = getCostModelVer2UsageInfo(sctx)
+	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
 	return &usage, nil
 }
