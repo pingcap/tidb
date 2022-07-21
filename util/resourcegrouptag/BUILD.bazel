@@ -18,6 +18,7 @@ go_library(
 
 go_test(
     name = "resourcegrouptag_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "resource_group_tag_test.go",

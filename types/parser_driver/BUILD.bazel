@@ -17,6 +17,7 @@ go_library(
 
 go_test(
     name = "parser_driver_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "value_expr_test.go",

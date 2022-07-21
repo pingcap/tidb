@@ -116,11 +116,10 @@ func CompatibleCollate(collate1, collate2 string) bool {
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id < 0 {
-			logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
-		} else {
+		if id >= 0 {
 			return -id
 		}
+		logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -128,11 +127,10 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
-		if id > 0 {
-			logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
-		} else {
+		if id <= 0 {
 			return -id
 		}
+		logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
 	}
 	return id
 }

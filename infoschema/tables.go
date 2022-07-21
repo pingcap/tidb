@@ -888,6 +888,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogHasMoreResults, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
+	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
@@ -1294,6 +1295,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.PrevSampleTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: stmtsummary.PlanDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: stmtsummary.PlanStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
+	{name: stmtsummary.BinaryPlan, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled binary plan"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1830,6 +1832,23 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		}
 	}
 	return cnt, nil
+}
+
+// GetDataFromSessionVariables return the [name, value] of all session variables
+func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error) {
+	sessionVars := ctx.GetSessionVars()
+	sysVars := variable.GetSysVars()
+	rows := make([][]types.Datum, 0, len(sysVars))
+	for _, v := range sysVars {
+		var value string
+		value, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
+		if err != nil {
+			return nil, err
+		}
+		row := types.MakeDatums(v.Name, value)
+		rows = append(rows, row)
+	}
+	return rows, nil
 }
 
 var tableNameToColumns = map[string][]columnInfo{

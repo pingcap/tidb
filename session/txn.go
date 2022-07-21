@@ -240,22 +240,6 @@ func (txn *LazyTxn) GetOption(opt int) interface{} {
 	return txn.Transaction.GetOption(opt)
 }
 
-func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
-	txn.Transaction = kvTxn
-	txn.initStmtBuf()
-	txn.txnFuture = nil
-
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
-	txn.resetTxnInfo(
-		kvTxn.StartTS(),
-		txninfo.TxnIdle,
-		uint64(txn.Transaction.Len()),
-		uint64(txn.Transaction.Size()),
-		"",
-		nil)
-}
-
 func (txn *LazyTxn) changeToPending(future *txnFuture) {
 	txn.Transaction = nil
 	txn.txnFuture = future

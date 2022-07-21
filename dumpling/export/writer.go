@@ -217,7 +217,9 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 				return err
 			}
 		}
-		defer ir.Close()
+		defer func() {
+			_ = ir.Close()
+		}()
 		return w.tryToWriteTableData(tctx, meta, ir, currentChunk)
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }

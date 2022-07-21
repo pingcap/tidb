@@ -36,6 +36,7 @@ go_library(
 
 go_test(
     name = "ranger_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "ranger_test.go",

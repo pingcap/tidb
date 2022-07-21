@@ -17,6 +17,7 @@ go_library(
 
 go_test(
     name = "table-filter_test",
+    timeout = "short",
     srcs = [
         "column_filter_test.go",
         "compat_test.go",

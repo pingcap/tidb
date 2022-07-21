@@ -64,18 +64,6 @@ type InfoSchema interface {
 
 type sortedTables []table.Table
 
-func (s sortedTables) Len() int {
-	return len(s)
-}
-
-func (s sortedTables) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
-}
-
-func (s sortedTables) Less(i, j int) bool {
-	return s[i].Meta().ID < s[j].Meta().ID
-}
-
 func (s sortedTables) searchTable(id int64) int {
 	idx := sort.Search(len(s), func(i int) bool {
 		return s[i].Meta().ID >= id

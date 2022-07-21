@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "column-mapping_test",
+    timeout = "short",
     srcs = ["column_test.go"],
     embed = [":column-mapping"],
     deps = ["@com_github_stretchr_testify//require"],

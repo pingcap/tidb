@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -731,6 +732,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		}
 	case mysql.AuthNativePassword:
 	case mysql.AuthSocket:
+	case mysql.AuthTiDBSessionToken:
 	default:
 		return errors.New("Unknown auth plugin")
 	}
@@ -757,6 +759,7 @@ func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeRespo
 		case mysql.AuthCachingSha2Password:
 		case mysql.AuthNativePassword:
 		case mysql.AuthSocket:
+		case mysql.AuthTiDBSessionToken:
 		default:
 			logutil.Logger(ctx).Warn("Unknown Auth Plugin", zap.String("plugin", resp.AuthPlugin))
 		}
@@ -858,7 +861,16 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 		return errAccessDeniedNoPassword.FastGenByArgs(cc.user, host)
 	}
 
-	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
+	userIdentity := &auth.UserIdentity{Username: cc.user, Hostname: host}
+	if authPlugin == mysql.AuthTiDBSessionToken {
+		if !cc.ctx.AuthWithoutVerification(userIdentity) {
+			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
+		if err = sessionstates.ValidateSessionToken(authData, cc.user); err != nil {
+			logutil.BgLogger().Warn("verify session token failed", zap.String("username", cc.user), zap.Error(err))
+			return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		}
+	} else if !cc.ctx.Auth(userIdentity, authData, cc.salt) {
 		return errAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
 	cc.ctx.SetPort(port)
@@ -883,6 +895,10 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 	}
 
 	authData := resp.Auth
+	// tidb_session_token is always permitted and skips stored user plugin.
+	if resp.AuthPlugin == mysql.AuthTiDBSessionToken {
+		return authData, nil
+	}
 	hasPassword := "YES"
 	if len(authData) == 0 {
 		hasPassword = "NO"
@@ -2411,9 +2427,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 }
 
 func (cc *clientConn) handleCommonConnectionReset(ctx context.Context) error {
-	if plugin.IsEnable(plugin.Audit) {
-		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
-	}
+	cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
 
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
