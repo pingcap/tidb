@@ -497,7 +497,7 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 	case pdpb.OperatorStatus_SUCCESS:
 		return true, nil
 	default:
-		log.FromContext(ctx).Warn("scatter-region operator status is abnormal, will scatter region again",
+		log.FromContext(ctx).Debug("scatter-region operator status is abnormal, will scatter region again",
 			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
 		return false, local.splitCli.ScatterRegion(ctx, regionInfo)
 	}
