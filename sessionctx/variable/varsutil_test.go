@@ -432,6 +432,14 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, TiDBTableCacheLease, "123")
 	require.Error(t, err)
 	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
+
+	val, err = GetSessionOrGlobalSystemVar(v, TiDBMinPagingSize)
+	require.NoError(t, err)
+	require.Equal(t, strconv.Itoa(DefMinPagingSize), val)
+
+	err = SetSessionSystemVar(v, TiDBMinPagingSize, "123")
+	require.NoError(t, err)
+	require.Equal(t, v.MinPagingSize, 123)
 }
 
 func TestValidate(t *testing.T) {

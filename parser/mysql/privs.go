@@ -259,9 +259,13 @@ const (
 	DropRolePriv
 	// CreateTMPTablePriv is the privilege to create a temporary table.
 	CreateTMPTablePriv
+	// LockTablesPriv is the privilege to lock tables.
 	LockTablesPriv
+	// CreateRoutinePriv is the privilege to create a stored routine.
 	CreateRoutinePriv
+	// AlterRoutinePriv is the privilege to alter a stored routine.
 	AlterRoutinePriv
+	// EventPriv is the privilege to event.
 	EventPriv
 
 	// ShutdownPriv the privilege to shutdown a server.
@@ -296,8 +300,10 @@ const (
 // If it's passed to RequestVerification, it means any privilege would be OK.
 const AllPrivMask = AllPriv - 1
 
+// Privileges is the list of all privileges.
 type Privileges []PrivilegeType
 
+// Has checks whether PrivilegeType has the privilege.
 func (privs Privileges) Has(p PrivilegeType) bool {
 	for _, cp := range privs {
 		if cp == p {

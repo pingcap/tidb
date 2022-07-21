@@ -13,6 +13,7 @@ go_library(
 
 go_test(
     name = "mvmap_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "main_test.go",
