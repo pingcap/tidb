@@ -23,11 +23,6 @@
 package expression
 
 import (
-	"math"
-	"strconv"
-	"strings"
-	gotime "time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -40,6 +35,9 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"math"
+	"strconv"
+	"strings"
 )
 
 var (
@@ -1607,11 +1605,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	ts, err := getStmtTimestamp(b.ctx)
-	if err != nil {
-		ts = gotime.Now()
-	}
-	res, err = val.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+	res, err = val.ConvertToTime(sc, b.tp.GetType())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}

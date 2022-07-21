@@ -1836,6 +1836,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc = vars.InitStatementContext()
 	}
 	sc.TimeZone = vars.Location()
+	tm, err := expression.GetStmtTimestamp(ctx)
+	if err != nil {
+		tm = time.Now().In(vars.Location())
+	}
+	sc.Timestamp = tm
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false

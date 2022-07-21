@@ -15,15 +15,13 @@
 package expression
 
 import (
-	"math"
-	"strconv"
-	"strings"
-	gotime "time"
-
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"math"
+	"strconv"
+	"strings"
 )
 
 func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
@@ -608,10 +606,6 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 	ds := buf.GoDurations()
 	times := result.Times()
 	stmtCtx := b.ctx.GetSessionVars().StmtCtx
-	ts, err := getStmtTimestamp(b.ctx)
-	if err != nil {
-		ts = gotime.Now()
-	}
 	fsp := b.tp.GetDecimal()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
@@ -620,7 +614,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		tm, err := duration.ConvertToTimeWithTimestamp(stmtCtx, b.tp.GetType(), ts)
+		tm, err := duration.ConvertToTime(stmtCtx, b.tp.GetType())
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
