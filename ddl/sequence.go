@@ -260,7 +260,7 @@ func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 	same := reflect.DeepEqual(*tblInfo.Sequence, copySequenceInfo)
-	if same {
+	if same && !restart {
 		job.State = model.JobStateDone
 		return ver, errors.Trace(err)
 	}
