@@ -2063,6 +2063,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	multiUpdateOnSameTable := make(map[int64]bool)
 	failpoint.Inject("injectAlterTable", func(val failpoint.Value) {
 		if val.(bool) {
+			// wait alter table change by waiting channel
 			<-InjectCH
 		}
 	})
