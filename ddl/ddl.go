@@ -612,7 +612,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 		}
 	}
 	// reorg worker count at least 1 at most 10.
-	reorgCnt := mathutil.Min(mathutil.Max(runtime.NumCPU()/4, 1), reorgWorkerCnt)
+	reorgCnt := mathutil.Min(mathutil.Max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
