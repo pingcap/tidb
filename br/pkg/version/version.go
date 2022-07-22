@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -148,6 +149,16 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		}
 	}
 
+	return nil
+}
+
+// CheckVersionForDDL checks whether we use queue or table to execute ddl during restore.
+func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
+	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
+	if tikvVersion.Major < 6 || (tikvVersion.Major == 6 && tikvVersion.Minor <= 1) {
+		variable.EnableConcurrentDDL.Store(false)
+		return nil
+	}
 	return nil
 }
 
