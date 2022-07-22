@@ -450,7 +450,7 @@
         "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
         "Plan": [
           "Projection_13 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",
-          "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(20,0) BINARY)->Column#5, test.t.b, test.t.b, test.t.b, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
+          "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(32,0) BINARY)->Column#4, cast(test.t.b, decimal(15,4) BINARY)->Column#5, test.t.b, test.t.b, test.t.b, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(32,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
           "  └─Sort_22 8000.00 root  test.t.b",
           "    └─TableReader_19 8000.00 root  data:Selection_20",
           "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b, decimal(32,0) BINARY), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
