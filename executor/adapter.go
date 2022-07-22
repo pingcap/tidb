@@ -205,6 +205,9 @@ type PartitionTelemetryInfo struct {
 	UseTablePartitionRangeColumns  bool
 	UseTablePartitionListColumns   bool
 	TablePartitionMaxPartitionsNum uint64
+	UseCreateIntervalPartition     bool
+	UseAddIntervalPartition        bool
+	UseDropIntervalPartition       bool
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.

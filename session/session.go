@@ -122,15 +122,18 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage                         = metrics.TelemetrySQLCTECnt
-	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
-	telemetryTablePartitionUsage              = metrics.TelemetryTablePartitionCnt
-	telemetryTablePartitionListUsage          = metrics.TelemetryTablePartitionListCnt
-	telemetryTablePartitionRangeUsage         = metrics.TelemetryTablePartitionRangeCnt
-	telemetryTablePartitionHashUsage          = metrics.TelemetryTablePartitionHashCnt
-	telemetryTablePartitionRangeColumnsUsage  = metrics.TelemetryTablePartitionRangeColumnsCnt
-	telemetryTablePartitionListColumnsUsage   = metrics.TelemetryTablePartitionListColumnsCnt
-	telemetryTablePartitionMaxPartitionsUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryCTEUsage                          = metrics.TelemetrySQLCTECnt
+	telemetryMultiSchemaChangeUsage            = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryTablePartitionUsage               = metrics.TelemetryTablePartitionCnt
+	telemetryTablePartitionListUsage           = metrics.TelemetryTablePartitionListCnt
+	telemetryTablePartitionRangeUsage          = metrics.TelemetryTablePartitionRangeCnt
+	telemetryTablePartitionHashUsage           = metrics.TelemetryTablePartitionHashCnt
+	telemetryTablePartitionRangeColumnsUsage   = metrics.TelemetryTablePartitionRangeColumnsCnt
+	telemetryTablePartitionListColumnsUsage    = metrics.TelemetryTablePartitionListColumnsCnt
+	telemetryTablePartitionMaxPartitionsUsage  = metrics.TelemetryTablePartitionMaxPartitionsCnt
+	telemetryTablePartitionCreateIntervalUsage = metrics.TelemetryTablePartitionCreateIntervalPartitionsCnt
+	telemetryTablePartitionAddIntervalUsage    = metrics.TelemetryTablePartitionAddIntervalPartitionsCnt
+	telemetryTablePartitionDropIntervalUsage   = metrics.TelemetryTablePartitionDropIntervalPartitionsCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -3444,6 +3447,15 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 		}
 		if ti.PartitionTelemetry.UseTablePartitionListColumns {
 			telemetryTablePartitionListColumnsUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseCreateIntervalPartition {
+			telemetryTablePartitionCreateIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseAddIntervalPartition {
+			telemetryTablePartitionAddIntervalUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseDropIntervalPartition {
+			telemetryTablePartitionDropIntervalUsage.Inc()
 		}
 	}
 }
