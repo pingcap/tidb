@@ -301,6 +301,12 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTETableReader(v)
 	case *plannercore.CompactTable:
 		return b.buildCompactTable(v)
+	case *plannercore.FKOnDeleteCascadePlan:
+		return b.buildDelete(v.Delete)
+	case *plannercore.FKOnDeleteSetNullPlan:
+		return b.buildUpdate(v.Update)
+	case *plannercore.FKCheckPlan:
+		return b.buildFKCheck(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -2160,9 +2166,6 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 	}
 	deleteExec.fkTriggerExecs, b.err = b.buildForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
 	if b.err != nil {
-		return nil
-	}
-	if b.err = deleteExec.initForeignKeyChecker(); b.err != nil {
 		return nil
 	}
 	return deleteExec
@@ -5013,5 +5016,23 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) Executo
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tableInfo:    v.TableInfo,
 		tikvStore:    tikvStore,
+	}
+}
+
+func (b *executorBuilder) buildFKCheck(v *plannercore.FKCheckPlan) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base.initCap = chunk.ZeroCapacity
+	return &ForeignKeyCheckExec{
+		baseExecutor:          base,
+		tbl:                   v.Tbl,
+		idx:                   v.Idx,
+		idxIsExclusive:        v.IdxIsExclusive,
+		idxIsPrimaryKey:       v.IdxIsPrimaryKey,
+		handleCols:            v.HandleCols,
+		checkExist:            v.CheckExist,
+		failedErr:             v.FailedErr,
+		toBeCheckedHandleKeys: v.ToBeCheckedHandleKeys,
+		toBeCheckedUniqueKeys: v.ToBeCheckedUniqueKeys,
+		toBeCheckedIndexKeys:  v.ToBeCheckedIndexKeys,
 	}
 }

@@ -47,35 +47,17 @@ type DeleteExec struct {
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
 
-	deleteRowFKCheckers map[int64][]*foreignKeyChecker
-	fkTriggerExecs      map[int64][]*ForeignKeyTriggerExec
+	fkTriggerExecs map[int64][]*ForeignKeyTriggerExec
 }
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	for _, fkchckers := range e.deleteRowFKCheckers {
-		for _, fkc := range fkchckers {
-			fkc.resetToBeCheckedKeys()
-		}
-	}
 	if e.IsMultiTable {
 		// todo: add fk check for this
 		return e.deleteMultiTablesByChunk(ctx)
 	}
 	return e.deleteSingleTableByChunk(ctx)
-}
-
-func (e *DeleteExec) initForeignKeyChecker() error {
-	e.deleteRowFKCheckers = make(map[int64][]*foreignKeyChecker)
-	for tid, tbl := range e.tblID2Table {
-		deleteRowFKCheckers, err := initDeleteRowForeignKeyChecker(e.ctx, e.is, tbl.Meta())
-		if err != nil {
-			return err
-		}
-		e.deleteRowFKCheckers[tid] = deleteRowFKCheckers
-	}
-	return nil
 }
 
 func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCols plannercore.HandleCols, isExtraHandle bool, row []types.Datum) error {
@@ -162,20 +144,6 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
-
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	for _, fkchckers := range e.deleteRowFKCheckers {
-		for _, fkc := range fkchckers {
-			err := fkc.checkValueExistInReferTable(ctx, txn)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -261,18 +229,6 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 			return err
 		}
 	}
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	for _, fkchckers := range e.deleteRowFKCheckers {
-		for _, fkc := range fkchckers {
-			err := fkc.checkValueExistInReferTable(ctx, txn)
-			if err != nil {
-				return err
-			}
-		}
-	}
 	return nil
 }
 
@@ -285,15 +241,6 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	err = t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return err
-	}
-
-	stmtCtx := ctx.GetSessionVars().StmtCtx
-	deleteRowFKCheckers := e.deleteRowFKCheckers[t.Meta().ID]
-	for _, fkc := range deleteRowFKCheckers {
-		err = fkc.addRowNeedToCheck(stmtCtx, data)
-		if err != nil {
-			return err
-		}
 	}
 
 	fkTriggerExecs := e.fkTriggerExecs[t.Meta().ID]

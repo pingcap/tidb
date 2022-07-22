@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -13,9 +14,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 func initAddRowForeignKeyChecker(ctx sessionctx.Context, is infoschema.InfoSchema, tbInfo *model.TableInfo, dbName string) ([]*foreignKeyChecker, error) {
@@ -389,6 +390,153 @@ func getForeignKeyTriggerExecs(e Executor) []*ForeignKeyTriggerExec {
 	return nil
 }
 
+type ForeignKeyCheckExec struct {
+	baseExecutor
+
+	tbl             table.Table
+	idx             table.Index
+	idxIsExclusive  bool
+	idxIsPrimaryKey bool
+	handleCols      []*table.Column
+
+	checkExist bool
+	failedErr  error
+
+	toBeCheckedHandleKeys []kv.Handle
+	toBeCheckedUniqueKeys []kv.Key
+	toBeCheckedIndexKeys  []kv.Key
+
+	checked bool
+}
+
+func (fkc ForeignKeyCheckExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	if fkc.checked {
+		return nil
+	}
+	fkc.checked = true
+
+	txn, err := fkc.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	err = fkc.checkHandleKeys(ctx, txn)
+	if err != nil {
+		return err
+	}
+	err = fkc.checkUniqueKeys(ctx, txn)
+	if err != nil {
+		return err
+	}
+	return fkc.checkIndexKeys(ctx, txn)
+}
+
+func (fkc *ForeignKeyCheckExec) checkHandleKeys(ctx context.Context, txn kv.Transaction) error {
+	if len(fkc.toBeCheckedHandleKeys) == 0 {
+		return nil
+	}
+	// Fill cache using BatchGet
+	keys := make([]kv.Key, len(fkc.toBeCheckedHandleKeys))
+	for i, handle := range fkc.toBeCheckedHandleKeys {
+		keys[i] = tablecodec.EncodeRecordKey(fkc.tbl.RecordPrefix(), handle)
+	}
+
+	_, err := txn.BatchGet(ctx, keys)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		_, err := txn.Get(ctx, k)
+		if err == nil {
+			if !fkc.checkExist {
+				return fkc.failedErr
+			}
+			continue
+		}
+		if kv.IsErrNotFound(err) {
+			if fkc.checkExist {
+				return fkc.failedErr
+			}
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (fkc *ForeignKeyCheckExec) checkUniqueKeys(ctx context.Context, txn kv.Transaction) error {
+	if len(fkc.toBeCheckedUniqueKeys) == 0 {
+		return nil
+	}
+	// Fill cache using BatchGet
+	_, err := txn.BatchGet(ctx, fkc.toBeCheckedUniqueKeys)
+	if err != nil {
+		return err
+	}
+	for _, uk := range fkc.toBeCheckedUniqueKeys {
+		_, err := txn.Get(ctx, uk)
+		if err == nil {
+			if !fkc.checkExist {
+				return fkc.failedErr
+			}
+			continue
+		}
+		if kv.IsErrNotFound(err) {
+			if fkc.checkExist {
+				return fkc.failedErr
+			}
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (fkc *ForeignKeyCheckExec) checkIndexKeys(ctx context.Context, txn kv.Transaction) error {
+	if len(fkc.toBeCheckedIndexKeys) == 0 {
+		return nil
+	}
+	snap := txn.GetSnapshot()
+	snap.SetOption(kv.ScanBatchSize, 2)
+	defer func() {
+		snap.SetOption(kv.ScanBatchSize, 256)
+	}()
+	for _, key := range fkc.toBeCheckedIndexKeys {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		exist, err := fkc.checkIndexKeyExistInReferTable(snap, key)
+		if err != nil {
+			return err
+		}
+		if !exist && fkc.checkExist {
+			return fkc.failedErr
+		}
+		if exist && !fkc.checkExist {
+			return fkc.failedErr
+		}
+	}
+	return nil
+}
+
+func (fkc *ForeignKeyCheckExec) checkIndexKeyExistInReferTable(snap kv.Snapshot, key kv.Key) (bool, error) {
+	it, err := snap.Iter(key, nil)
+	if err != nil {
+		return false, err
+	}
+	defer it.Close()
+	if it.Valid() {
+		k := it.Key()
+		// TODO: better decode to column datum and compare the datum value
+		if k.HasPrefix(key) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type ForeignKeyTriggerExec struct {
 	b             *executorBuilder
 	fkTriggerPlan plannercore.FKTriggerPlan
@@ -398,7 +546,7 @@ type ForeignKeyTriggerExec struct {
 }
 
 func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
-	vals, err := fkt.fetchFKValues(row)
+	vals, err := fetchFKValues(row, fkt.colsOffsets)
 	if err != nil || vals == nil {
 		return err
 	}
@@ -406,9 +554,9 @@ func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
 	return nil
 }
 
-func (fkt *ForeignKeyTriggerExec) fetchFKValues(row []types.Datum) ([]types.Datum, error) {
-	vals := make([]types.Datum, len(fkt.colsOffsets))
-	for i, offset := range fkt.colsOffsets {
+func fetchFKValues(row []types.Datum, colsOffsets []int) ([]types.Datum, error) {
+	vals := make([]types.Datum, len(colsOffsets))
+	for i, offset := range colsOffsets {
 		if offset >= len(row) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs("", offset, row)
 		}
@@ -439,20 +587,11 @@ func (fkt *ForeignKeyTriggerExec) fetchFKValues(row []types.Datum) ([]types.Datu
 }
 
 func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() error {
-	ranges := make([]*ranger.Range, 0, len(fkt.fkValues))
-	for _, vals := range fkt.fkValues {
-		ranges = append(ranges, &ranger.Range{
-			LowVal:      vals,
-			HighVal:     vals,
-			LowExclude:  false,
-			HighExclude: false,
-		})
-	}
-	return fkt.fkTriggerPlan.SetRangeForSelectPlan(ranges)
+	return fkt.fkTriggerPlan.SetRangeForSelectPlan(fkt.fkValues)
 }
 
 func (fkt *ForeignKeyTriggerExec) buildExecutor() Executor {
-	return fkt.b.build(fkt.fkTriggerPlan.GetTriggerPlan())
+	return fkt.b.build(fkt.fkTriggerPlan)
 }
 
 func (b *executorBuilder) buildForeignKeyTriggerExecs(tblID2Table map[int64]table.Table, tblID2FKTriggerPlans map[int64][]plannercore.FKTriggerPlan) (map[int64][]*ForeignKeyTriggerExec, error) {

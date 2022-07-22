@@ -17,6 +17,9 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"math"
 	"math/bits"
@@ -5637,9 +5640,9 @@ type FKTriggerPlan interface {
 
 	GetFKInfo() *model.FKInfo
 
-	GetTriggerPlan() Plan
+	//GetTriggerPlan() Plan
 
-	SetRangeForSelectPlan([]*ranger.Range) error
+	SetRangeForSelectPlan([][]types.Datum) error
 }
 
 type baseFKTriggerPlan struct {
@@ -5650,7 +5653,17 @@ func (p *baseFKTriggerPlan) GetFKInfo() *model.FKInfo {
 	return p.fk
 }
 
-func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, ranges []*ranger.Range) error {
+func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkValues [][]types.Datum) error {
+	ranges := make([]*ranger.Range, 0, len(fkValues))
+	for _, vals := range fkValues {
+		ranges = append(ranges, &ranger.Range{
+			LowVal:      vals,
+			HighVal:     vals,
+			LowExclude:  false,
+			HighExclude: false,
+		})
+	}
+
 	switch p := selectPlan.(type) {
 	case *PhysicalIndexLookUpReader:
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -5673,27 +5686,96 @@ type FKOnDeleteSetNullPlan struct {
 	*Update
 }
 
+type FKCheckPlan struct {
+	baseSchemaProducer
+	baseFKTriggerPlan
+
+	DBName     model.CIStr
+	Tbl        table.Table
+	Idx        table.Index
+	Cols       []model.CIStr
+	HandleCols []*table.Column
+
+	IdxIsPrimaryKey bool
+	IdxIsExclusive  bool
+
+	CheckExist bool
+	FailedErr  error
+
+	ToBeCheckedHandleKeys []kv.Handle
+	ToBeCheckedUniqueKeys []kv.Key
+	ToBeCheckedIndexKeys  []kv.Key
+}
+
 func (p *FKOnDeleteCascadePlan) GetTriggerPlan() Plan {
 	return p.Delete
 }
 
-func (p *FKOnDeleteCascadePlan) SetRangeForSelectPlan(ranges []*ranger.Range) error {
-	return p.setRangeForSelectPlan(p.SelectPlan, ranges)
+func (p *FKOnDeleteCascadePlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
+	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
 }
 
 func (p *FKOnDeleteSetNullPlan) GetTriggerPlan() Plan {
 	return p.Update
 }
 
-func (p *FKOnDeleteSetNullPlan) SetRangeForSelectPlan(ranges []*ranger.Range) error {
-	return p.setRangeForSelectPlan(p.SelectPlan, ranges)
+func (p *FKOnDeleteSetNullPlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
+	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
 }
 
-type ForeignKeyTriggerPlan struct {
-	Plan
+func (p *FKCheckPlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
+	for _, vals := range fkValues {
+		err := p.addRowNeedToCheck(vals)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	ChildTable table.Table
-	FK         *model.FKInfo
+func (p *FKCheckPlan) addRowNeedToCheck(vals []types.Datum) error {
+	sc := p.ctx.GetSessionVars().StmtCtx
+	if p.IdxIsPrimaryKey {
+		handleKey, err := p.buildHandleFromFKValues(sc, vals)
+		if err != nil {
+			return err
+		}
+		if p.IdxIsExclusive {
+			p.ToBeCheckedHandleKeys = append(p.ToBeCheckedHandleKeys, handleKey)
+		} else {
+			key := tablecodec.EncodeRecordKey(p.Tbl.RecordPrefix(), handleKey)
+			p.ToBeCheckedIndexKeys = append(p.ToBeCheckedIndexKeys, key)
+		}
+		return nil
+	}
+	key, distinct, err := p.Idx.GenIndexKey(sc, vals, nil, nil)
+	if err != nil {
+		return err
+	}
+	if distinct && p.IdxIsExclusive {
+		p.ToBeCheckedUniqueKeys = append(p.ToBeCheckedUniqueKeys, key)
+	} else {
+		p.ToBeCheckedIndexKeys = append(p.ToBeCheckedIndexKeys, key)
+	}
+	return nil
+}
+
+func (p *FKCheckPlan) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals []types.Datum) (kv.Handle, error) {
+	if len(vals) == 1 && p.Idx == nil {
+		return kv.IntHandle(vals[0].GetInt64()), nil
+	}
+	pkDts := make([]types.Datum, 0, len(vals))
+	for i, val := range vals {
+		if p.Idx != nil && len(p.HandleCols) > 0 {
+			tablecodec.TruncateIndexValue(&val, p.Idx.Meta().Columns[i], p.HandleCols[i].ColumnInfo)
+		}
+		pkDts = append(pkDts, val)
+	}
+	handleBytes, err := codec.EncodeKey(sc, nil, pkDts...)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(handleBytes)
 }
 
 func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]FKTriggerPlan, error) {
@@ -5718,6 +5800,9 @@ func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tb
 			triggerPlan, err = b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
 		case ast.ReferOptionSetNull:
 			triggerPlan, err = b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
+		case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
+			failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
+			triggerPlan, err = b.buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, false, failedErr)
 		default:
 			continue
 		}
@@ -5829,6 +5914,57 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 		Update:            update,
 		baseFKTriggerPlan: baseFKTriggerPlan{fk: fk},
 	}, nil
+}
+
+func (b *PlanBuilder) buildFKCheckPlan(ctx sessionctx.Context, tbl table.Table, fk *model.FKInfo, cols []model.CIStr, checkExist bool, failedErr error) (*FKCheckPlan, error) {
+	tblInfo := tbl.Meta()
+	if tblInfo.PKIsHandle && len(cols) == 1 {
+		refColInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
+		if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
+			refCol := table.FindCol(tbl.Cols(), refColInfo.Name.O)
+			return FKCheckPlan{
+				baseFKTriggerPlan: baseFKTriggerPlan{fk},
+				Tbl:               tbl,
+				IdxIsPrimaryKey:   true,
+				IdxIsExclusive:    true,
+				HandleCols:        []*table.Column{refCol},
+				CheckExist:        checkExist,
+				FailedErr:         failedErr,
+			}.Init(ctx), nil
+		}
+	}
+
+	referTbIdxInfo := model.FindIndexByColumns(tblInfo.Indices, cols...)
+	if referTbIdxInfo == nil {
+		return nil, failedErr
+	}
+	var tblIdx table.Index
+	for _, idx := range tbl.Indices() {
+		if idx.Meta().ID == referTbIdxInfo.ID {
+			tblIdx = idx
+		}
+	}
+	if tblIdx == nil {
+		return nil, failedErr
+	}
+
+	var handleCols []*table.Column
+	if referTbIdxInfo.Primary && tblInfo.IsCommonHandle {
+		cols := tbl.Cols()
+		for _, idxCol := range referTbIdxInfo.Columns {
+			handleCols = append(handleCols, cols[idxCol.Offset])
+		}
+	}
+
+	return FKCheckPlan{
+		baseFKTriggerPlan: baseFKTriggerPlan{fk},
+		Tbl:               tbl,
+		Idx:               tblIdx,
+		IdxIsExclusive:    len(cols) == len(referTbIdxInfo.Columns),
+		IdxIsPrimaryKey:   referTbIdxInfo.Primary && tblInfo.IsCommonHandle,
+		CheckExist:        checkExist,
+		FailedErr:         failedErr,
+	}.Init(ctx), nil
 }
 
 func (b *PlanBuilder) buildTableReaderForFK(ds *DataSource, cols []model.CIStr) (PhysicalPlan, error) {

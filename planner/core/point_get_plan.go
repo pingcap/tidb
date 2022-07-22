@@ -1529,6 +1529,10 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
+	// todo: remove this.
+	if len(tbl.ForeignKeys) > 0 || len(tbl.ReferredForeignKeys) > 0 {
+		return nil
+	}
 	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
 	delPlan := Delete{
 		SelectPlan: pointPlan,

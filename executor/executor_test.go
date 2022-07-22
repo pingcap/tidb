@@ -6313,7 +6313,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
 		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn := func() {
 		for _, ca := range cases {
@@ -6321,7 +6321,9 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 				tk.MustExec(ca.sql)
 			} else {
 				err := tk.ExecToErr(ca.sql)
-				require.True(t, ca.err.Equal(err), ca.sql)
+				msg := fmt.Sprintf("sql: %v, err: %v, expected_err: %v", ca.sql, err, ca.err)
+				require.NotNil(t, err, msg)
+				require.True(t, ca.err.Equal(err), msg)
 			}
 		}
 	}
@@ -6341,7 +6343,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
 		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6359,7 +6361,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
 		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6377,7 +6379,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
 		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6395,7 +6397,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "insert into t2 values (1, 1, 1)"},
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6414,7 +6416,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
 		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6433,7 +6435,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
 		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6452,7 +6454,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2"},
 		{sql: "delete from t1 where a = 3 or b = 4"},
 		{sql: "delete from t1 where a = 5 or b = 6 or a is null or b is null;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6470,7 +6472,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "insert into t2 values (1, 1);"},
 		{sql: "delete from t1 where id = 2;"},
 		{sql: "delete from t1 where a = 3 or a = 4;"},
-		{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 
@@ -6490,7 +6492,7 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 2;"},
 		{sql: "delete from t1 where a = 3 or a = 4;"},
 		// todo: test for cascade.
-		//{sql: "delete from t1 where id = 1", err: executor.ErrRowIsReferenced2},
+		//{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
 }
