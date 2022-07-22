@@ -573,7 +573,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 
 		// In strict sql mode like ‘STRICT_TRANS_TABLES’，can not insert an invalid enum value like 0.
 		// While in sql mode like '', can insert an invalid enum value like 0,
-		// then the enum value 0 will have the enum name '', which maybe confilct with user defined enum ''.
+		// then the enum value 0 will have the enum name '', which maybe conflict with user defined enum ''.
 		// Ref to issue #26885.
 		// This check is used to handle invalid enum name same with user defined enum name.
 		// Use enum value as groupKey instead of enum name.
