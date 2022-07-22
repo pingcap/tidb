@@ -82,6 +82,9 @@ type TableReaderExecutor struct {
 	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
+	// FIXME: in some cases the data size can be more accurate after get the handles count,
+	// but we keep things simple as it needn't to be that accurate for now.
+	netDataSize float64
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -340,7 +343,9 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
 			SetPaging(e.paging).
-			SetAllowBatchCop(e.batchCop).Build()
+			SetAllowBatchCop(e.batchCop).
+			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+			Build()
 		if err != nil {
 			return nil, err
 		}
@@ -379,7 +384,9 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetPaging(e.paging).
-		SetAllowBatchCop(e.batchCop).Build()
+		SetAllowBatchCop(e.batchCop).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
+		Build()
 	if err != nil {
 		return nil, err
 	}
@@ -411,6 +418,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
 		SetAllowBatchCop(e.batchCop).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.ctx, &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging)
 	return reqBuilder.Build()
 }

@@ -917,8 +917,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	fn := func(jobs []*model.Job) (bool, error) {
 		return executor.GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-
-	err = ddl.IterAllDDLJobs(txn, fn)
+	err = ddl.IterAllDDLJobs(s, txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			// The err indicate that current ddl job and remain DDL jobs was been deleted by GC,
