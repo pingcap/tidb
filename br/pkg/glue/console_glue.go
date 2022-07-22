@@ -5,7 +5,6 @@ package glue
 import (
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -19,6 +18,8 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/term"
 )
+
+const defaultTerminalWidth = 80
 
 // ConsoleOperations are some operations based on ConsoleGlue.
 type ConsoleOperations struct {
@@ -77,15 +78,19 @@ func (p pbProgress) Close() {
 	p.bar.Abort(false)
 }
 
+// Wait implements the ProgressWaiter interface.
 func (p pbProgress) Wait() {
 	p.progress.Wait()
 }
 
+// ProgressWaiter is the extended `Progress``: which provides a `wait` method to
+// allow caller wait until all unit in the progress finished.
 type ProgressWaiter interface {
 	Progress
 	Wait()
 }
 
+// cbOnComplete like `decor.OnComplete`, however allow the message provided by a function.
 func cbOnComplete(decl decor.Decorator, cb func() string) decor.DecorFunc {
 	return func(s decor.Statistics) string {
 		if s.Completed {
@@ -100,16 +105,21 @@ func cbOnComplete(decl decor.Decorator, cb func() string) decor.DecorFunc {
 //       after success, and implement by `mpb` (instead of `pb`).
 // Note': Maybe replace the old `StartProgress` with `mpb` too.
 func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFields ...ExtraField) ProgressWaiter {
-	pb := mpb.New(mpb.WithOutput(ops), mpb.WithWidth(ops.GetWidth()), mpb.PopCompletedMode())
+	console := io.Writer(ops)
+	if !ops.IsInteractive() {
+		console = nil
+	}
+	pb := mpb.New(mpb.WithOutput(console), mpb.WithWidth(ops.GetWidth()))
 	greenTitle := color.GreenString(title)
 	bar := pb.New(int64(total),
 		// Play as if the old BR style.
-		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "/", "-", "\\", "|", "/", "-").TipOnComplete("-"),
+		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "/", "-", "\\", "|", "/").TipOnComplete("-"),
 		mpb.BarFillerClearOnComplete(),
 		mpb.PrependDecorators(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s...", title))),
 		mpb.AppendDecorators(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields)))),
 	)
 
+	// If total is zero, finish right now.
 	if total == 0 {
 		bar.SetTotal(0, true)
 	}
@@ -258,7 +268,9 @@ func (NoOPConsoleGlue) Scanln(args ...interface{}) (int, error) {
 }
 
 func (NoOPConsoleGlue) GetWidth() int {
-	return math.MaxUint32
+	// act as if a std console...
+	// so if someone wants to fill one line of terminal won't get OOM.
+	return defaultTerminalWidth
 }
 
 func GetConsole(g Glue) ConsoleOperations {
@@ -287,8 +299,8 @@ func (s StdIOGlue) Scanln(args ...interface{}) (int, error) {
 func (s StdIOGlue) GetWidth() int {
 	width, _, err := term.GetSize(int(os.Stdin.Fd()))
 	if err != nil {
-		log.Warn("failed to get terminal size, using infinity", logutil.ShortError(err), zap.Int("fd", int(os.Stdin.Fd())))
-		return math.MaxUint32
+		log.Warn("failed to get terminal size, assuming normal", logutil.ShortError(err), zap.Int("fd", int(os.Stdin.Fd())))
+		return defaultTerminalWidth
 	}
 	log.Debug("terminal width got.", zap.Int("width", width))
 	return width
