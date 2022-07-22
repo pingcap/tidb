@@ -358,7 +358,7 @@ func (m *MockEngineWriter) AppendRow(arg0 context.Context, arg1 string, arg2 []s
 // AppendRow indicates an expected call of AppendRows.
 func (mr *MockEngineWriterMockRecorder) AppendRow(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRow", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRow", reflect.TypeOf((*MockEngineWriter)(nil).AppendRow), arg0, arg1, arg2, arg3)
 }
 
 // Close mocks base method.

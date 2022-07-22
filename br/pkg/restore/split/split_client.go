@@ -459,7 +459,7 @@ func sendSplitRegionRequest(c *pdClient, ctx context.Context, regionInfo *Region
 				if findLeaderErr != nil {
 					return false, nil, findLeaderErr
 				}
-				if !checkRegionEpoch(newRegionInfo, regionInfo) {
+				if !CheckRegionEpoch(newRegionInfo, regionInfo) {
 					return false, nil, berrors.ErrKVEpochNotMatch
 				}
 				log.Info("find new leader", zap.Uint64("new leader", newRegionInfo.Leader.Id))
@@ -718,8 +718,55 @@ func (c *pdClient) getPDAPIAddr() string {
 	return strings.TrimRight(addr, "/")
 }
 
-func checkRegionEpoch(_new, _old *RegionInfo) bool {
+// CheckRegionEpoch check region epoch.
+func CheckRegionEpoch(_new, _old *RegionInfo) bool {
 	return _new.Region.GetId() == _old.Region.GetId() &&
 		_new.Region.GetRegionEpoch().GetVersion() == _old.Region.GetRegionEpoch().GetVersion() &&
 		_new.Region.GetRegionEpoch().GetConfVer() == _old.Region.GetRegionEpoch().GetConfVer()
+}
+
+// ExponentialBackoffer trivially retry any errors it meets.
+// It's useful when the caller has handled the errors but
+// only want to a more semantic backoff implementation.
+type ExponentialBackoffer struct {
+	Attempts    int
+	BaseBackoff time.Duration
+}
+
+func (b *ExponentialBackoffer) exponentialBackoff() time.Duration {
+	bo := b.BaseBackoff
+	b.Attempts--
+	if b.Attempts == 0 {
+		return 0
+	}
+	b.BaseBackoff *= 2
+	return bo
+}
+
+// PdErrorCanRetry when pd error retry.
+func PdErrorCanRetry(err error) bool {
+	// There are 3 type of reason that PD would reject a `scatter` request:
+	// (1) region %d has no leader
+	// (2) region %d is hot
+	// (3) region %d is not fully replicated
+	//
+	// (2) shouldn't happen in a recently splitted region.
+	// (1) and (3) might happen, and should be retried.
+	grpcErr := status.Convert(err)
+	if grpcErr == nil {
+		return false
+	}
+	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
+		strings.Contains(grpcErr.Message(), "has no leader")
+}
+
+// NextBackoff returns a duration to wait before retrying again.
+func (b *ExponentialBackoffer) NextBackoff(error) time.Duration {
+	// trivially exponential back off, because we have handled the error at upper level.
+	return b.exponentialBackoff()
+}
+
+// Attempt returns the remain attempt times
+func (b *ExponentialBackoffer) Attempt() int {
+	return b.Attempts
 }

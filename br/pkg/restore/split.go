@@ -301,7 +301,7 @@ func (rs *RegionSplitter) ScatterRegionsWithBackoffer(ctx context.Context, newRe
 			if err == nil {
 				// it is safe according to the Go language spec.
 				delete(newRegionSet, region.Region.Id)
-			} else if !pdErrorCanRetry(err) {
+			} else if !split.PdErrorCanRetry(err) {
 				log.Warn("scatter meet error cannot be retried, skipping",
 					logutil.ShortError(err),
 					logutil.Region(region.Region),
@@ -364,15 +364,15 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*spli
 			rs.ScatterRegionsWithBackoffer(
 				ctx, newRegions,
 				// backoff about 6s, or we give up scattering this region.
-				&exponentialBackoffer{
-					attempt:     7,
-					baseBackoff: 100 * time.Millisecond,
+				&split.ExponentialBackoffer{
+					Attempts:    7,
+					BaseBackoff: 100 * time.Millisecond,
 				})
 			return nil
 		}
 		return err
 		// the retry is for the temporary network errors during sending request.
-	}, &exponentialBackoffer{attempt: 3, baseBackoff: 500 * time.Millisecond})
+	}, &split.ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
 
 	if err != nil {
 		log.Warn("failed to batch scatter region", logutil.ShortError(err))
