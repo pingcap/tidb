@@ -21,6 +21,7 @@ go_test(
         "string_util_test.go",
     ],
     embed = [":stringutil"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
