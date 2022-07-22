@@ -23,5 +23,6 @@ go_test(
         "mysql_native_password_test.go",
     ],
     embed = [":auth"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

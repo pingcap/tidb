@@ -2575,15 +2575,24 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	var bf baseBuiltinFunc
 	if isClockUnit && isDateUnit {
 		// For unit DAY_MICROSECOND/DAY_SECOND/DAY_MINUTE/DAY_HOUR, the interpretation of the second argument depends on its evaluation type:
-		// 1. Datetime/timestamp/time are interchangeably interpreted as time. For example:
+		// 1. Datetime/timestamp are interpreted as datetime. For example:
+		// extract(day_second from datetime('2001-01-01 02:03:04')) = 120304
+		// Note that MySQL 5.5+ has a bug of no day portion in the result (20304) for this case, see https://bugs.mysql.com/bug.php?id=73240.
+		// 2. Time is interpreted as is. For example:
 		// extract(day_second from time('02:03:04')) = 20304
-		// extract(day_second from datetime('2001-01-01 02:03:04')) = 20304
-		// 2. Otherwise are interpreted as datetime. For example:
-		// extract(day_second from '2001-01-01 02:03:04') = 1020304
-		// extract(day_second from 20010101020304) = 1020304
-		// Note the heading 1 (the "day" portion) in results of the above two cases.
-		// They are why these units are special -
-		if args[1].GetType().EvalType() == types.ETDatetime || args[1].GetType().EvalType() == types.ETTimestamp || args[1].GetType().EvalType() == types.ETDuration {
+		// Note that time shouldn't be implicitly cast to datetime, or else the date portion will be padded with the current date and this will adjust time portion accordingly.
+		// 3. Otherwise, string/int/float are interpreted as arbitrarily either datetime or time, depending on which fits. For example:
+		// extract(day_second from '2001-01-01 02:03:04') = 1020304 // datetime
+		// extract(day_second from 20010101020304) = 1020304 // datetime
+		// extract(day_second from '01 02:03:04') = 260304 // time
+		if args[1].GetType().EvalType() == types.ETDatetime || args[1].GetType().EvalType() == types.ETTimestamp {
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+			if err != nil {
+				return nil, err
+			}
+			sig = &builtinExtractDatetimeSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
+		} else if args[1].GetType().EvalType() == types.ETDuration {
 			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDuration)
 			if err != nil {
 				return nil, err

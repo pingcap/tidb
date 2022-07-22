@@ -466,6 +466,8 @@ type TableInfo struct {
 
 	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
+
+	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -1083,6 +1085,13 @@ func (p PartitionType) String() string {
 	default:
 		return ""
 	}
+}
+
+// ExchangePartitionInfo provides exchange partition info.
+type ExchangePartitionInfo struct {
+	ExchangePartitionFlag  bool  `json:"exchange_partition_flag"`
+	ExchangePartitionID    int64 `json:"exchange_partition_id"`
+	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
 }
 
 // PartitionInfo provides table partition info.

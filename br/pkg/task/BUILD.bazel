@@ -76,6 +76,7 @@ go_test(
         "stream_test.go",
     ],
     embed = [":task"],
+    flaky = True,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/metautil",

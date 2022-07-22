@@ -24,6 +24,7 @@ go_test(
     name = "errormanager_test",
     srcs = ["errormanager_test.go"],
     embed = [":errormanager"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",

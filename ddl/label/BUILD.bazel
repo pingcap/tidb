@@ -26,6 +26,7 @@ go_test(
         "rule_test.go",
     ],
     embed = [":label"],
+    flaky = True,
     deps = [
         "//parser/ast",
         "//testkit/testsetup",

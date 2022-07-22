@@ -48,9 +48,11 @@ type featureUsage struct {
 	NonTransactionalUsage *m.NonTransactionalStmtCounter   `json:"nonTransactional"`
 	GlobalKill            bool                             `json:"globalKill"`
 	MultiSchemaChange     *m.MultiSchemaChangeUsageCounter `json:"multiSchemaChange"`
+	TablePartition        *m.TablePartitionUsageCounter    `json:"tablePartition"`
 	TiFlashModeStatistics TiFlashModeStatistics            `json:"TiFlashModeStatistics"`
 	LogBackup             bool                             `json:"logBackup"`
 	EnablePaging          bool                             `json:"enablePaging"`
+	EnableCostModelVer2   bool                             `json:"enableCostModelVer2"`
 }
 
 type placementPolicyUsage struct {
@@ -77,6 +79,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 
 	usage.MultiSchemaChange = getMultiSchemaChangeUsageInfo()
 
+	usage.TablePartition = getTablePartitionUsageInfo()
+
 	usage.AutoCapture = getAutoCaptureUsageInfo(sctx)
 
 	collectFeatureUsageFromInfoschema(sctx, &usage)
@@ -90,6 +94,8 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	usage.LogBackup = getLogBackupUsageInfo(sctx)
 
 	usage.EnablePaging = getPagingUsageInfo(sctx)
+
+	usage.EnableCostModelVer2 = getCostModelVer2UsageInfo(sctx)
 
 	return &usage, nil
 }
@@ -209,12 +215,15 @@ type TxnUsage struct {
 	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
 	AssertionLevel      string                   `json:"assertionLevel"`
 	RcCheckTS           bool                     `json:"rcCheckTS"`
+	SavepointCounter    int64                    `json:"SavepointCounter"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 var initialNonTransactionalCounter m.NonTransactionalStmtCounter
 var initialMultiSchemaChangeCounter m.MultiSchemaChangeUsageCounter
+var initialTablePartitionCounter m.TablePartitionUsageCounter
+var initialSavepointStmtCounter int64
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -240,7 +249,9 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
 		rcCheckTSUsed = val == variable.On
 	}
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed}
+	currSavepointCount := m.GetSavepointStmtCounter()
+	diffSavepointCount := currSavepointCount - initialSavepointStmtCounter
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed, diffSavepointCount}
 }
 
 func postReportTxnUsage() {
@@ -249,6 +260,11 @@ func postReportTxnUsage() {
 
 func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
+}
+
+// PostSavepointCount exports for testing.
+func PostSavepointCount() {
+	initialSavepointStmtCounter = m.GetSavepointStmtCounter()
 }
 
 // getCTEUsageInfo gets the CTE usages.
@@ -265,6 +281,16 @@ func postReportMultiSchemaChangeUsage() {
 func getMultiSchemaChangeUsageInfo() *m.MultiSchemaChangeUsageCounter {
 	curr := m.GetMultiSchemaCounter()
 	diff := curr.Sub(initialMultiSchemaChangeCounter)
+	return &diff
+}
+
+func postReportTablePartitionUsage() {
+	initialTablePartitionCounter = m.ResetTablePartitionCounter(initialTablePartitionCounter)
+}
+
+func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
+	curr := m.GetTablePartitionCounter()
+	diff := curr.Cal(initialTablePartitionCounter)
 	return &diff
 }
 
@@ -320,6 +346,10 @@ func getTiFlashModeStatistics(ctx sessionctx.Context) TiFlashModeStatistics {
 
 func getLogBackupUsageInfo(ctx sessionctx.Context) bool {
 	return utils.CheckLogBackupEnabled(ctx)
+}
+
+func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
+	return ctx.GetSessionVars().CostModelVersion == 2
 }
 
 // getPagingUsageInfo gets the value of system variable `tidb_enable_paging`.

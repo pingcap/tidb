@@ -795,6 +795,10 @@ func TestDMLStmt(t *testing.T) {
 		{"admin show ddl jobs -1;", false, ""},
 		{"admin show ddl job queries 1", true, "ADMIN SHOW DDL JOB QUERIES 1"},
 		{"admin show ddl job queries 1, 2, 3, 4", true, "ADMIN SHOW DDL JOB QUERIES 1, 2, 3, 4"},
+		{"admin show ddl job queries limit 5", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 5"},
+		{"admin show ddl job queries limit 5, 10", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 5, 10"},
+		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
+		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
 		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
 		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
 		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
@@ -3397,8 +3401,8 @@ func TestDDL(t *testing.T) {
 		{"create table t (a longtext ascii)", true, "CREATE TABLE `t` (`a` LONGTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a mediumtext ascii)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a tinytext ascii)", true, "CREATE TABLE `t` (`a` TINYTEXT CHARACTER SET LATIN1)"},
-		{"create table t (a text byte)", true, "CREATE TABLE `t` (`a` TEXT)"},
-		{"create table t (a long byte, b text ascii)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT,`b` TEXT CHARACTER SET LATIN1)"},
+		{"create table t (a text byte)", true, "CREATE TABLE `t` (`a` BLOB)"},
+		{"create table t (a long byte, b text ascii)", true, "CREATE TABLE `t` (`a` MEDIUMBLOB,`b` TEXT CHARACTER SET LATIN1)"},
 		{"create table t (a text ascii, b mediumtext ascii, c int)", true, "CREATE TABLE `t` (`a` TEXT CHARACTER SET LATIN1,`b` MEDIUMTEXT CHARACTER SET LATIN1,`c` INT)"},
 		{"create table t (a int, b text ascii, c mediumtext ascii)", true, "CREATE TABLE `t` (`a` INT,`b` TEXT CHARACTER SET LATIN1,`c` MEDIUMTEXT CHARACTER SET LATIN1)"},
 		{"create table t (a long ascii, b long ascii)", true, "CREATE TABLE `t` (`a` MEDIUMTEXT CHARACTER SET LATIN1,`b` MEDIUMTEXT CHARACTER SET LATIN1)"},
@@ -6133,6 +6137,23 @@ func CleanNodeText(node ast.Node) {
 type nodeTextCleaner struct {
 }
 
+func cleanPartition(n ast.Node) {
+	if p, ok := n.(*ast.PartitionOptions); ok && p != nil {
+		var tmpCleaner nodeTextCleaner
+		if p.Interval != nil {
+			p.Interval.SetText(nil, "")
+			p.Interval.SetOriginTextPosition(0)
+			p.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
+			if p.Interval.FirstRangeEnd != nil {
+				(*p.Interval.FirstRangeEnd).Accept(&tmpCleaner)
+			}
+			if p.Interval.LastRangeEnd != nil {
+				(*p.Interval.LastRangeEnd).Accept(&tmpCleaner)
+			}
+		}
+	}
+}
+
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	in.SetText(nil, "")
@@ -6154,21 +6175,6 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && option.Stored == false && option.Refer == nil {
 					col.Options = append(col.Options[:i], col.Options[i+1:]...)
-				}
-			}
-		}
-		if node.Partition != nil {
-			var tmpCleaner nodeTextCleaner
-			if node.Partition.Expr != nil {
-				node.Partition.Expr.Accept(&tmpCleaner)
-			}
-			if node.Partition.Interval != nil {
-				node.Partition.Interval.IntervalExpr.Expr.Accept(&tmpCleaner)
-				if node.Partition.Interval.FirstRangeEnd != nil {
-					(*node.Partition.Interval.FirstRangeEnd).Accept(&tmpCleaner)
-				}
-				if node.Partition.Interval.LastRangeEnd != nil {
-					(*node.Partition.Interval.LastRangeEnd).Accept(&tmpCleaner)
 				}
 			}
 		}
@@ -6220,6 +6226,8 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 		node.ExplicitParens = false
 	case *ast.ColumnDef:
 		node.Tp.CleanElemIsBinaryLit()
+	case *ast.PartitionOptions:
+		cleanPartition(node)
 	}
 	return in, false
 }

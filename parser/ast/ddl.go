@@ -3857,7 +3857,6 @@ func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
-	node
 	PartitionMethod
 	Sub         *PartitionMethod
 	Definitions []*PartitionDefinition
