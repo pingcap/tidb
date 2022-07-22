@@ -34,7 +34,6 @@ go_library(
         "//config",
         "//kv",
         "//parser/mysql",
-        "//sessionctx",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics/handle",

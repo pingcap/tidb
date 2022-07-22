@@ -54,6 +54,7 @@ go_library(
         "//table/tables",
         "//types",
         "//util/collate",
+        "//util/engine",
         "//util/mathutil",
         "//util/mock",
         "@com_github_coreos_go_semver//semver",
