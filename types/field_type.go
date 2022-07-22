@@ -41,7 +41,7 @@ type FieldType = ast.FieldType
 // with a type and other information about field type.
 func NewFieldType(tp byte) *FieldType {
 	charset1, collate1 := DefaultCharsetForType(tp)
-	flen, decimal := MaxFlenAndDecimalForType(tp)
+	flen, decimal := minFlenAndDecimalForType(tp)
 	return NewFieldTypeBuilder().
 		SetType(tp).
 		SetCharset(charset1).
@@ -333,8 +333,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 	}
 }
 
-// MaxFlenAndDecimalForType returns the default flen/decimal for mysql type.
-func MaxFlenAndDecimalForType(tp byte) (int, int) {
+// minFlenAndDecimalForType returns the minimum flen/decimal that can hold all the data for `tp`.
+func minFlenAndDecimalForType(tp byte) (int, int) {
 	switch tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		return mysql.GetDefaultFieldLengthAndDecimal(tp)
