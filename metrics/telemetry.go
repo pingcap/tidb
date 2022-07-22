@@ -225,7 +225,7 @@ func GetSavepointStmtCounter() int64 {
 	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint"}))
 }
 
-// AddIndexLightning records the usages of Add Index with Lightning solution.
+// AddIndexLightningUsageCounter records the usages of Add Index with Lightning solution.
 type AddIndexLightningUsageCounter struct {
 	AddIndexLightningUsed int64 `json:"add_index_lightning_used"`
 }
