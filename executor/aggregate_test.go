@@ -1622,4 +1622,3 @@ func TestIssue26885(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "a", "b", "c", ""))
 	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 }
->>>>>>> 065563a8e... executor: fix aggregating enum zero value gets different results from mysql  (#36208)
