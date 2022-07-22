@@ -122,8 +122,15 @@ var (
 	sessionExecuteParseDurationInternal   = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteParseDurationGeneral    = metrics.SessionExecuteParseDuration.WithLabelValues(metrics.LblGeneral)
 
-	telemetryCTEUsage               = metrics.TelemetrySQLCTECnt
-	telemetryMultiSchemaChangeUsage = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryCTEUsage                         = metrics.TelemetrySQLCTECnt
+	telemetryMultiSchemaChangeUsage           = metrics.TelemetryMultiSchemaChangeCnt
+	telemetryTablePartitionUsage              = metrics.TelemetryTablePartitionCnt
+	telemetryTablePartitionListUsage          = metrics.TelemetryTablePartitionListCnt
+	telemetryTablePartitionRangeUsage         = metrics.TelemetryTablePartitionRangeCnt
+	telemetryTablePartitionHashUsage          = metrics.TelemetryTablePartitionHashCnt
+	telemetryTablePartitionRangeColumnsUsage  = metrics.TelemetryTablePartitionRangeColumnsCnt
+	telemetryTablePartitionListColumnsUsage   = metrics.TelemetryTablePartitionListColumnsCnt
+	telemetryTablePartitionMaxPartitionsUsage = metrics.TelemetryTablePartitionMaxPartitionsCnt
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -3416,6 +3423,28 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 	if ti.UseMultiSchemaChange {
 		telemetryMultiSchemaChangeUsage.Inc()
+	}
+
+	if ti.PartitionTelemetry != nil {
+		if ti.PartitionTelemetry.UseTablePartition {
+			telemetryTablePartitionUsage.Inc()
+			telemetryTablePartitionMaxPartitionsUsage.Add(float64(ti.PartitionTelemetry.TablePartitionMaxPartitionsNum))
+		}
+		if ti.PartitionTelemetry.UseTablePartitionList {
+			telemetryTablePartitionListUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRange {
+			telemetryTablePartitionRangeUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionHash {
+			telemetryTablePartitionHashUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionRangeColumns {
+			telemetryTablePartitionRangeColumnsUsage.Inc()
+		}
+		if ti.PartitionTelemetry.UseTablePartitionListColumns {
+			telemetryTablePartitionListColumnsUsage.Inc()
+		}
 	}
 }
 
