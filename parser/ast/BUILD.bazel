@@ -45,6 +45,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":ast"],
+    flaky = True,
     deps = [
         "//parser",
         "//parser/auth",
