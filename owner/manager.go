@@ -191,6 +191,7 @@ func (m *ownerManager) RetireOwner() {
 // CampaignCancel implements Manager.CampaignCancel interface.
 func (m *ownerManager) CampaignCancel() {
 	m.campaignCancel()
+	m.wg.Wait()
 }
 
 func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
