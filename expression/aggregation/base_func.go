@@ -287,7 +287,6 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	// cast to int implicitly
 	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
