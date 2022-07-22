@@ -26,6 +26,7 @@ go_test(
     timeout = "short",
     srcs = ["executable_checker_test.go"],
     embed = [":ddl-checker"],
+    flaky = True,
     deps = [
         "//testkit",
         "@com_github_stretchr_testify//require",
