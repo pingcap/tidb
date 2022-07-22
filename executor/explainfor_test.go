@@ -1181,22 +1181,29 @@ func TestIgnorePlanCacheWithPrepare(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
+	tk.MustExec("create table t(a int, index idx_a(a));")
 
 	tk.MustExec("create binding for select * from t using select /*+ ignore_plan_cache() */ * from t;")
 	tk.MustExec("prepare stmt from 'select * from t;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
 
 	tk.MustExec("drop binding for select * from t;")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-
-	tk.MustExec("create binding for select * from t using select /*+ ignore_plan_cache() */ * from t;")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("0"))
+
+	tk.MustExec("create binding for select * from t using select /*+ use_index(t, idx_a) */ * from t;")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
 }
 
 func TestSelectView4PlanCache(t *testing.T) {

@@ -318,36 +318,37 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt, ignore *bool) string {
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) (string, bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	ignore := false
 	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
-		return ""
+		return "", ignore
 	}
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return ""
+		return "", ignore
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			*ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
-			return enabledBinding.BindSQL
+			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			return enabledBinding.BindSQL, ignore
 		}
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	if globalHandle == nil {
-		return ""
+		return "", ignore
 	}
 	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			*ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
-			return enabledBinding.BindSQL
+			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			return enabledBinding.BindSQL, ignore
 		}
 	}
-	return ""
+	return "", ignore
 }
 
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (err error) {
@@ -358,14 +359,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	stmtCtx.UseCache = prepared.UseCache
 
 	var bindSQL string
-	var ignorePlanCache bool = false
+	var ignorePlanCache = false
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
 
 	if prepared.UseCache {
-		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt, &ignorePlanCache)
+		bindSQL, ignorePlanCache = GetBindSQL4PlanCache(sctx, preparedStmt)
 		if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || preparedStmt.ForUpdateRead {
 			// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 			// last time. If it changed, we should rebuild the plan. Here, we use a different and more
