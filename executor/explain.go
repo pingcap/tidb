@@ -222,7 +222,7 @@ func (h *memoryDebugModeHandler) run() {
 			heapInUse, trackedMem := h.fetchCurrentMemoryUsage(h.autoGC)
 			loop++
 			if loop%6 == 0 {
-				fields, err = h.genInfo("running", false, int64(heapInUse), int64(trackedMem))
+				fields, err = h.genInfo("running", true, int64(heapInUse), int64(trackedMem))
 				logutil.BgLogger().Info("Memory Debug Mode", fields...)
 				if err != nil {
 					return
