@@ -20,6 +20,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -407,6 +408,10 @@ func newOracleFuture(ctx context.Context, sctx sessionctx.Context, scope string)
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	failpoint.Inject("requestTsoFromPD", func() {
+		sessiontxn.TsoRequestCountInc(sctx)
+	})
 
 	oracleStore := sctx.GetStore().GetOracle()
 	option := &oracle.Option{TxnScope: scope}
