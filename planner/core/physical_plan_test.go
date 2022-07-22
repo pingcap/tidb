@@ -2022,6 +2022,16 @@ func TestSkewDistinctAgg(t *testing.T) {
 	tk.MustQuery("select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) " +
 		"from t group by date_format(d,'%Y') order by df;").Check(
 		testkit.Rows("2019 9 3 3", "2020 90 3 2"))
+	tk.MustQuery("select count(distinct b), sum(c) from t group by a order by 1,2;").Check(
+		testkit.Rows("0 1", "0 1", "1 <nil>", "1 5", "2 7", "2 10"))
+	tk.MustQuery("select count(distinct b) from t group by date_format(d,'%Y') order by 1;").Check(
+		testkit.Rows("2", "2"))
+	tk.MustQuery("select count(a), count(distinct b), max(b) from t group by date_format(d,'%Y') order by 1,2,3;").Check(
+		testkit.Rows("4 2 6", "4 2 6"))
+	tk.MustQuery("select count(a), count(distinct b), max(b) from t group by date_format(d,'%Y'),c order by 1,2,3;").Check(
+		testkit.Rows("1 0 <nil>", "1 0 <nil>", "1 1 4", "1 1 6", "2 1 4", "2 2 6"))
+	tk.MustQuery("select avg(distinct b), count(a), sum(b) from t group by date_format(d,'%Y'),c order by 1,2,3;").Check(
+		testkit.Rows("<nil> 1 <nil>", "<nil> 1 <nil>", "4.0000 1 4", "4.0000 2 8", "5.0000 2 10", "6.0000 1 6"))
 
 	for i, ts := range input {
 		testdata.OnRecord(func() {
