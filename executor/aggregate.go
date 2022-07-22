@@ -566,15 +566,19 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	for _, item := range groupByItems {
 		tp := item.GetType()
 
+		buf, err := expression.GetColumn(tp.EvalType(), numRows)
+		if err != nil {
+			return nil, err
+		}
+
+		// This check is used to handle the condition that in 'NO_ENGINE_SUBSTITUTION' sql_mode,
+		// invalid enum value same with user defined enum value.
+		// Use enum value as groupKey instead of enum name.
+		// Ref to issue #26885.
 		if item.GetType().GetType() == mysql.TypeEnum {
 			newTp := *tp
 			newTp.AddFlag(mysql.EnumSetAsIntFlag)
 			tp = &newTp
-		}
-
-		buf, err := expression.GetColumn(tp.EvalType(), numRows)
-		if err != nil {
-			return nil, err
 		}
 
 		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
