@@ -41,7 +41,7 @@ var (
 			Subsystem: "server",
 			Name:      "memory_usage",
 			Help:      "Memory Usage",
-		}, []string{LblType})
+		}, []string{LblModule, LblType})
 )
 
 // metrics labels.
@@ -100,9 +100,13 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BackfillTotalCounter)
 	prometheus.MustRegister(BackfillProgressGauge)
 	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLJobTableDuration)
+	prometheus.MustRegister(DDLRunningJobCount)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
 	prometheus.MustRegister(DistSQLCoprCacheCounter)
+	prometheus.MustRegister(DistSQLCoprClosestReadCounter)
+	prometheus.MustRegister(DistSQLCoprRespBodySize)
 	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
@@ -146,6 +150,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsInaccuracyRate)
 	prometheus.MustRegister(StmtNodeCounter)
 	prometheus.MustRegister(DbStmtNodeCounter)
+	prometheus.MustRegister(ExecPhaseDuration)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionDuration)
@@ -195,6 +200,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(AdvancerOwner)
 	prometheus.MustRegister(AdvancerTickDuration)
 	prometheus.MustRegister(GetCheckpointBatchSize)
+	prometheus.MustRegister(RegionCheckpointRequest)
+	prometheus.MustRegister(RegionCheckpointFailure)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

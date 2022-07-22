@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser"
@@ -213,6 +214,15 @@ func TestPreCheckFailed(t *testing.T) {
 	require.NoError(t, err)
 	g := glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg:          cfg,
+		targetDBGlue: g,
+	}
+	preInfoGetter := &PreRestoreInfoGetterImpl{
+		cfg:              cfg,
+		targetInfoGetter: targetInfoGetter,
+		dbMetas:          make([]*mydump.MDDatabaseMeta, 0),
+	}
 	ctl := &Controller{
 		cfg:            cfg,
 		saveCpCh:       make(chan saveCp),
@@ -221,6 +231,7 @@ func TestPreCheckFailed(t *testing.T) {
 		checkTemplate:  NewSimpleTemplate(),
 		tidbGlue:       g,
 		errorMgr:       errormanager.New(nil, cfg, log.L()),
+		preInfoGetter:  preInfoGetter,
 	}
 
 	mock.ExpectBegin()

@@ -63,7 +63,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -224,6 +223,8 @@ type Controller struct {
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
+
+	preInfoGetter PreRestoreInfoGetter
 }
 
 type LightningStatus struct {
@@ -365,6 +366,24 @@ func NewRestoreControllerWithPauser(
 	default:
 		metaBuilder = noopMetaMgrBuilder{}
 	}
+	ioWorkers := worker.NewPool(ctx, cfg.App.IOConcurrency, "io")
+	targetInfoGetter := &TargetInfoGetterImpl{
+		cfg:          cfg,
+		targetDBGlue: p.Glue,
+		tls:          tls,
+		backend:      backend,
+	}
+	preInfoGetter, err := NewPreRestoreInfoGetter(
+		cfg,
+		p.DBMetas,
+		p.DumpFileStorage,
+		targetInfoGetter,
+		ioWorkers,
+		backend,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	rc := &Controller{
 		taskCtx:       ctx,
@@ -373,7 +392,7 @@ func NewRestoreControllerWithPauser(
 		tableWorkers:  nil,
 		indexWorkers:  nil,
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
-		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
+		ioWorkers:     ioWorkers,
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
 		pauser:        p.Pauser,
 		backend:       backend,
@@ -393,6 +412,8 @@ func NewRestoreControllerWithPauser(
 		errorMgr:       errorMgr,
 		status:         p.Status,
 		taskMgr:        nil,
+
+		preInfoGetter: preInfoGetter,
 	}
 
 	return rc, nil
@@ -713,22 +734,18 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	for i := 0; i < concurrency; i++ {
 		go worker.doJob()
 	}
-	getTableFunc := rc.backend.FetchRemoteTableModels
-	if !rc.tidbGlue.OwnsSQLExecutor() {
-		getTableFunc = rc.tidbGlue.GetTables
-	}
-	err := worker.makeJobs(rc.dbMetas, getTableFunc)
+	err := worker.makeJobs(rc.dbMetas, rc.preInfoGetter.FetchRemoteTableModels)
 	logTask.End(zap.ErrorLevel, err)
 	if err != nil {
 		return err
 	}
 
-	dbInfos, err := LoadSchemaInfo(ctx, rc.dbMetas, getTableFunc)
+	dbInfos, err := rc.preInfoGetter.GetAllTableStructures(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// For local backend, we need DBInfo.ID to operate the global autoid allocator.
-	if rc.isLocalBackend() {
+	if isLocalBackend(rc.cfg) {
 		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
 		if err != nil {
 			return errors.Trace(err)
@@ -742,11 +759,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		}
 	}
 	rc.dbInfos = dbInfos
-
-	sysVars := ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
-	// override by manually set vars
-	maps.Copy(sysVars, rc.cfg.TiDB.Vars)
-	rc.sysVars = sysVars
+	rc.sysVars = rc.preInfoGetter.GetTargetSysVariablesForImport(ctx)
 
 	return nil
 }
@@ -1398,7 +1411,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 	postProgress := func() error { return nil }
 	var kvStore tidbkv.Storage
 
-	if rc.isLocalBackend() {
+	if isLocalBackend(rc.cfg) {
 		var (
 			restoreFn pdutil.UndoFunc
 			err       error
@@ -1654,7 +1667,7 @@ func (tr *TableRestore) restoreTable(
 		versionInfo := version.ParseServerInfo(versionStr)
 
 		// "show table next_row_id" is only available after tidb v4.0.0
-		if versionInfo.ServerVersion.Major >= 4 && rc.isLocalBackend() {
+		if versionInfo.ServerVersion.Major >= 4 && isLocalBackend(rc.cfg) {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
@@ -1764,7 +1777,7 @@ func (rc *Controller) switchToNormalMode(ctx context.Context) {
 
 func (rc *Controller) switchTiKVMode(ctx context.Context, mode sstpb.SwitchMode) {
 	// // tidb backend don't need to switch tikv to import mode
-	if rc.isTiDBBackend() {
+	if isTiDBBackend(rc.cfg) {
 		return
 	}
 
@@ -1883,7 +1896,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// skip for tidb backend to be compatible with MySQL
-	if rc.isTiDBBackend() {
+	if isTiDBBackend(rc.cfg) {
 		return nil
 	}
 	// set new collation flag base on tidb config
@@ -1932,12 +1945,12 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 	return nil
 }
 
-func (rc *Controller) isLocalBackend() bool {
-	return rc.cfg.TikvImporter.Backend == config.BackendLocal
+func isLocalBackend(cfg *config.Config) bool {
+	return cfg.TikvImporter.Backend == config.BackendLocal
 }
 
-func (rc *Controller) isTiDBBackend() bool {
-	return rc.cfg.TikvImporter.Backend == config.BackendTiDB
+func isTiDBBackend(cfg *config.Config) bool {
+	return cfg.TikvImporter.Backend == config.BackendTiDB
 }
 
 // preCheckRequirements checks
@@ -1947,6 +1960,8 @@ func (rc *Controller) isTiDBBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
+	ctx = WithPreInfoGetterSysVarsCache(ctx, rc.sysVars)
+	ctx = WithPreInfoGetterTableStructuresCache(ctx, rc.dbInfos)
 	if err := rc.DataCheck(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1968,11 +1983,22 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 	// We still need to sample source data even if this task has existed, because we need to judge whether the
 	// source is in order as row key to decide how to sort local data.
-	source, err := rc.estimateSourceData(ctx)
+	estimatedSizeResult, err := rc.preInfoGetter.EstimateSourceDataSize(ctx)
 	if err != nil {
 		return common.ErrCheckDataSource.Wrap(err).GenWithStackByArgs()
 	}
-	if rc.isLocalBackend() {
+	estimatedDataSizeWithIndex := estimatedSizeResult.SizeWithIndex
+
+	// Do not import with too large concurrency because these data may be all unsorted.
+	if estimatedSizeResult.HasUnsortedBigTables {
+		if rc.cfg.App.TableConcurrency > rc.cfg.App.IndexConcurrency {
+			rc.cfg.App.TableConcurrency = rc.cfg.App.IndexConcurrency
+		}
+	}
+	if rc.status != nil {
+		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
+	}
+	if isLocalBackend(rc.cfg) {
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
@@ -1986,7 +2012,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 		}
 		if !taskExist {
-			if err = rc.taskMgr.InitTask(ctx, source); err != nil {
+			if err = rc.taskMgr.InitTask(ctx, estimatedDataSizeWithIndex); err != nil {
 				return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
 			}
 		}
@@ -2002,11 +2028,11 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				err = rc.localResource(ctx, source)
+				err = rc.localResource(ctx, estimatedDataSizeWithIndex)
 				if err != nil {
 					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
 				}
-				if err := rc.clusterResource(ctx, source); err != nil {
+				if err := rc.clusterResource(ctx, estimatedDataSizeWithIndex); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
 						log.FromContext(ctx).Warn("cleanup task failed", zap.Error(err1))
 						return common.ErrMetaMgrUnknown.Wrap(err).GenWithStackByArgs()
@@ -2335,7 +2361,7 @@ func (cr *chunkRestore) deliverLoop(
 		// can safely update current checkpoint.
 
 		failpoint.Inject("LocalBackendSaveCheckpoint", func() {
-			if !rc.isLocalBackend() && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
+			if !isLocalBackend(rc.cfg) && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 				// No need to save checkpoint if nothing was delivered.
 				saveCheckpoint(rc, t, engineID, cr.chunk)
 			}

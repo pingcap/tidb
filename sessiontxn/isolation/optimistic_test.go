@@ -43,6 +43,8 @@ func TestOptimisticTxnContextProviderTS(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, v int)")
 
@@ -132,6 +134,8 @@ func TestOptimisticHandleError(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	provider := initializeOptimisticProvider(t, tk, true)
 	startTS := tk.Session().GetSessionVars().TxnCtx.StartTS
 	checkTS := func() {
@@ -214,6 +218,8 @@ func TestOptimisticProviderInitialize(t *testing.T) {
 		defer clearScopeSettings()
 
 		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
+
 		se := tk.Session()
 
 		// begin outside a txn
@@ -286,6 +292,8 @@ func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	safePoint := "20160102-15:04:05 -0700"

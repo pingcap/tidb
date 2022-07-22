@@ -39,6 +39,7 @@ go_test(
         "processor_test.go",
         "provider_test.go",
     ],
+    flaky = True,
     deps = [
         ":staleread",
         "//domain",

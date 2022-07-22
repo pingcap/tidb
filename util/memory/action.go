@@ -115,7 +115,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *LogOnExceed) GetPriority() int64 {
+func (*LogOnExceed) GetPriority() int64 {
 	return DefLogPriority
 }
 
@@ -134,7 +134,7 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 }
 
 // Action panics when memory usage exceeds memory quota.
-func (a *PanicOnExceed) Action(t *Tracker) {
+func (a *PanicOnExceed) Action(_ *Tracker) {
 	a.mutex.Lock()
 	if a.acted {
 		a.mutex.Unlock()
@@ -149,7 +149,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 }
 
 // GetPriority get the priority of the Action
-func (a *PanicOnExceed) GetPriority() int64 {
+func (*PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
 }
 

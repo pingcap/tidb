@@ -24,12 +24,14 @@ go_library(
 
 go_test(
     name = "memory_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "main_test.go",
         "tracker_test.go",
     ],
     embed = [":memory"],
+    flaky = True,
     deps = [
         "//errno",
         "//parser/terror",

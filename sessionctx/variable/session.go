@@ -689,6 +689,9 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
+	// EnableSkewDistinctAgg can be set true to allow skew distinct aggregate rewrite
+	EnableSkewDistinctAgg bool
+
 	// MultiStatementMode permits incorrect client library usage. Not recommended to be turned on.
 	MultiStatementMode int
 
@@ -917,7 +920,7 @@ type SessionVars struct {
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
-	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
+	// ConnectionInfo indicates current connection info used by current session.
 	ConnectionInfo *ConnectionInfo
 
 	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
@@ -972,6 +975,9 @@ type SessionVars struct {
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
+	// ReplicaClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.
+	// this variable only take effect when `tidb_follower_read` = 'closest-adaptive'
+	ReplicaClosestReadThreshold int64
 
 	// IsolationReadEngines is used to isolation read, tidb only read from the stores whose engine type is in the engines.
 	IsolationReadEngines map[kv.StoreType]struct{}
@@ -1171,6 +1177,16 @@ type SessionVars struct {
 	// MemoryDebugModeAlarmRatio indicated the allowable bias ratio of memory tracking accuracy check.
 	// When `(memory trakced by tidb) * (1+MemoryDebugModeAlarmRatio) < actual heapInUse`, an alarm log will be recorded.
 	MemoryDebugModeAlarmRatio int64
+
+	// EnableAnalyzeSnapshot indicates whether to read data on snapshot when collecting statistics.
+	// When it is false, ANALYZE reads the latest data.
+	// When it is true, ANALYZE reads data on the snapshot at the beginning of ANALYZE.
+	EnableAnalyzeSnapshot bool
+
+	// DefaultStrMatchSelectivity adjust the estimation strategy for string matching expressions that can't be estimated by building into range.
+	// when > 0: it's the selectivity for the expression.
+	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
+	DefaultStrMatchSelectivity float64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1296,7 +1312,7 @@ func (pps PreparedParams) String() string {
 	return " [arguments: " + types.DatumsToStrNoErr(pps) + "]"
 }
 
-// ConnectionInfo present connection used by audit.
+// ConnectionInfo presents the connection information, which is mainly used by audit logs.
 type ConnectionInfo struct {
 	ConnectionID      uint64
 	ConnectionType    string
@@ -1314,6 +1330,24 @@ type ConnectionInfo struct {
 	SSLVersion        string
 	PID               int
 	DB                string
+}
+
+const (
+	// ConnTypeSocket indicates socket without TLS.
+	ConnTypeSocket string = "Socket"
+	// ConnTypeUnixSocket indicates Unix Socket.
+	ConnTypeUnixSocket string = "UnixSocket"
+	// ConnTypeTLS indicates socket with TLS.
+	ConnTypeTLS string = "SSL/TLS"
+)
+
+// IsSecureTransport checks whether the connection is secure.
+func (connInfo *ConnectionInfo) IsSecureTransport() bool {
+	switch connInfo.ConnectionType {
+	case ConnTypeUnixSocket, ConnTypeTLS:
+		return true
+	}
+	return false
 }
 
 // NewSessionVars creates a session vars object.
@@ -1407,6 +1441,7 @@ func NewSessionVars() *SessionVars {
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:       DefTiDBSkewDistinctAgg,
 		MaxAllowedPacket:            DefMaxAllowedPacket,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
@@ -1433,6 +1468,7 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:    DefIndexLookupSize,
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
+		MinPagingSize:      DefMinPagingSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
@@ -2173,6 +2209,9 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// MinPagingSize defines the min size used by the coprocessor paging protocol.
+	MinPagingSize int
 }
 
 const (
@@ -2264,8 +2303,12 @@ const (
 	SlowLogPlan = "Plan"
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
+	// SlowLogBinaryPlan is used to record the binary plan.
+	SlowLogBinaryPlan = "Binary_plan"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
+	// SlowLogBinaryPlanPrefix is the prefix of the binary plan value.
+	SlowLogBinaryPlanPrefix = ast.TiDBDecodeBinaryPlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
@@ -2292,6 +2335,10 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 )
 
+// GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
+// It's controlled by the global variable `tidb_generate_binary_plan`.
+var GenerateBinaryPlan atomic2.Bool
+
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
@@ -2317,6 +2364,7 @@ type SlowQueryLogItems struct {
 	PrevStmt          string
 	Plan              string
 	PlanDigest        string
+	BinaryPlan        string
 	RewriteInfo       RewritePhaseInfo
 	KVTotal           time.Duration
 	PDTotal           time.Duration
@@ -2500,6 +2548,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.PlanDigest) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
 	}
+	if len(logItems.BinaryPlan) != 0 {
+		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
+	}
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
@@ -2677,4 +2728,31 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		return s.seekFactorV2
 	}
 	return s.seekFactor
+}
+
+// EnableEvalTopNEstimationForStrMatch means if we need to evaluate expression with TopN to improve estimation.
+// Currently, it's only for string matching functions (like and regexp).
+func (s *SessionVars) EnableEvalTopNEstimationForStrMatch() bool {
+	return s.DefaultStrMatchSelectivity == 0
+}
+
+// GetStrMatchDefaultSelectivity means the default selectivity for like and regexp.
+// Note: 0 is a special value, which means the default selectivity is 0.1 and TopN assisted estimation is enabled.
+func (s *SessionVars) GetStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == 0 {
+		return 0.1
+	}
+	return s.DefaultStrMatchSelectivity
+}
+
+// GetNegateStrMatchDefaultSelectivity means the default selectivity for not like and not regexp.
+// Note:
+//     0 is a special value, which means the default selectivity is 0.9 and TopN assisted estimation is enabled.
+//     0.8 (the default value) is also a special value. For backward compatibility, when the variable is set to 0.8, we
+//   keep the default selectivity of like/regexp and not like/regexp all 0.8.
+func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
+	if s.DefaultStrMatchSelectivity == DefTiDBDefaultStrMatchSelectivity {
+		return DefTiDBDefaultStrMatchSelectivity
+	}
+	return 1 - s.GetStrMatchDefaultSelectivity()
 }

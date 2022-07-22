@@ -50,10 +50,7 @@ func Format(inputFilename string, goldenFilename string) (err error) {
 		return err
 	}
 
-	if err = printRules(yFmt, spec.Rules); err != nil {
-		return err
-	}
-	return nil
+	return printRules(yFmt, spec.Rules)
 }
 
 func parseFileToSpec(inputFilename string) (*parser.Specification, error) {
@@ -369,7 +366,7 @@ func printRuleBody(f format.Formatter, rule *parser.Rule) error {
 				return err
 			}
 		}
-		counter += 1
+		counter++
 	}
 	if err := checkInconsistencyInYaccParser(f, rule, counter); err != nil {
 		return err

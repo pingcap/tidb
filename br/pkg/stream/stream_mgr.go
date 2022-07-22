@@ -36,11 +36,17 @@ import (
 const (
 	streamBackupMetaPrefix = "v1/backupmeta"
 
+	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
+
 	metaDataWorkerPoolSize = 128
 )
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
+}
+
+func GetStreamBackupGlobalCheckpointPrefix() string {
+	return streamBackupGlobalCheckpointPrefix
 }
 
 // appendTableObserveRanges builds key ranges corresponding to `tblIDS`.
