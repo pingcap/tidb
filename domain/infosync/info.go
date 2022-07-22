@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -450,8 +451,8 @@ func CheckTiKVVersion(store kv.Storage, minVersion semver.Version) error {
 			return err
 		}
 		for _, s := range stores {
-			// empty version means the store is a mock store.
-			if s.Version == "" {
+			// empty version means the store is a mock store. Don't require tiflash version either.
+			if s.Version == "" || engine.IsTiFlash(s) {
 				continue
 			}
 			ver, err := semver.NewVersion(removeVAndHash(s.Version))

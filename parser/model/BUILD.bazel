@@ -23,6 +23,7 @@ go_test(
     name = "model_test",
     srcs = ["model_test.go"],
     embed = [":model"],
+    flaky = True,
     deps = [
         "//parser/charset",
         "//parser/mysql",
