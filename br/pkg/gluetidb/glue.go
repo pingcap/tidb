@@ -226,7 +226,7 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 		table.Partition = &newPartition
 	}
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
+	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, nil)
 }
 
 // Close implements glue.Session.
