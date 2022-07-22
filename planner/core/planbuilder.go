@@ -1400,6 +1400,10 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p := &ShowDDLJobQueries{JobIDs: as.JobIDs}
 		p.setSchemaAndNames(buildShowDDLJobQueriesFields())
 		ret = p
+	case ast.AdminShowDDLJobQueriesWithRange:
+		p := &ShowDDLJobQueriesWithRange{Limit: as.LimitSimple.Count, Offset: as.LimitSimple.Offset}
+		p.setSchemaAndNames(buildShowDDLJobQueriesWithRangeFields())
+		ret = p
 	case ast.AdminShowSlow:
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.setSchemaAndNames(buildShowSlowSchema())
@@ -2806,6 +2810,13 @@ func buildSplitRegionsSchema() (*expression.Schema, types.NameSlice) {
 
 func buildShowDDLJobQueriesFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "QUERY", mysql.TypeVarchar, 256))
+	return schema.col2Schema(), schema.names
+}
+
+func buildShowDDLJobQueriesWithRangeFields() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(2)
+	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "QUERY", mysql.TypeVarchar, 256))
 	return schema.col2Schema(), schema.names
 }
