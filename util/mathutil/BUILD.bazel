@@ -20,6 +20,7 @@ go_test(
         "rand_test.go",
     ],
     embed = [":mathutil"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

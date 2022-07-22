@@ -49,6 +49,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":gcworker"],
+    flaky = True,
     deps = [
         "//ddl/placement",
         "//ddl/util",

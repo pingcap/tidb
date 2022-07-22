@@ -50,6 +50,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":common"],
+    flaky = True,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",
