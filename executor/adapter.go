@@ -193,6 +193,18 @@ type TelemetryInfo struct {
 	UseNonRecursive      bool
 	UseRecursive         bool
 	UseMultiSchemaChange bool
+	PartitionTelemetry   *PartitionTelemetryInfo
+}
+
+// PartitionTelemetryInfo records table partition telemetry information during execution.
+type PartitionTelemetryInfo struct {
+	UseTablePartition              bool
+	UseTablePartitionList          bool
+	UseTablePartitionRange         bool
+	UseTablePartitionHash          bool
+	UseTablePartitionRangeColumns  bool
+	UseTablePartitionListColumns   bool
+	TablePartitionMaxPartitionsNum uint64
 }
 
 // ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
