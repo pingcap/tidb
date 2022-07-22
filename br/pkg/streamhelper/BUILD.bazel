@@ -26,6 +26,7 @@ go_library(
         "//kv",
         "//metrics",
         "//owner",
+        "//util/mathutil",
         "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
         "@com_github_google_btree//:btree",
@@ -56,6 +57,7 @@ go_test(
         "regioniter_test.go",
         "tsheap_test.go",
     ],
+    flaky = True,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",

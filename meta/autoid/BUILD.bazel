@@ -39,6 +39,7 @@ go_test(
         "memid_test.go",
         "seq_autoid_test.go",
     ],
+    flaky = True,
     deps = [
         ":autoid",
         "//kv",

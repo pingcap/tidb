@@ -25,6 +25,7 @@ go_library(
     deps = [
         "//parser/terror",
         "//util/logutil",
+        "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",
@@ -41,6 +42,7 @@ go_test(
         "metrics_test.go",
     ],
     embed = [":metrics"],
+    flaky = True,
     deps = [
         "//parser/terror",
         "//testkit/testsetup",
