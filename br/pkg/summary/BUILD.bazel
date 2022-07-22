@@ -23,6 +23,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":summary"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

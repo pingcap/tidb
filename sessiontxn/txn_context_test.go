@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testfork"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -50,13 +52,10 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan", "return"))
 
 	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 
@@ -81,13 +80,10 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertNotStaleReadForExecutorGetReadTS"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerForUpdateTSEqual"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan"))
 
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
@@ -445,7 +441,7 @@ func TestTxnContextForHistoricalRead(t *testing.T) {
 	})
 
 	doWithCheckPath(t, se, normalPathRecords, func() {
-		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 11"))
+		tk.MustQuery("select * from t1 where id=1 for update").Check(testkit.Rows("1 10"))
 	})
 
 	tk.MustExec("rollback")
@@ -592,13 +588,13 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 }
 
 func TestTxnContextForStaleReadInPrepare(t *testing.T) {
-	store, do, deferFunc := setupTxnContextTest(t)
+	store, _, deferFunc := setupTxnContextTest(t)
 	defer deferFunc()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
 
-	is1 := do.InfoSchema()
+	is1 := se.GetDomainInfoSchema()
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
@@ -665,6 +661,32 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("execute s3")
 	})
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
+
+	// stale read should not use plan cache
+	is2 := se.GetDomainInfoSchema()
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
+	tk.MustExec("set @@tx_read_ts=''")
+	tk.MustExec("do sleep(0.1)")
+	tk.MustExec("set @b=now(6)")
+	tk.MustExec("do sleep(0.1)")
+	tk.MustExec("update t1 set v=v+1 where id=1")
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
+	doWithCheckPath(t, se, path, func() {
+		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 12"))
+	})
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
+	tk.MustExec("set @@tx_read_ts=@b")
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
+	doWithCheckPath(t, se, path, func() {
+		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 11"))
+	})
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
+	tk.MustExec("set @@tx_read_ts=''")
 }
 
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
@@ -725,65 +747,234 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 		"update t1 set v=v+1 where id in (1, 2, 3) and v>0",
 	}
 
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	for _, isolation := range []string{ast.RepeatableRead, ast.ReadCommitted} {
-		for _, query := range queries {
-			for _, autocommit := range []bool{true, false} {
-				t.Run(fmt.Sprintf("%s,%s,autocommit=%v", isolation, query, autocommit), func(t *testing.T) {
-					tk.MustExec("truncate table t1")
-					tk.MustExec("insert into t1 values(1, 10)")
-					tk2 := testkit.NewSteppedTestKit(t, store)
-					defer tk2.MustExec("rollback")
+	testfork.RunTest(t, func(t *testfork.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("truncate table t1")
+		tk.MustExec("insert into t1 values(1, 10)")
+		tk2 := testkit.NewSteppedTestKit(t, store)
+		defer tk2.MustExec("rollback")
 
-					tk2.MustExec("use test")
-					tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
-					tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", isolation))
-					if autocommit {
-						tk2.MustExec("set autocommit=1")
-						tk2.MustExec("begin")
-					} else {
-						tk2.MustExec("set autocommit=0")
-					}
-
-					tk2.SetBreakPoints(
-						sessiontxn.BreakPointBeforeExecutorFirstRun,
-						sessiontxn.BreakPointOnStmtRetryAfterLockError,
-					)
-
-					var isSelect, isUpdate bool
-					switch {
-					case strings.HasPrefix(query, "select"):
-						isSelect = true
-						tk2.SteppedMustQuery(query)
-					case strings.HasPrefix(query, "update"):
-						isUpdate = true
-						tk2.SteppedMustExec(query)
-					default:
-						require.FailNowf(t, "invalid query: ", query)
-					}
-
-					// Pause the session before the executor first run and then update the record in another session
-					tk2.ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
-					tk.MustExec("update t1 set v=v+1")
-
-					// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
-					// and then update the record in another session again.
-					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
-					tk.MustExec("update t1 set v=v+1")
-
-					// Because the record is updated by another session again, when this session continues, it will get a lock error again.
-					tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
-					tk2.Continue().ExpectIdle()
-					switch {
-					case isSelect:
-						tk2.GetQueryResult().Check(testkit.Rows("1 12"))
-					case isUpdate:
-						tk2.MustExec("commit")
-						tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
-					}
-				})
-			}
+		tk2.MustExec("use test")
+		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec(fmt.Sprintf("set tx_isolation = '%s'", testfork.PickEnum(t, ast.RepeatableRead, ast.ReadCommitted)))
+		autocommit := testfork.PickEnum(t, 0, 1)
+		tk2.MustExec(fmt.Sprintf("set autocommit=%d", autocommit))
+		if autocommit == 1 {
+			tk2.MustExec("begin")
 		}
+
+		tk2.SetBreakPoints(
+			sessiontxn.BreakPointBeforeExecutorFirstRun,
+			sessiontxn.BreakPointOnStmtRetryAfterLockError,
+		)
+
+		var isSelect, isUpdate bool
+		query := testfork.Pick(t, queries)
+		switch {
+		case strings.HasPrefix(query, "select"):
+			isSelect = true
+			tk2.SteppedMustQuery(query)
+		case strings.HasPrefix(query, "update"):
+			isUpdate = true
+			tk2.SteppedMustExec(query)
+		default:
+			require.FailNowf(t, "invalid query: ", query)
+		}
+
+		// Pause the session before the executor first run and then update the record in another session
+		tk2.ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+		tk.MustExec("update t1 set v=v+1")
+
+		// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
+		// and then update the record in another session again.
+		tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+		tk.MustExec("update t1 set v=v+1")
+
+		// Because the record is updated by another session again, when this session continues, it will get a lock error again.
+		tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+		tk2.Continue().ExpectIdle()
+		switch {
+		case isSelect:
+			tk2.GetQueryResult().Check(testkit.Rows("1 12"))
+		case isUpdate:
+			tk2.MustExec("commit")
+			tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
+		}
+	})
+}
+
+func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
+	store, _, deferFunc := setupTxnContextTest(t)
+	defer deferFunc()
+
+	queries := []string{
+		"update t1 set v=v+1",
+		"update t1 set v=v+1 where id=1",
+		"update t1 set v=v+1 where id=1 and v>0",
+		"update t1 set v=v+1 where id in (1, 2, 3)",
+		"update t1 set v=v+1 where id in (1, 2, 3) and v>0",
 	}
+
+	testfork.RunTest(t, func(t *testfork.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("truncate table t1")
+		tk.MustExec("insert into t1 values(1, 10)")
+		tk2 := testkit.NewSteppedTestKit(t, store)
+		defer tk2.MustExec("rollback")
+
+		tk2.MustExec("use test")
+		tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+		tk2.MustExec("set autocommit = 1")
+
+		// When autocommit meets write conflict, it will retry in pessimistic mode.
+		// conflictAfterTransfer being true means we encounter a write-conflict again during
+		// the pessimistic mode.
+		// doubleConflictAfterTransfer being true means we encounter a write-conflict again
+		// during the pessimistic retry phase.
+		// And only conflictAfterTransfer being true allows doubleConflictAfterTransfer being true.
+		conflictAfterTransfer := testfork.PickEnum(t, true, false)
+		doubleConflictAfterTransfer := testfork.PickEnum(t, true, false)
+		if !conflictAfterTransfer && doubleConflictAfterTransfer {
+			return
+		}
+
+		tk2.SetBreakPoints(
+			sessiontxn.BreakPointBeforeExecutorFirstRun,
+			sessiontxn.BreakPointOnStmtRetryAfterLockError,
+		)
+
+		query := testfork.Pick(t, queries)
+
+		tk2.SteppedMustExec(query)
+
+		// Pause the session before the executor first run and then update the record in another session
+		tk2.ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+		// After this update, tk2's statement will encounter write conflict. As it's an autocommit transaction,
+		// it will transfer to pessimistic transaction mode.
+		tk.MustExec("update t1 set v=v+1")
+
+		if conflictAfterTransfer {
+			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+			tk.MustExec("update t1 set v=v+1")
+
+			if doubleConflictAfterTransfer {
+				// Session continues, it should get a lock error and retry, we pause the session before the executor's next run
+				// and then update the record in another session again.
+				tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+				tk.MustExec("update t1 set v=v+1")
+			}
+
+			// Because the record is updated by another session again, when this session continues, it will get a lock error again.
+			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointOnStmtRetryAfterLockError)
+			tk2.Continue().ExpectIdle()
+
+			if doubleConflictAfterTransfer {
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 14"))
+			} else {
+				tk2.MustQuery("select * from t1").Check(testkit.Rows("1 13"))
+			}
+		} else {
+			tk2.Continue().ExpectStopOnBreakPoint(sessiontxn.BreakPointBeforeExecutorFirstRun)
+			tk2.Continue().ExpectIdle()
+
+			tk2.MustQuery("select * from t1").Check(testkit.Rows("1 12"))
+		}
+	})
+}
+
+func TestTSOCmdCountForPrepareExecute(t *testing.T) {
+	// This is a mock workload mocks one which discovers that the tso request count is abnormal.
+	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
+	// to reject future works that accidentally causes tso request increasing.
+	// Note, we do not record all tso requests but some typical requests.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
+	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ctx := context.Background()
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+
+	tk.MustExec("create table t1(id int, v int, v2 int, primary key (id), unique key uk (v))")
+	tk.MustExec("create table t2(id int, v int, unique key i1(v))")
+	tk.MustExec("create table t3(id int, v int, key i1(v))")
+
+	sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id = ? for update")
+	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set v = v + 10 where id = ?")
+	sqlInsertID1, _, _, _ := tk.Session().PrepareStmt("insert into t2 values(?, ?)")
+	sqlInsertID2, _, _, _ := tk.Session().PrepareStmt("insert into t3 values(?, ?)")
+
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+
+	for i := 1; i < 100; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+
+		val := i * 10
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	count := sctx.Value(sessiontxn.TsoRequestCount)
+	require.Equal(t, uint64(99), count)
+
+}
+
+func TestTSOCmdCountForTextSql(t *testing.T) {
+	// This is a mock workload mocks one which discovers that the tso request count is abnormal.
+	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
+	// to reject future works that accidentally causes tso request increasing.
+	// Note, we do not record all tso requests but some typical requests.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
+	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+
+	tk.MustExec("create table t1(id int, v int, v2 int, primary key (id), unique key uk (v))")
+	tk.MustExec("create table t2(id int, v int, unique key i1(v))")
+	tk.MustExec("create table t3(id int, v int, key i1(v))")
+
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+	for i := 1; i < 100; i++ {
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t1 where id = 1 for update")
+		tk.MustExec("update t1 set v = v + 10 where id = 1")
+		val := i * 10
+		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v)", val, val))
+		tk.MustExec(fmt.Sprintf("insert into t3 values(%v, %v)", val, val))
+		tk.MustExec("commit")
+	}
+	count := sctx.Value(sessiontxn.TsoRequestCount)
+	require.Equal(t, uint64(99), count)
 }

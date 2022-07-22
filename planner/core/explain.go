@@ -22,37 +22,17 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-// A plan is dataAccesser means it can access underlying data.
-// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
-// ExplainInfo = AccessObject + OperatorInfo
-type dataAccesser interface {
-
-	// AccessObject return plan's `table`, `partition` and `index`.
-	AccessObject(normalized bool) string
-
-	// OperatorInfo return other operator information to be explained.
-	OperatorInfo(normalized bool) string
-}
-
-type partitionAccesser interface {
-	accessObject(sessionctx.Context) string
-}
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
@@ -83,47 +63,12 @@ func (p *PhysicalIndexScan) TP() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
-	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
-}
-
-// AccessObject implements dataAccesser interface.
-func (p *PhysicalIndexScan) AccessObject(normalized bool) string {
-	var buffer strings.Builder
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	buffer.WriteString("table:")
-	buffer.WriteString(tblName)
-	if p.isPartition {
-		if normalized {
-			buffer.WriteString(", partition:?")
-		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			buffer.WriteString(", partition:")
-			buffer.WriteString(partitionName)
-		}
-	}
-	if len(p.Index.Columns) > 0 {
-		buffer.WriteString(", index:" + p.Index.Name.O + "(")
-		for i, idxCol := range p.Index.Columns {
-			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				buffer.WriteString(tblCol.GeneratedExprString)
-			} else {
-				buffer.WriteString(idxCol.Name.O)
-			}
-			if i+1 < len(p.Index.Columns) {
-				buffer.WriteString(", ")
-			}
-		}
-		buffer.WriteString(")")
-	}
-	return buffer.String()
+	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
 // OperatorInfo implements dataAccesser interface.
@@ -215,33 +160,12 @@ func (p *PhysicalTableScan) TP() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
-	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+	return p.AccessObject().String() + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
-	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
-}
-
-// AccessObject implements dataAccesser interface.
-func (p *PhysicalTableScan) AccessObject(normalized bool) string {
-	var buffer strings.Builder
-	tblName := p.Table.Name.O
-	if p.TableAsName != nil && p.TableAsName.O != "" {
-		tblName = p.TableAsName.O
-	}
-	buffer.WriteString("table:")
-	buffer.WriteString(tblName)
-	if p.isPartition {
-		if normalized {
-			buffer.WriteString(", partition:?")
-		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
-			partitionName := pi.GetNameByID(p.physicalTableID)
-			buffer.WriteString(", partition:")
-			buffer.WriteString(partitionName)
-		}
-	}
-	return buffer.String()
+	return p.AccessObject().NormalizedString() + ", " + p.OperatorInfo(true)
 }
 
 // OperatorInfo implements dataAccesser interface.
@@ -333,93 +257,6 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 	return ""
 }
 
-func getAccessObjectForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan, partitionInfo PartitionInfo) string {
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
-	}
-	tbl := tmp.(table.PartitionedTable)
-
-	return partitionAccessObject(sctx, tbl, pi, &partitionInfo)
-}
-
-func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
-	if !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-	if len(p.PartitionInfos) == 0 {
-		ts := p.TablePlans[0].(*PhysicalTableScan)
-		return getAccessObjectForTableScan(sctx, ts, p.PartitionInfo)
-	}
-	if len(p.PartitionInfos) == 1 {
-		return getAccessObjectForTableScan(sctx, p.PartitionInfos[0].tableScan, p.PartitionInfos[0].partitionInfo)
-	}
-	containsPartitionTable := false
-	for _, info := range p.PartitionInfos {
-		if info.tableScan.Table.GetPartitionInfo() != nil {
-			containsPartitionTable = true
-			break
-		}
-	}
-	if !containsPartitionTable {
-		return ""
-	}
-	var buffer bytes.Buffer
-	for index, info := range p.PartitionInfos {
-		if index > 0 {
-			buffer.WriteString(", ")
-		}
-
-		tblName := info.tableScan.Table.Name.O
-		if info.tableScan.TableAsName != nil && info.tableScan.TableAsName.O != "" {
-			tblName = info.tableScan.TableAsName.O
-		}
-
-		if info.tableScan.Table.GetPartitionInfo() == nil {
-			buffer.WriteString("table of ")
-			buffer.WriteString(tblName)
-			continue
-		}
-		buffer.WriteString(getAccessObjectForTableScan(sctx, info.tableScan, info.partitionInfo))
-		buffer.WriteString(" of ")
-		buffer.WriteString(tblName)
-	}
-	return buffer.String()
-}
-
-func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {
-	var buffer bytes.Buffer
-	idxArr, err := PartitionPruning(sctx, tbl, partTable.PruningConds, partTable.PartitionNames, partTable.Columns, partTable.ColumnNames)
-	if err != nil {
-		return "partition pruning error" + err.Error()
-	}
-
-	if len(idxArr) == 0 {
-		return "partition:dual"
-	}
-
-	if len(idxArr) == 1 && idxArr[0] == FullRange {
-		return "partition:all"
-	}
-
-	for i, idx := range idxArr {
-		if i == 0 {
-			buffer.WriteString("partition:")
-		} else {
-			buffer.WriteString(",")
-		}
-		buffer.WriteString(pi.Definitions[idx].Name.O)
-	}
-
-	return buffer.String()
-}
-
 // OperatorInfo return other operator information to be explained.
 func (p *PhysicalTableReader) OperatorInfo(normalized bool) string {
 	return "data:" + p.tablePlan.ExplainID().String()
@@ -433,26 +270,6 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 	return "index:" + p.indexPlan.TP()
-}
-
-func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.IndexPlans[0].(*PhysicalIndexScan)
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	var buffer strings.Builder
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		buffer.WriteString("partition table not found: ")
-		buffer.WriteString(strconv.FormatInt(ts.Table.ID, 10))
-		return buffer.String()
-	}
-
-	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -469,46 +286,9 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	return str.String()
 }
 
-func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		var buffer strings.Builder
-		buffer.WriteString("partition table not found: ")
-		buffer.WriteString(strconv.FormatInt(ts.Table.ID, 10))
-		return buffer.String()
-	}
-
-	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
-}
-
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return ""
-}
-
-func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return ""
-	}
-
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	tmp, ok := is.TableByID(ts.Table.ID)
-	if !ok {
-		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
-	}
-	tbl := tmp.(table.PartitionedTable)
-
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -518,7 +298,11 @@ func (p *PhysicalUnionScan) ExplainInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainInfo() string {
-	return string(expression.SortedExplainExpressionList(p.Conditions))
+	exprStr := string(expression.SortedExplainExpressionList(p.Conditions))
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	return exprStr
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -528,7 +312,11 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainInfo() string {
-	return expression.ExplainExpressionList(p.Exprs, p.schema)
+	exprStr := expression.ExplainExpressionList(p.Exprs, p.schema)
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		exprStr += fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	return exprStr
 }
 
 // ExplainNormalizedInfo implements Plan interface.
@@ -547,7 +335,11 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	return explainByItems(buffer, p.ByItems).String()
+	buffer = explainByItems(buffer, p.ByItems)
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -867,6 +659,9 @@ func (p *PhysicalWindow) ExplainInfo() string {
 		p.formatFrameBound(buffer, p.Frame.End)
 	}
 	buffer.WriteString(")")
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
 	return buffer.String()
 }
 
@@ -995,7 +790,18 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 		}
 		fmt.Fprintf(buffer, "]")
 	}
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		buffer.WriteString(fmt.Sprintf(", stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount))
+	}
 	return buffer.String()
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalExchangeReceiver) ExplainInfo() (res string) {
+	if p.TiFlashFineGrainedShuffleStreamCount > 0 {
+		res = fmt.Sprintf("stream_count: %d", p.TiFlashFineGrainedShuffleStreamCount)
+	}
+	return res
 }
 
 // ExplainInfo implements Plan interface.
@@ -1110,16 +916,11 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject().String(), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
 	return accessObject + ", " + operatorInfo
-}
-
-// AccessObject implements dataAccesser interface.
-func (p *PhysicalMemTable) AccessObject(_ bool) string {
-	return "table:" + p.Table.Name.O
 }
 
 // OperatorInfo implements dataAccesser interface.

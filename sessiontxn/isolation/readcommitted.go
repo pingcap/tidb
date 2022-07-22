@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -31,19 +32,14 @@ import (
 )
 
 type stmtState struct {
-	stmtTS            uint64
-	stmtTSFuture      oracle.Future
-	stmtUseStartTS    bool
-	onNextRetryOrStmt func() error
+	stmtTS         uint64
+	stmtTSFuture   oracle.Future
+	stmtUseStartTS bool
 }
 
 func (s *stmtState) prepareStmt(useStartTS bool) error {
-	onNextStmt := s.onNextRetryOrStmt
 	*s = stmtState{
 		stmtUseStartTS: useStartTS,
-	}
-	if onNextStmt != nil {
-		return onNextStmt()
 	}
 	return nil
 }
@@ -52,7 +48,9 @@ func (s *stmtState) prepareStmt(useStartTS bool) error {
 type PessimisticRCTxnContextProvider struct {
 	baseTxnContextProvider
 	stmtState
-	availableRCCheckTS uint64
+	latestOracleTS uint64
+	// latestOracleTSValid shows whether we have already fetched a ts from pd and whether the ts we fetched is still valid.
+	latestOracleTSValid bool
 }
 
 // NewPessimisticRCTxnContextProvider returns a new PessimisticRCTxnContextProvider
@@ -65,30 +63,49 @@ func NewPessimisticRCTxnContextProvider(sctx sessionctx.Context, causalConsisten
 				txnCtx.IsPessimistic = true
 				txnCtx.Isolation = ast.ReadCommitted
 			},
-			onTxnActive: func(txn kv.Transaction) {
+			onTxnActive: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
 				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
 	}
 
+	provider.onTxnActive = func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+		txn.SetOption(kv.Pessimistic, true)
+		provider.latestOracleTS = txn.StartTS()
+		provider.latestOracleTSValid = true
+	}
 	provider.getStmtReadTSFunc = provider.getStmtTS
 	provider.getStmtForUpdateTSFunc = provider.getStmtTS
 	return provider
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context) error {
-	if err := p.baseTxnContextProvider.OnStmtStart(ctx); err != nil {
+func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
+	if err := p.baseTxnContextProvider.OnStmtStart(ctx, node); err != nil {
 		return err
 	}
+
+	// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
+	// using read-consistency isolation level.
+	if node != nil && NeedSetRCCheckTSFlag(p.sctx, node) {
+		p.sctx.GetSessionVars().StmtCtx.RCCheckTS = true
+	}
+
 	return p.prepareStmt(!p.isTxnPrepared)
+}
+
+// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
+func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
+	sessionVars := ctx.GetSessionVars()
+	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
+		!sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
+		return true
+	}
+	return false
 }
 
 // OnStmtErrorForNextAction is the hook that should be called when a new statement get an error
 func (p *PessimisticRCTxnContextProvider) OnStmtErrorForNextAction(point sessiontxn.StmtErrorHandlePoint, err error) (sessiontxn.StmtErrorAction, error) {
-	// Invalid rc check for next statement or retry when error occurs
-	p.availableRCCheckTS = 0
-
 	switch point {
 	case sessiontxn.StmtErrAfterQuery:
 		return p.handleAfterQueryError(err)
@@ -116,14 +133,29 @@ func (p *PessimisticRCTxnContextProvider) prepareStmtTS() {
 	var stmtTSFuture oracle.Future
 	switch {
 	case p.stmtUseStartTS:
-		stmtTSFuture = sessiontxn.FuncFuture(p.getTxnStartTS)
-	case p.availableRCCheckTS != 0 && sessVars.StmtCtx.RCCheckTS:
-		stmtTSFuture = sessiontxn.ConstantFuture(p.availableRCCheckTS)
+		stmtTSFuture = funcFuture(p.getTxnStartTS)
+	case p.latestOracleTSValid && sessVars.StmtCtx.RCCheckTS:
+		stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
 	default:
-		stmtTSFuture = sessiontxn.NewOracleFuture(p.ctx, p.sctx, sessVars.TxnCtx.TxnScope)
+		stmtTSFuture = p.getOracleFuture()
 	}
 
 	p.stmtTSFuture = stmtTSFuture
+}
+
+func (p *PessimisticRCTxnContextProvider) getOracleFuture() funcFuture {
+	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	future := newOracleFuture(p.ctx, p.sctx, txnCtx.TxnScope)
+	return func() (ts uint64, err error) {
+		if ts, err = future.Wait(); err != nil {
+			return
+		}
+		txnCtx.SetForUpdateTS(ts)
+		ts = txnCtx.GetForUpdateTS()
+		p.latestOracleTS = ts
+		p.latestOracleTSValid = true
+		return
+	}
 }
 
 func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
@@ -132,7 +164,7 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 	}
 
 	var txn kv.Transaction
-	if txn, err = p.activateTxn(); err != nil {
+	if txn, err = p.ActivateTxn(); err != nil {
 		return 0, err
 	}
 
@@ -141,13 +173,8 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 		return 0, err
 	}
 
-	// forUpdateTS should exactly equal to the read ts
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	txnCtx.SetForUpdateTS(ts)
 	txn.SetOption(kv.SnapshotTS, ts)
-
 	p.stmtTS = ts
-	p.availableRCCheckTS = ts
 	return
 }
 
@@ -155,16 +182,18 @@ func (p *PessimisticRCTxnContextProvider) getStmtTS() (ts uint64, err error) {
 // At this point the query will be retried from the beginning.
 func (p *PessimisticRCTxnContextProvider) handleAfterQueryError(queryErr error) (sessiontxn.StmtErrorAction, error) {
 	sessVars := p.sctx.GetSessionVars()
-	if sessVars.StmtCtx.RCCheckTS && errors.ErrorEqual(queryErr, kv.ErrWriteConflict) {
-		logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
-			zap.String("sql", sessVars.StmtCtx.OriginalSQL))
-		return sessiontxn.RetryReady()
+	if !errors.ErrorEqual(queryErr, kv.ErrWriteConflict) || !sessVars.StmtCtx.RCCheckTS {
+		return sessiontxn.NoIdea()
 	}
 
-	return sessiontxn.NoIdea()
+	p.latestOracleTSValid = false
+	logutil.Logger(p.ctx).Info("RC read with ts checking has failed, retry RC read",
+		zap.String("sql", sessVars.StmtCtx.OriginalSQL), zap.Error(queryErr))
+	return sessiontxn.RetryReady()
 }
 
 func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockErr error) (sessiontxn.StmtErrorAction, error) {
+	p.latestOracleTSValid = false
 	txnCtx := p.sctx.GetSessionVars().TxnCtx
 	retryable := false
 	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok && deadlock.IsRetryable {
@@ -182,28 +211,63 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(lockEr
 		retryable = true
 	}
 
-	// force refresh ts in next retry or statement when lock error occurs
-	p.onNextRetryOrStmt = func() error {
-		_, err := p.getStmtTS()
-		return err
-	}
-
 	if retryable {
 		return sessiontxn.RetryReady()
 	}
-
 	return sessiontxn.ErrorAction(lockErr)
 }
 
 // AdviseWarmup provides warmup for inner state
 func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
-	if p.isTidbSnapshotEnabled() {
-		return nil
-	}
-
 	if err := p.prepareTxn(); err != nil {
 		return err
 	}
-	p.prepareStmtTS()
+
+	if !p.isTidbSnapshotEnabled() {
+		p.prepareStmtTS()
+	}
+
 	return nil
+}
+
+// AdviseOptimizeWithPlan in RC covers much fewer cases compared with pessimistic repeatable read.
+// We only optimize with insert operator with no selection in that we do not fetch latest ts immediately.
+// We only update ts if write conflict is incurred.
+func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
+	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
+		return nil
+	}
+
+	if p.stmtUseStartTS || !p.latestOracleTSValid {
+		return nil
+	}
+
+	plan, ok := val.(plannercore.Plan)
+	if !ok {
+		return nil
+	}
+
+	if execute, ok := plan.(*plannercore.Execute); ok {
+		plan = execute.Plan
+	}
+
+	if v, ok := plan.(*plannercore.Insert); ok && v.SelectPlan == nil {
+		p.stmtTSFuture = sessiontxn.ConstantFuture(p.latestOracleTS)
+	}
+
+	return nil
+}
+
+// GetSnapshotWithStmtReadTS gets snapshot with read ts
+func (p *PessimisticRCTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	snapshot, err := p.baseTxnContextProvider.GetSnapshotWithStmtForUpdateTS()
+	if err != nil {
+		return nil, err
+	}
+
+	if p.sctx.GetSessionVars().StmtCtx.RCCheckTS {
+		snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
+
+	return snapshot, nil
 }

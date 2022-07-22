@@ -366,6 +366,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
+	ctxWithTimeout = kv.WithInternalSourceType(ctxWithTimeout, kv.InternalTxnDDL)
 
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitKeys, true, &e.tableInfo.ID)
 	if err != nil {

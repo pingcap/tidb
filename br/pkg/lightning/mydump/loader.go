@@ -38,22 +38,27 @@ type MDDatabaseMeta struct {
 	charSet    string
 }
 
-func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
-	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
-	if err != nil {
-		log.FromContext(ctx).Warn("failed to extract table schema",
-			zap.String("Path", m.SchemaFile.FileMeta.Path),
-			log.ShortError(err),
-		)
-		schema = nil
+// NewMDDatabaseMeta creates an Mydumper database meta with specified character set.
+func NewMDDatabaseMeta(charSet string) *MDDatabaseMeta {
+	return &MDDatabaseMeta{
+		charSet: charSet,
 	}
-	schemaStr := strings.TrimSpace(string(schema))
-	// set default if schema sql is empty
-	if len(schemaStr) == 0 {
-		schemaStr = "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
-	}
+}
 
-	return schemaStr
+func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
+	if m.SchemaFile.FileMeta.Path != "" {
+		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
+		if err != nil {
+			log.FromContext(ctx).Warn("failed to extract table schema",
+				zap.String("Path", m.SchemaFile.FileMeta.Path),
+				log.ShortError(err),
+			)
+		} else if schemaStr := strings.TrimSpace(string(schema)); schemaStr != "" {
+			return schemaStr
+		}
+	}
+	// set default if schema sql is empty or failed to extract.
+	return "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
 }
 
 type MDTableMeta struct {
@@ -73,6 +78,13 @@ type SourceFileMeta struct {
 	Compression Compression
 	SortKey     string
 	FileSize    int64
+}
+
+// NewMDTableMeta creates an Mydumper table meta with specified character set.
+func NewMDTableMeta(charSet string) *MDTableMeta {
+	return &MDTableMeta{
+		charSet: charSet,
+	}
 }
 
 func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) (string, error) {

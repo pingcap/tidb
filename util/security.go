@@ -84,6 +84,7 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 
 	// Create a certificate pool from CA
 	certPool := x509.NewCertPool()
+	//nolint: gosec
 	ca, err := ioutil.ReadFile(caPath)
 	if err != nil {
 		return nil, errors.Annotate(err, "could not read ca certificate")

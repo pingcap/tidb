@@ -135,11 +135,6 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	fsp, err := getExpressionFsp(ctx, args[0])
-	if err != nil {
-		return nil, err
-	}
-
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
 	if err != nil {
 		return nil, err
@@ -214,10 +209,11 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCoalesceStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceString)
 	case types.ETDatetime, types.ETTimestamp:
+		bf.tp.SetDecimal(resultFieldType.GetDecimal())
 		sig = &builtinCoalesceTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case types.ETDuration:
-		bf.tp.SetDecimal(fsp)
+		bf.tp.SetDecimal(resultFieldType.GetDecimal())
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	case types.ETJson:
@@ -329,8 +325,10 @@ func (b *builtinCoalesceTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinCoalesceTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
+	fsp := b.tp.GetDecimal()
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalTime(b.ctx, row)
+		res.SetFsp(fsp)
 		if err != nil || !isNull {
 			break
 		}
@@ -353,6 +351,7 @@ func (b *builtinCoalesceDurationSig) Clone() builtinFunc {
 func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalDuration(b.ctx, row)
+		res.Fsp = b.tp.GetDecimal()
 		if err != nil || !isNull {
 			break
 		}
@@ -2540,21 +2539,21 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case isUnsigned0 && isUnsigned1 && types.CompareUint64(uint64(arg0), uint64(arg1)) == 0:
 		res = 1
 	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
 		res = 1
 	case isUnsigned0 && !isUnsigned1:
 		if arg1 < 0 {
-			break
+			return res, false, nil
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
 		}
 	case !isUnsigned0 && isUnsigned1:
 		if arg0 < 0 {
-			break
+			return res, false, nil
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
@@ -2587,7 +2586,7 @@ func (b *builtinNullEQRealSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case types.CompareFloat64(arg0, arg1) == 0:
 		res = 1
 	}
@@ -2618,7 +2617,7 @@ func (b *builtinNullEQDecimalSig) evalInt(row chunk.Row) (val int64, isNull bool
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2649,7 +2648,7 @@ func (b *builtinNullEQStringSig) evalInt(row chunk.Row) (val int64, isNull bool,
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case types.CompareString(arg0, arg1, b.collation) == 0:
 		res = 1
 	}
@@ -2680,7 +2679,7 @@ func (b *builtinNullEQDurationSig) evalInt(row chunk.Row) (val int64, isNull boo
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2711,7 +2710,7 @@ func (b *builtinNullEQTimeSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	case arg0.Compare(arg1) == 0:
 		res = 1
 	}
@@ -2742,7 +2741,7 @@ func (b *builtinNullEQJSONSig) evalInt(row chunk.Row) (val int64, isNull bool, e
 	case isNull0 && isNull1:
 		res = 1
 	case isNull0 != isNull1:
-		break
+		return res, false, nil
 	default:
 		cmpRes := json.CompareBinary(arg0, arg1)
 		if cmpRes == 0 {

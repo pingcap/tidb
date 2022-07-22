@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // Feedback represents the total scan count in range [lower, upper).
@@ -350,15 +351,15 @@ func NonOverlappedFeedbacks(sc *stmtctx.StatementContext, fbs []Feedback) ([]Fee
 	// Sort feedbacks by end point and start point incrementally, then pick every feedback that is not overlapped
 	// with the previous chosen feedbacks.
 	var existsErr bool
-	sort.Slice(fbs, func(i, j int) bool {
-		res, err := fbs[i].Upper.Compare(sc, fbs[j].Upper, collate.GetBinaryCollator())
+	slices.SortFunc(fbs, func(i, j Feedback) bool {
+		res, err := i.Upper.Compare(sc, j.Upper, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
 		if existsErr || res != 0 {
 			return res < 0
 		}
-		res, err = fbs[i].Lower.Compare(sc, fbs[j].Lower, collate.GetBinaryCollator())
+		res, err = i.Lower.Compare(sc, j.Lower, collate.GetBinaryCollator())
 		if err != nil {
 			existsErr = true
 		}
@@ -726,7 +727,7 @@ func mergeBuckets(bkts []bucket, isNewBuckets []bool, bucketCount int, totalCoun
 	for i := 0; i < mergeCount; i++ {
 		ids = append(ids, bs[i].id)
 	}
-	sort.Ints(ids)
+	slices.Sort(ids)
 	idCursor, bktCursor := 0, 0
 	for i := range bkts {
 		// Merge this bucket with last one.

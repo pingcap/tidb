@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -32,7 +34,7 @@ func assertDecode(t *testing.T, key []byte) []byte {
 }
 
 func assertRegions(t *testing.T, regions []*restore.RegionInfo, keys ...string) {
-	require.Equal(t, len(regions)+1, len(keys))
+	require.Equal(t, len(regions)+1, len(keys), "%+v\nvs\n%+v", regions, keys)
 	last := keys[0]
 	for i, r := range regions {
 		start := assertDecode(t, r.Region.StartKey)
@@ -127,7 +129,7 @@ func TestNotLeader(t *testing.T) {
 func printRegion(name string, infos []*restore.RegionInfo) {
 	fmt.Printf(">>>>> %s <<<<<\n", name)
 	for _, info := range infos {
-		fmt.Printf("[%d] %s ~ %s\n", info.Region.Id, hex.EncodeToString(info.Region.StartKey), hex.EncodeToString(info.Region.EndKey))
+		fmt.Printf("[%04d] %s ~ %s\n", info.Region.Id, hex.EncodeToString(info.Region.StartKey), hex.EncodeToString(info.Region.EndKey))
 	}
 	fmt.Printf("<<<<< %s >>>>>\n", name)
 }
@@ -135,7 +137,7 @@ func printRegion(name string, infos []*restore.RegionInfo) {
 func printPDRegion(name string, infos []*pdtypes.Region) {
 	fmt.Printf(">>>>> %s <<<<<\n", name)
 	for _, info := range infos {
-		fmt.Printf("[%d] %s ~ %s\n", info.Meta.Id, hex.EncodeToString(info.Meta.StartKey), hex.EncodeToString(info.Meta.EndKey))
+		fmt.Printf("[%04d] %s ~ %s\n", info.Meta.Id, hex.EncodeToString(info.Meta.StartKey), hex.EncodeToString(info.Meta.EndKey))
 	}
 	fmt.Printf("<<<<< %s >>>>>\n", name)
 }
@@ -315,4 +317,30 @@ func TestWrappedError(t *testing.T) {
 	require.Equal(t, result.StrategyForRetry(), restore.StrategyFromThisRegion)
 	result = restore.RPCResultFromError(errors.Trace(status.Error(codes.Unknown, "the server said something hard to understand")))
 	require.Equal(t, result.StrategyForRetry(), restore.StrategyGiveUp)
+}
+
+func envInt(name string, def int) int {
+	lit := os.Getenv(name)
+	r, err := strconv.Atoi(lit)
+	if err != nil {
+		return def
+	}
+	return r
+}
+
+func TestPaginateScanLeader(t *testing.T) {
+	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+	cli := initTestClient()
+	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
+	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
+	ctx := context.Background()
+
+	cli.InjectErr = true
+	cli.InjectTimes = int32(envInt("PAGINATE_SCAN_LEADER_FAILURE_COUNT", 2))
+	collectedRegions := []*restore.RegionInfo{}
+	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+		collectedRegions = append(collectedRegions, r)
+		return restore.RPCResultOK()
+	})
+	assertRegions(t, collectedRegions, "", "aay", "bba")
 }

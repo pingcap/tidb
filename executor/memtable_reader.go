@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -252,7 +252,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					}
 					items = append(items, item{key: key, val: str})
 				}
-				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
+				slices.SortFunc(items, func(i, j item) bool { return i.key < j.key })
 				var rows [][]types.Datum
 				for _, item := range items {
 					rows = append(rows, types.MakeDatums(
@@ -279,7 +279,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
@@ -357,7 +357,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 		}
 		results = append(results, result)
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].idx < results[j].idx })
+	slices.SortFunc(results, func(i, j result) bool { return i.idx < j.idx })
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}

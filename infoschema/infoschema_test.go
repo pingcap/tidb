@@ -102,7 +102,8 @@ func TestBasic(t *testing.T) {
 	}
 
 	dbInfos := []*model.DBInfo{dbInfo}
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateDatabase(dbInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
@@ -193,7 +194,7 @@ func TestBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		err := meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
@@ -305,7 +306,8 @@ func TestInfoTables(t *testing.T) {
 
 func genGlobalID(store kv.Storage) (int64, error) {
 	var globalID int64
-	err := kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err error
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
@@ -356,7 +358,8 @@ func TestBuildBundle(t *testing.T) {
 
 	var tb1Bundle, p1Bundle *placement.Bundle
 
-	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) (err error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) (err error) {
 		m := meta.NewMeta(txn)
 		tb1Bundle, err = placement.NewTableBundle(m, tbl1.Meta())
 		require.NoError(t, err)

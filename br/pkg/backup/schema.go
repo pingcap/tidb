@@ -108,13 +108,13 @@ func (ss *Schemas) BackupSchemas(
 				)
 
 				if !skipChecksum {
-					logger.Info("table checksum start")
+					logger.Info("Calculate table checksum start")
 					start := time.Now()
 					err := schema.calculateChecksum(ectx, store.GetClient(), backupTS, copConcurrency)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					logger.Info("table checksum finished",
+					logger.Info("Calculate table checksum completed",
 						zap.Uint64("Crc64Xor", schema.crc64xor),
 						zap.Uint64("TotalKvs", schema.totalKvs),
 						zap.Uint64("TotalBytes", schema.totalBytes),
@@ -143,7 +143,7 @@ func (ss *Schemas) BackupSchemas(
 	if err := errg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("backup checksum", zap.Duration("take", time.Since(startAll)))
+	log.Info("Backup calculated table checksum into metas", zap.Duration("take", time.Since(startAll)))
 	summary.CollectDuration("backup checksum", time.Since(startAll))
 	return metaWriter.FinishWriteMetas(ctx, op)
 }

@@ -161,7 +161,8 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 		tID = job.TableID
 		if atomic.LoadInt32(&errCount) > 0 && job.Type == model.ActionModifyColumn {
 			atomic.AddInt32(&errCount, -1)
-			genAutoRandErr = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBackfillDDLPrefix+ddl.DDLBackfillers[model.ActionModifyColumn])
+			genAutoRandErr = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
 				_, err1 := t.GetAutoIDAccessors(dbID, tID).RandomID().Inc(1)
 				return err1
@@ -176,7 +177,8 @@ func TestModifyAutoRandColumnWithMetaKeyChanged(t *testing.T) {
 	const newAutoRandomBits uint64 = 10
 	testCheckJobDone(t, store, jobID, true)
 	var newTbInfo *model.TableInfo
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		newTbInfo, err = t.GetTable(dbID, tID)

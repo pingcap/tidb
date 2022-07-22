@@ -21,6 +21,7 @@ go_library(
         "//session",
         "//session/txninfo",
         "//sessionctx/variable",
+        "//store/driver",
         "//store/mockstore",
         "//types",
         "//util",
@@ -33,6 +34,7 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_atomic//:atomic",
     ],
 )

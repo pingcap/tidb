@@ -27,6 +27,7 @@ go_test(
         "structure_test.go",
     ],
     embed = [":structure"],
+    flaky = True,
     deps = [
         "//kv",
         "//parser/mysql",
