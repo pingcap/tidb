@@ -23,6 +23,7 @@ go_test(
         "compat_test.go",
         "table_filter_test.go",
     ],
+    flaky = True,
     deps = [
         ":table-filter",
         "@com_github_stretchr_testify//require",

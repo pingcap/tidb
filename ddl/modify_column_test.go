@@ -120,7 +120,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+		e, start, end, physicalID, err := ddl.NewReorgHandlerForTest(m, testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
 		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 		require.Nil(t, e)
 		require.Nil(t, start)

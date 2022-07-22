@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -45,6 +46,15 @@ const (
 
 	// DefaultMergeRegionKeyCount is the default region key count, 960000.
 	DefaultMergeRegionKeyCount uint64 = 960000
+)
+
+type VersionCheckerType int
+
+const (
+	// default version checker
+	NormalVersionChecker VersionCheckerType = iota
+	// version checker for PiTR
+	StreamVersionChecker
 )
 
 // Mgr manages connections to a TiDB cluster.
@@ -91,7 +101,7 @@ func GetAllTiKVStores(
 	j := 0
 	for _, store := range stores {
 		isTiFlash := false
-		if version.IsTiFlash(store) {
+		if engine.IsTiFlash(store) {
 			if storeBehavior == SkipTiFlash {
 				continue
 			} else if storeBehavior == ErrorOnTiFlash {
@@ -177,6 +187,7 @@ func NewMgr(
 	storeBehavior StoreBehavior,
 	checkRequirements bool,
 	needDomain bool,
+	versionCheckerType VersionCheckerType,
 ) (*Mgr, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("conn.NewMgr", opentracing.ChildOf(span.Context()))
@@ -192,7 +203,16 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 	if checkRequirements {
-		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForBR)
+		var checker version.VerChecker
+		switch versionCheckerType {
+		case NormalVersionChecker:
+			checker = version.CheckVersionForBR
+		case StreamVersionChecker:
+			checker = version.CheckVersionForBRPiTR
+		default:
+			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
+		}
+		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), checker)
 		if err != nil {
 			return nil, errors.Annotate(err, "running BR in incompatible version of cluster, "+
 				"if you believe it's OK, use --check-requirements=false to skip.")

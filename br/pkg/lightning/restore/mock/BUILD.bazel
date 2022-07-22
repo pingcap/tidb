@@ -19,6 +19,7 @@ go_test(
     name = "mock_test",
     srcs = ["mock_test.go"],
     embed = [":mock"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/restore",
         "//parser/model",

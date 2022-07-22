@@ -48,12 +48,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -1022,7 +1022,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1035,7 +1035,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return version.IsTiFlash(s)
+				return engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1071,10 +1071,10 @@ func TestMultiIngest(t *testing.T) {
 		// test all non-tiflash stores that support multi ingests
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1110,7 +1110,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error but no tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1123,7 +1123,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error and contains offline tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store) || store.State != metapb.StoreState_Up
+				return !engine.IsTiFlash(store) || store.State != metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
 				return true

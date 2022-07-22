@@ -260,6 +260,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	case model.StateWriteOnly:
 		// write only -> delete only
 		colInfo.State = model.StateDeleteOnly
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
@@ -277,6 +278,7 @@ func onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		colInfo.State = model.StateDeleteReorganization
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -618,24 +620,39 @@ func rollbackModifyColumnJobWithData(d *ddlCtx, t *meta.Meta, tblInfo *model.Tab
 		// Reset PreventNullInsertFlag flag.
 		tblInfo.Columns[oldCol.Offset].SetFlag(oldCol.GetFlag() &^ mysql.PreventNullInsertFlag)
 	}
+	var changingIdxIDs []int64
 	if modifyInfo.changingCol != nil {
-		// changingCol isn't nil means the job has been in the mid state. These appended changingCol and changingIndex should
+		changingIdxIDs = buildRelatedIndexIDs(tblInfo, modifyInfo.changingCol.ID)
+		// The job is in the middle state. The appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(modifyInfo.changingIdxs)]
+		removeChangingColAndIdxs(tblInfo, modifyInfo.changingCol.ID)
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-	// Refactor the job args to add the abandoned temporary index ids into delete range table.
-	idxIDs := make([]int64, 0, len(modifyInfo.changingIdxs))
-	for _, idx := range modifyInfo.changingIdxs {
-		idxIDs = append(idxIDs, idx.ID)
-	}
-	job.Args = []interface{}{idxIDs, getPartitionIDs(tblInfo)}
+	// Reconstruct the job args to add the temporary index ids into delete range table.
+	job.Args = []interface{}{changingIdxIDs, getPartitionIDs(tblInfo)}
 	return ver, nil
+}
+
+func removeChangingColAndIdxs(tblInfo *model.TableInfo, changingColID int64) {
+	restIdx := tblInfo.Indices[:0]
+	for _, idx := range tblInfo.Indices {
+		if !idx.HasColumnInIndexColumns(tblInfo, changingColID) {
+			restIdx = append(restIdx, idx)
+		}
+	}
+	tblInfo.Indices = restIdx
+
+	restCols := tblInfo.Columns[:0]
+	for _, c := range tblInfo.Columns {
+		if c.ID != changingColID {
+			restCols = append(restCols, c)
+		}
+	}
+	tblInfo.Columns = restCols
 }
 
 func (w *worker) doModifyColumnTypeWithData(
@@ -646,7 +663,7 @@ func (w *worker) doModifyColumnTypeWithData(
 	originalState := changingCol.State
 	targetCol := changingCol.Clone()
 	targetCol.Name = colName
-	changingIdxs := getRelatedIndexInfos(tblInfo, changingCol.ID)
+	changingIdxs := buildRelatedIndexInfos(tblInfo, changingCol.ID)
 	switch changingCol.State {
 	case model.StateNone:
 		// Column from null to not null.
@@ -686,7 +703,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs, rmIdxIDs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -733,7 +750,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, err
 		}
 
-		rmIdxIDs = append(getRelatedIndexIDs(tblInfo, oldCol.ID), rmIdxIDs...)
+		rmIdxIDs = append(buildRelatedIndexIDs(tblInfo, oldCol.ID), rmIdxIDs...)
 
 		err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
 		if err != nil {
@@ -776,7 +793,7 @@ func doReorgWorkForModifyColumnMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, j
 
 func doReorgWorkForModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table,
 	oldCol, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) (done bool, ver int64, err error) {
-	rh := newReorgHandler(t)
+	rh := newReorgHandler(t, w.sess, w.concurrentDDL)
 	reorgInfo, err := getReorgInfo(d.jobContext(job), d, rh, job, tbl, BuildElements(changingCol, changingIdxs))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
@@ -926,27 +943,21 @@ func updateChangingCol(col *model.ColumnInfo, newName model.CIStr, newOffset int
 	return col
 }
 
-func getRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.IndexInfo {
+func buildRelatedIndexInfos(tblInfo *model.TableInfo, colID int64) []*model.IndexInfo {
 	var indexInfos []*model.IndexInfo
 	for _, idx := range tblInfo.Indices {
-		for _, idxCol := range idx.Columns {
-			if tblInfo.Columns[idxCol.Offset].ID == colID {
-				indexInfos = append(indexInfos, idx)
-				break
-			}
+		if idx.HasColumnInIndexColumns(tblInfo, colID) {
+			indexInfos = append(indexInfos, idx)
 		}
 	}
 	return indexInfos
 }
 
-func getRelatedIndexIDs(tblInfo *model.TableInfo, colID int64) []int64 {
+func buildRelatedIndexIDs(tblInfo *model.TableInfo, colID int64) []int64 {
 	var oldIdxIDs []int64
 	for _, idx := range tblInfo.Indices {
-		for _, idxCol := range idx.Columns {
-			if tblInfo.Columns[idxCol.Offset].ID == colID {
-				oldIdxIDs = append(oldIdxIDs, idx.ID)
-				break
-			}
+		if idx.HasColumnInIndexColumns(tblInfo, colID) {
+			oldIdxIDs = append(oldIdxIDs, idx.ID)
 		}
 	}
 	return oldIdxIDs
@@ -1053,7 +1064,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		// Update the element in the reorgInfo for updating the reorg meta below.
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey)
+		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey, w.sessPool)
 		logutil.BgLogger().Info("[ddl] update column and indexes",
 			zap.Int64("jobID", reorgInfo.Job.ID),
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
@@ -1094,7 +1105,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		backfillWorker: newBackfillWorker(sessCtx, id, t, reorgInfo),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
-		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_rate"),
+		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues(metrics.GenerateReorgLabel("update_col_rate", reorgInfo.SchemaName, t.Meta().Name.String())),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 		sqlMode:        reorgInfo.ReorgMeta.SQLMode,
