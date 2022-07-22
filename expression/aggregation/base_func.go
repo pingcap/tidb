@@ -104,8 +104,6 @@ func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
-		// make cast to int explicit
-		a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
 		a.typeInfer4NumberFuncs()
 	case ast.WindowFuncCumeDist:
@@ -289,7 +287,8 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+	// make cast to int explicit
+	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
 func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
