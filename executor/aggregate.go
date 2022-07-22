@@ -571,8 +571,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 
-		// This check is used to handle the condition that in 'NO_ENGINE_SUBSTITUTION' sql_mode,
-		// invalid enum value same with user defined enum value.
+		// This check is used to handle invalid enum value same with user defined enum value.
 		// Use enum value as groupKey instead of enum name.
 		// Ref to issue #26885.
 		if item.GetType().GetType() == mysql.TypeEnum {
