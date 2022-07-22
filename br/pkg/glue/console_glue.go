@@ -107,7 +107,7 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "/", "-", "\\", "|", "/", "-").TipOnComplete("-"),
 		mpb.BarFillerClearOnComplete(),
 		mpb.PrependDecorators(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s...", title))),
-		mpb.AppendDecorators(decor.Any(cbOnComplete(decor.Percentage(), printFinalMessage(extraFields)))),
+		mpb.AppendDecorators(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields)))),
 	)
 
 	if total == 0 {

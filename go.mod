@@ -115,6 +115,7 @@ require (
 )
 
 require (
+	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/chavacava/garif v0.0.0-20220316182200-5cad0b5181d4 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
