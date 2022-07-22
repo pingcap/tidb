@@ -920,7 +920,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	removed := metas.RemoveDataBefore(shiftUntilTS)
 
 	// remove metadata
-	removeMetaDone := console.ShowTask("Removing metadata... ", glue.WithTimeCost())
+	removeMetaDone := console.ShowTask("Removing Metadata... ", glue.WithTimeCost())
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
 			return err
@@ -929,27 +929,39 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	removeMetaDone()
 
 	// remove log
-	clearDataFileDone := console.ShowTask(
-		"Clearing data files... ", glue.WithTimeCost(),
+	p := console.StartProgressBar(
+		"Clearing Data Files", len(removed),
+		glue.WithTimeCost(),
 		glue.WithConstExtraField("kv-count", kvCount),
 		glue.WithConstExtraField("kv-size", fmt.Sprintf("%d(%s)", totalSize, units.HumanSize(float64(totalSize)))),
 	)
 	worker := utils.NewWorkerPool(128, "delete files")
-	wg := new(sync.WaitGroup)
+	const keepFirstNFailure = 16
+	var notDeleted []string
 	for _, f := range removed {
-		if !cfg.DryRun {
-			wg.Add(1)
-			worker.Apply(func() {
-				defer wg.Done()
+		worker.Apply(func() {
+			defer p.Inc()
+			if !cfg.DryRun {
 				if err := storage.DeleteFile(ctx, f.Path); err != nil {
 					log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-					console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
+					notDeleted = append(notDeleted, f.Path)
 				}
-			})
+			}
+		})
+	}
+	p.Wait()
+	if len(notDeleted) > 0 {
+		console.Println("Files below are not deleted due to error, you may clear it manually, check log for detail error:")
+		console.Println("- Total", em(len(notDeleted)), "items.")
+		if len(notDeleted) > keepFirstNFailure {
+			console.Println("-", em(len(notDeleted)-keepFirstNFailure), "items omitted.")
+			// TODO: maybe don't add them at the very first.
+			notDeleted = notDeleted[:keepFirstNFailure]
+		}
+		for _, f := range notDeleted {
+			console.Println(f)
 		}
 	}
-	wg.Wait()
-	clearDataFileDone()
 	return nil
 }
 

@@ -14,6 +14,8 @@ import (
 	"github.com/fatih/color"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/vbauerster/mpb/v7"
+	"github.com/vbauerster/mpb/v7/decor"
 	"go.uber.org/zap"
 	"golang.org/x/term"
 )
@@ -43,6 +45,79 @@ func WithTimeCost() ExtraField {
 func WithConstExtraField(key string, value interface{}) ExtraField {
 	return func() [2]string {
 		return [2]string{key, fmt.Sprint(value)}
+	}
+}
+
+type pbProgress struct {
+	bar      *mpb.Bar
+	progress *mpb.Progress
+	ops      ConsoleOperations
+}
+
+func printFinalMessage(extraFields []ExtraField) func() string {
+	return func() string {
+		fields := make([]string, 0, len(extraFields))
+		for _, fieldFunc := range extraFields {
+			field := fieldFunc()
+			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
+		}
+		return fmt.Sprintf("%s; %s\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
+	}
+}
+
+// Inc increases the progress. This method must be goroutine-safe, and can
+// be called from any goroutine.
+func (p pbProgress) Inc() {
+	p.bar.Increment()
+}
+
+// Close marks the progress as 100% complete and that Inc() can no longer be
+// called.
+func (p pbProgress) Close() {
+	p.bar.Abort(false)
+}
+
+func (p pbProgress) Wait() {
+	p.progress.Wait()
+}
+
+type ProgressWaiter interface {
+	Progress
+	Wait()
+}
+
+func cbOnComplete(decl decor.Decorator, cb func() string) decor.DecorFunc {
+	return func(s decor.Statistics) string {
+		if s.Completed {
+			return cb()
+		}
+		return decl.Decor(s)
+	}
+}
+
+// StartProgressBar starts a progress bar with the console operations.
+// Note: This function has overlapped function with `glue.StartProgress`, however this supports display extra fields
+//       after success, and implement by `mpb` (instead of `pb`).
+// Note': Maybe replace the old `StartProgress` with `mpb` too.
+func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFields ...ExtraField) ProgressWaiter {
+	pb := mpb.New(mpb.WithOutput(ops), mpb.WithWidth(ops.GetWidth()), mpb.PopCompletedMode())
+	greenTitle := color.GreenString(title)
+	bar := pb.New(int64(total),
+		// Play as if the old BR style.
+		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "/", "-", "\\", "|", "/", "-").TipOnComplete("-"),
+		mpb.BarFillerClearOnComplete(),
+		mpb.PrependDecorators(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s...", title))),
+		mpb.AppendDecorators(decor.Any(cbOnComplete(decor.Percentage(), printFinalMessage(extraFields)))),
+	)
+
+	if total == 0 {
+		bar.SetTotal(0, true)
+	}
+
+	return pbProgress{
+		bar:      bar,
+		ops:      ops,
+		progress: pb,
 	}
 }
 
