@@ -494,7 +494,13 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		// meta key always need to lock.
 		return true
 	}
+
 	if flags.HasPresumeKeyNotExists() {
+		// For a PUT with PresumeNotExists, lock it or not does not affect the rate of success.
+		// If there will be a write conflict, locking won't help.
+		if len(v) > 0 {
+			return false
+		}
 		return true
 	}
 
