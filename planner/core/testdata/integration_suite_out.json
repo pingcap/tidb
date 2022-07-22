@@ -2561,10 +2561,10 @@
         "Plan": [
           "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
           "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
-          "│ └─StreamAgg_60 1.00 8.18 root  funcs:count(Column#32)->Column#18",
-          "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
-          "│     └─StreamAgg_44 1.00 49.50 batchCop[tiflash]  funcs:count(1)->Column#32",
-          "│       └─TableFullScan_59 3.00 40.50 batchCop[tiflash] table:t1 keep order:false",
+          "│ └─StreamAgg_61 1.00 8.18 root  funcs:count(Column#32)->Column#18",
+          "│   └─TableReader_62 1.00 5.17 root  data:StreamAgg_45",
+          "│     └─StreamAgg_45 1.00 49.50 batchCop[tiflash]  funcs:count(1)->Column#32",
+          "│       └─TableFullScan_60 3.00 40.50 batchCop[tiflash] table:t1 keep order:false",
           "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
           "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
           "    ├─TableReader_24(Build) 3.00 10.16 root  data:TableFullScan_23",
@@ -2856,6 +2856,31 @@
           "  └─TableReader 1.00 root  data:Limit",
           "    └─Limit 1.00 cop[tiflash]  offset:0, count:1",
           "      └─TableFullScan 1.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushDownToTiFlashWithKeepOrderInFastMode",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select max(a) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:max(test.t.a)->Column#3",
+          "└─TopN 1.00 root  test.t.a:desc, offset:0, count:1",
+          "  └─TableReader 1.00 root  data:TopN",
+          "    └─TopN 1.00 batchCop[tiflash]  test.t.a:desc, offset:0, count:1",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select min(a) from t",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:min(test.t.a)->Column#3",
+          "└─TopN 1.00 root  test.t.a, offset:0, count:1",
+          "  └─TableReader 1.00 root  data:TopN",
+          "    └─TopN 1.00 batchCop[tiflash]  test.t.a, offset:0, count:1",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -5197,6 +5222,33 @@
     ]
   },
   {
+    "Name": "TestPushDownSelectionForMPP",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg()*/ count(*) c, id from t group by id having id >c",
+        "Plan": [
+          "TableReader 6400.00 root  data:ExchangeSender",
+          "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 6400.00 mpp[tiflash]  gt(test.t.id, Column#5)",
+          "    └─Projection 8000.00 mpp[tiflash]  Column#5, test.t.id",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(1)->Column#5, funcs:firstrow(test.t.id)->test.t.id",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
+          "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select * from t where id < 2",
+        "Plan": [
+          "TableReader 3323.33 root  data:ExchangeSender",
+          "└─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 3323.33 mpp[tiflash]  lt(test.t.id, 2)",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestMppUnionAll",
     "Cases": [
       {
@@ -5580,11 +5632,11 @@
         "SQL": "desc format = 'brief' select id from t group by id having avg(value)>0",
         "Plan": [
           "Projection 6400.00 root  test.t.id",
-          "└─Selection 6400.00 root  gt(Column#4, 0)",
-          "  └─TableReader 8000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#9, 0), 1, Column#9), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#9, funcs:sum(test.t.value)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "└─TableReader 6400.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Selection 6400.00 mpp[tiflash]  gt(Column#4, 0)",
+          "      └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#17, 0), 1, Column#17), decimal(20,0) BINARY))->Column#4, test.t.id",
+          "        └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#17, funcs:sum(test.t.value)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
           "          └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -5593,11 +5645,11 @@
       {
         "SQL": "desc format = 'brief' select avg(value),id from t group by id having avg(value)>0",
         "Plan": [
-          "Selection 6400.00 root  gt(Column#4, 0)",
-          "└─TableReader 8000.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#10, 0), 1, Column#10), decimal(20,0) BINARY))->Column#4, test.t.id",
-          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#10, funcs:sum(test.t.value)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
+          "TableReader 6400.00 root  data:ExchangeSender",
+          "└─ExchangeSender 6400.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 6400.00 mpp[tiflash]  gt(Column#4, 0)",
+          "    └─Projection 8000.00 mpp[tiflash]  div(Column#4, cast(case(eq(Column#18, 0), 1, Column#18), decimal(20,0) BINARY))->Column#4, test.t.id",
+          "      └─HashAgg 8000.00 mpp[tiflash]  group by:test.t.id, funcs:count(test.t.value)->Column#18, funcs:sum(test.t.value)->Column#4, funcs:firstrow(test.t.id)->test.t.id",
           "        └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
           "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.t.id, collate: binary]",
           "            └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"

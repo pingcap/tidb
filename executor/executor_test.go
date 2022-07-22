@@ -4389,7 +4389,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
+	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
@@ -6055,4 +6055,27 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestBinaryStrNumericOperator(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varbinary(10))")
+	tk.MustExec("insert into t values ('123.12')")
+	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
+		"124.12"))
+	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
+		"122.12"))
+	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
+		"-1231.2"))
+	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
+		"-61.56"))
+	// there should be no warning.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }

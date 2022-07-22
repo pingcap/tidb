@@ -14,7 +14,11 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"strings"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // Metrics for the DDL package.
 var (
@@ -123,6 +127,22 @@ var (
 			Name:      "backfill_percentage_progress",
 			Help:      "Percentage progress of backfill",
 		}, []string{LblType})
+
+	DDLJobTableDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "tidb",
+		Subsystem: "ddl",
+		Name:      "job_table_duration_seconds",
+		Help:      "Bucketed histogram of processing time (s) of the 3 DDL job tables",
+		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
+	}, []string{LblType})
+
+	DDLRunningJobCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "running_job_count",
+			Help:      "Running DDL jobs count",
+		}, []string{LblType})
 )
 
 // Label constants.
@@ -133,7 +153,19 @@ const (
 	LblModifyColumn = "modify_column"
 )
 
+// GenerateReorgLabel returns the label with schema name and table name.
+func GenerateReorgLabel(label string, schemaName string, tableName string) string {
+	var stringBuilder strings.Builder
+	stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
+	stringBuilder.WriteString(label)
+	stringBuilder.WriteString("_")
+	stringBuilder.WriteString(schemaName)
+	stringBuilder.WriteString("_")
+	stringBuilder.WriteString(tableName)
+	return stringBuilder.String()
+}
+
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(lbl string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(lbl)
+func GetBackfillProgressByLabel(label string, schemaName string, tableName string) prometheus.Gauge {
+	return BackfillProgressGauge.WithLabelValues(GenerateReorgLabel(label, schemaName, tableName))
 }

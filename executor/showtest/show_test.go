@@ -458,6 +458,17 @@ func TestShowCreateTable(t *testing.T) {
 			"  `b` varchar(20) DEFAULT '\\\\',\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(" +
+		"a set('a', 'b') charset binary," +
+		"b enum('a', 'b') charset ascii);")
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,\n"+
+			"  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
@@ -1738,7 +1749,7 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=3"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
 

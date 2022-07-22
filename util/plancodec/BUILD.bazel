@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "plancodec",
     srcs = [
+        "binary_plan_decode.go",
         "codec.go",
         "id.go",
     ],
@@ -11,9 +12,11 @@ go_library(
     deps = [
         "//kv",
         "//util/hack",
+        "//util/memory",
         "//util/texttree",
         "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-tipb",
     ],
 )
 

@@ -364,6 +364,9 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 type CompactReplicaKind string
 
 const (
+	// CompactReplicaKindAll means compacting both TiKV and TiFlash replicas.
+	CompactReplicaKindAll = "ALL"
+
 	// CompactReplicaKindTiFlash means compacting TiFlash replicas.
 	CompactReplicaKindTiFlash = "TIFLASH"
 
@@ -386,10 +389,15 @@ func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while add table")
 	}
 
-	// Note: There is only TiFlash replica available now. TiKV will be added later.
-	ctx.WriteKeyWord(" COMPACT ")
-	ctx.WriteKeyWord(string(n.ReplicaKind))
-	ctx.WriteKeyWord(" REPLICA")
+	if n.ReplicaKind == CompactReplicaKindAll {
+		ctx.WriteKeyWord(" COMPACT")
+	} else {
+		// Note: There is only TiFlash replica available now. TiKV will be added later.
+		ctx.WriteKeyWord(" COMPACT ")
+		ctx.WriteKeyWord(string(n.ReplicaKind))
+		ctx.WriteKeyWord(" REPLICA")
+	}
+
 	return nil
 }
 
@@ -3545,7 +3553,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join":
+	case "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "qb_name", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge":
 		ctx.WritePlain(")")
 		return nil
 	}

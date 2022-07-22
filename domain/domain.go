@@ -126,7 +126,7 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
-	neededSchemaVersion, err := m.GetSchemaVersion()
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
@@ -290,8 +290,9 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			return nil, nil, err
 		}
 		if diff == nil {
-			// If diff is missing for any version between used and new version, we fall back to full reload.
-			return nil, nil, fmt.Errorf("failed to get schemadiff")
+			// Empty diff means the txn of generating schema version is committed, but the txn of `runDDLJob` is not or fail.
+			// It is safe to skip the empty diff because the infoschema is new enough and consistent.
+			continue
 		}
 		diffs = append(diffs, diff)
 	}
@@ -903,24 +904,21 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	cfg := config.GetGlobalConfig()
-	if cfg.LogBackup.Enabled {
-		if pdClient == nil || do.etcdClient == nil {
-			log.Warn("pd / etcd client not provided, won't begin Advancer.")
-			return nil
-		}
-		env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
-		if err != nil {
-			return err
-		}
-		adv := streamhelper.NewCheckpointAdvancer(env)
-		adv.UpdateConfig(cfg.LogBackup.Advancer)
-		do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
-		loop, err := do.logBackupAdvancer.Begin(ctx)
-		if err != nil {
-			return err
-		}
-		do.wg.Run(loop)
+	if pdClient == nil || do.etcdClient == nil {
+		log.Warn("pd / etcd client not provided, won't begin Advancer.")
+		return nil
 	}
+	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	if err != nil {
+		return err
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	do.logBackupAdvancer = streamhelper.NewAdvancerDaemon(adv, streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient))
+	loop, err := do.logBackupAdvancer.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	do.wg.Run(loop)
 	return nil
 }
 

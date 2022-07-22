@@ -968,6 +968,17 @@ func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
 }
 
+func (t *partitionedTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error {
+	defID, err := t.locatePartition(ctx, pi, r)
+	if err != nil {
+		return err
+	}
+	if defID != pid {
+		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+	}
+	return nil
+}
+
 // locatePartition returns the partition ID of the input record.
 func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
