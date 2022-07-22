@@ -777,6 +777,13 @@
     ]
   },
   {
+    "name": "TestPushDownSelectionForMPP",
+    "cases": [
+      "desc format = 'brief' select /*+ hash_agg()*/ count(*) c, id from t group by id having id >c",
+      "desc format = 'brief' select * from t where id < 2"
+    ]
+  },
+  {
     "name": "TestMppUnionAll",
     "cases": [
       "explain format = 'brief' select count(*) from (select a , b from t union all select a , b from t1) tt",

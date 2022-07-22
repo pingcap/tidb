@@ -1271,6 +1271,7 @@ type DDLJobsReaderExec struct {
 
 	cacheJobs []*model.Job
 	is        infoschema.InfoSchema
+	sess      sessionctx.Context
 }
 
 // Open implements the Executor Next interface.
@@ -1278,13 +1279,23 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	e.DDLJobRetriever.is = e.is
+	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
+	sess, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
-	e.DDLJobRetriever.is = e.is
-	e.activeRoles = e.ctx.GetSessionVars().ActiveRoles
-	err = e.DDLJobRetriever.initial(txn)
+	e.sess = sess
+	err = sessiontxn.NewTxn(context.Background(), sess)
+	if err != nil {
+		return err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return err
+	}
+	sess.GetSessionVars().SetInTxn(true)
+	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
 	}
@@ -1333,6 +1344,12 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.cursor += len(e.cacheJobs)
 	}
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *DDLJobsReaderExec) Close() error {
+	e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), e.sess)
+	return e.baseExecutor.Close()
 }
 
 func (e *memtableRetriever) setDataFromEngines() {

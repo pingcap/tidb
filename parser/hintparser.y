@@ -531,13 +531,13 @@ UnsupportedTableLevelOptimizerHintName:
 |	"NO_BNL"
 /* HASH_JOIN is supported by TiDB */
 |	"NO_HASH_JOIN"
-|	"MERGE"
 |	"NO_MERGE"
 
 SupportedTableLevelOptimizerHintName:
 	"MERGE_JOIN"
 |	"BROADCAST_JOIN"
 |	"INL_JOIN"
+|	"MERGE"
 |	"INL_HASH_JOIN"
 |	"SWAP_JOIN_INPUTS"
 |	"NO_SWAP_JOIN_INPUTS"

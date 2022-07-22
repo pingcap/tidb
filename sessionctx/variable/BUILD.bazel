@@ -33,6 +33,7 @@ go_library(
         "//parser/types",
         "//sessionctx/sessionstates",
         "//sessionctx/stmtctx",
+        "//sessionctx/variable/featuretag/concurrencyddl",
         "//tidb-binlog/pump_client",
         "//types",
         "//util",
