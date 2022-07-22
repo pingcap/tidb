@@ -1683,6 +1683,20 @@
     ]
   },
   {
+    "SQL": "with cte1 as (with cte3 as (select /*+ MERGE() */  * from t1),cte4 as (select /*+ MERGE() */ * from t2) select /*+ MERGE() */  * from cte3,cte4) ,cte2 as (select /*+ MERGE() */  * from t3) select * from cte1,cte2;",
+    "Plan": [
+      "HashJoin 343.00 root  CARTESIAN inner join",
+      "├─TableReader(Build) 7.00 root  data:TableFullScan",
+      "│ └─TableFullScan 7.00 cop[tikv] table:t3 keep order:false",
+      "└─HashJoin(Probe) 49.00 root  CARTESIAN inner join",
+      "  ├─TableReader(Build) 7.00 root  data:TableFullScan",
+      "  │ └─TableFullScan 7.00 cop[tikv] table:t2 keep order:false",
+      "  └─TableReader(Probe) 7.00 root  data:TableFullScan",
+      "    └─TableFullScan 7.00 cop[tikv] table:t1 keep order:false"
+    ],
+    "Warning": null
+  },
+  {
     "SQL": "with cte1 as (select * from tc), cte2 as (with cte3 as (select /*+ MERGE() */ * from te) ,cte4 as (select * from tc) select * from cte3,cte4) select * from cte2;",
     "Plan": [
       "CTEFullScan 49.00 root CTE:cte2 data:CTE_1",
