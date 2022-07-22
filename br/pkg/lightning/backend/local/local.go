@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -501,7 +502,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	hasTiFlash := false
 	for _, s := range stores {
-		if s.State == metapb.StoreState_Up && version.IsTiFlash(s) {
+		if s.State == metapb.StoreState_Up && engine.IsTiFlash(s) {
 			hasTiFlash = true
 			break
 		}
@@ -509,7 +510,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 
 	for _, s := range stores {
 		// skip stores that are not online
-		if s.State != metapb.StoreState_Up || version.IsTiFlash(s) {
+		if s.State != metapb.StoreState_Up || engine.IsTiFlash(s) {
 			continue
 		}
 		var err error
@@ -1994,7 +1995,7 @@ func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		return 0, 0, err
 	}
 	for _, store := range stores {
-		if store.StatusAddress == "" || version.IsTiFlash(store) {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) {
 			continue
 		}
 		serverInfo := infoschema.ServerInfo{
