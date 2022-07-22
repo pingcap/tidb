@@ -1412,10 +1412,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	dbt.MustExec("create table t2 (a int auto_increment, b int, unique index idx(a));")
 	dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), time.Second*20)
-	defer cancel()
 	checkFn := func(sql, planRegexp string) {
-		require.NoError(t, timeoutCtx.Err())
 		stats := mc.GetSQLStatsBySQLWithRetry(sql, len(planRegexp) > 0)
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
 		require.Greaterf(t, len(stats), 0, "sql: "+sql)
