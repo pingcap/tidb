@@ -62,6 +62,7 @@ func TestMain(m *testing.M) {
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
+
 func createMockStoreForSchemaTest(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
 	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
