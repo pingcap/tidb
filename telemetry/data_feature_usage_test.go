@@ -171,6 +171,51 @@ func TestMultiSchemaChange(t *testing.T) {
 	require.Equal(t, int64(2), usage.MultiSchemaChange.MultiSchemaChangeUsed)
 }
 
+func TestTablePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec("create table pt (a int,b int) partition by hash(a) partitions 4")
+
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionHashCnt)
+	require.Equal(t, int64(4), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+
+	telemetry.PostReportTelemetryDataForTest()
+	tk.MustExec("drop table if exists pt1")
+	tk.MustExec("create table pt1 (a int,b int) partition by range(a) (" +
+		"partition p0 values less than (3)," +
+		"partition p1 values less than (6), " +
+		"partition p2 values less than (9)," +
+		"partition p3 values less than (12)," +
+		"partition p4 values less than (15))")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionHashCnt)
+	require.Equal(t, int64(5), usage.TablePartition.TablePartitionMaxPartitionsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListCnt)
+	require.Equal(t, int64(1), usage.TablePartition.TablePartitionRangeCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionRangeColumnsCnt)
+	require.Equal(t, int64(0), usage.TablePartition.TablePartitionListColumnsCnt)
+}
+
 func TestPlacementPolicies(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
