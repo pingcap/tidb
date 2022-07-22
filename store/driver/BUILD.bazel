@@ -36,6 +36,7 @@ go_test(
         "txn_test.go",
     ],
     embed = [":driver"],
+    flaky = True,
     deps = [
         "//domain",
         "//kv",
