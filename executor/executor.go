@@ -683,18 +683,35 @@ type ShowDDLJobQueriesWithRangeExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobQueriesWithRangeExec) Open(ctx context.Context) error {
+	var err error
+	var jobs []*model.Job
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
+	session, err := e.getSysSession()
 	if err != nil {
 		return err
 	}
+	err = sessiontxn.NewTxn(context.Background(), session)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// releaseSysSession will rollbacks txn automatically.
+		e.releaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), session)
+	}()
+	txn, err := session.Txn(true)
+	if err != nil {
+		return err
+	}
+	session.GetSessionVars().SetInTxn(true)
+
 	m := meta.NewMeta(txn)
-	jobs, err := ddl.GetAllDDLJobs(m)
+	jobs, err = ddl.GetAllDDLJobs(session, m)
 	if err != nil {
 		return err
 	}
+
 	historyJobs, err := ddl.GetLastNHistoryDDLJobs(m, int(e.offset + e.limit))
 	if err != nil {
 		return err
