@@ -54,6 +54,7 @@ go_library(
         "//table/tables",
         "//types",
         "//util/collate",
+        "//util/engine",
         "//util/mathutil",
         "//util/mock",
         "@com_github_coreos_go_semver//semver",
@@ -91,6 +92,7 @@ go_test(
         "tidb_test.go",
     ],
     embed = [":restore"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/kv",

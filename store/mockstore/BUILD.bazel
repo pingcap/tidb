@@ -33,6 +33,7 @@ go_test(
         "tikv_test.go",
     ],
     embed = [":mockstore"],
+    flaky = True,
     deps = [
         "//config",
         "//kv",
