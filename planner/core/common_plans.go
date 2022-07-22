@@ -80,7 +80,7 @@ type ShowDDLJobQueries struct {
 type ShowDDLJobQueriesWithRange struct {
 	baseSchemaProducer
 
-	Limit uint64
+	Limit  uint64
 	Offset uint64
 }
 

@@ -395,8 +395,8 @@ func (b *executorBuilder) buildShowDDLJobQueries(v *plannercore.ShowDDLJobQuerie
 func (b *executorBuilder) buildShowDDLJobQueriesWithRange(v *plannercore.ShowDDLJobQueriesWithRange) Executor {
 	e := &ShowDDLJobQueriesWithRangeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		offset: v.Offset,
-		limit: v.Limit,
+		offset:       v.Offset,
+		limit:        v.Limit,
 	}
 	return e
 }
