@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mock",
+    srcs = ["mock.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/lightning/restore/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/lightning/mydump",
+        "//br/pkg/storage",
+        "//parser/model",
+        "//store/pdtypes",
+        "//util/filter",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "mock_test",
+    srcs = ["mock_test.go"],
+    embed = [":mock"],
+    deps = [
+        "//br/pkg/lightning/restore",
+        "//parser/model",
+        "@com_github_stretchr_testify//require",
+    ],
+)

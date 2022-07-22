@@ -31,6 +31,7 @@ go_library(
 
 go_test(
     name = "stmtsummary_test",
+    timeout = "short",
     srcs = [
         "evicted_test.go",
         "main_test.go",

@@ -16,6 +16,7 @@ package stream
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -35,11 +36,17 @@ import (
 const (
 	streamBackupMetaPrefix = "v1/backupmeta"
 
+	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
+
 	metaDataWorkerPoolSize = 128
 )
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
+}
+
+func GetStreamBackupGlobalCheckpointPrefix() string {
+	return streamBackupGlobalCheckpointPrefix
 }
 
 // appendTableObserveRanges builds key ranges corresponding to `tblIDS`.
@@ -172,7 +179,11 @@ func FastUnmarshalMetaData(
 			m := &backuppb.Metadata{}
 			err = m.Unmarshal(b)
 			if err != nil {
-				return err
+				if !strings.HasSuffix(path, ".meta") {
+					return nil
+				} else {
+					return err
+				}
 			}
 			return fn(readPath, m)
 		})

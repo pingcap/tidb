@@ -45,6 +45,8 @@ func TestPessimisticRCTxnContextProviderRCCheck(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	tk.MustExec("set @@tidb_rc_read_check_ts=1")
 	se := tk.Session()
 	provider := initializePessimisticRCProvider(t, tk)
@@ -145,7 +147,11 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
+
 	tk.MustExec("use test")
 	tk2.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, v int)")
@@ -181,6 +187,8 @@ func TestPessimisticRCTxnContextProviderRCCheckForPrepareExecute(t *testing.T) {
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(ctx, tk.Session(), rs)
 	require.Error(t, err)
+	rs.Close()
+
 	ts, err = provider.GetStmtForUpdateTS()
 	require.NoError(t, err)
 	require.Greater(t, compareTS, ts)
@@ -199,6 +207,8 @@ func TestPessimisticRCTxnContextProviderLockError(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	provider := initializePessimisticRCProvider(t, tk)
 
@@ -236,6 +246,8 @@ func TestPessimisticRCTxnContextProviderTS(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	provider := initializePessimisticRCProvider(t, tk)
 	compareTS := getOracleTS(t, se)
@@ -293,6 +305,8 @@ func TestRCProviderInitialize(t *testing.T) {
 		defer clearScopeSettings()
 
 		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
+
 		se := tk.Session()
 		tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 		tk.MustExec("set @@tidb_txn_mode='pessimistic'")
@@ -355,6 +369,8 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
 	tk.MustExec("set @@tx_isolation = 'READ-COMMITTED'")
 	safePoint := "20160102-15:04:05 -0700"
@@ -447,8 +463,12 @@ func TestConflictErrorsInRC(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
+
 	se := tk.Session()
+
 	tk2 := testkit.NewTestKit(t, store)
+	defer tk2.MustExec("rollback")
 
 	tk.MustExec("use test")
 	tk2.MustExec("use test")

@@ -10,6 +10,7 @@ go_library(
 
 go_test(
     name = "table-rule-selector_test",
+    timeout = "short",
     srcs = ["selector_test.go"],
     embed = [":table-rule-selector"],
     deps = ["@com_github_stretchr_testify//require"],

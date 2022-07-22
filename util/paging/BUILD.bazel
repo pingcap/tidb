@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "paging_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "paging_test.go",

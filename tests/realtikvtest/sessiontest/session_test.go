@@ -1373,7 +1373,8 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	tk.MustExec("create database testoom")
+	tk.MustExec("use testoom")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
 	// create table for non keep-order case
 	tk.MustExec("drop table if exists t5")
@@ -1414,7 +1415,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		quota := 5*copr.MockResponseSizeForTest - 100
 		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-		tk.MustExec("use test")
+		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
@@ -1429,7 +1430,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
-		tk.MustExec("use test")
+		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err := tk.QueryToErr(sql)
@@ -1451,7 +1452,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		se.Close()
 	}
 	globaltk := testkit.NewTestKit(t, store)
-	globaltk.MustExec("use test")
+	globaltk.MustExec("use testoom")
 	globaltk.MustExec("set global tidb_enable_rate_limit_action= 0")
 	for _, testcase := range testcases {
 		se, err := session.CreateSession4Test(store)
@@ -1476,7 +1477,7 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		se, err := session.CreateSession4Test(store)
 		require.NoError(t, err)
 		tk.SetSession(se)
-		tk.MustExec("use test")
+		tk.MustExec("use testoom")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
