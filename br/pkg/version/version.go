@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -70,16 +71,6 @@ func checkTiFlashVersion(store *metapb.Store) error {
 	return nil
 }
 
-// IsTiFlash tests whether the store is based on tiflash engine.
-func IsTiFlash(store *metapb.Store) bool {
-	for _, label := range store.Labels {
-		if label.Key == "engine" && label.Value == "tiflash" {
-			return true
-		}
-	}
-	return false
-}
-
 // VerChecker is a callback for the CheckClusterVersion, decides whether the cluster is suitable to execute restore.
 // See also: CheckVersionForBackup and CheckVersionForBR.
 type VerChecker func(store *metapb.Store, ver *semver.Version) error
@@ -91,7 +82,7 @@ func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerCheck
 		return errors.Trace(err)
 	}
 	for _, s := range stores {
-		isTiFlash := IsTiFlash(s)
+		isTiFlash := engine.IsTiFlash(s)
 		log.Debug("checking compatibility of store in cluster",
 			zap.Uint64("ID", s.GetId()),
 			zap.Bool("TiFlash?", isTiFlash),
