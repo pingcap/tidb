@@ -266,27 +266,30 @@ func TestCheckClusterVersion(t *testing.T) {
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.4.0"}}
 		}
+		originVal := variable.EnableConcurrentDDL.Load()
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
 		require.NoError(t, err)
-		require.True(t, variable.EnableConcurrentDDL.Load())
+		require.Equal(t, originVal, variable.EnableConcurrentDDL.Load())
 	}
 
 	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.2.0"}}
 		}
+		originVal := variable.EnableConcurrentDDL.Load()
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
 		require.NoError(t, err)
-		require.True(t, variable.EnableConcurrentDDL.Load())
+		require.Equal(t, originVal,variable.EnableConcurrentDDL.Load())
 	}
 
 	{
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v6.2.0-alpha"}}
 		}
+		originVal := variable.EnableConcurrentDDL.Load()
 		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForDDL)
 		require.NoError(t, err)
-		require.True(t, variable.EnableConcurrentDDL.Load())
+		require.Equal(t, originVal,variable.EnableConcurrentDDL.Load())
 	}
 
 	{
