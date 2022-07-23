@@ -18,11 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/engine"
->>>>>>> 28a8ffcf6... br: fix compatibility issue with concurrent ddl (#36474)
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
