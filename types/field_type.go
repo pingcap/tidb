@@ -332,7 +332,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 }
 
 // DefaultCharsetForType returns the default charset/collation for mysql type.
-func DefaultCharsetForType(tp byte) (string, string) {
+func DefaultCharsetForType(tp byte) (defaultCharset string, defaultCollation string) {
 	switch tp {
 	case mysql.TypeVarString, mysql.TypeString, mysql.TypeVarchar:
 		// Default charset for string types is utf8mb4.

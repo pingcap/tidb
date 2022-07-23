@@ -69,7 +69,7 @@ const (
 	ActionDropSequence                  ActionType = 36
 	ActionAddColumns                    ActionType = 37 // Deprecated, we use ActionMultiSchemaChange instead.
 	ActionDropColumns                   ActionType = 38 // Deprecated, we use ActionMultiSchemaChange instead.
-	ActionModifyTableAutoIdCache        ActionType = 39
+	ActionModifyTableAutoIdCache        ActionType = 39 //nolint:revive
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
 	ActionExchangeTablePartition        ActionType = 42
@@ -79,7 +79,7 @@ const (
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
-	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
+	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46 //nolint:revive
 
 	ActionRenameTables                  ActionType = 47
 	ActionDropIndexes                   ActionType = 48 // Deprecated, we use ActionMultiSchemaChange instead.
@@ -231,6 +231,7 @@ type TimeZoneLocation struct {
 	location *time.Location
 }
 
+// GetLocation gets the timezone location.
 func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 	if tz.location != nil {
 		return tz.location, nil
@@ -257,6 +258,9 @@ type MultiSchemaInfo struct {
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
+	// SkipVersion is used to control whether generating a new schema version for a sub-job.
+	SkipVersion bool `json:"-"`
+
 	AddColumns    []CIStr `json:"-"`
 	DropColumns   []CIStr `json:"-"`
 	ModifyColumns []CIStr `json:"-"`
@@ -268,6 +272,7 @@ type MultiSchemaInfo struct {
 	PositionColumns []CIStr `json:"-"`
 }
 
+// NewMultiSchemaInfo new a MultiSchemaInfo.
 func NewMultiSchemaInfo() *MultiSchemaInfo {
 	return &MultiSchemaInfo{
 		SubJobs:    nil,
@@ -275,6 +280,7 @@ func NewMultiSchemaInfo() *MultiSchemaInfo {
 	}
 }
 
+// SubJob is a representation of one DDL schema change. A Job may contain zero(when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
 	Type        ActionType      `json:"type"`
 	Args        []interface{}   `json:"-"`
@@ -286,6 +292,7 @@ type SubJob struct {
 	RowCount    int64           `json:"row_count"`
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
+	SchemaVer   int64           `json:"schema_version"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -338,7 +345,8 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 	}
 }
 
-func (sub *SubJob) FromProxyJob(proxyJob *Job) {
+// FromProxyJob converts a proxy job to a sub-job.
+func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Revertible = proxyJob.MultiSchemaInfo.Revertible
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
@@ -346,6 +354,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job) {
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
+	sub.SchemaVer = ver
 }
 
 // Job is for a DDL operation.
@@ -574,6 +583,63 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 				return true, nil
 			}
 		}
+		if job.Type == ActionExchangeTablePartition {
+			var (
+				defID          int64
+				ptSchemaID     int64
+				ptID           int64
+				partName       string
+				withValidation bool
+			)
+			if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if other.SchemaID == ptSchemaID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
+	if job.Type == ActionExchangeTablePartition {
+		var (
+			defID          int64
+			ptSchemaID     int64
+			ptID           int64
+			partName       string
+			withValidation bool
+		)
+
+		if err := job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+			return false, errors.Trace(err)
+		}
+		if ptID == other.TableID || defID == other.TableID {
+			return true, nil
+		}
+
+		if other.Type == ActionExchangeTablePartition {
+			var (
+				otherDefID          int64
+				otherPtSchemaID     int64
+				otherPtID           int64
+				otherPartName       string
+				otherWithValidation bool
+			)
+			if err := other.DecodeArgs(&otherDefID, &otherPtSchemaID, &otherPtID, &otherPartName, &otherWithValidation); err != nil {
+				return false, errors.Trace(err)
+			}
+			if job.TableID == other.TableID || job.TableID == otherPtID || job.TableID == otherDefID {
+				return true, nil
+			}
+			if ptID == other.TableID || ptID == otherPtID || ptID == otherDefID {
+				return true, nil
+			}
+			if defID == other.TableID || defID == otherPtID || defID == otherDefID {
+				return true, nil
+			}
+		}
 	}
 	return false, nil
 }
@@ -595,6 +661,14 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	// TODO: If a job is ActionRenameTable, we need to check table name.
 	if other.TableID == job.TableID {
 		return true, nil
+	}
+	isDependent, err = job.hasDependentTableForExchangePartition(other)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+	isDependent, err = other.hasDependentTableForExchangePartition(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
 	}
 	return false, nil
 }
@@ -640,10 +714,12 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+// IsQueueing returns whether job is queuing or not.
 func (job *Job) IsQueueing() bool {
 	return job.State == JobStateQueueing
 }
 
+// NotStarted returns true if the job is never run by a worker.
 func (job *Job) NotStarted() bool {
 	return job.State == JobStateNone || job.State == JobStateQueueing
 }

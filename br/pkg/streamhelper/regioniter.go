@@ -5,13 +5,18 @@ package streamhelper
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 )
 
 const (
@@ -42,6 +47,13 @@ type RegionIter struct {
 	// This can be changed before calling `Next` each time,
 	// however no thread safety provided.
 	PageSize int
+}
+
+func (r *RegionIter) String() string {
+	return fmt.Sprintf("RegionIter:%s;%v;from=%s",
+		logutil.StringifyKeys([]kv.KeyRange{{StartKey: r.currentStartKey, EndKey: r.endKey}}),
+		r.infScanFinished,
+		redact.Key(r.startKey))
 }
 
 // IterateRegion creates an iterater over the region range.
@@ -85,8 +97,17 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []RegionWithLeader)
 // Next get the next page of regions.
 func (r *RegionIter) Next(ctx context.Context) ([]RegionWithLeader, error) {
 	var rs []RegionWithLeader
-	state := utils.InitialRetryState(30, 500*time.Millisecond, 500*time.Millisecond)
-	err := utils.WithRetry(ctx, func() error {
+	state := utils.InitialRetryState(8, 500*time.Millisecond, 500*time.Millisecond)
+	err := utils.WithRetry(ctx, func() (retErr error) {
+		defer func() {
+			if retErr != nil {
+				log.Warn("failed with trying to scan regions", logutil.ShortError(retErr),
+					logutil.Key("start", r.currentStartKey),
+					logutil.Key("end", r.endKey),
+				)
+			}
+			metrics.RegionCheckpointFailure.WithLabelValues("retryable-scan-region").Inc()
+		}()
 		regions, err := r.cli.RegionScan(ctx, r.currentStartKey, r.endKey, r.PageSize)
 		if err != nil {
 			return err
@@ -115,8 +136,11 @@ func (r *RegionIter) Next(ctx context.Context) ([]RegionWithLeader, error) {
 
 // Done checks whether the iteration is done.
 func (r *RegionIter) Done() bool {
+	// special case: we want to scan to the end of key space.
+	// at this time, comparing currentStartKey and endKey may be misleading when
+	// they are both "".
 	if len(r.endKey) == 0 {
 		return r.infScanFinished
 	}
-	return bytes.Compare(r.currentStartKey, r.endKey) >= 0
+	return r.infScanFinished || bytes.Compare(r.currentStartKey, r.endKey) >= 0
 }
