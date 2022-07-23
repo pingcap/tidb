@@ -18,6 +18,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/engine"
+>>>>>>> 28a8ffcf6... br: fix compatibility issue with concurrent ddl (#36474)
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -157,6 +162,18 @@ func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
 		}
 	}
 
+	return nil
+}
+
+// CheckVersionForDDL checks whether we use queue or table to execute ddl during restore.
+func CheckVersionForDDL(s *metapb.Store, tikvVersion *semver.Version) error {
+	// use tikvVersion instead of tidbVersion since br doesn't have mysql client to connect tidb.
+	requireVersion := semver.New("6.2.0-alpha")
+	if tikvVersion.Compare(*requireVersion) < 0 {
+		log.Info("detected the old version of tidb cluster. set enable concurrent ddl to false")
+		variable.EnableConcurrentDDL.Store(false)
+		return nil
+	}
 	return nil
 }
 
