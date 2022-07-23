@@ -94,3 +94,19 @@ func TestBytesCodec(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestBytesCodecExt(t *testing.T) {
+	inputs := []struct {
+		enc []byte
+		dec []byte
+	}{
+		{[]byte{}, []byte{0, 0, 0, 0, 0, 0, 0, 0, 247}},
+		{[]byte{1, 2, 3}, []byte{1, 2, 3, 0, 0, 0, 0, 0, 250}},
+		{[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9}, []byte{1, 2, 3, 4, 5, 6, 7, 8, 255, 9, 0, 0, 0, 0, 0, 0, 0, 248}},
+	}
+
+	for _, input := range inputs {
+		require.Equal(t, input.enc, EncodeBytesExt(nil, input.enc, true))
+		require.Equal(t, input.dec, EncodeBytesExt(nil, input.enc, false))
+	}
+}

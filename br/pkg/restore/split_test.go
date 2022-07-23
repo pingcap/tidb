@@ -279,7 +279,7 @@ func (b *assertRetryLessThanBackoffer) Attempt() int {
 }
 
 func TestScatterFinishInTime(t *testing.T) {
-	client := initTestClient()
+	client := initTestClient(false)
 	ranges := initRanges()
 	rewriteRules := initRewriteRules()
 	regionSplitter := restore.NewRegionSplitter(client)
@@ -325,12 +325,12 @@ func TestScatterFinishInTime(t *testing.T) {
 //   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func TestSplitAndScatter(t *testing.T) {
 	t.Run("BatchScatter", func(t *testing.T) {
-		client := initTestClient()
+		client := initTestClient(false)
 		client.InstallBatchScatterSupport()
 		runTestSplitAndScatterWith(t, client)
 	})
 	t.Run("BackwardCompatibility", func(t *testing.T) {
-		client := initTestClient()
+		client := initTestClient(false)
 		runTestSplitAndScatterWith(t, client)
 	})
 }
@@ -375,8 +375,33 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	}
 }
 
+func TestRawSplit(t *testing.T) {
+	// Fix issue #36490.
+	ranges := []rtree.Range{
+		{
+			StartKey: []byte{0},
+			EndKey:   []byte{},
+		},
+	}
+	client := initTestClient(true)
+	ctx := context.Background()
+
+	regionSplitter := restore.NewRegionSplitter(client)
+	err := regionSplitter.Split(ctx, ranges, nil, true, func(key [][]byte) {})
+	require.NoError(t, err)
+	regions := client.GetAllRegions()
+	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
+	if !validateRegionsExt(regions, expectedKeys, true) {
+		for _, region := range regions {
+			t.Logf("region: %v\n", region.Region)
+		}
+		t.Log("get wrong result")
+		t.Fail()
+	}
+}
+
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-func initTestClient() *TestClient {
+func initTestClient(isRawKv bool) *TestClient {
 	peers := make([]*metapb.Peer, 1)
 	peers[0] = &metapb.Peer{
 		Id:      1,
@@ -387,11 +412,11 @@ func initTestClient() *TestClient {
 	for i := uint64(1); i < 6; i++ {
 		startKey := []byte(keys[i-1])
 		if len(startKey) != 0 {
-			startKey = codec.EncodeBytes([]byte{}, startKey)
+			startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
 		}
 		endKey := []byte(keys[i])
 		if len(endKey) != 0 {
-			endKey = codec.EncodeBytes([]byte{}, endKey)
+			endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
 		}
 		regions[i] = &restore.RegionInfo{
 			Leader: &metapb.Peer{
@@ -454,19 +479,23 @@ func initRewriteRules() *restore.RewriteRules {
 //   [bbj, cca), [cca, xxe), [xxe, xxz), [xxz, )
 func validateRegions(regions map[uint64]*restore.RegionInfo) bool {
 	keys := [...]string{"", "aay", "bba", "bbf", "bbh", "bbj", "cca", "xxe", "xxz", ""}
-	if len(regions) != len(keys)-1 {
+	return validateRegionsExt(regions, keys[:], false)
+}
+
+func validateRegionsExt(regions map[uint64]*restore.RegionInfo, expectedKeys []string, isRawKv bool) bool {
+	if len(regions) != len(expectedKeys)-1 {
 		return false
 	}
 FindRegion:
-	for i := 1; i < len(keys); i++ {
+	for i := 1; i < len(expectedKeys); i++ {
 		for _, region := range regions {
-			startKey := []byte(keys[i-1])
+			startKey := []byte(expectedKeys[i-1])
 			if len(startKey) != 0 {
-				startKey = codec.EncodeBytes([]byte{}, startKey)
+				startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
 			}
-			endKey := []byte(keys[i])
+			endKey := []byte(expectedKeys[i])
 			if len(endKey) != 0 {
-				endKey = codec.EncodeBytes([]byte{}, endKey)
+				endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
 			}
 			if bytes.Equal(region.Region.GetStartKey(), startKey) &&
 				bytes.Equal(region.Region.GetEndKey(), endKey) {

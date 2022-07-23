@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 set -eo pipefail
-
 IMAGE_TAG="nightly"
 while [[ $# -gt 0 ]]
 do
@@ -121,6 +120,7 @@ FROM golang:1.16.4-buster as ycsb-builder
 WORKDIR /go/src/github.com/pingcap/
 RUN git clone https://github.com/pingcap/go-ycsb.git && \
     cd go-ycsb && \
+    go mod tidy && \
     make && \
     cp bin/go-ycsb /go-ycsb
 
@@ -149,7 +149,7 @@ COPY --from=ycsb-builder      /go-ycsb                       /br/bin/go-ycsb
 COPY --from=tiflash-builder   /tiflash/tiflash               /br/bin/tiflash
 COPY --from=tiflash-builder   /tiflash/libtiflash_proxy.so   /br/bin/libtiflash_proxy.so
 COPY --from=tiflash-builder   /tiflash/flash_cluster_manager /br/bin/flash_cluster_manager
-COPY --from=minio-builder     /usr/bin/minio                 /br/bin/minio
+COPY --from=minio-builder     /opt/bin/minio                 /br/bin/minio
 COPY --from=mc-builder        /usr/bin/mc                    /br/bin/mc
 COPY --from=gcs-builder       /bin/fake-gcs-server           /br/bin/fake-gcs-server
 
@@ -168,7 +168,7 @@ if [ "$exist_container" ]; then
     echo "Attach exsiting container: $exist_container"
     exec docker attach $exist_container
 else
-    volume_args=
+    volume_args="-v `pwd`/../bin:/br/build"
     for f in `ls -a`; do
         if [ $f = "." ] || [ $f = ".." ]; then
             continue
