@@ -20,6 +20,7 @@ go_test(
         "mvmap_test.go",
     ],
     embed = [":mvmap"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

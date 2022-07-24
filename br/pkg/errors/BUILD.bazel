@@ -11,6 +11,7 @@ go_library(
 go_test(
     name = "errors_test",
     srcs = ["errors_test.go"],
+    flaky = True,
     deps = [
         ":errors",
         "@com_github_pingcap_errors//:errors",
