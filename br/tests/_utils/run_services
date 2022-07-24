@@ -224,7 +224,7 @@ start_services_impl() {
         start_tikv "$i"
     done
     ensure_tikv
-    # start_tidb
+    start_tidb
 
     if $RUN_TIFLASH; then
         start_tiflash

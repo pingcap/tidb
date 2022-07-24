@@ -133,7 +133,7 @@ SplitRegions:
 						log.Error("split regions no valid key",
 							logutil.Key("startKey", region.Region.StartKey),
 							logutil.Key("endKey", region.Region.EndKey),
-							logutil.Key("key", codec.EncodeBytes(nil, key)),
+							logutil.Key("key", codec.EncodeBytesExt(nil, key, isRawKv)),
 							rtree.ZapRanges(ranges))
 					}
 					return errors.Trace(errSplit)
