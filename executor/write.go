@@ -168,6 +168,9 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 					return false, err
 				}
 				unchangedUniqueKey, _, err := idx.GenIndexKey(sc, ukVals, h, nil)
+				if err != nil {
+					return false, err
+				}
 				txnCtx.AddUnchangedLockKey(unchangedUniqueKey)
 			}
 		}
