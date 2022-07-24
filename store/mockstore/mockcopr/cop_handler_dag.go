@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -39,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -134,20 +132,6 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 // timezone offset in seconds east of UTC is used to constructed the timezone.
 func constructTimeZone(name string, offset int) (*time.Location, error) {
 	return timeutil.ConstructTimeZone(name, offset)
-}
-
-func (h coprHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return &mockCopStreamClient{
-		exec:   e,
-		req:    dagReq,
-		ctx:    ctx,
-		dagCtx: dagCtx,
-	}, nil
 }
 
 func (h coprHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, *tipb.Executor, error) {
@@ -398,7 +382,7 @@ func (h coprHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	groupByCollators := make([]collate.Collator, 0, len(groupBys))
 	for _, expr := range groupBys {
-		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType().Collate))
+		groupByCollators = append(groupByCollators, collate.GetCollator(expr.GetType().GetCollate()))
 	}
 
 	return &streamAggExec{
@@ -522,16 +506,6 @@ func (mockClientStream) SendMsg(m interface{}) error { return nil }
 // RecvMsg implements grpc.ClientStream interface
 func (mockClientStream) RecvMsg(m interface{}) error { return nil }
 
-type mockCopStreamClient struct {
-	mockClientStream
-
-	req      *tipb.DAGRequest
-	exec     executor
-	ctx      context.Context
-	dagCtx   *dagContext
-	finished bool
-}
-
 type mockBathCopErrClient struct {
 	mockClientStream
 
@@ -566,110 +540,6 @@ func (mock *mockBatchCopDataClient) Recv() (*coprocessor.BatchResponse, error) {
 		}, nil
 	}
 	return nil, io.EOF
-}
-
-type mockCopStreamErrClient struct {
-	mockClientStream
-
-	*errorpb.Error
-}
-
-func (mock *mockCopStreamErrClient) Recv() (*coprocessor.Response, error) {
-	return &coprocessor.Response{
-		RegionError: mock.Error,
-	}, nil
-}
-
-func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
-	select {
-	case <-mock.ctx.Done():
-		return nil, mock.ctx.Err()
-	default:
-	}
-
-	if mock.finished {
-		return nil, io.EOF
-	}
-
-	if hook := mock.ctx.Value(mockpkg.HookKeyForTest("mockTiKVStreamRecvHook")); hook != nil {
-		hook.(func(context.Context))(mock.ctx)
-	}
-
-	var resp coprocessor.Response
-	chunk, finish, ran, counts, warnings, err := mock.readBlockFromExecutor()
-	resp.Range = ran
-	if err != nil {
-		if locked, ok := errors.Cause(err).(*testutils.ErrLocked); ok {
-			resp.Locked = &kvrpcpb.LockInfo{
-				Key:         locked.Key,
-				PrimaryLock: locked.Primary,
-				LockVersion: locked.StartTS,
-				LockTtl:     locked.TTL,
-			}
-		} else {
-			resp.OtherError = err.Error()
-		}
-		return &resp, nil
-	}
-	if finish {
-		// Just mark it, need to handle the last chunk.
-		mock.finished = true
-	}
-
-	data, err := chunk.Marshal()
-	if err != nil {
-		resp.OtherError = err.Error()
-		return &resp, nil
-	}
-	var Warnings []*tipb.Error
-	if len(warnings) > 0 {
-		Warnings = make([]*tipb.Error, 0, len(warnings))
-		for i := range warnings {
-			Warnings = append(Warnings, toPBError(warnings[i].Err))
-		}
-	}
-	streamResponse := tipb.StreamResponse{
-		Error:        toPBError(err),
-		Data:         data,
-		Warnings:     Warnings,
-		OutputCounts: counts,
-	}
-	resp.Data, err = proto.Marshal(&streamResponse)
-	if err != nil {
-		resp.OtherError = err.Error()
-	}
-	return &resp, nil
-}
-
-func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, []stmtctx.SQLWarn, error) {
-	var chunk tipb.Chunk
-	var ran coprocessor.KeyRange
-	var finish bool
-	var desc bool
-	mock.exec.ResetCounts()
-	ran.Start, desc = mock.exec.Cursor()
-	for count := 0; count < rowsPerChunk; count++ {
-		row, err := mock.exec.Next(mock.ctx)
-		if err != nil {
-			ran.End, _ = mock.exec.Cursor()
-			return chunk, false, &ran, nil, nil, errors.Trace(err)
-		}
-		if row == nil {
-			finish = true
-			break
-		}
-		for _, offset := range mock.req.OutputOffsets {
-			chunk.RowsData = append(chunk.RowsData, row[offset]...)
-		}
-	}
-
-	ran.End, _ = mock.exec.Cursor()
-	if desc {
-		ran.Start, ran.End = ran.End, ran.Start
-	}
-	warnings := mock.dagCtx.evalCtx.sc.GetWarnings()
-	mock.dagCtx.evalCtx.sc.SetWarnings(nil)
-	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
 func (h coprHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, counts []int64) *tipb.SelectResponse {
@@ -928,13 +798,13 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 // fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
 func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
-	return &types.FieldType{
-		Tp:      byte(col.GetTp()),
-		Flag:    uint(col.Flag),
-		Flen:    int(col.GetColumnLen()),
-		Decimal: int(col.GetDecimal()),
-		Elems:   col.Elems,
-		Charset: charsetStr,
-		Collate: collationStr,
-	}
+	ft := &types.FieldType{}
+	ft.SetType(byte(col.GetTp()))
+	ft.SetFlag(uint(col.GetFlag()))
+	ft.SetFlen(int(col.GetColumnLen()))
+	ft.SetDecimal(int(col.GetDecimal()))
+	ft.SetElems(col.Elems)
+	ft.SetCharset(charsetStr)
+	ft.SetCollate(collationStr)
+	return ft
 }

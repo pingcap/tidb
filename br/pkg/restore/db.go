@@ -5,7 +5,6 @@ package restore
 import (
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -13,11 +12,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tidbutil "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // DB is a TiDB instance, not thread-safe.
@@ -227,7 +229,7 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 	return errors.Trace(err)
 }
 
-func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
 
 	var restoreMetaSQL string
 	var err error
@@ -239,8 +241,8 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 		if err != nil {
 			return errors.Trace(err)
 		}
-	// only table exists in ddlJobs during incremental restoration should do alter after creation.
-	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+	// only table exists in restored cluster during incremental restoration should do alter after creation.
+	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",
@@ -376,8 +378,8 @@ func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model
 // FilterDDLJobs filters ddl jobs.
 func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs []*model.Job) {
 	// Sort the ddl jobs by schema version in descending order.
-	sort.Slice(allDDLJobs, func(i, j int) bool {
-		return allDDLJobs[i].BinlogInfo.SchemaVersion > allDDLJobs[j].BinlogInfo.SchemaVersion
+	slices.SortFunc(allDDLJobs, func(i, j *model.Job) bool {
+		return i.BinlogInfo.SchemaVersion > j.BinlogInfo.SchemaVersion
 	})
 	dbs := getDatabases(tables)
 	for _, db := range dbs {
@@ -448,6 +450,26 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 // DDLJobBlockListRule rule for filter ddl job with type in block list.
 func DDLJobBlockListRule(ddlJob *model.Job) bool {
 	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
+// GetExistedUserDBs get dbs created or modified by users
+func GetExistedUserDBs(dom *domain.Domain) []*model.DBInfo {
+	databases := dom.InfoSchema().AllSchemas()
+	existedDatabases := make([]*model.DBInfo, 0, 16)
+	for _, db := range databases {
+		dbName := db.Name.L
+		if tidbutil.IsMemOrSysDB(dbName) {
+			continue
+		} else if dbName == "test" && len(db.Tables) == 0 {
+			// tidb create test db on fresh cluster
+			// if it's empty we don't take it as user db
+			continue
+		} else {
+			existedDatabases = append(existedDatabases, db)
+		}
+	}
+
+	return existedDatabases
 }
 
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {

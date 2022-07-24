@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "table-filter",
+    srcs = [
+        "column_filter.go",
+        "compat.go",
+        "helper.go",
+        "matchers.go",
+        "parser.go",
+        "table_filter.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/table-filter",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_pingcap_errors//:errors"],
+)
+
+go_test(
+    name = "table-filter_test",
+    timeout = "short",
+    srcs = [
+        "column_filter_test.go",
+        "compat_test.go",
+        "table_filter_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":table-filter",
+        "@com_github_stretchr_testify//require",
+    ],
+)

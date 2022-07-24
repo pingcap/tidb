@@ -1068,6 +1068,7 @@ func TestIssue27070(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database issue_27070")
 	tk.MustExec("use issue_27070")
+	tk.MustExec("set @@tidb_enable_list_partition = OFF")
 	tk.MustExec(`create table if not exists t (id int,   create_date date NOT NULL DEFAULT '2000-01-01',   PRIMARY KEY (id,create_date)  ) PARTITION BY list COLUMNS(create_date) (   PARTITION p20210506 VALUES IN ("20210507"),   PARTITION p20210507 VALUES IN ("20210508") )`)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type LIST, treat as normal table"))
 }

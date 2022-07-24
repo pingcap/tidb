@@ -59,6 +59,13 @@ func defineGCSFlags(flags *pflag.FlagSet) {
 	flags.String(gcsCredentialsFile, "", "(experimental) Set the GCS credentials file path")
 }
 
+func hiddenGCSFlags(flags *pflag.FlagSet) {
+	_ = flags.MarkHidden(gcsEndpointOption)
+	_ = flags.MarkHidden(gcsStorageClassOption)
+	_ = flags.MarkHidden(gcsPredefinedACL)
+	_ = flags.MarkHidden(gcsCredentialsFile)
+}
+
 func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	options.Endpoint, err = flags.GetString(gcsEndpointOption)
@@ -179,12 +186,13 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-
+	if len(opt.ObjPrefix) != 0 {
+		return errors.New("gcs storage not support ObjPrefix for now")
+	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-
 	query := &storage.Query{Prefix: prefix}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
@@ -204,6 +212,8 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		// which can not be reuse in other API(Open/Read) directly.
 		// so we use TrimPrefix to filter Prefix for next Open/Read.
 		path := strings.TrimPrefix(attrs.Name, s.gcs.Prefix)
+		// trim the prefix '/' to ensure that the path returned is consistent with the local storage
+		path = strings.TrimPrefix(path, "/")
 		if err = fn(path, attrs.Size); err != nil {
 			return errors.Trace(err)
 		}
@@ -248,12 +258,11 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
-				if len(creds.JSON) > 0 {
-					gcs.CredentialsBlob = string(creds.JSON)
-				} else {
+				if len(creds.JSON) <= 0 {
 					return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
 						"You should provide '--gcs.credentials_file' when '--send-credentials-to-tikv' is true")
 				}
+				gcs.CredentialsBlob = string(creds.JSON)
 			}
 			if creds != nil {
 				clientOps = append(clientOps, option.WithCredentials(creds))

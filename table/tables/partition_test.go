@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -86,7 +87,7 @@ PARTITION BY RANGE ( id ) (
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	require.Equal(t, model.NewCIStr("p0"), p0.Name)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1))
 	require.NoError(t, err)
 
@@ -129,7 +130,7 @@ PARTITION BY RANGE ( id ) (
 )`
 	_, err = tk.Session().Execute(context.Background(), createTable2)
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(22))
@@ -141,7 +142,7 @@ PARTITION BY RANGE ( id ) (
 	)`
 	_, err = tk.Session().Execute(context.Background(), createTable3)
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(11))
@@ -157,7 +158,7 @@ PARTITION BY RANGE ( id ) (
 	);`
 	_, err = tk.Session().Execute(context.Background(), createTable4)
 	require.NoError(t, err)
-	require.Nil(t, tk.Session().NewTxn(ctx))
+	require.Nil(t, sessiontxn.NewTxn(ctx, tk.Session()))
 	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
 	require.NoError(t, err)
 	_, err = tb.AddRecord(tk.Session(), types.MakeDatums(1, 11))
@@ -180,7 +181,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
-	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(8))
 	require.NoError(t, err)
 
@@ -217,7 +218,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
-		require.Nil(t, tk.Session().NewTxn(context.Background()))
+		require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 		rid, err = tb.AddRecord(tk.Session(), types.MakeDatums(-i))
 		require.NoError(t, err)
 		txn, err = tk.Session().Txn(true)
@@ -727,4 +728,18 @@ func TestIssue31721(t *testing.T) {
 		"PARTITION `P2` VALUES IN ('3'));")
 	tk.MustExec("insert into t_31721 values ('1')")
 	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
+}
+
+func TestPruneModeWarningInfo(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats",
+		"Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
+	tk.MustExec("set global tidb_partition_prune_mode = 'dynamic'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
 }

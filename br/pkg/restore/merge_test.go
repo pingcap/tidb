@@ -12,6 +12,7 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -90,8 +91,8 @@ func TestMergeRanges(t *testing.T) {
 		merged []int    // length of each merged range
 		stat   restore.MergeRangesStat
 	}
-	splitSizeBytes := int(restore.DefaultMergeRegionSizeBytes)
-	splitKeyCount := int(restore.DefaultMergeRegionKeyCount)
+	splitSizeBytes := int(conn.DefaultMergeRegionSizeBytes)
+	splitKeyCount := int(conn.DefaultMergeRegionKeyCount)
 	cases := []Case{
 		// Empty backup.
 		{
@@ -205,7 +206,7 @@ func TestMergeRanges(t *testing.T) {
 		for _, f := range cs.files {
 			files = append(files, fb.build(f[0], f[1], f[2], f[3], f[4])...)
 		}
-		rngs, stat, err := restore.MergeFileRanges(files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
+		rngs, stat, err := restore.MergeFileRanges(files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 		require.NoErrorf(t, err, "%+v", cs)
 		require.Equalf(t, cs.stat.TotalRegions, stat.TotalRegions, "%+v", cs)
 		require.Equalf(t, cs.stat.MergedRegions, stat.MergedRegions, "%+v", cs)
@@ -228,7 +229,7 @@ func TestMergeRawKVRanges(t *testing.T) {
 	// RawKV does not have write cf
 	files = files[1:]
 	_, stat, err := restore.MergeFileRanges(
-		files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
+		files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	require.NoError(t, err)
 	require.Equal(t, 1, stat.TotalRegions)
 	require.Equal(t, 1, stat.MergedRegions)
@@ -241,7 +242,7 @@ func TestInvalidRanges(t *testing.T) {
 	files[0].Name = "invalid.sst"
 	files[0].Cf = "invalid"
 	_, _, err := restore.MergeFileRanges(
-		files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
+		files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	require.Error(t, err)
 	require.Equal(t, berrors.ErrRestoreInvalidBackup, errors.Cause(err))
 }
@@ -262,7 +263,7 @@ func benchmarkMergeRanges(b *testing.B, filesCount int) {
 	}
 	var err error
 	for i := 0; i < b.N; i++ {
-		_, _, err = restore.MergeFileRanges(files, restore.DefaultMergeRegionSizeBytes, restore.DefaultMergeRegionKeyCount)
+		_, _, err = restore.MergeFileRanges(files, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 		if err != nil {
 			b.Error(err)
 		}

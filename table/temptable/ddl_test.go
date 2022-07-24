@@ -164,7 +164,7 @@ func TestTruncateLocalTemporaryTable(t *testing.T) {
 	// truncate when empty
 	err := ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
-	require.Nil(t, sessVars.LocalTemporaryTables)
+	require.Equal(t, 0, sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).Count())
 	require.Nil(t, sessVars.TemporaryTableData)
 
 	// add one table

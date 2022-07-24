@@ -68,28 +68,25 @@ func (m *aggregator) run() {
 		case <-m.ctx.Done():
 			return
 		case <-tick.C:
-			m.aggregate(state.TopSQLEnabled())
+			m.aggregate()
 		}
 	}
 }
 
 // aggregate data from all associated StatementStats.
 // If StatementStats has been closed, collect will remove it from the map.
-func (m *aggregator) aggregate(take bool) {
+func (m *aggregator) aggregate() {
 	total := StatementStatsMap{}
 	m.statsSet.Range(func(statsR, _ interface{}) bool {
 		stats := statsR.(*StatementStats)
 		if stats.Finished() {
 			m.unregister(stats)
-			total.Merge(stats.Take())
-			return true
 		}
-		if take {
-			total.Merge(stats.Take())
-		}
+		total.Merge(stats.Take())
 		return true
 	})
-	if len(total) > 0 {
+	// If TopSQL is not enabled, just drop them.
+	if len(total) > 0 && state.TopSQLEnabled() {
 		m.collectors.Range(func(c, _ interface{}) bool {
 			c.(Collector).CollectStmtStatsMap(total)
 			return true

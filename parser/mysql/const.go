@@ -42,7 +42,7 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
-// Protocol Features
+// AuthSwitchRequest is a protocol feature.
 const AuthSwitchRequest byte = 0xfe
 
 // Server information.
@@ -167,6 +167,7 @@ const (
 	AuthNativePassword      = "mysql_native_password" // #nosec G101
 	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
 	AuthSocket              = "auth_socket"
+	AuthTiDBSessionToken    = "tidb_session_token"
 )
 
 // MySQL database and tables.
@@ -189,7 +190,7 @@ const (
 	GlobalStatusTable = "GLOBAL_STATUS"
 	// TiDBTable is the table contains tidb info.
 	TiDBTable = "tidb"
-	//  RoleEdgesTable is the table contains role relation info
+	// RoleEdgeTable is the table contains role relation info
 	RoleEdgeTable = "role_edges"
 	// DefaultRoleTable is the table contain default active role info
 	DefaultRoleTable = "default_roles"
@@ -197,7 +198,7 @@ const (
 
 // MySQL type maximum length.
 const (
-	// For arguments that have no fixed number of decimals, the decimals value is set to 31,
+	// NotFixedDec For arguments that have no fixed number of decimals, the decimals value is set to 31,
 	// which is 1 more than the maximum number of decimals permitted for the DECIMAL, FLOAT, and DOUBLE data types.
 	NotFixedDec = 31
 
@@ -230,6 +231,7 @@ const MaxTypeSetMembers = 64
 
 // PWDHashLen is the length of mysql_native_password's hash.
 const PWDHashLen = 40 // excluding the '*'
+// SHAPWDHashLen is the length of sha256_password's hash.
 const SHAPWDHashLen = 70
 
 // Command2Str is the command information to command name.

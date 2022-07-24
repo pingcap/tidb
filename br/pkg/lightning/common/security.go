@@ -31,7 +31,6 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-// TLS
 type TLS struct {
 	caPath   string
 	certPath string
@@ -50,16 +49,6 @@ func ToTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
 		return nil, nil
 	}
 
-	// Load the client certificates from disk
-	var certificates []tls.Certificate
-	if len(certPath) != 0 && len(keyPath) != 0 {
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-		if err != nil {
-			return nil, errors.Annotate(err, "could not load client key pair")
-		}
-		certificates = []tls.Certificate{cert}
-	}
-
 	// Create a certificate pool from CA
 	certPool := x509.NewCertPool()
 	ca, err := os.ReadFile(caPath)
@@ -72,12 +61,28 @@ func ToTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
 		return nil, errors.New("failed to append ca certs")
 	}
 
-	return &tls.Config{
-		Certificates: certificates,
-		RootCAs:      certPool,
-		NextProtos:   []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
-		MinVersion:   tls.VersionTLS12,
-	}, nil
+	tlsConfig := &tls.Config{
+		RootCAs:    certPool,
+		NextProtos: []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
+		MinVersion: tls.VersionTLS12,
+	}
+
+	if len(certPath) != 0 && len(keyPath) != 0 {
+		loadCert := func() (*tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+			if err != nil {
+				return nil, errors.Annotate(err, "could not load client key pair")
+			}
+			return &cert, nil
+		}
+		tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return loadCert()
+		}
+		tlsConfig.GetCertificate = func(info *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			return loadCert()
+		}
+	}
+	return tlsConfig, nil
 }
 
 // NewTLS constructs a new HTTP client with TLS configured with the CA,

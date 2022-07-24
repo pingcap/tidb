@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -43,11 +42,11 @@ type UpdateExec struct {
 
 	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
-	updatedRowKeys map[int]*kv.HandleMap
+	updatedRowKeys map[int]*kv.MemAwareHandleMap[bool]
 	tblID2table    map[int64]table.Table
 	// mergedRowData is a map for unique (Table, handle) pair.
 	// The value is cached table row
-	mergedRowData          map[int64]*kv.HandleMap
+	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
 	multiUpdateOnSameTable map[int64]bool
 
 	matched uint64 // a counter of matched rows during update
@@ -72,7 +71,7 @@ type UpdateExec struct {
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
 func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[int]*kv.HandleMap)
+		e.updatedRowKeys = make(map[int]*kv.MemAwareHandleMap[bool])
 	}
 	e.handles = e.handles[:0]
 	e.tableUpdatable = e.tableUpdatable[:0]
@@ -80,7 +79,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
 		if e.updatedRowKeys[content.Start] == nil {
-			e.updatedRowKeys[content.Start] = kv.NewHandleMap()
+			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
 		handle, err := content.HandleCols.BuildHandleByDatums(row)
 		if err != nil {
@@ -103,7 +102,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if ok {
-			e.changed = append(e.changed, changed.(bool))
+			e.changed = append(e.changed, changed)
 			e.matches = append(e.matches, false)
 		} else {
 			e.changed = append(e.changed, false)
@@ -115,7 +114,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 
 func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
 	if e.mergedRowData == nil {
-		e.mergedRowData = make(map[int64]*kv.HandleMap)
+		e.mergedRowData = make(map[int64]*kv.MemAwareHandleMap[[]types.Datum])
 	}
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
@@ -136,13 +135,13 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		flags := e.assignFlag[content.Start:content.End]
 
 		if e.mergedRowData[content.TblID] == nil {
-			e.mergedRowData[content.TblID] = kv.NewHandleMap()
+			e.mergedRowData[content.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
 		}
 		tbl := e.tblID2table[content.TblID]
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
-			mergedData = v.([]types.Datum)
+			mergedData = v
 			for i, flag := range flags {
 				if tbl.WritableCols()[i].IsGenerated() != mergeGenerated {
 					continue
@@ -157,7 +156,10 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		} else {
 			mergedData = append([]types.Datum{}, newTableData...)
 		}
-		e.mergedRowData[content.TblID].Set(handle, mergedData)
+
+		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
+		memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+		e.memTracker.Consume(memDelta)
 	}
 	return nil
 }
@@ -191,7 +193,12 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
-			e.updatedRowKeys[content.Start].Set(handle, changed)
+			_, exist := e.updatedRowKeys[content.Start].Get(handle)
+			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
+			if !exist {
+				memDelta += int64(handle.ExtraMemSize())
+			}
+			e.memTracker.Consume(memDelta)
 			continue
 		}
 
@@ -271,14 +278,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		if topsqlstate.TopSQLEnabled() {
-			txn, err := e.ctx.Txn(true)
-			if err == nil {
-				txn.SetOption(kv.ResourceGroupTagger, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
-				if e.ctx.GetSessionVars().StmtCtx.KvExecCounter != nil {
-					// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
-					txn.SetOption(kv.RPCInterceptor, e.ctx.GetSessionVars().StmtCtx.KvExecCounter.RPCInterceptor())
-				}
+		txn, err := e.ctx.Txn(true)
+		if err == nil {
+			sc := e.ctx.GetSessionVars().StmtCtx
+			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+			if sc.KvExecCounter != nil {
+				// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
+				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 			}
 		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
@@ -428,6 +434,7 @@ func (e *UpdateExec) Close() error {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
+	defer e.memTracker.ReplaceBytesUsed(0)
 	return e.children[0].Close()
 }
 

@@ -30,8 +30,6 @@ import (
 	dbsql "database/sql"
 	"io/ioutil"
 	"os"
-	"path"
-	"runtime"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -40,8 +38,7 @@ import (
 )
 
 func TestCompareReservedWordsWithMySQL(t *testing.T) {
-	_, filename, _, _ := runtime.Caller(0)
-	parserFilename := path.Join(path.Dir(filename), "parser.y")
+	parserFilename := "parser.y"
 	parserFile, err := os.Open(parserFilename)
 	requires.NoError(t, err)
 	data, err := ioutil.ReadAll(parserFile)

@@ -142,8 +142,8 @@ func TestCompare(t *testing.T) {
 		bf, err := funcs[test.funcName].getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{test.arg0, test.arg1}))
 		require.NoError(t, err)
 		args := bf.getArgs()
-		require.Equal(t, test.tp, args[0].GetType().Tp)
-		require.Equal(t, test.tp, args[1].GetType().Tp)
+		require.Equal(t, test.tp, args[0].GetType().GetType())
+		require.Equal(t, test.tp, args[1].GetType().GetType())
 		res, isNil, err := bf.evalInt(chunk.Row{})
 		require.NoError(t, err)
 		require.False(t, isNil)
@@ -155,16 +155,16 @@ func TestCompare(t *testing.T) {
 	bf, err := funcs[ast.LT].getFunction(ctx, []Expression{decimalCol, stringCon})
 	require.NoError(t, err)
 	args := bf.getArgs()
-	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().Tp)
-	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().Tp)
+	require.Equal(t, mysql.TypeNewDecimal, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeNewDecimal, args[1].GetType().GetType())
 
 	// test <time column> <cmp> <non-time const>
 	timeCol := &Column{RetType: types.NewFieldType(mysql.TypeDatetime)}
 	bf, err = funcs[ast.LT].getFunction(ctx, []Expression{timeCol, stringCon})
 	require.NoError(t, err)
 	args = bf.getArgs()
-	require.Equal(t, mysql.TypeDatetime, args[0].GetType().Tp)
-	require.Equal(t, mysql.TypeDatetime, args[1].GetType().Tp)
+	require.Equal(t, mysql.TypeDatetime, args[0].GetType().GetType())
+	require.Equal(t, mysql.TypeDatetime, args[1].GetType().GetType())
 }
 
 func TestCoalesce(t *testing.T) {
@@ -185,7 +185,13 @@ func TestCoalesce(t *testing.T) {
 		{[]interface{}{nil, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromFloatForTest(123.456), false, false},
 		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
 		{[]interface{}{nil, duration}, duration, false, false},
+		{[]interface{}{nil, durationWithFsp}, durationWithFsp, false, false},
+		{[]interface{}{durationWithFsp, duration}, durationWithFsp, false, false},
+		{[]interface{}{duration, durationWithFsp}, durationWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
+		{[]interface{}{nil, tmWithFsp, nil}, tmWithFsp, false, false},
+		{[]interface{}{tmWithFsp, tm, nil}, tmWithFsp, false, false},
+		{[]interface{}{tm, tmWithFsp, nil}, tmWithFspAndZeroMicrosecond, false, false},
 		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
@@ -203,7 +209,11 @@ func TestCoalesce(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				require.Equal(t, test.expected, d.GetValue())
+				if f.GetType().EvalType() == types.ETDuration {
+					require.Equal(t, test.expected.(types.Duration).String(), d.GetValue().(types.Duration).String())
+				} else {
+					require.Equal(t, test.expected, d.GetValue())
+				}
 			}
 		}
 	}

@@ -145,10 +145,10 @@ func TestRepairTable(t *testing.T) {
 	require.Equal(t, originTableInfo.Columns[0].ID, repairTable.Meta().Indices[0].ID)
 	require.Equal(t, originTableInfo.AutoIncID, repairTable.Meta().AutoIncID)
 
-	require.Equal(t, mysql.TypeLong, repairTable.Meta().Columns[0].Tp)
-	require.Equal(t, mysql.TypeVarchar, repairTable.Meta().Columns[1].Tp)
-	require.Equal(t, 5, repairTable.Meta().Columns[1].Flen)
-	require.Equal(t, mysql.TypeLong, repairTable.Meta().Columns[2].Tp)
+	require.Equal(t, mysql.TypeLong, repairTable.Meta().Columns[0].GetType())
+	require.Equal(t, mysql.TypeVarchar, repairTable.Meta().Columns[1].GetType())
+	require.Equal(t, 5, repairTable.Meta().Columns[1].GetFlen())
+	require.Equal(t, mysql.TypeLong, repairTable.Meta().Columns[2].GetType())
 
 	// Exec the show create table statement to make sure new tableInfo has been set.
 	result := tk.MustQuery("show create table origin")

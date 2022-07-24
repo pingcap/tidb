@@ -18,9 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"sort"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -28,7 +26,9 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
+	"golang.org/x/exp/slices"
 )
 
 // SortExec represents sorting executor.
@@ -77,6 +77,9 @@ func (e *SortExec) Close() error {
 	e.memTracker = nil
 	e.diskTracker = nil
 	e.multiWayMerge = nil
+	if e.spillAction != nil {
+		e.spillAction.SetFinished()
+	}
 	e.spillAction = nil
 	return e.children[0].Close()
 }
@@ -359,9 +362,9 @@ func (h *topNChunkHeap) Swap(i, j int) {
 }
 
 // keyColumnsLess is the less function for key columns.
-func (e *TopNExec) keyColumnsLess(i, j int) bool {
-	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
-	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
+func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) bool {
+	rowI := e.rowChunks.GetRow(i)
+	rowJ := e.rowChunks.GetRow(j)
 	return e.lessRow(rowI, rowJ)
 }
 
@@ -470,7 +473,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 			}
 		}
 	}
-	sort.Slice(e.rowPtrs, e.keyColumnsLess)
+	slices.SortFunc(e.rowPtrs, e.keyColumnsLess)
 	return nil
 }
 

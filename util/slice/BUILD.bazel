@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "slice",
+    srcs = ["slice.go"],
+    importpath = "github.com/pingcap/tidb/util/slice",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "slice_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "slice_test.go",
+    ],
+    embed = [":slice"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -35,12 +35,50 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPointGetPreparedPlan4PlanCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk1 := testkit.NewTestKitWithSession(t, store, se)
+	tk1.MustExec("drop database if exists ps_text")
+	defer tk1.MustExec("drop database if exists ps_text")
+	tk1.MustExec("create database ps_text")
+	tk1.MustExec("use ps_text")
+
+	tk1.MustExec(`create table t (a int, b int, c int,
+			primary key k_a(a),
+			unique key k_b(b))`)
+	tk1.MustExec("insert into t values (1, 1, 1)")
+	tk1.MustExec("insert into t values (2, 2, 2)")
+	tk1.MustExec("insert into t values (3, 3, 3)")
+
+	pspk1Id, _, _, err := tk1.Session().PrepareStmt("select * from t where a = ?")
+	require.NoError(t, err)
+	tk1.Session().GetSessionVars().PreparedStmts[pspk1Id].(*core.CachedPrepareStmt).PreparedAst.UseCache = false
+
+	ctx := context.Background()
+	// first time plan generated
+	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(0)})
+	require.NoError(t, err)
+
+	// using the generated plan but with different params
+	_, err = tk1.Session().ExecutePreparedStmt(ctx, pspk1Id, []types.Datum{types.NewDatum(nil)})
+	require.NoError(t, err)
+}
 
 func TestPreparePointGetWithDML(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
@@ -990,6 +1028,38 @@ func TestPrepareWithWindowFunction(t *testing.T) {
 	tk.MustQuery("execute stmt2 using @a, @b").Check(testkit.Rows("0", "0"))
 }
 
+func TestPrepareWindowFunctionWithoutParamsCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer tk.MustExec("set @@tidb_enable_window_function = 0")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 (d DOUBLE, id INT, sex CHAR(1), n INT NOT NULL AUTO_INCREMENT, PRIMARY KEY(n));")
+	tk.MustExec("insert into t1(d, id, sex) values (1.0, 1, 'M'),(2.0, 2, 'F'),(3.0, 3, 'F'),(4.0, 4, 'F'),(5.0, 5, 'M')")
+	// prepare phase, we don't check the window function args.
+	tk.MustExec("prepare p from \"select id, sex, lead(id, ?) over () from t1\"")
+	// execute phase, we do check the window function args (param is initialized).
+	err := tk.ExecToErr("execute p using @p1")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to lead")
+	tk.MustExec("set @p1 = 3")
+	// execute phase, we do check the window function args (param is valid).
+	tk.MustQuery("execute p using @p1").Check(testkit.Rows("1 M 4", "2 F 5", "3 F <nil>", "4 F <nil>", "5 M <nil>"))
+
+	// execute phase, we do check the window function args (param is invalid).
+	tk.MustExec("PREPARE p FROM \"SELECT id, sex, LEAD(id, ?) OVER (), ntile(?) over() FROM t1\"")
+	tk.MustExec("set @p2 = 3")
+	tk.MustQuery("execute p using @p1, @p2").Check(testkit.Rows("1 M 4 1", "2 F 5 1", "3 F <nil> 2", "4 F <nil> 2", "5 M <nil> 3"))
+	tk.MustExec("set @p2 = 0") // ntile doesn't allow param to be 0
+	err = tk.ExecToErr("execute p using @p1, @p2")
+	require.NotNil(t, err)
+	require.EqualError(t, err, "[planner:1210]Incorrect arguments to ntile")
+}
+
 func TestPrepareWithSnapshot(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1513,6 +1583,53 @@ func TestIssue29303(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows())
 	tk.MustExec(`set @a="龂", @b="龂", @c="龂", @d="龂"`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d`).Check(testkit.Rows("� 龂 � 龂"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+func TestIssue34725(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+		a int(11) DEFAULT NULL,
+		b int(11) GENERATED ALWAYS AS (a) STORED NOT NULL,
+		PRIMARY KEY (b))`)
+	tk.MustExec(`insert into t(a) values(102)`)
+	tk.MustExec(`prepare stmt from "select * from t where b in (?, ?, ?)"`)
+	tk.MustExec(`set @a=102, @b=102, @c=102`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows(`102 102`))
+	tk.MustExec(`set @a=-97, @b=-97, @c=-97`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Check(testkit.Rows())
+}
+
+func TestIssue33628(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(false)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int primary key, b int)`)
+	tk.MustExec(`prepare stmt from "select * from t where a=10"`) // point-get plan
+	tk.MustExec(`execute stmt`)
+	tk.MustExec(`execute stmt`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
@@ -2766,4 +2883,233 @@ func TestCachedTable(t *testing.T) {
 	tk.MustQuery("execute pointGet using @a").Check(testkit.Rows("1"))
 	require.True(t, lastReadFromCache(tk))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestPlanCacheWithRCWhenInfoSchemaChange(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int, index ic (c))")
+	// prepare text protocol
+	tk1.MustExec("prepare s from 'select /*+use_index(t1, ic)*/ * from t1 where 1'")
+	// prepare binary protocol
+	stmtID, _, _, err := tk2.Session().PrepareStmt("select /*+use_index(t1, ic)*/ * from t1 where 1")
+	require.Nil(t, err)
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk2.MustExec("begin pessimistic")
+	tk1.MustQuery("execute s").Check(testkit.Rows())
+	rs, err := tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+	tk3.MustExec("alter table t1 drop index ic")
+	tk3.MustExec("insert into t1 values(1, 0)")
+
+	// The execution after schema changed should not hit plan cache.
+	// execute text protocol
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 0"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// execute binary protocol
+	rs, err = tk2.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk2.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 0"))
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestConsistencyBetweenPrepareExecuteAndNormalSql(t *testing.T) {
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int)")
+	tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
+	// prepare text protocol
+	tk1.MustExec("prepare s from 'select * from t1'")
+	// prepare binary protocol
+	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1")
+	require.Nil(t, err)
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk2.MustExec("begin pessimistic")
+
+	// Execute using sql
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 1", "2 2"))
+	// Execute using binary
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "2 2"))
+	// Normal sql
+	tk1.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+
+	// Change infoSchema
+	tk2.MustExec("alter table t1 drop column c")
+	tk2.MustExec("insert into t1 values (3)")
+	// Execute using sql
+	tk1.MustQuery("execute s").Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
+	// Execute using binary
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
+	// Normal sql
+	tk1.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 <nil>"))
+	tk1.MustExec("commit")
+
+	// After beginning a new txn, the infoSchema should be the latest
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "3"))
+
+}
+
+func verifyCache(ctx context.Context, t *testing.T, tk1 *testkit.TestKit, tk2 *testkit.TestKit, stmtID uint32) {
+	// Cache miss in the firs time.
+	tk1.MustExec("execute s")
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// This time, the cache will be hit.
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk1.MustExec("execute s")
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Change infoSchema version which will make the plan cache invalid in the next execute
+	tk2.MustExec("alter table t1 drop column c")
+	tk1.MustExec("execute s")
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// Now the plan cache will be valid
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.NoError(t, err)
+	require.NoError(t, rs.Close())
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestCacheHitInRc(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int)")
+	tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
+	// prepare text protocol
+	tk1.MustExec("prepare s from 'select * from t1'")
+	// prepare binary protocol
+	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1")
+	require.Nil(t, err)
+
+	// Test for RC
+	tk1.MustExec("set tx_isolation='READ-COMMITTED'")
+	tk1.MustExec("begin pessimistic")
+
+	// Verify for the RC isolation
+	verifyCache(ctx, t, tk1, tk2, stmtID)
+	tk1.MustExec("rollback")
+}
+
+func TestCacheHitInForUpdateRead(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int)")
+	tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
+
+	tk1.MustExec("prepare s from 'select * from t1 where id = 1 for update'")
+	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1 where id = 1 for update")
+	require.Nil(t, err)
+	tk1.MustExec("begin pessimistic")
+
+	// Verify for the for update read
+	verifyCache(ctx, t, tk1, tk2, stmtID)
+	tk1.MustExec("rollback")
+}
+
+func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("drop table if exists t1")
+	tk1.MustExec("create table t1(id int primary key, c int)")
+	tk1.MustExec("insert into t1 values(1, 1), (2, 2)")
+
+	tk1.MustExec("prepare s from 'select * from t1 where id = 1 for update'")
+	stmtID, _, _, err := tk1.Session().PrepareStmt("select * from t1 where id = 1 for update")
+	require.Nil(t, err)
+	rs, err := tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 1"))
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2.MustExec("alter table t1 drop column c")
+	tk2.MustExec("update t1 set id = 10 where id = 1")
+
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	rs, err = tk1.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	require.Nil(t, err)
+	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
+	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }

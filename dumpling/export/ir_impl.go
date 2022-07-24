@@ -7,9 +7,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 // rowIter implements the SQLRowIter interface.
@@ -92,12 +91,10 @@ func (iter *multiQueriesChunkIter) nextRows() {
 	for iter.id < len(iter.queries) {
 		rows := iter.rows
 		if rows != nil {
-			err = rows.Close()
-			if err != nil {
+			if err = rows.Close(); err != nil {
 				return
 			}
-			err = rows.Err()
-			if err != nil {
+			if err = rows.Err(); err != nil {
 				return
 			}
 		}

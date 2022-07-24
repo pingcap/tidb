@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -302,7 +304,8 @@ func cloneRegion(region *restore.RegionInfo) *restore.RegionInfo {
 	return &restore.RegionInfo{Region: r, Leader: l}
 }
 
-// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+// For keys ["", "aay", "bba", "bbh", "cca", ""], the key ranges of
+// regions are [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, ).
 func initTestClient(keys [][]byte, hook clientHook) *testClient {
 	peers := make([]*metapb.Peer, 1)
 	peers[0] = &metapb.Peer{
@@ -416,6 +419,7 @@ func doTestBatchSplitRegionByRanges(ctx context.Context, t *testing.T, hook clie
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
@@ -574,6 +578,45 @@ func TestBatchSplitByRangesNoValidKeys(t *testing.T) {
 	doTestBatchSplitRegionByRanges(context.Background(), t, &splitRegionNoValidKeyHook{returnErrTimes: math.MaxInt32}, "no valid key", defaultHook{})
 }
 
+func TestSplitAndScatterRegionInBatches(t *testing.T) {
+	splitHook := defaultHook{}
+	deferFunc := splitHook.setup(t)
+	defer deferFunc()
+
+	keys := [][]byte{[]byte(""), []byte("a"), []byte("b"), []byte("")}
+	client := initTestClient(keys, nil)
+	local := &local{
+		splitCli: client,
+		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var ranges []Range
+	for i := 0; i < 20; i++ {
+		ranges = append(ranges, Range{
+			start: []byte(fmt.Sprintf("a%02d", i)),
+			end:   []byte(fmt.Sprintf("a%02d", i+1)),
+		})
+	}
+
+	err := local.SplitAndScatterRegionInBatches(ctx, ranges, nil, true, 1000, 4)
+	require.NoError(t, err)
+
+	rangeStart := codec.EncodeBytes([]byte{}, []byte("a"))
+	rangeEnd := codec.EncodeBytes([]byte{}, []byte("b"))
+	regions, err := restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	require.NoError(t, err)
+	result := [][]byte{[]byte("a"), []byte("a00"), []byte("a01"), []byte("a02"), []byte("a03"), []byte("a04"),
+		[]byte("a05"), []byte("a06"), []byte("a07"), []byte("a08"), []byte("a09"), []byte("a10"), []byte("a11"),
+		[]byte("a12"), []byte("a13"), []byte("a14"), []byte("a15"), []byte("a16"), []byte("a17"), []byte("a18"),
+		[]byte("a19"), []byte("a20"), []byte("b"),
+	}
+	checkRegionRanges(t, regions, result)
+}
+
 type reportAfterSplitHook struct {
 	noopHook
 	ch chan<- struct{}
@@ -632,6 +675,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	local := &local{
 		splitCli: client,
 		g:        glue.NewExternalTiDBGlue(nil, mysql.ModeNone),
+		logger:   log.L(),
 	}
 	ctx := context.Background()
 
@@ -722,11 +766,54 @@ func TestNeedSplit(t *testing.T) {
 
 	for hdl, idx := range checkMap {
 		checkKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(hdl))
-		res := needSplit(checkKey, regions)
+		res := needSplit(checkKey, regions, log.L())
 		if idx < 0 {
 			require.Nil(t, res)
 		} else {
 			require.Equal(t, regions[idx], res)
 		}
 	}
+}
+
+func TestStoreWriteLimiter(t *testing.T) {
+	// Test create store write limiter with limit math.MaxInt.
+	limiter := newStoreWriteLimiter(math.MaxInt)
+	err := limiter.WaitN(context.Background(), 1, 1024)
+	require.NoError(t, err)
+
+	// Test WaitN exceeds the burst.
+	limiter = newStoreWriteLimiter(100)
+	start := time.Now()
+	// 120 is the initial burst, 150 is the number of new tokens.
+	err = limiter.WaitN(context.Background(), 1, 120+120)
+	require.NoError(t, err)
+	require.Greater(t, time.Since(start), time.Second)
+
+	// Test WaitN with different store id.
+	limiter = newStoreWriteLimiter(100)
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
+	defer cancel()
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(storeID uint64) {
+			defer wg.Done()
+			start = time.Now()
+			var gotTokens int
+			for {
+				n := rand.Intn(50)
+				if limiter.WaitN(ctx, storeID, n) != nil {
+					break
+				}
+				gotTokens += n
+			}
+			elapsed := time.Since(start)
+			maxTokens := 120 + int(float64(elapsed)/float64(time.Second)*100)
+			// In theory, gotTokens should be less than or equal to maxTokens.
+			// But we allow a little of error to avoid the test being flaky.
+			require.LessOrEqual(t, gotTokens, maxTokens+1)
+
+		}(uint64(i))
+	}
+	wg.Wait()
 }

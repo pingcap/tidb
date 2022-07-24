@@ -19,15 +19,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testbridge.SetupForCommonTest()
+	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestLogFormat(t *testing.T) {
-	mem := new(memory.Tracker)
+	mem := memory.NewTracker(-1, -1)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
 	info := &util.ProcessInfo{
 		ID:            233,

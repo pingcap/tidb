@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -136,7 +138,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupTS, err = parseTSString(backupTS)
+	cfg.BackupTS, err = ParseTSString(backupTS, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -251,7 +253,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Domain loads all table info into memory. By skipping Domain, we save
 	// lots of memory (about 500MB for 40K 40 fields YCSB tables).
 	needDomain := !skipStats
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,7 +271,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("get newCollationEnable for check during restore", zap.String("newCollationEnable", newCollationEnable))
+	log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
+		zap.String(tidbNewCollationEnabled, newCollationEnable))
 
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
@@ -352,7 +355,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
-		metautil.MetaFileSize, cfg.UseBackupMetaV2, &cfg.CipherInfo)
+		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
 	// Hack way to update backupmeta.
 	metawriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = req.StartVersion
@@ -372,7 +375,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// nothing to backup
-	if ranges == nil {
+	if ranges == nil || len(ranges) <= 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
@@ -396,7 +399,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 
 		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-		err = backup.WriteBackupDDLJobs(metawriter, mgr.GetStorage(), cfg.LastBackupTS, backupTS)
+		err = backup.WriteBackupDDLJobs(metawriter, se.GetSessionCtx(), mgr.GetStorage(), cfg.LastBackupTS, backupTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -479,7 +482,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	schemasConcurrency := uint(utils.MinInt(backup.DefaultSchemaConcurrency, schemas.Len()))
+	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
@@ -525,8 +528,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	return nil
 }
 
-// parseTSString port from tidb setSnapshotTS.
-func parseTSString(ts string) (uint64, error) {
+// ParseTSString port from tidb setSnapshotTS.
+func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if len(ts) == 0 {
 		return 0, nil
 	}
@@ -537,6 +540,12 @@ func parseTSString(ts string) (uint64, error) {
 	loc := time.Local
 	sc := &stmtctx.StatementContext{
 		TimeZone: loc,
+	}
+	if tzCheck {
+		tzIdx, _, _, _, _ := types.GetTimezone(ts)
+		if tzIdx < 0 {
+			return 0, errors.Errorf("must set timezone when using datetime format ts")
+		}
 	}
 	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {

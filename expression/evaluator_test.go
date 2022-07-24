@@ -33,44 +33,44 @@ func kindToFieldType(kind byte) types.FieldType {
 	ft := types.FieldType{}
 	switch kind {
 	case types.KindNull:
-		ft.Tp = mysql.TypeNull
+		ft.SetType(mysql.TypeNull)
 	case types.KindInt64:
-		ft.Tp = mysql.TypeLonglong
+		ft.SetType(mysql.TypeLonglong)
 	case types.KindUint64:
-		ft.Tp = mysql.TypeLonglong
-		ft.Flag |= mysql.UnsignedFlag
+		ft.SetType(mysql.TypeLonglong)
+		ft.SetFlag(ft.GetFlag() | mysql.UnsignedFlag)
 	case types.KindMinNotNull:
-		ft.Tp = mysql.TypeLonglong
+		ft.SetType(mysql.TypeLonglong)
 	case types.KindMaxValue:
-		ft.Tp = mysql.TypeLonglong
+		ft.SetType(mysql.TypeLonglong)
 	case types.KindFloat32:
-		ft.Tp = mysql.TypeDouble
+		ft.SetType(mysql.TypeDouble)
 	case types.KindFloat64:
-		ft.Tp = mysql.TypeDouble
+		ft.SetType(mysql.TypeDouble)
 	case types.KindString:
-		ft.Tp = mysql.TypeVarString
+		ft.SetType(mysql.TypeVarString)
 	case types.KindBytes:
-		ft.Tp = mysql.TypeVarString
+		ft.SetType(mysql.TypeVarString)
 	case types.KindMysqlEnum:
-		ft.Tp = mysql.TypeEnum
+		ft.SetType(mysql.TypeEnum)
 	case types.KindMysqlSet:
-		ft.Tp = mysql.TypeSet
+		ft.SetType(mysql.TypeSet)
 	case types.KindInterface:
-		ft.Tp = mysql.TypeVarString
+		ft.SetType(mysql.TypeVarString)
 	case types.KindMysqlDecimal:
-		ft.Tp = mysql.TypeNewDecimal
+		ft.SetType(mysql.TypeNewDecimal)
 	case types.KindMysqlDuration:
-		ft.Tp = mysql.TypeDuration
+		ft.SetType(mysql.TypeDuration)
 	case types.KindMysqlTime:
-		ft.Tp = mysql.TypeDatetime
+		ft.SetType(mysql.TypeDatetime)
 	case types.KindBinaryLiteral:
-		ft.Tp = mysql.TypeVarString
-		ft.Charset = charset.CharsetBin
-		ft.Collate = charset.CollationBin
+		ft.SetType(mysql.TypeVarString)
+		ft.SetCharset(charset.CharsetBin)
+		ft.SetCollate(charset.CollationBin)
 	case types.KindMysqlBit:
-		ft.Tp = mysql.TypeBit
+		ft.SetType(mysql.TypeBit)
 	case types.KindMysqlJSON:
-		ft.Tp = mysql.TypeJSON
+		ft.SetType(mysql.TypeJSON)
 	}
 	return ft
 }
@@ -80,9 +80,10 @@ func datumsToConstants(datums []types.Datum) []Expression {
 	for _, d := range datums {
 		ft := kindToFieldType(d.Kind())
 		if types.IsNonBinaryStr(&ft) {
-			ft.Collate = d.Collation()
+			ft.SetCollate(d.Collation())
 		}
-		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+		ft.SetFlen(types.UnspecifiedLength)
+		ft.SetDecimal(types.UnspecifiedLength)
 		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}
 	return constants

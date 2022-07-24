@@ -15,13 +15,13 @@
 package schemacmp
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -55,14 +55,14 @@ func restoreColumnInfoFromUnwrapped(ctx *format.RestoreCtx, col []interface{}, c
 	if col[columnInfoTupleIndexGeneratedStored].(bool) {
 		ctx.WriteKeyWord(" STORED")
 	}
-	if mysql.HasNotNullFlag(typ.Flag) {
+	if mysql.HasNotNullFlag(typ.GetFlag()) {
 		ctx.WriteKeyWord(" NOT NULL")
 	}
 	if defVal := col[columnInfoTupleIndexDefaultValue]; defVal != nil {
 		ctx.WriteKeyWord(" DEFAULT ")
 		ctx.WritePlainf("%v", defVal)
 	}
-	if mysql.HasAutoIncrementFlag(typ.Flag) {
+	if mysql.HasAutoIncrementFlag(typ.GetFlag()) {
 		ctx.WriteKeyWord(" AUTO_INCREMENT")
 	}
 }
@@ -224,7 +224,7 @@ func (a indexMap) ForEach(f func(key string, value Lattice) error) error {
 	return nil
 }
 
-func (indexMap) CompareWithNil(value Lattice) (int, error) {
+func (indexMap) CompareWithNil(_ Lattice) (int, error) {
 	return -1, nil
 }
 
@@ -232,7 +232,7 @@ func (indexMap) ShouldDeleteIncompatibleJoin() bool {
 	return true
 }
 
-func (indexMap) JoinWithNil(value Lattice) (Lattice, error) {
+func (indexMap) JoinWithNil(_ Lattice) (Lattice, error) {
 	return nil, nil
 }
 
@@ -263,7 +263,7 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 	columns := make(columnMap)
 	for _, ci := range ti.Columns {
 		columns[ci.Name.L] = encodeColumnInfoToLattice(ci)
-		if !hasExplicitPrimaryKey && (ci.Flag&mysql.PriKeyFlag) != 0 {
+		if !hasExplicitPrimaryKey && (ci.GetFlag()&mysql.PriKeyFlag) != 0 {
 			indices["primary"] = encodeImplicitPrimaryKeyToLattice(ci)
 		}
 	}
@@ -283,32 +283,20 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 	}
 }
 
-type sortedMapSlice []struct {
+type kvPair struct {
 	key   string
 	value interface{}
 }
 
-func (sl sortedMapSlice) Len() int {
-	return len(sl)
-}
-
-func (sl sortedMapSlice) Less(i, j int) bool {
-	return sl[i].key < sl[j].key
-}
-
-func (sl sortedMapSlice) Swap(i, j int) {
-	sl[i], sl[j] = sl[j], sl[i]
-}
-
-func sortedMap(input map[string]interface{}) sortedMapSlice {
-	res := make(sortedMapSlice, 0, len(input))
+func sortedMap(input map[string]interface{}) []kvPair {
+	res := make([]kvPair, 0, len(input))
 	for key, value := range input {
-		res = append(res, struct {
-			key   string
-			value interface{}
-		}{key: key, value: value})
+		res = append(res, kvPair{key: key, value: value})
 	}
-	sort.Sort(res)
+
+	slices.SortFunc(res, func(a, b kvPair) bool {
+		return a.key < b.key
+	})
 	return res
 }
 

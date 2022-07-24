@@ -32,7 +32,7 @@ import (
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
 // Please make sure that the top level is CNF form.
 func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.Expression, checker *conditionChecker) ([]expression.Expression, []expression.Expression) {
-	var accessConditions, filterConditions []expression.Expression // nolint: prealloc
+	var accessConditions, filterConditions []expression.Expression //nolint: prealloc
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
@@ -82,14 +82,14 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 			}
 			rebuildCNF := expression.ComposeCNFCondition(sctx, columnCNFItems...)
 			accessConditions = append(accessConditions, rebuildCNF)
-		} else if checker.check(cond) {
+		} else if !checker.check(cond) {
+			return nil, true
+		} else {
 			accessConditions = append(accessConditions, cond)
 			if checker.shouldReserve {
 				hasResidualConditions = true
 				checker.shouldReserve = checker.length != types.UnspecifiedLength
 			}
-		} else {
-			return nil, true
 		}
 	}
 	return accessConditions, hasResidualConditions
@@ -122,7 +122,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -144,7 +144,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 				return -1
 			}
 			if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -167,7 +167,7 @@ func getPotentialEqOrInColOffset(sctx sessionctx.Context, expr expression.Expres
 		if !ok {
 			return -1
 		}
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -530,7 +530,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		}
 		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
 		// Lazily compute the points for the previously visited Eq/In
-		collator := collate.GetCollator(cols[offset].GetType().Collate)
+		collator := collate.GetCollator(cols[offset].GetType().GetCollate())
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
 			points[offset] = rb.build(accesses[offset], collator)
@@ -662,12 +662,14 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 					}
 				}
 			}
-		} else if firstColumnChecker.check(item) {
+		} else if !firstColumnChecker.check(item) {
+			return FullRange(), nil, nil, true, nil
+		} else {
 			if firstColumnChecker.shouldReserve {
 				hasResidual = true
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
-			points := rb.build(item, collate.GetCollator(newTpSlice[0].Collate))
+			points := rb.build(item, collate.GetCollator(newTpSlice[0].GetCollate()))
 			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
@@ -686,8 +688,6 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 					columnValues[0] = nil
 				}
 			}
-		} else {
-			return FullRange(), nil, nil, true, nil
 		}
 	}
 
@@ -894,7 +894,6 @@ func AddGcColumnCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-
 	if cond := accessesCond[1]; cond != nil {
 		if f, ok := cond.(*expression.ScalarFunction); ok {
 			switch f.FuncName.L {
@@ -916,7 +915,6 @@ func AddGcColumnCond(sctx sessionctx.Context,
 func AddGcColumn4InCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression) ([]expression.Expression, error) {
-
 	var errRes error
 	var newAccessCond []expression.Expression
 	record := make([]types.Datum, 1)
@@ -985,7 +983,6 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 	cols []*expression.Column,
 	accessesCond []expression.Expression,
 	columnValues []*valueInfo) ([]expression.Expression, error) {
-
 	expr := cols[0].VirtualExpr.Clone()
 	record := make([]types.Datum, len(columnValues)-1)
 
@@ -1026,7 +1023,6 @@ func AddGcColumn4EqCond(sctx sessionctx.Context,
 // @retval - the new condition after adding tidb_shard() prefix
 func AddExpr4EqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column) ([]expression.Expression, error) {
-
 	accesses := make([]expression.Expression, len(cols))
 	columnValues := make([]*valueInfo, len(cols))
 	offsets := make([]int, len(conditions))
@@ -1096,7 +1092,6 @@ func NeedAddGcColumn4ShardIndex(
 	cols []*expression.Column,
 	accessCond []expression.Expression,
 	columnValues []*valueInfo) bool {
-
 	// the columns of shard index shoude be more than 2, like (tidb_shard(a),a,...)
 	// check cols and columnValues in the sub call function
 	if len(accessCond) < 2 || len(cols) < 2 {

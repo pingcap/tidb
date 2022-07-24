@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
@@ -44,7 +45,7 @@ var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Log.EnableSlowLog.Store(false)
+		cfg.Instance.EnableSlowLog.Store(false)
 	})
 
 	store, err := mockstore.NewMockStore()
@@ -1812,8 +1813,9 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 	is := se.GetInfoSchema()
 
 	b.ResetTimer()
+	stmtExec := &ast.ExecuteStmt{ExecID: stmtID, BinaryArgs: args}
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtID, is.(infoschema.InfoSchema), 0, kv.GlobalTxnScope, args)
+		_, _, _, err := executor.CompileExecutePreparedStmt(context.Background(), se, stmtExec, is.(infoschema.InfoSchema))
 		if err != nil {
 			b.Fatal(err)
 		}

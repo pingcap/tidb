@@ -54,13 +54,13 @@ var testMetaJSONs = [][]byte{
             "origin_default_bit": null,
             "state": 5,
             "type": {
-              "Charset": "utf8mb4",
-              "Collate": "utf8mb4_bin",
-              "Decimal": 0,
-              "Elems": null,
-              "Flag": 4099,
-              "Flen": 256,
-              "Tp": 15
+              "charset": "utf8mb4",
+              "collate": "utf8mb4_bin",
+              "decimal": 0,
+              "elems": null,
+              "flag": 4099,
+              "flen": 256,
+              "tp": 15
             },
             "version": 2
           }

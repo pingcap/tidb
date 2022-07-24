@@ -17,16 +17,18 @@ package session
 import (
 	"bytes"
 	"context"
-	"sort"
+	"fmt"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -36,6 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 func initTblColIdxID(metaInfo *model.TableInfo) {
@@ -95,7 +98,7 @@ func prepareTestData(
 	basicRowValue := make([]types.Datum, len(oldTblInfo.Meta().Columns))
 	for i, col := range oldTblInfo.Meta().Columns {
 		colIds[i] = oldTblInfo.Meta().Columns[col.Offset].ID
-		if col.FieldType.Tp == mysql.TypeLong {
+		if col.FieldType.GetType() == mysql.TypeLong {
 			basicRowValue[i] = types.NewIntDatum(int64(col.Offset))
 		} else {
 			basicRowValue[i] = types.NewStringDatum(strconv.Itoa(col.Offset))
@@ -254,6 +257,8 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 		store:       store,
 		sessionVars: variable.NewSessionVars(),
 	}
+	se.mu.values = make(map[fmt.Stringer]interface{})
+	domain.BindDomain(se, &domain.Domain{})
 	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization}
 	for _, startState := range startStates {
 		endStatMap := ConstOpAddIndex[startState]
@@ -261,7 +266,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 		for st := range endStatMap {
 			endStates = append(endStates, st)
 		}
-		sort.Slice(endStates, func(i, j int) bool { return endStates[i] < endStates[j] })
+		slices.Sort(endStates)
 		for _, endState := range endStates {
 			logutil.BgLogger().Info("[TEST]>>>>>>new round test", zap.Stringer("start", startState), zap.Stringer("end", endState))
 			// column: a, b, c, d, e, c_str, d_str, e_str, f, g.
@@ -404,10 +409,9 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 
 			logutil.BgLogger().Info("[TEST]finish to write old txn data")
 			// Write data for this new transaction, its memory buffer will be used by schema amender.
-			txn, err := se.store.Begin()
+			err = sessiontxn.NewTxn(ctx, se)
 			require.NoError(t, err)
-			se.txn.changeInvalidToValid(txn)
-			txn, err = se.Txn(true)
+			txn, err := se.Txn(false)
 			require.NoError(t, err)
 			var checkKeys []kv.Key
 			for i, key := range mutations.GetKeys() {

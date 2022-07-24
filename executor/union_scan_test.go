@@ -15,11 +15,13 @@
 package executor_test
 
 import (
+	"encoding/hex"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/benchdaily"
@@ -456,6 +458,28 @@ func TestIssue28073(t *testing.T) {
 		break
 	}
 	require.False(t, exist)
+
+	// Another case, left join on partition table should not generate locks on physical ID = 0
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int, c_str));")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int)) partition by hash (c_int) partitions 4;")
+	tk.MustExec("insert into t1 (`c_int`, `c_str`) values (1, 'upbeat solomon'), (5, 'sharp rubin');")
+	tk.MustExec("insert into t2 (`c_int`, `c_str`) values (1, 'clever haibt'), (4, 'kind margulis');")
+	tk.MustExec("begin pessimistic;")
+	tk.MustQuery("select * from t1 left join t2 on t1.c_int = t2.c_int for update;").Check(testkit.Rows(
+		"1 upbeat solomon 1 clever haibt",
+		"5 sharp rubin <nil> <nil>",
+	))
+	key, err := hex.DecodeString("7480000000000000005F728000000000000000")
+	require.NoError(t, err)
+	h := helper.NewHelper(store.(helper.Storage))
+	resp, err := h.GetMvccByEncodedKey(key)
+	require.NoError(t, err)
+	require.Nil(t, resp.Info.Lock)
+	require.Len(t, resp.Info.Writes, 0)
+	require.Len(t, resp.Info.Values, 0)
+
+	tk.MustExec("rollback;")
 }
 
 func TestIssue32422(t *testing.T) {

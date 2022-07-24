@@ -13,12 +13,10 @@
 // limitations under the License.
 
 //go:build !codes
-// +build !codes
 
 package testutil
 
 import (
-	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
@@ -27,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 // MustNewCommonHandle create a common handle with given values.
@@ -47,6 +46,6 @@ func MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int6
 	for i, h := range handles {
 		ordered[i] = h << shiftBitsCount >> shiftBitsCount
 	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	slices.Sort(ordered)
 	return ordered
 }

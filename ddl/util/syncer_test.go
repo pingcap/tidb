@@ -25,7 +25,6 @@ import (
 	. "github.com/pingcap/tidb/ddl"
 	. "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
@@ -71,15 +70,18 @@ func TestSyncerSimple(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic),
 	)
-	require.NoError(t, d.Start(nil))
-	defer func() {
-		require.NoError(t, d.Stop())
+	go func() {
+		require.NoError(t, d.OwnerManager().CampaignOwner())
 	}()
+	defer d.OwnerManager().Cancel()
 
 	// for init function
 	require.NoError(t, d.SchemaSyncer().Init(ctx))
 	resp, err := cli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
 	require.NoError(t, err)
+
+	go d.SchemaSyncer().StartCleanWork()
+	defer d.SchemaSyncer().Close()
 
 	key := DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
 	checkRespKV(t, 1, key, InitialVersion, resp.Kvs...)
@@ -102,11 +104,14 @@ func TestSyncerSimple(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic2),
 	)
-	require.NoError(t, d1.Start(nil))
-	defer func() {
-		require.NoError(t, d1.Stop())
+
+	go func() {
+		require.NoError(t, d1.OwnerManager().CampaignOwner())
 	}()
+	defer d1.OwnerManager().Cancel()
 	require.NoError(t, d1.SchemaSyncer().Init(ctx))
+	go d.SchemaSyncer().StartCleanWork()
+	defer d.SchemaSyncer().Close()
 
 	// for watchCh
 	var wg util.WaitGroupWrapper
@@ -162,7 +167,7 @@ func TestSyncerSimple(t *testing.T) {
 	NeededCleanTTL = int64(11)
 	ttlKey := "session_ttl_key"
 	ttlVal := "session_ttl_val"
-	session, err := owner.NewSession(ctx, "", cli, owner.NewSessionDefaultRetryCnt, ttl)
+	session, err := util.NewSession(ctx, "", cli, util.NewSessionDefaultRetryCnt, ttl)
 	require.NoError(t, err)
 	require.NoError(t, PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease())))
 

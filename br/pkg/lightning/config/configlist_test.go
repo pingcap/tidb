@@ -26,32 +26,32 @@ import (
 func TestNormalPushPop(t *testing.T) {
 	cl := config.NewConfigList()
 
-	cl.Push(&config.Config{TikvImporter: config.TikvImporter{Addr: "1.1.1.1:1111"}})
-	cl.Push(&config.Config{TikvImporter: config.TikvImporter{Addr: "2.2.2.2:2222"}})
+	cl.Push(&config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted1"}})
+	cl.Push(&config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted2"}})
 
 	startTime := time.Now()
 	cfg, err := cl.Pop(context.Background()) // these two should never block.
 	require.Less(t, time.Since(startTime), 100*time.Millisecond)
 	require.NoError(t, err)
-	require.Equal(t, "1.1.1.1:1111", cfg.TikvImporter.Addr)
+	require.Equal(t, "/tmp/sorted1", cfg.TikvImporter.SortedKVDir)
 
 	startTime = time.Now()
 	cfg, err = cl.Pop(context.Background())
 	require.Less(t, time.Since(startTime), 100*time.Millisecond)
 	require.NoError(t, err)
-	require.Equal(t, "2.2.2.2:2222", cfg.TikvImporter.Addr)
+	require.Equal(t, "/tmp/sorted2", cfg.TikvImporter.SortedKVDir)
 
 	startTime = time.Now()
 
 	go func() {
 		time.Sleep(400 * time.Millisecond)
-		cl.Push(&config.Config{TikvImporter: config.TikvImporter{Addr: "3.3.3.3:3333"}})
+		cl.Push(&config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted3"}})
 	}()
 
 	cfg, err = cl.Pop(context.Background()) // this should block for ≥400ms
 	require.GreaterOrEqual(t, time.Since(startTime), 400*time.Millisecond)
 	require.NoError(t, err)
-	require.Equal(t, "3.3.3.3:3333", cfg.TikvImporter.Addr)
+	require.Equal(t, "/tmp/sorted3", cfg.TikvImporter.SortedKVDir)
 }
 
 func TestContextCancel(t *testing.T) {
@@ -72,11 +72,11 @@ func TestContextCancel(t *testing.T) {
 func TestGetRemove(t *testing.T) {
 	cl := config.NewConfigList()
 
-	cfg1 := &config.Config{TikvImporter: config.TikvImporter{Addr: "1.1.1.1:1111"}}
+	cfg1 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted1"}}
 	cl.Push(cfg1)
-	cfg2 := &config.Config{TikvImporter: config.TikvImporter{Addr: "2.2.2.2:2222"}}
+	cfg2 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted2"}}
 	cl.Push(cfg2)
-	cfg3 := &config.Config{TikvImporter: config.TikvImporter{Addr: "3.3.3.3:3333"}}
+	cfg3 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted3"}}
 	cl.Push(cfg3)
 
 	cfg, ok := cl.Get(cfg2.TaskID)
@@ -105,11 +105,11 @@ func TestGetRemove(t *testing.T) {
 func TestMoveFrontBack(t *testing.T) {
 	cl := config.NewConfigList()
 
-	cfg1 := &config.Config{TikvImporter: config.TikvImporter{Addr: "1.1.1.1:1111"}}
+	cfg1 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted1"}}
 	cl.Push(cfg1)
-	cfg2 := &config.Config{TikvImporter: config.TikvImporter{Addr: "2.2.2.2:2222"}}
+	cfg2 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted2"}}
 	cl.Push(cfg2)
-	cfg3 := &config.Config{TikvImporter: config.TikvImporter{Addr: "3.3.3.3:3333"}}
+	cfg3 := &config.Config{TikvImporter: config.TikvImporter{SortedKVDir: "/tmp/sorted3"}}
 	cl.Push(cfg3)
 
 	require.Equal(t, []int64{cfg1.TaskID, cfg2.TaskID, cfg3.TaskID}, cl.AllIDs())
