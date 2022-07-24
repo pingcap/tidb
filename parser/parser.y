@@ -845,7 +845,7 @@ import (
 %token not2
 %type	<expr>
 	Expression                      "expression"
-	MaxValueOrExpression            "maxvalue or expression"
+	MaxValueOrDefaultOrExpression   "maxvalue, default or expression"
 	BoolPri                         "boolean primary expression"
 	ExprOrDefault                   "expression or default"
 	PredicateExpr                   "Predicate expression factor"
@@ -1053,7 +1053,7 @@ import (
 	EscapedTableRef                        "escaped table reference"
 	ExpressionList                         "expression list"
 	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
-	MaxValueOrExpressionList               "maxvalue or expression list"
+	MaxValueOrDefaultOrExpressionList      "maxvalue, default or expression list"
 	ExpressionListOpt                      "expression list opt"
 	FetchFirstOpt                          "Fetch First/Next Option"
 	FuncDatetimePrecListOpt                "Function datetime precision list opt"
@@ -4435,7 +4435,7 @@ PartDefValuesOpt:
 			Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
 		}
 	}
-|	"VALUES" "LESS" "THAN" '(' MaxValueOrExpressionList ')'
+|	"VALUES" "LESS" "THAN" '(' MaxValueOrDefaultOrExpressionList ')'
 	{
 		$$ = &ast.PartitionDefinitionClauseLessThan{
 			Exprs: $5.([]ast.ExprNode),
@@ -4445,7 +4445,7 @@ PartDefValuesOpt:
 	{
 		$$ = &ast.PartitionDefinitionClauseIn{}
 	}
-|	"VALUES" "IN" '(' MaxValueOrExpressionList ')'
+|	"VALUES" "IN" '(' MaxValueOrDefaultOrExpressionList ')'
 	{
 		exprs := $4.([]ast.ExprNode)
 		values := make([][]ast.ExprNode, 0, len(exprs))
@@ -5598,8 +5598,12 @@ Expression:
 	}
 |	BoolPri
 
-MaxValueOrExpression:
-	"MAXVALUE"
+MaxValueOrDefaultOrExpression:
+	"DEFAULT"
+	{
+		$$ = &ast.DefaultExpr{}
+	}
+|	"MAXVALUE"
 	{
 		$$ = &ast.MaxValueExpr{}
 	}
@@ -5645,12 +5649,12 @@ ExpressionList:
 		$$ = append($1.([]ast.ExprNode), $3)
 	}
 
-MaxValueOrExpressionList:
-	MaxValueOrExpression
+MaxValueOrDefaultOrExpressionList:
+	MaxValueOrDefaultOrExpression
 	{
 		$$ = []ast.ExprNode{$1}
 	}
-|	MaxValueOrExpressionList ',' MaxValueOrExpression
+|	MaxValueOrDefaultOrExpressionList ',' MaxValueOrDefaultOrExpression
 	{
 		$$ = append($1.([]ast.ExprNode), $3)
 	}

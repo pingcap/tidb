@@ -3408,6 +3408,8 @@ func TestDDL(t *testing.T) {
 		{`ALTER TABLE d_n.t_n WITHOUT VALIDATION , ADD PARTITION ( PARTITION ident VALUES IN ( MAXVALUE ) STORAGE ENGINE text_string MAX_ROWS 12 )`, true, "ALTER TABLE `d_n`.`t_n` WITHOUT VALIDATION, ADD PARTITION (PARTITION `ident` VALUES IN (MAXVALUE) ENGINE = text_string MAX_ROWS = 12)"},
 		{`ALTER TABLE d_n.t_n WITH VALIDATION , ADD PARTITION NO_WRITE_TO_BINLOG ( PARTITION ident VALUES IN ( MAXVALUE ) STORAGE ENGINE text_string MAX_ROWS 12 )`, true, "ALTER TABLE `d_n`.`t_n` WITH VALIDATION, ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION `ident` VALUES IN (MAXVALUE) ENGINE = text_string MAX_ROWS = 12)"},
 		{`ALTER TABLE d_n.t_n WITH VALIDATION , ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION ident VALUES LESS THAN MAXVALUE STORAGE ENGINE = text_string, PARTITION ident VALUES IN ( MAXVALUE ) (SUBPARTITION text_string MIN_ROWS 11))`, true, "ALTER TABLE `d_n`.`t_n` WITH VALIDATION, ADD PARTITION NO_WRITE_TO_BINLOG (PARTITION `ident` VALUES LESS THAN (MAXVALUE) ENGINE = text_string, PARTITION `ident` VALUES IN (MAXVALUE) (SUBPARTITION `text_string` MIN_ROWS = 11))"},
+		{`ALTER TABLE d_n.t_n ADD PARTITION (PARTITION ident VALUES IN ( DEFAULT ))`, true, "ALTER TABLE `d_n`.`t_n` ADD PARTITION (PARTITION `ident` VALUES IN (DEFAULT))"},
+		{`ALTER TABLE d_n.t_n ADD PARTITION (PARTITION ident VALUES IN (1, default ))`, true, "ALTER TABLE `d_n`.`t_n` ADD PARTITION (PARTITION `ident` VALUES IN (1, DEFAULT))"},
 		// for issue 501
 		{"ALTER TABLE t IMPORT TABLESPACE;", true, "ALTER TABLE `t` IMPORT TABLESPACE"},
 		{"ALTER TABLE t DISCARD TABLESPACE;", true, "ALTER TABLE `t` DISCARD TABLESPACE"},
@@ -5804,6 +5806,8 @@ ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `
 		// VALUES LESS THAN clause is valid only for RANGE partitions
 		{"create table t1 (a int) partition by hash (a) (partition x values less than (10))", false, ""},
 		{"create table t1 (a int) partition by key (a) (partition x values less than (10))", false, ""},
+		{"create table t1 (a int) partition by range (a) (partition x values less than (maxvalue))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (MAXVALUE))"},
+		{"create table t1 (a int) partition by range (a) (partition x values less than (default))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (DEFAULT))"},
 		{"create table t1 (a int) partition by range (a) (partition x values less than (10))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (10))"},
 		{"create table t1 (a int) partition by list (a) (partition x values less than (10))", false, ""},
 		{"create table t1 (a int) partition by system_time (partition x values less than (10))", false, ""},
@@ -5812,6 +5816,9 @@ ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `
 		{"create table t1 (a int) partition by key (a) (partition x values in (10))", false, ""},
 		{"create table t1 (a int) partition by range (a) (partition x values in (10))", false, ""},
 		{"create table t1 (a int) partition by list (a) (partition x values in (10))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY LIST (`a`) (PARTITION `x` VALUES IN (10))"},
+		{"create table t1 (a int) partition by list (a) (partition x values in (default))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY LIST (`a`) (PARTITION `x` VALUES IN (DEFAULT))"},
+		{"create table t1 (a int) partition by list (a) (partition x values in (maxvalue))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY LIST (`a`) (PARTITION `x` VALUES IN (MAXVALUE))"},
+		{"create table t1 (a int) partition by list (a) (partition x values in (default, 10))", true, "CREATE TABLE `t1` (`a` INT) PARTITION BY LIST (`a`) (PARTITION `x` VALUES IN (DEFAULT, 10))"},
 		{"create table t1 (a int) partition by system_time (partition x values in (10))", false, ""},
 		// HISTORY/CURRENT clauses are valid only for SYSTEM_TIME partitions
 		{"create table t1 (a int) partition by hash (a) (partition x history, partition y current)", false, ""},
