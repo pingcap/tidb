@@ -386,7 +386,7 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
-	theCheckBuilder := NewPrecheckItemBuilder(
+	preCheckBuilder := NewPrecheckItemBuilder(
 		cfg, p.DBMetas, preInfoGetter, cpdb,
 	)
 
@@ -419,7 +419,7 @@ func NewRestoreControllerWithPauser(
 		taskMgr:        nil,
 
 		preInfoGetter:       preInfoGetter,
-		precheckItemBuilder: theCheckBuilder,
+		precheckItemBuilder: preCheckBuilder,
 	}
 
 	return rc, nil
@@ -2071,44 +2071,26 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 // DataCheck checks the data schema which needs #rc.restoreSchema finished.
 func (rc *Controller) DataCheck(ctx context.Context) error {
-	var (
-		err    error
-		result *CheckResult
-	)
 	if rc.cfg.App.CheckRequirements {
 		if err := rc.HasLargeCSV(ctx); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if rc.cfg.Checkpoint.Enable {
-		theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckCheckpoints)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		result, err = theChecker.Check(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
+	if err := rc.checkCheckpoints(ctx); err != nil {
+		return errors.Trace(err)
 	}
 
-	if rc.cfg.App.CheckRequirements && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
-		theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckSourceSchemaValid)
-		if err != nil {
+	if rc.cfg.App.CheckRequirements {
+		if err := rc.checkSourceSchema(ctx); err != nil {
 			return errors.Trace(err)
 		}
-		result, err = theChecker.Check(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
 	}
 
 	if err := rc.checkTableEmpty(ctx); err != nil {
 		return common.ErrCheckTableEmpty.Wrap(err).GenWithStackByArgs()
 	}
-	if err = rc.checkCSVHeader(ctx); err != nil {
+	if err := rc.checkCSVHeader(ctx); err != nil {
 		return common.ErrCheckCSVHeader.Wrap(err).GenWithStackByArgs()
 	}
 

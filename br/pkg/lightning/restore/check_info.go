@@ -46,71 +46,42 @@ func (rc *Controller) isSourceInLocal() bool {
 	return strings.HasPrefix(rc.store.URI(), storage.LocalURIPrefix)
 }
 
-// clusterResource check cluster has enough resource to import data. this test can by skipped.
+func (rc *Controller) doPreCheckOnItem(ctx context.Context, checkItemID CheckItemID) error {
+	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(checkItemID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	result, err := theChecker.Check(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if result != nil {
+		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
+	}
+	return nil
+}
+
+// clusterResource check cluster has enough resource to import data. this test can be skipped.
 func (rc *Controller) clusterResource(ctx context.Context) error {
 	checkCtx := ctx
 	if rc.taskMgr != nil {
 		checkCtx = WithPrecheckKey(ctx, taskManagerKey, rc.taskMgr)
 	}
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckTargetClusterSize)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(checkCtx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(checkCtx, CheckTargetClusterSize)
 }
 
 // ClusterIsAvailable check cluster is available to import data. this test can be skipped.
 func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckTargetClusterVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckTargetClusterVersion)
 }
 
 func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckTargetClusterEmptyRegion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckTargetClusterEmptyRegion)
 }
 
 // checkRegionDistribution checks if regions distribution is unbalanced.
 func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckTargetClusterRegionDist)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckTargetClusterRegionDist)
 }
 
 // checkClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
@@ -139,36 +110,14 @@ func (rc *Controller) checkClusterRegion(ctx context.Context) error {
 
 // StoragePermission checks whether Lightning has enough permission to storage.
 func (rc *Controller) StoragePermission(ctx context.Context) error {
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckSourcePermission)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckSourcePermission)
 }
 
 // HasLargeCSV checks whether input csvs is fit for Lightning import.
 // If strictFormat is false, and csv file is large. Lightning will have performance issue.
 // this test cannot be skipped.
 func (rc *Controller) HasLargeCSV(ctx context.Context) error {
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckLargeDataFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckLargeDataFile)
 }
 
 func (rc *Controller) estimateSourceData(ctx context.Context) (int64, int64, bool, error) {
@@ -182,62 +131,35 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, int64, boo
 // localResource checks the local node has enough resources for this import when local backend enabled;
 func (rc *Controller) localResource(ctx context.Context) error {
 	if rc.isSourceInLocal() {
-		theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckLocalDiskPlacement)
-		if err != nil {
+		if err := rc.doPreCheckOnItem(ctx, CheckLocalDiskPlacement); err != nil {
 			return errors.Trace(err)
-		}
-		result, err := theChecker.Check(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if result != nil {
-			rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
 		}
 	}
 
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckLocalTempKVDir)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckLocalTempKVDir)
 }
 
 func (rc *Controller) checkCSVHeader(ctx context.Context) error {
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckCSVHeader)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckCSVHeader)
 }
 
 func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.IncrementalImport {
 		return nil
 	}
-	theChecker, err := rc.precheckItemBuilder.BuildPrecheckItem(CheckTargetTableEmpty)
-	if err != nil {
-		return errors.Trace(err)
+	return rc.doPreCheckOnItem(ctx, CheckTargetTableEmpty)
+}
+
+func (rc *Controller) checkCheckpoints(ctx context.Context) error {
+	if !rc.cfg.Checkpoint.Enable {
+		return nil
 	}
-	result, err := theChecker.Check(ctx)
-	if err != nil {
-		return errors.Trace(err)
+	return rc.doPreCheckOnItem(ctx, CheckCheckpoints)
+}
+
+func (rc *Controller) checkSourceSchema(ctx context.Context) error {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB {
+		return nil
 	}
-	if result != nil {
-		rc.checkTemplate.Collect(result.Severity, result.Passed, result.Message)
-	}
-	return nil
+	return rc.doPreCheckOnItem(ctx, CheckSourceSchemaValid)
 }

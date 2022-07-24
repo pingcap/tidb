@@ -1,3 +1,16 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package restore
 
 import (
@@ -34,7 +47,7 @@ type clusterResourceCheckItem struct {
 	preInfoGetter PreRestoreInfoGetter
 }
 
-func NewClusterRestoureCheckItem(preInfoGetter PreRestoreInfoGetter) PrecheckItem {
+func NewClusterResourceCheckItem(preInfoGetter PreRestoreInfoGetter) PrecheckItem {
 	return &clusterResourceCheckItem{
 		preInfoGetter: preInfoGetter,
 	}
@@ -551,7 +564,7 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) 
 	checkMsgs := []string{}
 	for _, dbInfo := range ci.dbMetas {
 		for _, tableInfo := range dbInfo.Tables {
-			msgs, err := ci.CheckpointIsValid(ctx, tableInfo)
+			msgs, err := ci.checkpointIsValid(ctx, tableInfo)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -565,8 +578,8 @@ func (ci *checkpointCheckItem) Check(ctx context.Context) (*CheckResult, error) 
 	return theResult, nil
 }
 
-// CheckpointIsValid checks whether we can start this import with this checkpoint.
-func (ci *checkpointCheckItem) CheckpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+// checkpointIsValid checks whether we can start this import with this checkpoint.
+func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := ci.checkpointsDB.Get(ctx, uniqueName)
@@ -852,7 +865,7 @@ func (ci *csvHeaderCheckItem) GetCheckItemID() CheckItemID {
 	return CheckCSVHeader
 }
 
-// checkCSVHeader try to check whether the csv header config is consistent with the source csv files by:
+// Check tries to check whether the csv header config is consistent with the source csv files by:
 // 1. pick one table with two CSV files and a unique/primary key
 // 2. read the first row of those two CSV files
 // 3. checks if the content of those first rows are compatible with the table schema, and whether the

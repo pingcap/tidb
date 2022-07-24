@@ -117,7 +117,7 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckIt
 	case CheckCSVHeader:
 		return NewCSVHeaderCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
 	case CheckTargetClusterSize:
-		return NewClusterRestoureCheckItem(b.preInfoGetter), nil
+		return NewClusterResourceCheckItem(b.preInfoGetter), nil
 	case CheckTargetClusterEmptyRegion:
 		return NewEmptyRegionCheckItem(b.preInfoGetter, b.dbMetas), nil
 	case CheckTargetClusterRegionDist:
