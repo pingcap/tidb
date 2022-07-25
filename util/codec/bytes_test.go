@@ -105,8 +105,16 @@ func TestBytesCodecExt(t *testing.T) {
 		{[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9}, []byte{1, 2, 3, 4, 5, 6, 7, 8, 255, 9, 0, 0, 0, 0, 0, 0, 0, 248}},
 	}
 
+	// `assertEqual` is to deal with test case for `[]byte{}` & `[]byte(nil)`.
+	assertEqual := func(expected []byte, acutal []byte) {
+		require.Equal(t, len(expected), len(acutal))
+		for i := range expected {
+			require.Equal(t, expected[i], acutal[i])
+		}
+	}
+
 	for _, input := range inputs {
-		require.Equal(t, input.enc, EncodeBytesExt(nil, input.enc, true))
-		require.Equal(t, input.dec, EncodeBytesExt(nil, input.enc, false))
+		assertEqual(input.enc, EncodeBytesExt(nil, input.enc, true))
+		assertEqual(input.dec, EncodeBytesExt(nil, input.enc, false))
 	}
 }
