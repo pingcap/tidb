@@ -18,14 +18,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
@@ -72,48 +68,6 @@ func TestParseErrorWarn(t *testing.T) {
 }
 
 func TestKeysNeedLock(t *testing.T) {
-	mockTables :=
-		[]*model.TableInfo{
-			{
-				ID: 1,
-				Columns: []*model.ColumnInfo{
-					{
-						ID:        1,
-						Name:      model.NewCIStr("c1"),
-						FieldType: *types.NewFieldType(mysql.TypeString),
-					},
-				},
-				Indices: []*model.IndexInfo{
-					{
-						ID:   1,
-						Name: model.NewCIStr("unique"),
-						Columns: []*model.IndexColumn{
-							{
-								Name:   model.NewCIStr("c1"),
-								Length: types.UnspecifiedLength,
-							},
-						},
-						Unique: true,
-						State:  model.StatePublic,
-					},
-					{
-						ID:   2,
-						Name: model.NewCIStr("non_unique"),
-						Columns: []*model.IndexColumn{
-							{
-								Name:   model.NewCIStr("c1"),
-								Length: types.UnspecifiedLength,
-							},
-						},
-						Unique: false,
-						State:  model.StatePublic,
-					},
-				},
-			},
-		}
-
-	is := infoschema.MockInfoSchema(mockTables)
-
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	uniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
 	nonUniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 2, []byte{1})
@@ -138,14 +92,12 @@ func TestKeysNeedLock(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		need, err := keyNeedToLock(test.key, test.val, 0, is)
-		require.NoError(t, err)
+		need := keyNeedToLock(test.key, test.val, 0)
 		require.Equal(t, test.need, need)
 
 		flag := kv.KeyFlags(1)
-		need, err = keyNeedToLock(test.key, test.val, flag, is)
+		need = keyNeedToLock(test.key, test.val, flag)
 		require.True(t, flag.HasPresumeKeyNotExists())
-		require.NoError(t, err)
 		require.True(t, need)
 	}
 }

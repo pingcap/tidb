@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -450,18 +449,14 @@ func (txn *LazyTxn) cleanup() {
 }
 
 // KeysNeedToLock returns the keys need to be locked.
-func (txn *LazyTxn) KeysNeedToLock(is infoschema.InfoSchema) ([]kv.Key, error) {
+func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return nil, nil
 	}
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
-		needToLock, err := keyNeedToLock(k, v, flags, is)
-		if err != nil {
-			logutil.BgLogger().Error("error happened in KeysNeedToLock", zap.Error(err))
-		}
-		if !needToLock {
+		if !keyNeedToLock(k, v, flags) {
 			return
 		}
 		keys = append(keys, k)
@@ -493,46 +488,30 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 	return txn, nil
 }
 
-func keyNeedToLock(k, v []byte, flags kv.KeyFlags, is infoschema.InfoSchema) (bool, error) {
+func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
-		return true, nil
+		return true
 	}
 	if flags.HasPresumeKeyNotExists() {
-		return true, nil
+		return true
 	}
 
 	// lock row key, primary key and unique index for delete operation,
 	if len(v) == 0 {
-		return flags.HasNeedLocked() || tablecodec.IsRecordKey(k), nil
+		return flags.HasNeedLocked() || tablecodec.IsRecordKey(k)
 	}
 
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
-		return false, nil
+		return false
 	}
 
-	// Put row key and unique index need to lock.
 	if !tablecodec.IsIndexKey(k) {
-		return true, nil
+		return true
 	}
 
-	// find if it is unique
-	tableID, indexID, _, err := tablecodec.DecodeKeyHead(k)
-	if err != nil {
-		return false, err
-	}
-
-	tbl, found := is.TableByID(tableID)
-	if !found {
-		return false, errors.New("can not find table when deciding whether to lock index key")
-	}
-	for _, indexInfo := range tbl.Meta().Indices {
-		if indexInfo.ID == indexID {
-			return indexInfo.Unique, nil
-		}
-	}
-	return false, errors.New("can not find index when deciding whether to lock index key")
+	return tablecodec.IndexKVIsUnique(v)
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
