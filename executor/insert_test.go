@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/stretchr/testify/require"
@@ -1045,10 +1044,7 @@ func TestBit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a bit(3))`)
-	rec, err := tk.Exec("insert into t1 values(-1)")
-	require.True(t, types.ErrDataTooLong.Equal(err))
-	require.Regexp(t, ".*Data too long for column 'a' at.*", err.Error())
-	require.NoError(t, rec.Close())
+	tk.MustMatchErrMsg("insert into t1 values(-1)", ".*Data too long for column 'a' at.*")
 	tk.MustMatchErrMsg("insert into t1 values(9)", ".*Data too long for column 'a' at.*")
 	tk.MustExec(`create table t64 (a bit(64))`)
 	tk.MustExec("insert into t64 values(-1)")
@@ -1292,10 +1288,9 @@ func TestAutoRandomID(t *testing.T) {
 	tk.MustExec(`create table ar (id bigint key clustered auto_random(15), name char(10))`)
 	overflowVal := 1 << (64 - 5)
 	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
-	rec, err := tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
+	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), errMsg))
-	require.NoError(t, rec.Close())
 }
 
 func TestMultiAutoRandomID(t *testing.T) {
@@ -1403,10 +1398,9 @@ func TestInsertErrorMsg(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int primary key, b datetime, d date)`)
-	rec, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
+	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1")
-	require.NoError(t, rec.Close())
 }
 
 func TestIssue16366(t *testing.T) {
@@ -1417,10 +1411,9 @@ func TestIssue16366(t *testing.T) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(c numeric primary key);`)
 	tk.MustExec("insert ignore into t values(null);")
-	rec, err := tk.Exec(`insert into t values(0);`)
+	_, err := tk.Exec(`insert into t values(0);`)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Duplicate entry '0' for key 'PRIMARY'")
-	require.NoError(t, rec.Close())
 }
 
 func TestClusterPrimaryTablePlainInsert(t *testing.T) {
