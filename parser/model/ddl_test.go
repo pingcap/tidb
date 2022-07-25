@@ -37,7 +37,7 @@ func TestJobClone(t *testing.T) {
 	require.True(t, reflect.DeepEqual(job, clone))
 }
 
-func TestDDLJobSize(t *testing.T) {
+func TestJobSize(t *testing.T) {
 	msg := `Please make sure that the following methods work as expected:
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
