@@ -17,11 +17,13 @@ package domain_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
+	server.RunInGoTest = true
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),

@@ -953,6 +953,7 @@ import (
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
+	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterTablePartitionOpt                 "Alter table partition option"
@@ -1515,6 +1516,13 @@ AlterTableStmt:
 			IndexNames:     $9.([]model.CIStr),
 			IndexFlag:      true,
 			AnalyzeOpts:    $10.([]ast.AnalyzeOpt),
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT"
+	{
+		$$ = &ast.CompactTableStmt{
+			Table:       $4.(*ast.TableName),
+			ReplicaKind: ast.CompactReplicaKindAll,
 		}
 	}
 |	"ALTER" IgnoreOptional "TABLE" TableName "COMPACT" "TIFLASH" "REPLICA"
@@ -10127,6 +10135,20 @@ RolenameList:
 	}
 
 /****************************Admin Statement*******************************/
+AdminStmtLimitOpt:
+	"LIMIT" LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: 0, Count: $2.(uint64)}
+	}
+|	"LIMIT" LengthNum ',' LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: $2.(uint64), Count: $4.(uint64)}
+	}
+|	"LIMIT" LengthNum "OFFSET" LengthNum
+	{
+		$$ = &ast.LimitSimple{Offset: $4.(uint64), Count: $2.(uint64)}
+	}
+
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
 	{
@@ -10218,6 +10240,15 @@ AdminStmt:
 			Tp:     ast.AdminShowDDLJobQueries,
 			JobIDs: $6.([]int64),
 		}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOB" "QUERIES" AdminStmtLimitOpt
+	{
+		ret := &ast.AdminStmt{
+			Tp: ast.AdminShowDDLJobQueriesWithRange,
+		}
+		ret.LimitSimple.Count = $6.(*ast.LimitSimple).Count
+		ret.LimitSimple.Offset = $6.(*ast.LimitSimple).Offset
+		$$ = ret
 	}
 |	"ADMIN" "SHOW" "SLOW" AdminShowSlow
 	{
@@ -11904,6 +11935,10 @@ StringType:
 	{
 		tp := $1.(*types.FieldType)
 		tp.SetCharset($2.(*ast.OptBinary).Charset)
+		if $2.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -11961,6 +11996,10 @@ StringType:
 	{
 		tp := types.NewFieldType(mysql.TypeMediumBlob)
 		tp.SetCharset($3.(*ast.OptBinary).Charset)
+		if $3.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $3.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -11970,6 +12009,10 @@ StringType:
 	{
 		tp := types.NewFieldType(mysql.TypeMediumBlob)
 		tp.SetCharset($2.(*ast.OptBinary).Charset)
+		if $2.(*ast.OptBinary).Charset == charset.CharsetBin {
+			tp.AddFlag(mysql.BinaryFlag)
+			tp.SetCollate(charset.CollationBin)
+		}
 		if $2.(*ast.OptBinary).IsBinary {
 			tp.AddFlag(mysql.BinaryFlag)
 		}
@@ -12081,7 +12124,7 @@ OptCharsetWithOptBinary:
 	{
 		$$ = &ast.OptBinary{
 			IsBinary: false,
-			Charset:  "",
+			Charset:  charset.CharsetBin,
 		}
 	}
 

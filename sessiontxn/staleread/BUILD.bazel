@@ -23,6 +23,7 @@ go_library(
         "//sessionctx",
         "//sessionctx/variable",
         "//sessiontxn",
+        "//sessiontxn/internal",
         "//table/temptable",
         "//types",
         "//util/dbterror",
@@ -38,6 +39,7 @@ go_test(
         "processor_test.go",
         "provider_test.go",
     ],
+    flaky = True,
     deps = [
         ":staleread",
         "//domain",

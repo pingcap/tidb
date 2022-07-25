@@ -105,7 +105,8 @@ func DecodeRowMvccData(tableInfo *model.TableInfo) func(kv.Key, *kvrpcpb.MvccGet
 	return func(key kv.Key, respValue *kvrpcpb.MvccGetByKeyResponse, outMap map[string]interface{}) {
 		colMap := make(map[int64]*types.FieldType, 3)
 		for _, col := range tableInfo.Columns {
-			colMap[col.ID] = &col.FieldType
+			var fieldType = col.FieldType
+			colMap[col.ID] = &fieldType
 		}
 
 		if respValue.Info != nil {

@@ -97,11 +97,17 @@ type tableHintInfo struct {
 	indexMergeHintList  []indexHintInfo
 	timeRangeHint       ast.HintTimeRange
 	limitHints          limitHintInfo
+	MergeHints          MergeHintInfo
 	leadingJoinOrder    []hintTableInfo
 }
 
 type limitHintInfo struct {
 	preferLimitToCop bool
+}
+
+//MergeHintInfo ...one bool flag for cte
+type MergeHintInfo struct {
+	preferMerge bool
 }
 
 type hintTableInfo struct {
@@ -427,6 +433,8 @@ type cteInfo struct {
 	seedStat *property.StatsInfo
 	// The LogicalCTEs that reference the same table should share the same CteClass.
 	cteClass *CTEClass
+
+	isInline bool
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -501,6 +509,15 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+
+	// checkSemiJoinHint checks whether the SEMI_JOIN_REWRITE hint is possible to be applied on the current SELECT stmt.
+	// We need this variable for the hint since the hint is set in subquery, but we check its availability in its outer scope.
+	//   e.g. select * from t where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t1 where t.a=t1.a)
+	// Whether the hint can be applied or not is checked after the subquery is fully built.
+	checkSemiJoinHint bool
+	// hasValidSemijoinHint would tell the outer APPLY/JOIN operator that there's valid hint to be checked later
+	// if there's SEMI_JOIN_REWRITE hint and we find checkSemiJoinHint is true.
+	hasValidSemiJoinHint bool
 }
 
 type handleColHelper struct {
@@ -1391,6 +1408,10 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		p := &ShowDDLJobQueries{JobIDs: as.JobIDs}
 		p.setSchemaAndNames(buildShowDDLJobQueriesFields())
 		ret = p
+	case ast.AdminShowDDLJobQueriesWithRange:
+		p := &ShowDDLJobQueriesWithRange{Limit: as.LimitSimple.Count, Offset: as.LimitSimple.Offset}
+		p.setSchemaAndNames(buildShowDDLJobQueriesWithRangeFields())
+		ret = p
 	case ast.AdminShowSlow:
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.setSchemaAndNames(buildShowSlowSchema())
@@ -1477,6 +1498,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Columns:         idxColInfos,
 		Table:           tblInfo,
 		TableAsName:     &tblInfo.Name,
+		DBName:          dbName,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
 		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
@@ -2796,6 +2818,13 @@ func buildSplitRegionsSchema() (*expression.Schema, types.NameSlice) {
 
 func buildShowDDLJobQueriesFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "QUERY", mysql.TypeVarchar, 256))
+	return schema.col2Schema(), schema.names
+}
+
+func buildShowDDLJobQueriesWithRangeFields() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(2)
+	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "QUERY", mysql.TypeVarchar, 256))
 	return schema.col2Schema(), schema.names
 }
