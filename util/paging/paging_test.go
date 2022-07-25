@@ -22,8 +22,8 @@ import (
 
 func TestGrowPagingSize(t *testing.T) {
 	require.Equal(t, GrowPagingSize(MinPagingSize), MinPagingSize*pagingSizeGrow)
-	require.Equal(t, GrowPagingSize(MaxPagingSize), MaxPagingSize)
-	require.Equal(t, GrowPagingSize(MaxPagingSize/pagingSizeGrow+1), MaxPagingSize)
+	require.Equal(t, GrowPagingSize(MaxPagingSize), uint64(MaxPagingSize))
+	require.Equal(t, GrowPagingSize(MaxPagingSize/pagingSizeGrow+1), uint64(MaxPagingSize))
 }
 
 func TestCalculateSeekCnt(t *testing.T) {

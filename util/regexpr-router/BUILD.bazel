@@ -14,8 +14,10 @@ go_library(
 
 go_test(
     name = "regexpr-router_test",
+    timeout = "short",
     srcs = ["regexpr_router_test.go"],
     embed = [":regexpr-router"],
+    flaky = True,
     deps = [
         "//util/filter",
         "//util/table-router",

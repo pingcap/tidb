@@ -511,10 +511,10 @@ func TestDDL(t *testing.T) {
 			require.Equal(t, int64(0), k)
 
 			element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
-			err = m.UpdateDDLReorgHandle(job, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element)
+			err = m.UpdateDDLReorgHandle(job.ID, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element)
 			require.NoError(t, err)
 			element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
-			err = m.UpdateDDLReorgHandle(job, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element1)
+			err = m.UpdateDDLReorgHandle(job.ID, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element1)
 			require.NoError(t, err)
 
 			e, i, j, k, err = m.GetDDLReorgHandle(job)
@@ -765,4 +765,105 @@ func TestSequenceKey(b *testing.T) {
 	id, err := meta.ParseSequenceKey(key)
 	require.NoError(b, err)
 	require.Equal(b, tableID, id)
+}
+
+func TestClearJob(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
+	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
+	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
+
+	m := meta.NewMeta(txn)
+
+	require.NoError(t, m.EnQueueDDLJob(job1))
+	require.NoError(t, m.EnQueueDDLJob(job2))
+	require.NoError(t, m.EnQueueDDLJob(job3))
+
+	require.NoError(t, m.AddHistoryDDLJob(job1, false))
+	require.NoError(t, m.AddHistoryDDLJob(job2, false))
+
+	jobs, err := m.GetAllDDLJobsInQueue()
+	require.NoError(t, err)
+	require.Len(t, jobs, 3)
+	require.NoError(t, m.ClearALLDDLJob())
+	jobs, err = m.GetAllDDLJobsInQueue()
+	require.NoError(t, err)
+	require.Len(t, jobs, 0)
+
+	count, err := m.GetHistoryDDLCount()
+	require.NoError(t, err)
+	require.Equal(t, count, uint64(2))
+
+	err = txn.Rollback()
+	require.NoError(t, err)
+}
+
+func TestCreateMySQLDatabase(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
+
+	dbID, err := m.CreateMySQLDatabaseIfNotExists()
+	require.NoError(t, err)
+	require.Greater(t, dbID, int64(0))
+
+	anotherDBID, err := m.CreateMySQLDatabaseIfNotExists()
+	require.NoError(t, err)
+	require.Equal(t, dbID, anotherDBID)
+
+	err = txn.Rollback()
+	require.NoError(t, err)
+}
+
+func TestDDLTable(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMeta(txn)
+
+	exists, err := m.CheckDDLTableExists()
+	require.NoError(t, err)
+	require.False(t, exists)
+
+	err = m.SetDDLTables()
+	require.NoError(t, err)
+
+	exists, err = m.CheckDDLTableExists()
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	err = m.SetConcurrentDDL(true)
+	require.NoError(t, err)
+	b, err := m.IsConcurrentDDL()
+	require.NoError(t, err)
+	require.True(t, b)
+	err = m.SetConcurrentDDL(false)
+	require.NoError(t, err)
+	b, err = m.IsConcurrentDDL()
+	require.NoError(t, err)
+	require.False(t, b)
+
+	err = txn.Rollback()
+	require.NoError(t, err)
 }

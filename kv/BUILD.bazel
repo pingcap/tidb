@@ -67,6 +67,7 @@ go_test(
         "version_test.go",
     ],
     embed = [":kv"],
+    flaky = True,
     deps = [
         "//parser/model",
         "//parser/mysql",
