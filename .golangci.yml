@@ -23,6 +23,7 @@ linters:
     - durationcheck
     - prealloc
     - predeclared
+    - misspell
 
 linters-settings:
   staticcheck:
