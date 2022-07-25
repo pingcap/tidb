@@ -1855,7 +1855,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 		}
 		er.err = err
 	}
-	if eNNR {
+	if eNNR && er.b.analyzingPhase {
 		if er.err == nil && pos > 0 && pos <= len(er.b.curScope.projColumn) && !er.b.curScope.projColumn[pos-1].IsHidden {
 			er.ctxStackAppend(er.b.curScope.projColumn[pos-1], er.b.curScope.projNames[pos-1])
 		} else {
