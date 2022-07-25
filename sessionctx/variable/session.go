@@ -1642,7 +1642,7 @@ func (s *SessionVars) SetLastInsertID(insertID uint64) {
 }
 
 // SetStatusFlag sets the session server status variable.
-// If on is ture sets the flag in session status,
+// If on is true sets the flag in session status,
 // otherwise removes the flag.
 func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {
