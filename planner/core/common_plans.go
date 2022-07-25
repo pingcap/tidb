@@ -977,6 +977,8 @@ type Insert struct {
 	AllAssignmentsAreConstant bool
 
 	RowLen int
+
+	FKTriggerPlans []FKTriggerPlan
 }
 
 // Update represents Update plan.

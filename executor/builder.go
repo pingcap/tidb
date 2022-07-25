@@ -869,9 +869,8 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
-	err = insert.initForeignKeyChecker()
-	if err != nil {
-		b.err = err
+	ivs.fkTriggerExecs, b.err = b.buildTblForeignKeyTriggerExecs(v.Table, v.FKTriggerPlans)
+	if b.err != nil {
 		return nil
 	}
 	return insert
@@ -2164,7 +2163,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
 	}
-	deleteExec.fkTriggerExecs, b.err = b.buildForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
+	deleteExec.fkTriggerExecs, b.err = b.buildTblID2ForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
 	if b.err != nil {
 		return nil
 	}

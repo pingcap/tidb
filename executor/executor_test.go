@@ -6091,9 +6091,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn := func() {
 		for _, ca := range cases {
@@ -6101,7 +6101,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 				tk.MustExec(ca.sql)
 			} else {
 				err := tk.ExecToErr(ca.sql)
-				require.True(t, ca.err.Equal(err), ca.sql)
+				msg := fmt.Sprintf("sql: %v, err: %v, expected_err: %v", ca.sql, err, ca.err)
+				require.NotNil(t, err, msg)
+				require.True(t, ca.err.Equal(err), msg)
 			}
 		}
 	}
@@ -6122,9 +6124,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6143,9 +6145,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6164,9 +6166,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6186,9 +6188,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6208,9 +6210,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6230,9 +6232,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6252,9 +6254,9 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (3, 1, null);"},
 		{sql: "insert into t2 values (4, null, null);"},
 		{sql: "insert into t2 (id, a) values (10, 1);"},
-		{sql: "insert into t2 values (5, 1, 2);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (6, 0, 1);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (7, 2, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (5, 1, 2);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (6, 0, 1);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (7, 2, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6272,7 +6274,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "insert into t2 values (1, 1);"},
 		{sql: "insert into t2 values (2, null);"},
 		{sql: "insert into t2 (id) values (10);"},
-		{sql: "insert into t2 values (3, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (3, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 
@@ -6288,8 +6290,8 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 		{sql: "create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));"},
 		{sql: "insert into t1 values (1, 1);"},
 		{sql: "insert into t2 values (1, 1);"},
-		{sql: "insert into t2 (id) values (10);", err: executor.ErrNoReferencedRow2},
-		{sql: "insert into t2 values (3, 2);", err: executor.ErrNoReferencedRow2},
+		{sql: "insert into t2 (id) values (10);", err: plannercore.ErrNoReferencedRow2},
+		{sql: "insert into t2 values (3, 2);", err: plannercore.ErrNoReferencedRow2},
 	}
 	checkCaseFn()
 }

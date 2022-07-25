@@ -5638,19 +5638,18 @@ func (b *PlanBuilder) buildDeleteForeignKeyTriggerPlan(ctx context.Context, tblI
 type FKTriggerPlan interface {
 	Plan
 
-	GetFKInfo() *model.FKInfo
-
-	//GetTriggerPlan() Plan
+	GetCols() []model.CIStr
 
 	SetRangeForSelectPlan([][]types.Datum) error
 }
 
 type baseFKTriggerPlan struct {
-	fk *model.FKInfo
+	fk   *model.FKInfo
+	cols []model.CIStr
 }
 
-func (p *baseFKTriggerPlan) GetFKInfo() *model.FKInfo {
-	return p.fk
+func (p *baseFKTriggerPlan) GetCols() []model.CIStr {
+	return p.cols
 }
 
 func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkValues [][]types.Datum) error {
@@ -5778,6 +5777,30 @@ func (p *FKCheckPlan) buildHandleFromFKValues(sc *stmtctx.StatementContext, vals
 	return kv.NewCommonHandle(handleBytes)
 }
 
+func (b *PlanBuilder) buildForeignKeyOnInsertTriggerPlan(dbName string, tbl table.Table) ([]FKTriggerPlan, error) {
+	if !b.ctx.GetSessionVars().ForeignKeyChecks {
+		return nil, nil
+	}
+	tblInfo := tbl.Meta()
+	triggerPlans := make([]FKTriggerPlan, 0, len(tblInfo.ForeignKeys))
+	for _, fk := range tblInfo.ForeignKeys {
+		referTable, err := b.is.TableByName(fk.RefSchema, fk.RefTable)
+		if err != nil {
+			// todo: append warning?
+			continue
+
+		}
+
+		failedErr := ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
+		triggerPlan, err := buildFKCheckPlan(b.ctx, referTable, fk, fk.RefCols, fk.Cols, true, failedErr)
+		if err != nil {
+			return nil, err
+		}
+		triggerPlans = append(triggerPlans, triggerPlan)
+	}
+	return triggerPlans, nil
+}
+
 func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]FKTriggerPlan, error) {
 	if !b.ctx.GetSessionVars().ForeignKeyChecks {
 		return nil, nil
@@ -5802,7 +5825,7 @@ func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tb
 			triggerPlan, err = b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
 		case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
 			failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
-			triggerPlan, err = b.buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, false, failedErr)
+			triggerPlan, err = buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, fk.RefCols, false, failedErr)
 		default:
 			continue
 		}
@@ -5848,7 +5871,7 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName m
 	}
 	return &FKOnDeleteCascadePlan{
 		Delete:            del,
-		baseFKTriggerPlan: baseFKTriggerPlan{fk: fk},
+		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
 	}, nil
 }
 
@@ -5912,18 +5935,18 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 	}
 	return &FKOnDeleteSetNullPlan{
 		Update:            update,
-		baseFKTriggerPlan: baseFKTriggerPlan{fk: fk},
+		baseFKTriggerPlan: baseFKTriggerPlan{fk, fk.RefCols},
 	}, nil
 }
 
-func (b *PlanBuilder) buildFKCheckPlan(ctx sessionctx.Context, tbl table.Table, fk *model.FKInfo, cols []model.CIStr, checkExist bool, failedErr error) (*FKCheckPlan, error) {
+func buildFKCheckPlan(ctx sessionctx.Context, tbl table.Table, fk *model.FKInfo, cols, rowCols []model.CIStr, checkExist bool, failedErr error) (*FKCheckPlan, error) {
 	tblInfo := tbl.Meta()
 	if tblInfo.PKIsHandle && len(cols) == 1 {
 		refColInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)
 		if refColInfo != nil && mysql.HasPriKeyFlag(refColInfo.GetFlag()) {
 			refCol := table.FindCol(tbl.Cols(), refColInfo.Name.O)
 			return FKCheckPlan{
-				baseFKTriggerPlan: baseFKTriggerPlan{fk},
+				baseFKTriggerPlan: baseFKTriggerPlan{fk, rowCols},
 				Tbl:               tbl,
 				IdxIsPrimaryKey:   true,
 				IdxIsExclusive:    true,
@@ -5957,7 +5980,7 @@ func (b *PlanBuilder) buildFKCheckPlan(ctx sessionctx.Context, tbl table.Table, 
 	}
 
 	return FKCheckPlan{
-		baseFKTriggerPlan: baseFKTriggerPlan{fk},
+		baseFKTriggerPlan: baseFKTriggerPlan{fk, rowCols},
 		Tbl:               tbl,
 		Idx:               tblIdx,
 		IdxIsExclusive:    len(cols) == len(referTbIdxInfo.Columns),

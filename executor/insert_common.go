@@ -100,7 +100,7 @@ type InsertValues struct {
 	isLoadData bool
 	txnInUse   sync.Mutex
 
-	addRowFKCheckers []*foreignKeyChecker
+	fkTriggerExecs []*ForeignKeyTriggerExec
 }
 
 type defaultVal struct {
@@ -1065,12 +1065,6 @@ func (e *InsertValues) checkForeignKeyConstrain(ctx context.Context, rows [][]ty
 	return nil
 }
 
-func (e *InsertValues) initForeignKeyChecker() error {
-	var err error
-	e.addRowFKCheckers, err = initAddRowForeignKeyChecker(e.ctx, e.is, e.Table.Meta(), e.DBName.L)
-	return err
-}
-
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum,
@@ -1240,8 +1234,8 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
-	for _, fkc := range e.addRowFKCheckers {
-		err = fkc.addRowNeedToCheck(vars.StmtCtx, row)
+	for _, fkt := range e.fkTriggerExecs {
+		err = fkt.addRowNeedToTrigger(row)
 		if err != nil {
 			return err
 		}

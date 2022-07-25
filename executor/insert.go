@@ -57,9 +57,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 		return tblName
 	}))
-	for _, fkc := range e.addRowFKCheckers {
-		fkc.resetToBeCheckedKeys()
-	}
 
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
@@ -112,12 +109,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 		if e.stats != nil {
 			e.stats.CheckInsertTime += time.Since(start)
-		}
-	}
-	for _, fkc := range e.addRowFKCheckers {
-		err = fkc.checkValueExistInReferTable(ctx, txn)
-		if err != nil {
-			return err
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))

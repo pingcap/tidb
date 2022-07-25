@@ -3539,6 +3539,11 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	err = insertPlan.ResolveIndices()
+	if err != nil {
+		return nil, err
+	}
+
+	insertPlan.FKTriggerPlans, err = b.buildForeignKeyOnInsertTriggerPlan(insertPlan.DBName.L, insertPlan.Table)
 	return insertPlan, err
 }
 
