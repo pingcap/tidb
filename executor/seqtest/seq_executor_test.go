@@ -812,6 +812,10 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
+	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows("test1 t _tidb_rowid 1 AUTO_INCREMENT"))
+
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
