@@ -76,6 +76,14 @@ type ShowDDLJobQueries struct {
 	JobIDs []int64
 }
 
+// ShowDDLJobQueriesWithRange is for showing DDL job queries sql with specified limit and offset.
+type ShowDDLJobQueriesWithRange struct {
+	baseSchemaProducer
+
+	Limit  uint64
+	Offset uint64
+}
+
 // ShowNextRowID is for showing the next global row ID.
 type ShowNextRowID struct {
 	baseSchemaProducer
