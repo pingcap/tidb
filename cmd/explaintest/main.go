@@ -756,9 +756,11 @@ func main() {
 			continue
 		}
 		tr := newTester(t)
+		start := time.Now()
 		if err = tr.Run(); err != nil {
 			log.Fatal("run test", zap.String("test", t), zap.Error(err))
 		}
+		log.Error("run test ", zap.String("name", tr.name), zap.String("time", time.Since(start).String()))
 		log.Info("run test ok", zap.String("test", t))
 	}
 
