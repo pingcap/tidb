@@ -15,6 +15,7 @@ go_test(
         "paging_test.go",
     ],
     embed = [":paging"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
