@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessiontest
+package session_test
 
 import (
 	"fmt"
@@ -27,12 +27,11 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLocalTemporaryTableInsert(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -88,7 +87,7 @@ func TestLocalTemporaryTableInsert(t *testing.T) {
 }
 
 func TestLocalTemporaryTableUpdate(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -282,7 +281,7 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 func TestTemporaryTableSize(t *testing.T) {
 	// Test the @@tidb_tmp_table_max_size system variable.
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -329,7 +328,7 @@ func TestTemporaryTableSize(t *testing.T) {
 }
 
 func TestGlobalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -356,7 +355,7 @@ func TestGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryGlobalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -404,7 +403,7 @@ func TestRetryGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryLocalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
