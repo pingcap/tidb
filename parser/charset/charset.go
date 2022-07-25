@@ -25,7 +25,9 @@ import (
 )
 
 var (
-	ErrUnknownCollation         = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
+	// ErrUnknownCollation is unknown collation.
+	ErrUnknownCollation = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
+	// ErrCollationCharsetMismatch is collation charset mismatch.
 	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
 )
 
@@ -52,7 +54,7 @@ var collationsIDMap = make(map[int]*Collation)
 var collationsNameMap = make(map[string]*Collation)
 var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 
-// CharacterSetInfos: All the supported charsets should be in the following table.
+// CharacterSetInfos contains all the supported charsets.
 var CharacterSetInfos = map[string]*Charset{
 	CharsetUTF8:    {CharsetUTF8, CollationUTF8, make(map[string]*Collation), "UTF-8 Unicode", 3},
 	CharsetUTF8MB4: {CharsetUTF8MB4, CollationUTF8MB4, make(map[string]*Collation), "UTF-8 Unicode", 4},
@@ -140,7 +142,7 @@ func GetDefaultCollation(charset string) (string, error) {
 }
 
 // GetDefaultCharsetAndCollate returns the default charset and collation.
-func GetDefaultCharsetAndCollate() (string, string) {
+func GetDefaultCharsetAndCollate() (defaultCharset string, defaultCollationName string) {
 	return mysql.DefaultCharset, mysql.DefaultCollationName
 }
 
@@ -158,7 +160,7 @@ func GetCharsetInfo(cs string) (*Charset, error) {
 }
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
-func GetCharsetInfoByID(coID int) (string, string, error) {
+func GetCharsetInfoByID(coID int) (charsetStr string, collateStr string, err error) {
 	if coID == mysql.DefaultCollationID {
 		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
 	}
@@ -178,6 +180,7 @@ func GetCollations() []*Collation {
 	return collations
 }
 
+// GetCollationByName returns the collation by name.
 func GetCollationByName(name string) (*Collation, error) {
 	collation, ok := collationsNameMap[strings.ToLower(name)]
 	if !ok {
@@ -207,8 +210,9 @@ const (
 	CollationASCII = "ascii_bin"
 	// CollationLatin1 is the default collation for CharsetLatin1.
 	CollationLatin1 = "latin1_bin"
-
-	CollationGBKBin       = "gbk_bin"
+	// CollationGBKBin is the default collation for CharsetGBK when new collation is disabled.
+	CollationGBKBin = "gbk_bin"
+	// CollationGBKChineseCI is the default collation for CharsetGBK when new collation is enabled.
 	CollationGBKChineseCI = "gbk_chinese_ci"
 )
 
@@ -223,7 +227,7 @@ const (
 	CharsetUTF8 = "utf8"
 	// CharsetUTF8MB4 represents 4 bytes utf8, which works the same way as utf8 in Go.
 	CharsetUTF8MB4 = "utf8mb4"
-
+	//revive:disable:exported
 	CharsetARMSCII8 = "armscii8"
 	CharsetBig5     = "big5"
 	CharsetCP1250   = "cp1250"
@@ -260,6 +264,7 @@ const (
 	CharsetUTF16    = "utf16"
 	CharsetUTF16LE  = "utf16le"
 	CharsetUTF32    = "utf32"
+	//revive:enable:exported
 )
 
 var charsets = map[string]*Charset{

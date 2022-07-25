@@ -24,6 +24,7 @@ go_library(
         "//store/driver/backoff",
         "//store/driver/error",
         "//store/driver/options",
+        "//util",
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
@@ -65,6 +66,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":copr"],
+    flaky = True,
     deps = [
         "//kv",
         "//store/driver/backoff",

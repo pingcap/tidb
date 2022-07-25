@@ -65,7 +65,6 @@ func TestChildSpanFromContext(t *testing.T) {
 	// verify second span's operation is not nil, this way we can ensure
 	// callback logic works.
 	require.NotNil(t, collectedSpan[1].Operation)
-
 }
 
 func TestFollowFrom(t *testing.T) {
