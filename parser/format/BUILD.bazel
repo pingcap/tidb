@@ -11,6 +11,7 @@ go_test(
     name = "format_test",
     srcs = ["format_test.go"],
     embed = [":format"],
+    flaky = True,
     deps = [
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

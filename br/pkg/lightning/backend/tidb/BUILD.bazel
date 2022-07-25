@@ -32,6 +32,7 @@ go_library(
 go_test(
     name = "tidb_test",
     srcs = ["tidb_test.go"],
+    flaky = True,
     deps = [
         ":tidb",
         "//br/pkg/lightning/backend",
