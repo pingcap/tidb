@@ -7549,3 +7549,14 @@ func TestIssue34998(t *testing.T) {
 	tk.MustQuery("select extract(day_microsecond from '-512:37:22.00')").Check(testkit.Rows("-5123722000000"))
 	tk.MustQuery("select extract(day_microsecond from col1) from PK_S_MULTI_43").Check(testkit.Rows("-5123722000000"))
 }
+
+func TestIssue36358(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c datetime(6))")
+	tk.MustExec("insert into t values('2001-01-01 02:03:04.050607')")
+	tk.MustQuery("select extract(day_microsecond from cast('2001-01-01 02:03:04.050607' as datetime(6))) from t").Check(testkit.Rows("1020304050607"))
+	tk.MustQuery("select extract(day_microsecond from c) from t").Check(testkit.Rows("1020304050607"))
+}

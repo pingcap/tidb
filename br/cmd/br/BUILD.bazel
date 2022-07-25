@@ -56,4 +56,5 @@ go_test(
     name = "br_test",
     srcs = ["main_test.go"],
     embed = [":br_lib"],
+    flaky = True,
 )

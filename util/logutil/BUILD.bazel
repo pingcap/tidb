@@ -31,6 +31,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":logutil"],
+    flaky = True,
     deps = [
         "//kv",
         "//testkit/testsetup",
