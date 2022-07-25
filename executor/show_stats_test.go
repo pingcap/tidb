@@ -74,6 +74,7 @@ func TestShowStatsHistograms(t *testing.T) {
 	tk.MustExec("analyze table t index idx_b")
 	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
 	require.Len(t, res.Rows(), 1)
+	res.CheckAt([]int{10, 11, 12, 13, 14}, [][]interface{}{{"allLoaded", "305", "232", "73", "0"}})
 }
 
 func TestShowStatsBuckets(t *testing.T) {
