@@ -2106,19 +2106,10 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 	}
 }
 
-// InjectCH is used to notice alter table signal in TestUpdateStmtWhileSchemaChanged
-var InjectCH = make(chan struct{})
-
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
-	failpoint.Inject("injectAlterTable", func(val failpoint.Value) {
-		if val.(bool) {
-			// wait alter table change by waiting channel
-			<-InjectCH
-		}
-	})
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {

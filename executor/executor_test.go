@@ -29,7 +29,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -6081,28 +6080,6 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
-}
-
-func TestUpdateStmtWhileSchemaChanged(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("insert into t(a,b) values(1,1), (3,3), (7,7)")
-	failpoint.Enable("github.com/pingcap/tidb/executor/injectAlterTable", `return(true)`)
-	var wg util.WaitGroupWrapper
-	wg.Run(func() {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		tk2.MustExec("update t set a = 2 where b = 1;")
-	})
-	tk.MustExec("alter table t add column c int NOT NULL")
-	executor.InjectCH <- struct{}{}
-	wg.Wait()
-	tk.MustQuery("select a,c from t where b = 1").Check(testkit.Rows("2 0"))
-	failpoint.Disable("github.com/pingcap/tidb/executor/injectAlterTable")
 }
 
 func TestBinaryStrNumericOperator(t *testing.T) {
