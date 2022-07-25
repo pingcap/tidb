@@ -40,6 +40,7 @@ go_test(
         "encoding_test.go",
     ],
     embed = [":charset"],
+    flaky = True,
     deps = [
         "@com_github_stretchr_testify//require",
         "@org_golang_x_text//transform",
