@@ -66,6 +66,12 @@ func TestParallelApplyPlan(t *testing.T) {
 	q2 := "select * from t t0 where t0.b <= (select max(t1.b) from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a and t0.a > t2.a));"
 	checkApplyPlan(t, tk, q2, 1) // only the outside apply can be parallel
 	tk.MustQuery(q2).Sort().Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
+	q3 := "select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a) order by t1.a"
+	checkApplyPlan(t, tk, q3, 0)
+	tk.MustExec("alter table t add index idx(a)")
+	checkApplyPlan(t, tk, q3, 1)
+	tk.MustQuery(q3).Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Parallel Apply rejects the possible order properties of its outer child currently"))
 }
 
 func TestApplyColumnType(t *testing.T) {

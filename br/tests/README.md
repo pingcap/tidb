@@ -44,7 +44,6 @@ This folder contains all tests which relies on external processes such as TiDB.
     * `bin/mc`
     * `bin/tiflash`
     * `bin/cdc`
-    * `bin/tikv-importer`
 
     The versions must be ≥2.1.0.
 

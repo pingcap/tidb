@@ -342,18 +342,6 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	require.Equal(t, rows[1], []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 }
 
-func TestShowHistogramsInFlight(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	result := tk.MustQuery("show histograms_in_flight")
-	rows := result.Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, rows[0][0], "0")
-}
-
 func TestShowAnalyzeStatus(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

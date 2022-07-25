@@ -110,14 +110,14 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 
 // isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
 // and another is column.
-func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
+func isColEqCorColOrConstant(_ sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
 		return false
 	}
 	_, collation := f.CharsetAndCollation()
 	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
 			return false
 		}
 		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
@@ -132,7 +132,7 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 		}
 	}
 	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
 			return false
 		}
 		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {

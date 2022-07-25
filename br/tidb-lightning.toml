@@ -136,6 +136,8 @@ addr = "127.0.0.1:8287"
 # The memory cache used in for local sorting during the encode-KV phase before flushing into the engines. The memory
 # usage is bound by region-concurrency * local-writer-mem-cache-size.
 #local-writer-mem-cache-size = '128MiB'
+# Limit the write bandwidth to each tikv store. The unit is 'Bytes per second'. 0 means no limit.
+#store-write-bwlimit = 0
 
 [mydumper]
 # block size of file reading

@@ -17,7 +17,6 @@ package executor_test
 import (
 	"fmt"
 	"math/rand"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/slices"
 )
 
 func TestBasicCTE(t *testing.T) {
@@ -403,7 +403,7 @@ func TestSpillToDisk(t *testing.T) {
 	require.Greater(t, memTracker.MaxConsumed(), int64(0))
 	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
 
-	sort.Ints(vals)
+	slices.Sort(vals)
 	resRows := make([]string, 0, rowNum)
 	for i := vals[0]; i <= rowNum; i++ {
 		resRows = append(resRows, fmt.Sprintf("%d", i))
@@ -439,4 +439,24 @@ func TestCTEExecError(t *testing.T) {
 			"select * from cte")
 		require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
 	}
+}
+
+// https://github.com/pingcap/tidb/issues/33965.
+func TestCTEsInView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create database if not exists test1;")
+	tk.MustExec("create table test.t (a int);")
+	tk.MustExec("create table test1.t (a int);")
+	tk.MustExec("insert into test.t values (1);")
+	tk.MustExec("insert into test1.t values (2);")
+
+	tk.MustExec("use test;")
+	tk.MustExec("create definer='root'@'localhost' view test.v as with tt as (select * from t) select * from tt;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
+	tk.MustExec("use test1;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 }

@@ -20,10 +20,12 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
@@ -71,7 +73,10 @@ ut build
 ut build xxx
 
 // write the junitfile
-ut run --junitfile xxx`
+ut run --junitfile xxx
+
+// test with race flag
+ut run --race`
 
 	fmt.Println(msg)
 	return true
@@ -82,7 +87,6 @@ const modulePath = "github.com/pingcap/tidb"
 type task struct {
 	pkg  string
 	test string
-	old  bool
 }
 
 func (t *task) String() string {
@@ -95,7 +99,7 @@ var workDir string
 func cmdList(args ...string) bool {
 	pkgs, err := listPackages()
 	if err != nil {
-		fmt.Println("list package error", err)
+		log.Println("list package error", err)
 		return false
 	}
 
@@ -118,12 +122,12 @@ func cmdList(args ...string) bool {
 
 		err := buildTestBinary(pkg)
 		if err != nil {
-			fmt.Println("build package error", pkg, err)
+			log.Println("build package error", pkg, err)
 			return false
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			log.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -133,7 +137,7 @@ func cmdList(args ...string) bool {
 
 		res, err := listTestCases(pkg, nil)
 		if err != nil {
-			fmt.Println("list test cases for package error", err)
+			log.Println("list test cases for package error", err)
 			return false
 		}
 
@@ -155,7 +159,7 @@ func cmdList(args ...string) bool {
 func cmdBuild(args ...string) bool {
 	pkgs, err := listPackages()
 	if err != nil {
-		fmt.Println("list package error", err)
+		log.Println("list package error", err)
 		return false
 	}
 
@@ -163,7 +167,7 @@ func cmdBuild(args ...string) bool {
 	if len(args) == 0 {
 		err := buildTestBinaryMulti(pkgs)
 		if err != nil {
-			fmt.Println("build package error", pkgs, err)
+			log.Println("build package error", pkgs, err)
 			return false
 		}
 		return true
@@ -174,7 +178,7 @@ func cmdBuild(args ...string) bool {
 		pkg := args[0]
 		err := buildTestBinary(pkg)
 		if err != nil {
-			fmt.Println("build package error", pkg, err)
+			log.Println("build package error", pkg, err)
 			return false
 		}
 	}
@@ -194,14 +198,14 @@ func cmdRun(args ...string) bool {
 	if len(args) == 0 {
 		err := buildTestBinaryMulti(pkgs)
 		if err != nil {
-			fmt.Println("build package error", pkgs, err)
+			log.Println("build package error", pkgs, err)
 			return false
 		}
 
 		for _, pkg := range pkgs {
 			exist, err := testBinaryExist(pkg)
 			if err != nil {
-				fmt.Println("check test binary existance error", err)
+				log.Println("check test binary existence error", err)
 				return false
 			}
 			if !exist {
@@ -211,7 +215,7 @@ func cmdRun(args ...string) bool {
 
 			tasks, err = listTestCases(pkg, tasks)
 			if err != nil {
-				fmt.Println("list test cases error", err)
+				log.Println("list test cases error", err)
 				return false
 			}
 		}
@@ -222,12 +226,12 @@ func cmdRun(args ...string) bool {
 		pkg := args[0]
 		err := buildTestBinary(pkg)
 		if err != nil {
-			fmt.Println("build package error", pkg, err)
+			log.Println("build package error", pkg, err)
 			return false
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			log.Println("check test binary existence error", err)
 			return false
 		}
 
@@ -237,7 +241,7 @@ func cmdRun(args ...string) bool {
 		}
 		tasks, err = listTestCases(pkg, tasks)
 		if err != nil {
-			fmt.Println("list test cases error", err)
+			log.Println("list test cases error", err)
 			return false
 		}
 	}
@@ -247,12 +251,12 @@ func cmdRun(args ...string) bool {
 		pkg := args[0]
 		err := buildTestBinary(pkg)
 		if err != nil {
-			fmt.Println("build package error", pkg, err)
+			log.Println("build package error", pkg, err)
 			return false
 		}
 		exist, err := testBinaryExist(pkg)
 		if err != nil {
-			fmt.Println("check test binary existance error", err)
+			log.Println("check test binary existence error", err)
 			return false
 		}
 		if !exist {
@@ -262,12 +266,12 @@ func cmdRun(args ...string) bool {
 
 		tasks, err = listTestCases(pkg, tasks)
 		if err != nil {
-			fmt.Println("list test cases error", err)
+			log.Println("list test cases error", err)
 			return false
 		}
 		tasks, err = filterTestCases(tasks, args[1])
 		if err != nil {
-			fmt.Println("filter test cases error", err)
+			log.Println("filter test cases error", err)
 			return false
 		}
 	}
@@ -275,7 +279,7 @@ func cmdRun(args ...string) bool {
 	if except != "" {
 		list, err := parseCaseListFromFile(except)
 		if err != nil {
-			fmt.Println("parse --except file error", err)
+			log.Println("parse --except file error", err)
 			return false
 		}
 		tmp := tasks[:0]
@@ -290,7 +294,7 @@ func cmdRun(args ...string) bool {
 	if only != "" {
 		list, err := parseCaseListFromFile(only)
 		if err != nil {
-			fmt.Println("parse --only file error", err)
+			log.Println("parse --only file error", err)
 			return false
 		}
 		tmp := tasks[:0]
@@ -302,7 +306,7 @@ func cmdRun(args ...string) bool {
 		tasks = tmp
 	}
 
-	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
+	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", P, len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
@@ -347,10 +351,11 @@ func cmdRun(args ...string) bool {
 }
 
 func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
-	f, err := os.Open(fileName)
+	f, err := os.Open(filepath.Clean(fileName))
 	if err != nil {
 		return nil, withTrace(err)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	ret := make(map[string]struct{})
@@ -397,9 +402,23 @@ func handleFlags(flag string) string {
 	return res
 }
 
+func handleRaceFlag() (found bool) {
+	tmp := os.Args[:0]
+	for i := 0; i < len(os.Args); i++ {
+		if os.Args[i] == "--race" {
+			found = true
+			continue
+		}
+		tmp = append(tmp, os.Args[i])
+	}
+	os.Args = tmp
+	return
+}
+
 var junitfile string
 var coverprofile string
 var coverFileTempDir string
+var race bool
 
 var except string
 var only string
@@ -409,6 +428,8 @@ func main() {
 	coverprofile = handleFlags("--coverprofile")
 	except = handleFlags("--except")
 	only = handleFlags("--only")
+	race = handleRaceFlag()
+
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
@@ -464,6 +485,7 @@ func collectCoverProfileFile() {
 		fmt.Println("create cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer w.Close()
 	w.WriteString("mode: set\n")
 
@@ -501,6 +523,7 @@ func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEnt
 		fmt.Println("open temp cover file error:", err)
 		os.Exit(-1)
 	}
+	//nolint: errcheck
 	defer f.Close()
 
 	profs, err := cover.ParseProfilesFromReader(f)
@@ -603,21 +626,13 @@ func (b blocksByStart) Less(i, j int) bool {
 func listTestCases(pkg string, tasks []task) ([]task, error) {
 	newCases, err := listNewTestCases(pkg)
 	if err != nil {
-		fmt.Println("list test case error", pkg, err)
+		log.Println("list test case error", pkg, err)
 		return nil, withTrace(err)
 	}
 	for _, c := range newCases {
-		tasks = append(tasks, task{pkg, c, false})
+		tasks = append(tasks, task{pkg, c})
 	}
 
-	oldCases, err := listOldTestCases(pkg)
-	if err != nil {
-		fmt.Println("list old test case error", pkg, err)
-		return nil, withTrace(err)
-	}
-	for _, c := range oldCases {
-		tasks = append(tasks, task{pkg, c, true})
-	}
 	return tasks, nil
 }
 
@@ -673,10 +688,10 @@ type numa struct {
 func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
-		res := n.runTestCase(t.pkg, t.test, t.old)
+		res := n.runTestCase(t.pkg, t.test)
 		if res.Failure != nil {
 			fmt.Println("[FAIL] ", t.pkg, t.test)
-			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err, res.Failure.Contents)
+			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err.Error(), res.Failure.Contents)
 			n.Fail = true
 		}
 		n.results = append(n.results, res)
@@ -689,7 +704,7 @@ type testResult struct {
 	err error
 }
 
-func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
+func (n *numa) runTestCase(pkg string, fn string) testResult {
 	res := testResult{
 		JUnitTestCase: JUnitTestCase{
 			Classname: path.Join(modulePath, pkg),
@@ -701,7 +716,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 	var err error
 	var start time.Time
 	for i := 0; i < 3; i++ {
-		cmd := n.testCommand(pkg, fn, old)
+		cmd := n.testCommand(pkg, fn)
 		cmd.Dir = path.Join(workDir, pkg)
 		// Combine the test case output, so the run result for failed cases can be displayed.
 		cmd.Stdout = &buf
@@ -710,10 +725,18 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 		start = time.Now()
 		err = cmd.Run()
 		if err != nil {
+			//lint:ignore S1020
 			if _, ok := err.(*exec.ExitError); ok {
 				// Retry 3 times to get rid of the weird error:
-				// err=signal: segmentation fault (core dumped)
-				if err.Error() == "signal: segmentation fault (core dumped)" {
+				switch err.Error() {
+				case "signal: segmentation fault (core dumped)":
+					buf.Reset()
+					continue
+				case "signal: trace/breakpoint trap (core dumped)":
+					buf.Reset()
+					continue
+				}
+				if strings.Contains(buf.String(), "panic during panic") {
 					buf.Reset()
 					continue
 				}
@@ -779,7 +802,7 @@ func failureCases(input []JUnitTestCase) int {
 	return sum
 }
 
-func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
+func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 	args := make([]string, 0, 10)
 	exe := "./" + testFileName(pkg)
 	if coverprofile != "" {
@@ -788,20 +811,21 @@ func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
 	args = append(args, "-test.cpu", "1")
-	args = append(args, []string{"-test.timeout", "2m"}...)
-	if old {
-		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
-		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
+	if !race {
+		args = append(args, []string{"-test.timeout", "2m"}...)
 	} else {
-		// session.test -test.run TestClusteredPrefixColum
-		args = append(args, "-test.run", fn)
+		// it takes a longer when race is enabled. so it is set more timeout value.
+		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
+
+	// session.test -test.run TestClusteredPrefixColum
+	args = append(args, "-test.run", "^"+fn+"$")
 
 	return exec.Command(exe, args...)
 }
 
 func skipDIR(pkg string) bool {
-	skipDir := []string{"br", "cmd", "dumpling"}
+	skipDir := []string{"br", "cmd", "dumpling", "tests"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
 			return true
@@ -812,11 +836,12 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	var cmd *exec.Cmd
+	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
-	} else {
-		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
@@ -837,10 +862,12 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	var cmd *exec.Cmd
+	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
-	} else {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Args = append(cmd.Args, packages...)
 	cmd.Dir = workDir
@@ -855,6 +882,7 @@ func buildTestBinaryMulti(pkgs []string) error {
 func testBinaryExist(pkg string) (bool, error) {
 	_, err := os.Stat(testFileFullPath(pkg))
 	if err != nil {
+		//lint:ignore S1020
 		if _, ok := err.(*os.PathError); ok {
 			return false, nil
 		}
@@ -884,30 +912,6 @@ func listNewTestCases(pkg string) ([]string, error) {
 	return filter(res, func(s string) bool {
 		return strings.HasPrefix(s, "Test") && s != "TestT" && s != "TestBenchDaily"
 	}), nil
-}
-
-func listOldTestCases(pkg string) (res []string, err error) {
-	exe := "./" + testFileName(pkg)
-
-	// Maybe the restructure is finish on this package.
-	cmd := exec.Command(exe, "-h")
-	cmd.Dir = path.Join(workDir, pkg)
-	buf, err := cmd.CombinedOutput()
-	if err != nil {
-		err = withTrace(err)
-		return
-	}
-	if !bytes.Contains(buf, []byte("check.list")) {
-		// there is no old test case in pkg
-		return
-	}
-
-	// session.test -test.run TestT -check.list Test
-	cmd = exec.Command(exe, "-test.run", "^TestT$", "-check.list", "Test")
-	cmd.Dir = path.Join(workDir, pkg)
-	res, err = cmdToLines(cmd)
-	res = filter(res, func(s string) bool { return strings.Contains(s, "Test") })
-	return res, withTrace(err)
 }
 
 func cmdToLines(cmd *exec.Cmd) ([]string, error) {

@@ -43,16 +43,17 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}, geners: []dataGenerator{nil, newRangeDecimalGener(0, 0, 0.2)}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}, nil},
-			geners:             []dataGenerator{newRangeDecimalGener(0, 10000, 0.2), newRangeDecimalGener(0, 10000, 0.2)},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(mysql.UnsignedFlag).BuildP(), nil},
+			geners: []dataGenerator{newRangeDecimalGener(0, 10000, 0.2), newRangeDecimalGener(0, 10000, 0.2)},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
-			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldType{nil, types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners:             []dataGenerator{newRangeDecimalGener(0, 10000, 0.2), newRangeDecimalGener(0, 10000, 0.2)},
 		},
 		// when the final result is at (-1, 0], it should be return 0 instead of the error
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal},
-			childrenFieldTypes: []*types.FieldType{nil, {Tp: mysql.TypeNewDecimal, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldType{nil, types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners:             []dataGenerator{newRangeDecimalGener(-100, -1, 0.2), newRangeDecimalGener(1000, 2000, 0.2)},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
@@ -63,8 +64,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -72,8 +73,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				{Tp: mysql.TypeLonglong},
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -81,8 +82,8 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
 			childrenFieldTypes: []*types.FieldType{
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
-				{Tp: mysql.TypeLonglong}},
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldType(mysql.TypeLonglong)},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(0, math.MaxInt64),
@@ -107,24 +108,27 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(0, math.MaxInt64),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners: []dataGenerator{
 				newRangeInt64Gener(math.MinInt64/2, math.MaxInt64/2),
 				newRangeInt64Gener(0, math.MaxInt64),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
-				{Tp: mysql.TypeLonglong}},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldType(mysql.TypeLonglong)},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(math.MinInt64/2, math.MaxInt64/2),
@@ -136,7 +140,10 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETReal}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: []dataGenerator{newRangeInt64Gener(-10000, 10000), newRangeInt64Gener(-10000, 10000)}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeInt24, Flag: mysql.UnsignedFlag}, {Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, 10000),
 				newRangeInt64Gener(0, 10000),
@@ -155,24 +162,27 @@ var vecBuiltinArithmeticCases = map[string][]vecExprBenchCase{
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(0, math.MaxInt64),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong},
-				{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(0, math.MaxInt64),
 			},
 		},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt},
-			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag},
-				{Tp: mysql.TypeLonglong}},
+			childrenFieldTypes: []*types.FieldType{
+				types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP(),
+				types.NewFieldType(mysql.TypeLonglong)},
 			geners: []dataGenerator{
 				newRangeInt64Gener(0, math.MaxInt64),
 				newRangeInt64Gener(0, math.MaxInt64),

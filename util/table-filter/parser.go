@@ -58,7 +58,7 @@ func (p *tableRulesParser) parse(line string, canImport bool) error {
 		return err
 	}
 	if len(line) == 0 {
-		return p.errorf("missing table pattern")
+		return p.errorf("wrong table pattern")
 	}
 	if line[0] != '.' {
 		return p.errorf("syntax error: missing '.' between schema and table patterns")
@@ -298,6 +298,7 @@ parseLoop:
 }
 
 func (p *matcherParser) importFile(fileName string, parseMatcher func(string, bool) error) error {
+	//nolint: gosec
 	file, err := os.Open(fileName)
 	if err != nil {
 		return p.annotatef(err, "cannot open filter file")

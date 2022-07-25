@@ -31,13 +31,10 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# The maximum memory available for a single SQL statement. Default: 1GB
-mem-quota-query = 1073741824
-
-# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
+# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 oom-use-tmp-storage = true
 
-# Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
+# Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by the memory quota.
 # It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
 # It only takes effect when `oom-use-tmp-storage` is `true`.
 # tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
@@ -47,13 +44,6 @@ oom-use-tmp-storage = true
 # The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
 tmp-storage-quota = -1
 
-# Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
-# Valid options: ["log", "cancel"]
-oom-action = "cancel"
-
-# Enable batch commit for the DMLs.
-enable-batch-dml = false
-
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
@@ -61,9 +51,6 @@ compatible-kill-query = false
 # Make SIGTERM wait N seconds before starting the shutdown procedure. This is designed for when TiDB is behind a proxy/load balancer.
 # The health check will fail immediately but the server will not start shutting down until the time has elapsed.
 graceful-wait-before-shutdown = 0
-
-# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
-check-mb4-value-in-utf8 = true
 
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
@@ -102,9 +89,6 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
-# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
-max-server-connections = 0
-
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = true
 
@@ -129,6 +113,10 @@ deprecate-integer-display-length = false
 # See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
 enable-enum-length-limit = true
 
+# enable-global-kill is used to control global kill feature. When it is enabled, connection ID is globally unique and KILL
+# command can be forwarded to the right TiDB instance to execute.
+enable-global-kill = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -142,24 +130,11 @@ format = "text"
 # Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
 # enable-error-stack = false
 
-# Whether to enable slow query log.
-enable-slow-log = true
-
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
-# Queries with execution time greater than this value will be logged. (Milliseconds)
-slow-threshold = 300
-
-# record-plan-in-slow-log is used to enable record query plan in slow log.
-# 0 is disable. 1 is enable.
-record-plan-in-slow-log = 1
-
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
-
-# Maximum query length recorded in log.
-query-log-max-len = 4096
 
 # File logging.
 [log.file]
@@ -242,19 +217,14 @@ max-procs = 0
 # Memory size quota for tidb server, 0 means unlimited
 server-memory-quota = 0
 
-# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
-# and less than or equal to 1. The default value is 0.8.
-# If this configuration is set to 0 or 1, it'll disable the alarm.
-# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
-# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
-# `memory-usage-alarm-ratio * server-memory-quota`; otherwise, it'll be `memory-usage-alarm-ratio * system memory size`.
-memory-usage-alarm-ratio = 0.8
-
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
+
+# Set nodelay option for tcp connection.
+tcp-no-delay = true
 
 # Whether support cartesian product.
 cross-join = true
@@ -262,22 +232,9 @@ cross-join = true
 # Stats lease duration, which influences the time of analyze and stats load.
 stats-lease = "3s"
 
-# Run auto analyze worker on this tidb-server.
-run-auto-analyze = true
-
-# Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
-feedback-probability = 0.0
-
-# The max number of query feedback that cache in memory.
-query-feedback-limit = 512
-
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
 pseudo-estimate-ratio = 0.8
-
-# Force the priority of all statements in a specified priority.
-# The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
-force-priority = "NO_PRIORITY"
 
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
@@ -296,9 +253,6 @@ txn-total-size-limit = 104857600
 # NOTE: Increasing this limit may cause performance problems.
 txn-entry-size-limit = 6291456
 
-# The max number of running concurrency two phase committer request for an SQL.
-committer-concurrency = 128
-
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
 
@@ -314,11 +268,6 @@ networks = ""
 
 # PROXY protocol header read timeout, unit is second
 header-timeout = 5
-
-[prepared-plan-cache]
-enabled = false
-capacity = 1000
-memory-guard-ratio = 0.1
 
 [opentracing]
 # Enable opentracing.
@@ -402,9 +351,6 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
-# Enable chunk encoded data for coprocessor requests.
-enable-chunk-rpc = true
-
 # If a Region has not been accessed for more than the given duration (in seconds), it
 # will be reloaded from the PD.
 region-cache-ttl = 600
@@ -470,3 +416,49 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+# instance scope variables
+# These options are also available as a system variable for online configuration
+# changes to the system variable do not persist to the cluster. You must make changes
+# in this configuration file on each tidb-server.
+[instance]
+
+# tidb_general_log is used to log every query in the server in info level.
+tidb_general_log = false
+
+# tidb_pprof_sql_cpu is used to add label sql label to pprof result.
+tidb_pprof_sql_cpu = false
+
+# ddl_slow_threshold sets log DDL operations whose execution time exceeds the threshold value.
+ddl_slow_threshold = 300
+
+# tidb_expensive_query_time_threshold indicates the time threshold of expensive query.
+tidb_expensive_query_time_threshold = 60
+
+# Force the priority of all statements in a specified priority.
+# The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
+tidb_force_priority = "NO_PRIORITY"
+
+# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
+# and less than or equal to 1. The default value is 0.8.
+# If this configuration is set to 0 or 1, it'll disable the alarm.
+# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
+# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
+# `tidb_memory_usage_alarm_ratio * server-memory-quota`; otherwise, it'll be `tidb_memory_usage_alarm_ratio * system memory size`.
+tidb_memory_usage_alarm_ratio = 0.8
+
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+tidb_check_mb4_value_in_utf8 = true
+
+# Whether to enable slow query log.
+tidb_enable_slow_log = true
+
+# Queries with execution time greater than this value will be logged. (Milliseconds)
+tidb_slow_log_threshold = 300
+
+# tidb_record_plan_in_slow_log is used to enable record query plan in slow log.
+# 0 is disable. 1 is enable.
+tidb_record_plan_in_slow_log = 1
+
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max_connections = 0

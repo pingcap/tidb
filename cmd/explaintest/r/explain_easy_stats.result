@@ -106,12 +106,11 @@ Projection	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
 └─Apply	1999.00	root		CARTESIAN left outer join
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
-  └─Limit(Probe)	1.00	root		offset:0, count:1
-    └─Projection	1.00	root		test.t2.c1, test.t2.c2
-      └─IndexLookUp	1.00	root		
-        ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-        │ └─IndexRangeScan	1.25	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
-        └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false
+  └─TopN(Probe)	1.00	root		test.t2.c1, offset:0, count:1
+    └─IndexLookUp	1.00	root		
+      ├─TopN(Build)	1.00	cop[tikv]		test.t2.c1, offset:0, count:1
+      │ └─IndexRangeScan	2.48	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:false
+      └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1

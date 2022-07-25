@@ -16,6 +16,8 @@ package mvmap
 
 import (
 	"bytes"
+
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type entry struct {
@@ -55,7 +57,7 @@ const (
 func (ds *dataStore) put(key, value []byte) dataAddr {
 	dataLen := uint32(len(key) + len(value))
 	if ds.sliceLen != 0 && ds.sliceLen+dataLen > maxDataSliceLen {
-		ds.slices = append(ds.slices, make([]byte, 0, max(maxDataSliceLen, int(dataLen))))
+		ds.slices = append(ds.slices, make([]byte, 0, mathutil.Max(maxDataSliceLen, int(dataLen))))
 		ds.sliceLen = 0
 		ds.sliceIdx++
 	}
@@ -66,13 +68,6 @@ func (ds *dataStore) put(key, value []byte) dataAddr {
 	ds.slices[ds.sliceIdx] = slice
 	ds.sliceLen += dataLen
 	return addr
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func (ds *dataStore) get(e entry, key []byte) []byte {

@@ -24,7 +24,6 @@ import (
 // but changing them has no effect on behavior.
 
 var noopSysVars = []*SysVar{
-	{Scope: ScopeGlobal, Name: MaxConnections, Value: "151", Type: TypeUnsigned, MinValue: 1, MaxValue: 100000},
 	// It is unsafe to pretend that any variation of "read only" is enabled when the server
 	// does not support it. It is possible that these features will be supported in future,
 	// but until then...
@@ -156,7 +155,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_buffer_pool_instances", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_length_for_sort_data", Value: "1024", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: CharacterSetSystem, Value: "utf8"},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetFilesystem)
 	}},
 	{Scope: ScopeGlobal, Name: InnodbOptimizeFullTextOnly, Value: "0"},
@@ -296,7 +295,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: SlowQueryLog, Value: "0"},
 	{Scope: ScopeSession, Name: "debug_sync", Value: ""},
 	{Scope: ScopeGlobal, Name: InnodbStatsAutoRecalc, Value: "1"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "bulk_insert_buffer_size", Value: "8388608", IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},

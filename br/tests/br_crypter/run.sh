@@ -59,7 +59,7 @@ function test_crypter_plaintext(){
     drop_db
 
     echo "restore with crypter method of plaintext"
-    run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/plaintext" --crypter.method "PLAINTEXT"
+    run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/plaintext" --crypter.method "PLAINTEXT"
 
     check_db_row
 }
@@ -79,7 +79,7 @@ function test_crypter(){
 
     echo "restore crypter method of $CRYPTER_METHOD with wrong key of $CRYPTER_WRONG_KEY"
     restore_fail=0
-    run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
+    run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
         --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_WRONG_KEY || restore_fail=1
     if [ $restore_fail -ne 1 ]; then
         echo "TEST: [$TEST_NAME] test restore crypter with wrong key failed!"
@@ -87,7 +87,7 @@ function test_crypter(){
     fi
 
     echo "restore crypter method of $CRYPTER_METHOD with the key of $CRYPTER_KEY"
-    run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
+    run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/$CRYPTER_METHOD" \
         --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_KEY
 
     check_db_row
@@ -103,7 +103,7 @@ function test_crypter(){
 
     echo "backup crypter method of $CRYPTER_METHOD with the wrong key-file of $CRYPTER_WRONG_KEY_FILE"
     restore_fail=0
-    run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
+    run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
         --crypter.method $CRYPTER_METHOD  --crypter.key-file $CRYPTER_WRONG_KEY_FILE || restore_fail=1
     if [ $restore_fail -ne 1 ]; then
         echo "TEST: [$TEST_NAME] test restore with wrong key-file failed!"
@@ -111,7 +111,7 @@ function test_crypter(){
     fi
 
     echo "restore crypter method of $CRYPTER_METHOD with the key-file of $CRYPTER_KEY_FILE"
-    run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
+    run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
         --crypter.method $CRYPTER_METHOD --crypter.key-file $CRYPTER_KEY_FILE
 
     check_db_row

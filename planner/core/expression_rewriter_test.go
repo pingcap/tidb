@@ -409,6 +409,10 @@ func TestMultiColInExpression(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
+
+	// Default RPC encoding may cause statistics explain result differ and then the test unstable.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
 	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
 	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
@@ -419,5 +423,26 @@ func TestMultiColInExpression(t *testing.T) {
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+}
+
+func TestBitFuncsReturnType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a timestamp, b varbinary(32))")
+	tk.MustExec("insert into t values ('2006-08-27 21:57:57', 0x373037343631313230)")
+	tk.MustExec("analyze table t")
+	var input []string
+	var output []struct {
+		Plan []string
+	}
+
+	expressionRewriterSuiteData := plannercore.GetExpressionRewriterSuiteData()
+	expressionRewriterSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

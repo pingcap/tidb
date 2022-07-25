@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/tablecodec"
+	"golang.org/x/exp/maps"
 )
 
 var (
@@ -95,9 +96,7 @@ func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap
 		}
 
 		if len(snapResult) > 0 {
-			for k, v := range result {
-				snapResult[k] = v
-			}
+			maps.Copy(snapResult, result)
 			result = snapResult
 		}
 	}

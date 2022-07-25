@@ -62,7 +62,7 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 		if p.constantMap[i] != nil {
 			if p.constantMap[father] != nil {
 				// May has conflict here. We can choose collation from lhs or rhs, they should be equal. Exception is that `NULL` values.
-				if eq, err := p.constantMap[father].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &p.constantMap[i].Value, collate.GetCollator(p.constantMap[i].GetType().Collate)); eq != 0 || err != nil {
+				if eq, err := p.constantMap[father].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &p.constantMap[i].Value, collate.GetCollator(p.constantMap[i].GetType().GetCollate())); eq != 0 || err != nil {
 					return true
 				}
 			} else {
@@ -97,7 +97,7 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
 				// We can choose collation from lhs or rhs, they should be equal. Exception is that `NULL` values.
-				if eq, err := p.constantMap[id].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &cond.Value, collate.GetCollator(cond.GetType().Collate)); eq == 0 && err == nil {
+				if eq, err := p.constantMap[id].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &cond.Value, collate.GetCollator(cond.GetType().GetCollate())); eq == 0 && err == nil {
 					continue
 				}
 				return true

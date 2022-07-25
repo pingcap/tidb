@@ -44,9 +44,10 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 	tblInfo, err := do.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
 	require.NoError(t, err)
 
-	require.NoError(t, kv.RunInNewTxn(context.TODO(), do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
-		checkTableBundlesInPD(t, tt, tblInfo.Meta())
+		checkTableBundlesInPD(t, do, tt, tblInfo.Meta())
 		return nil
 	}))
 }
@@ -75,42 +76,54 @@ func checkAllBundlesNotChange(t *testing.T, bundles []*placement.Bundle) {
 	}
 }
 
-func checkTableBundlesInPD(t *testing.T, tt *meta.Meta, tblInfo *model.TableInfo) {
+func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblInfo *model.TableInfo) {
 	checks := make([]*struct {
-		ID     string
-		bundle *placement.Bundle
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
 	}, 0)
 
 	bundle, err := placement.NewTableBundle(tt, tblInfo)
 	require.NoError(t, err)
 	checks = append(checks, &struct {
-		ID     string
-		bundle *placement.Bundle
-	}{ID: placement.GroupID(tblInfo.ID), bundle: bundle})
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
+	}{ID: placement.GroupID(tblInfo.ID), tableID: tblInfo.ID, bundle: bundle})
 
 	if tblInfo.Partition != nil {
 		for _, def := range tblInfo.Partition.Definitions {
 			bundle, err := placement.NewPartitionBundle(tt, def)
 			require.NoError(t, err)
 			checks = append(checks, &struct {
-				ID     string
-				bundle *placement.Bundle
-			}{ID: placement.GroupID(def.ID), bundle: bundle})
+				ID      string
+				tableID int64
+				bundle  *placement.Bundle
+			}{ID: placement.GroupID(def.ID), tableID: def.ID, bundle: bundle})
 		}
 	}
 
+	is := do.InfoSchema()
 	for _, check := range checks {
-		got, err := infosync.GetRuleBundle(context.TODO(), check.ID)
+		pdGot, err := infosync.GetRuleBundle(context.TODO(), check.ID)
 		require.NoError(t, err)
+		isGot, ok := is.PlacementBundleByPhysicalTableID(check.tableID)
 		if check.bundle == nil {
-			require.True(t, got.IsEmpty())
+			require.True(t, pdGot.IsEmpty(), "bundle should be nil for table: %d", check.tableID)
+			require.False(t, ok, "bundle should be nil for table: %d", check.tableID)
 		} else {
 			expectedJSON, err := json.Marshal(check.bundle)
 			require.NoError(t, err)
 
-			gotJSON, err := json.Marshal(got)
+			pdGotJSON, err := json.Marshal(pdGot)
 			require.NoError(t, err)
-			require.Equal(t, string(expectedJSON), string(gotJSON))
+			require.NotNil(t, pdGot)
+			require.Equal(t, string(expectedJSON), string(pdGotJSON))
+
+			isGotJSON, err := json.Marshal(isGot)
+			require.NoError(t, err)
+			require.NotNil(t, isGot)
+			require.Equal(t, string(expectedJSON), string(isGotJSON))
 		}
 	}
 }
@@ -309,7 +322,8 @@ func testGetPolicyByIDFromMeta(t *testing.T, store kv.Storage, policyID int64) *
 		policyInfo *model.PolicyInfo
 		err        error
 	)
-	err1 := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err1 := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		policyInfo, err = t.GetPolicy(policyID)
 		if err != nil {
@@ -858,7 +872,8 @@ func testGetPolicyByName(t *testing.T, ctx sessionctx.Context, name string, must
 
 func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 	ids := make([]int64, 0, 32)
-	err1 := kv.RunInNewTxn(context.Background(), storage, false, func(ctx context.Context, txn kv.Transaction) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err1 := kv.RunInNewTxn(ctx, storage, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		dbs, err := t.ListDatabases()
 		if err != nil {
@@ -928,9 +943,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	require.Equal(t, true, in())
 
 	// Test drop policy can't succeed cause there are still some table depend on them.
-	_, err := tk.Exec("drop placement policy x")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:8241]Placement policy 'x' is still in use", err.Error())
+	tk.MustGetErrMsg("drop placement policy x", "[ddl:8241]Placement policy 'x' is still in use")
 
 	// Drop depended table t firstly.
 	tk.MustExec("drop table if exists t")
@@ -939,9 +952,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	require.Equal(t, 1, len(dependencies))
 	require.Equal(t, tbl2.Meta().ID, dependencies[0])
 
-	_, err = tk.Exec("drop placement policy x")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:8241]Placement policy 'x' is still in use", err.Error())
+	tk.MustGetErrMsg("drop placement policy x", "[ddl:8241]Placement policy 'x' is still in use")
 
 	// Drop depended table t2 secondly.
 	tk.MustExec("drop table if exists t2")
@@ -1285,6 +1296,11 @@ func TestDropTableGCPlacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundles))
 	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundles))
+	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
 }
 
 func TestAlterTablePlacement(t *testing.T) {
@@ -1423,6 +1439,22 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 		bundlesMap[bundle.ID] = bundle
 	}
 	_, ok := bundlesMap[placement.GroupID(t1.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().Partition.Definitions[1].ID)]
+	require.True(t, ok)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 3, len(bundles))
+	bundlesMap = make(map[string]*placement.Bundle)
+	for _, bundle := range bundles {
+		bundlesMap[bundle.ID] = bundle
+	}
+	_, ok = bundlesMap[placement.GroupID(t1.Meta().ID)]
 	require.True(t, ok)
 
 	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
@@ -1896,9 +1928,6 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	policy1, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
 	require.True(t, ok)
 
-	policy2, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
-	require.True(t, ok)
-
 	tk.MustExec(`CREATE TABLE t1 (id INT) placement policy p1`)
 	defer tk.MustExec("drop table t1")
 
@@ -1909,12 +1938,8 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	require.NoError(t, err)
 	t1ID := t1.Meta().ID
 
-	t2, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-	t2ID := t2.Meta().ID
-
 	tk.MustExec(`CREATE TABLE tp (id INT) placement policy p3 PARTITION BY RANGE (id) (
-        PARTITION p0 VALUES LESS THAN (100),
+        PARTITION p0 VALUES LESS THAN (100) placement policy p1,
         PARTITION p1 VALUES LESS THAN (1000) placement policy p2,
         PARTITION p2 VALUES LESS THAN (10000)
 	);`)
@@ -1924,7 +1949,6 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	require.NoError(t, err)
 	tpID := tp.Meta().ID
 	par0ID := tp.Meta().Partition.Definitions[0].ID
-	par1ID := tp.Meta().Partition.Definitions[1].ID
 
 	// exchange par0, t1
 	tk.MustExec("alter table tp exchange partition p0 with table t1")
@@ -1937,14 +1961,14 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
 		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	tp, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
 	require.NoError(t, err)
 	require.Equal(t, tpID, tp.Meta().ID)
 	require.Equal(t, t1ID, tp.Meta().Partition.Definitions[0].ID)
-	require.Nil(t, tp.Meta().Partition.Definitions[0].PlacementPolicyRef)
+	require.NotNil(t, tp.Meta().Partition.Definitions[0].PlacementPolicyRef)
 	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Equal(t, par0ID, t1.Meta().ID)
@@ -1952,54 +1976,10 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 	checkExistTableBundlesInPD(t, dom, "test", "tp")
 
 	// exchange par0, t2
-	tk.MustExec("alter table tp exchange partition p0 with table t2")
-	tk.MustQuery("show create table t2").Check(testkit.Rows("" +
-		"t2 CREATE TABLE `t2` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000))"))
-	tp, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
-	require.NoError(t, err)
-	require.Equal(t, tpID, tp.Meta().ID)
-	require.Equal(t, t2ID, tp.Meta().Partition.Definitions[0].ID)
-	require.Nil(t, tp.Meta().Partition.Definitions[0].PlacementPolicyRef)
-	t2, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.NoError(t, err)
-	require.Equal(t, t1ID, t2.Meta().ID)
-	require.Nil(t, t2.Meta().PlacementPolicyRef)
-	checkExistTableBundlesInPD(t, dom, "test", "tp")
+	tk.MustGetErrCode("alter table tp exchange partition p0 with table t2", mysql.ErrTablesDifferentMetadata)
 
-	// exchange par1, t1
-	tk.MustExec("alter table tp exchange partition p1 with table t1")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
-		"t1 CREATE TABLE `t1` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p1` */"))
-	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
-		"tp CREATE TABLE `tp` (\n" +
-		"  `id` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p3` */\n" +
-		"PARTITION BY RANGE (`id`)\n" +
-		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
-		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
-		" PARTITION `p2` VALUES LESS THAN (10000))"))
-	tp, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
-	require.NoError(t, err)
-	require.Equal(t, tpID, tp.Meta().ID)
-	require.Equal(t, par0ID, tp.Meta().Partition.Definitions[1].ID)
-	require.Equal(t, policy2.ID, tp.Meta().Partition.Definitions[1].PlacementPolicyRef.ID)
-	t1, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.NoError(t, err)
-	require.Equal(t, par1ID, t1.Meta().ID)
-	require.Equal(t, policy1.ID, t1.Meta().PlacementPolicyRef.ID)
-	checkExistTableBundlesInPD(t, dom, "test", "tp")
+	// exchange par1, t2
+	tk.MustGetErrCode("alter table tp exchange partition p1 with table t2", mysql.ErrTablesDifferentMetadata)
 }
 
 func TestPDFail(t *testing.T) {

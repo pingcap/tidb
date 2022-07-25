@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
@@ -28,19 +27,21 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 )
 
 var (
-	stmtNodeCounterUse      = metrics.StmtNodeCounter.WithLabelValues("Use")
-	stmtNodeCounterShow     = metrics.StmtNodeCounter.WithLabelValues("Show")
-	stmtNodeCounterBegin    = metrics.StmtNodeCounter.WithLabelValues("Begin")
-	stmtNodeCounterCommit   = metrics.StmtNodeCounter.WithLabelValues("Commit")
-	stmtNodeCounterRollback = metrics.StmtNodeCounter.WithLabelValues("Rollback")
-	stmtNodeCounterInsert   = metrics.StmtNodeCounter.WithLabelValues("Insert")
-	stmtNodeCounterReplace  = metrics.StmtNodeCounter.WithLabelValues("Replace")
-	stmtNodeCounterDelete   = metrics.StmtNodeCounter.WithLabelValues("Delete")
-	stmtNodeCounterUpdate   = metrics.StmtNodeCounter.WithLabelValues("Update")
-	stmtNodeCounterSelect   = metrics.StmtNodeCounter.WithLabelValues("Select")
+	stmtNodeCounterUse       = metrics.StmtNodeCounter.WithLabelValues("Use")
+	stmtNodeCounterShow      = metrics.StmtNodeCounter.WithLabelValues("Show")
+	stmtNodeCounterBegin     = metrics.StmtNodeCounter.WithLabelValues("Begin")
+	stmtNodeCounterCommit    = metrics.StmtNodeCounter.WithLabelValues("Commit")
+	stmtNodeCounterRollback  = metrics.StmtNodeCounter.WithLabelValues("Rollback")
+	stmtNodeCounterInsert    = metrics.StmtNodeCounter.WithLabelValues("Insert")
+	stmtNodeCounterReplace   = metrics.StmtNodeCounter.WithLabelValues("Replace")
+	stmtNodeCounterDelete    = metrics.StmtNodeCounter.WithLabelValues("Delete")
+	stmtNodeCounterUpdate    = metrics.StmtNodeCounter.WithLabelValues("Update")
+	stmtNodeCounterSelect    = metrics.StmtNodeCounter.WithLabelValues("Select")
+	stmtNodeCounterSavepoint = metrics.StmtNodeCounter.WithLabelValues("Savepoint")
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -57,11 +58,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
 	err := plannercore.Preprocess(c.Ctx,
 		stmtNode,
 		plannercore.WithPreprocessorReturn(ret),
-		plannercore.WithExecuteInfoSchemaUpdate(pe),
 		plannercore.InitTxnContextProvider,
 	)
 	if err != nil {
@@ -71,6 +70,10 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	failpoint.Inject("assertTxnManagerInCompile", func() {
 		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
 		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
+		if ret.LastSnapshotTS != 0 {
+			staleread.AssertStmtStaleness(c.Ctx, true)
+			sessiontxn.AssertTxnManagerReadTS(c.Ctx, ret.LastSnapshotTS)
+		}
 	})
 
 	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
@@ -80,11 +83,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
-		expected := val.(bool)
-		got := c.Ctx.GetSessionVars().StmtCtx.IsStaleness
-		if got != expected {
-			panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, got))
-		}
+		staleread.AssertStmtStaleness(c.Ctx, val.(bool))
 	})
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
@@ -92,19 +91,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
 	}
+	c.Ctx.GetSessionVars().StmtCtx.SetPlan(finalPlan)
 	return &ExecStmt{
-		GoCtx:            ctx,
-		SnapshotTS:       ret.LastSnapshotTS,
-		IsStaleness:      ret.IsStaleness,
-		ReplicaReadScope: ret.ReadReplicaScope,
-		InfoSchema:       is,
-		Plan:             finalPlan,
-		LowerPriority:    lowerPriority,
-		Text:             stmtNode.Text(),
-		StmtNode:         stmtNode,
-		Ctx:              c.Ctx,
-		OutputNames:      names,
-		Ti:               &TelemetryInfo{},
+		GoCtx:         ctx,
+		InfoSchema:    is,
+		Plan:          finalPlan,
+		LowerPriority: lowerPriority,
+		Text:          stmtNode.Text(),
+		StmtNode:      stmtNode,
+		Ctx:           c.Ctx,
+		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}, nil
 }
 
@@ -178,6 +175,8 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 		stmtNodeCounterUpdate.Inc()
 	case "Select":
 		stmtNodeCounterSelect.Inc()
+	case "Savepoint":
+		stmtNodeCounterSavepoint.Inc()
 	default:
 		metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
 	}
@@ -343,6 +342,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Change"
 	case *ast.CommitStmt:
 		return "Commit"
+	case *ast.CompactTableStmt:
+		return "CompactTable"
 	case *ast.CreateDatabaseStmt:
 		return "CreateDatabase"
 	case *ast.CreateIndexStmt:
@@ -380,7 +381,7 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.LoadDataStmt:
 		return "LoadData"
 	case *ast.RollbackStmt:
-		return "RollBack"
+		return "Rollback"
 	case *ast.SelectStmt:
 		return "Select"
 	case *ast.SetStmt, *ast.SetPwdStmt:
@@ -413,6 +414,8 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "Trace"
 	case *ast.ShutdownStmt:
 		return "Shutdown"
+	case *ast.SavepointStmt:
+		return "Savepoint"
 	}
 	return "other"
 }

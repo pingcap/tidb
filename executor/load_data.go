@@ -129,6 +129,36 @@ type FieldMapping struct {
 	UserVar *ast.VariableExpr
 }
 
+// reorderColumns reorder the e.insertColumns according to the order of columnNames
+// Note: We must ensure there must be one-to-one mapping between e.insertColumns and columnNames in terms of column name.
+func (e *LoadDataInfo) reorderColumns(columnNames []string) error {
+	cols := e.insertColumns
+
+	if len(cols) != len(columnNames) {
+		return ErrColumnsNotMatched
+	}
+
+	reorderedColumns := make([]*table.Column, len(cols))
+
+	if columnNames == nil {
+		return nil
+	}
+
+	mapping := make(map[string]int)
+	for idx, colName := range columnNames {
+		mapping[strings.ToLower(colName)] = idx
+	}
+
+	for _, col := range cols {
+		idx := mapping[col.Name.L]
+		reorderedColumns[idx] = col
+	}
+
+	e.insertColumns = reorderedColumns
+
+	return nil
+}
+
 // initLoadColumns sets columns which the input fields loaded to.
 func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 	var cols []*table.Column
@@ -161,6 +191,13 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 			break
 		}
 	}
+
+	// e.insertColumns is appended according to the original tables' column sequence.
+	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
+	if err = e.reorderColumns(columnNames); err != nil {
+		return err
+	}
+
 	e.rowLen = len(e.insertColumns)
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
@@ -596,8 +633,8 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 			}
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(e.FieldMappings[i].Column.Tp) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.Flag) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.Tp)))
+			if types.IsTypeTime(e.FieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.GetFlag()) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.GetType())))
 				continue
 			}
 

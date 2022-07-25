@@ -8,9 +8,8 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"go.uber.org/zap"
-
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"go.uber.org/zap"
 )
 
 const logProgressTick = 2 * time.Minute
@@ -51,13 +50,12 @@ type Midparams struct {
 }
 
 func (d *Dumper) GetParameters() (midparams *Midparams) {
-	conf := d.conf
 	mid := &Midparams{}
 	mid.TotalTables = atomic.LoadInt64(&d.totalTables)
-	mid.CompletedTables = ReadCounter(finishedTablesCounter, conf.Labels)
-	mid.FinishedBytes = ReadGauge(finishedSizeGauge, conf.Labels)
-	mid.FinishedRows = ReadGauge(finishedRowsGauge, conf.Labels)
-	mid.EstimateTotalRows = ReadCounter(estimateTotalRowsCounter, conf.Labels)
+	mid.CompletedTables = ReadCounter(d.metrics.finishedTablesCounter)
+	mid.FinishedBytes = ReadGauge(d.metrics.finishedSizeGauge)
+	mid.FinishedRows = ReadGauge(d.metrics.finishedRowsGauge)
+	mid.EstimateTotalRows = ReadCounter(d.metrics.estimateTotalRowsCounter)
 	return mid
 }
 

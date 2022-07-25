@@ -44,4 +44,6 @@ const (
 	FlagInSetOprStmt = 1 << 9
 	// FlagInLoadDataStmt indicates if this is a LOAD DATA statement.
 	FlagInLoadDataStmt = 1 << 10
+	// FlagInRestrictedSQL indicates if this request is in a restricted SQL. Auto Analyze is one example
+	FlagInRestrictedSQL = 1 << 11
 )

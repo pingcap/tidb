@@ -16,6 +16,10 @@ package util
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -28,7 +32,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
+	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -72,15 +76,6 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 	return errors.Trace(err)
 }
 
-// GetStack gets the stacktrace.
-func GetStack() []byte {
-	const size = 4096
-	buf := make([]byte, size)
-	stackSize := runtime.Stack(buf, false)
-	buf = buf[:stackSize]
-	return buf
-}
-
 // WithRecovery wraps goroutine startup call with force recovery.
 // it will dump current goroutine stack into log if catch any recover result.
 //   exec:      execute logic function.
@@ -107,7 +102,7 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 //   recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
 //   quit:         If this value is true, the current program exits after recovery.
 func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
-	r := recover()
+	r := recover() //nolint: revive
 	if r == nil {
 		return
 	}
@@ -119,7 +114,7 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
 		zap.Reflect("r", r),
-		zap.String("stack", string(GetStack())))
+		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if quit {
 		// Wait for metrics to be pushed.
@@ -402,7 +397,7 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 		col := ColumnToProto(c)
 		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
 		// is abandoned.
-		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == model.ExtraHandleID {
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.GetFlag())) || c.ID == model.ExtraHandleID {
 			col.PkHandle = true
 		} else {
 			col.PkHandle = false
@@ -416,13 +411,13 @@ func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool) []*tipb.Column
 func ColumnToProto(c *model.ColumnInfo) *tipb.ColumnInfo {
 	pc := &tipb.ColumnInfo{
 		ColumnId:  c.ID,
-		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.FieldType.Collate])),
-		ColumnLen: int32(c.FieldType.Flen),
-		Decimal:   int32(c.FieldType.Decimal),
-		Flag:      int32(c.Flag),
-		Elems:     c.Elems,
+		Collation: collate.RewriteNewCollationIDIfNeeded(int32(mysql.CollationNames[c.GetCollate()])),
+		ColumnLen: int32(c.GetFlen()),
+		Decimal:   int32(c.GetDecimal()),
+		Flag:      int32(c.GetFlag()),
+		Elems:     c.GetElems(),
 	}
-	pc.Tp = int32(c.FieldType.Tp)
+	pc.Tp = int32(c.GetType())
 	return pc
 }
 
@@ -474,7 +469,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		return
 	}
 
-	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	requireTLS := tlsutil.RequireSecureTransport.Load()
+
 	var minTLSVersion uint16 = tls.VersionTLS11
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
 	case "TLSv1.0":
@@ -533,7 +529,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 			cipherNames = append(cipherNames, sc.Name)
 			cipherSuites = append(cipherSuites, sc.ID)
 		}
-
 	}
 	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
 
@@ -623,12 +618,9 @@ func QueryStrForLog(query string) string {
 	return query
 }
 
-func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
-	privkey, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
-	if err != nil {
-		return err
-	}
-
+// CreateCertificates creates and writes a cert based on the params.
+func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyAlgo x509.PublicKeyAlgorithm,
+	signAlgo x509.SignatureAlgorithm) error {
 	certValidity := 90 * 24 * time.Hour // 90 days
 	notBefore := time.Now()
 	notAfter := notBefore.Add(certValidity)
@@ -641,14 +633,29 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 		Subject: pkix.Name{
 			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
 		},
-		SerialNumber: big.NewInt(1),
-		NotBefore:    notBefore,
-		NotAfter:     notAfter,
-		DNSNames:     []string{hostname},
+		SerialNumber:       big.NewInt(1),
+		NotBefore:          notBefore,
+		NotAfter:           notAfter,
+		DNSNames:           []string{hostname},
+		SignatureAlgorithm: signAlgo,
 	}
 
+	var privKey crypto.Signer
+	switch pubKeyAlgo {
+	case x509.RSA:
+		privKey, err = rsa.GenerateKey(rand.Reader, rsaKeySize)
+	case x509.ECDSA:
+		privKey, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	case x509.Ed25519:
+		_, privKey, err = ed25519.GenerateKey(rand.Reader)
+	default:
+		return errors.Errorf("unknown public key algorithm: %s", pubKeyAlgo.String())
+	}
+	if err != nil {
+		return err
+	}
 	// DER: Distinguished Encoding Rules, this is the ASN.1 encoding rule of the certificate.
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privkey.PublicKey, privkey)
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, privKey.Public(), privKey)
 	if err != nil {
 		return err
 	}
@@ -669,7 +676,7 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 		return err
 	}
 
-	privBytes, err := x509.MarshalPKCS8PrivateKey(privkey)
+	privBytes, err := x509.MarshalPKCS8PrivateKey(privKey)
 	if err != nil {
 		return err
 	}
@@ -685,4 +692,9 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
 		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
+}
+
+func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
+	// use RSA and unspecified signature algorithm
+	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 }

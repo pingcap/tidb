@@ -15,6 +15,7 @@
 package node
 
 import (
+	"context"
 	"path"
 	"testing"
 	"time"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
-	"golang.org/x/net/context"
 )
 
 var nodePrefix = path.Join(DefaultRootPath, NodePrefix[PumpNode])
@@ -37,7 +37,7 @@ func TestUpdateNodeInfo(t *testing.T) {
 	defer testEtcdCluster.Terminate(t)
 
 	etcdclient := etcd.NewClient(testEtcdCluster.RandClient(), DefaultRootPath)
-	r := NewEtcdRegistry(etcdclient, time.Duration(5)*time.Second)
+	r := NewEtcdRegistry(etcdclient, time.Duration(30)*time.Second)
 	ns := &Status{
 		NodeID:  "test",
 		Addr:    "test",

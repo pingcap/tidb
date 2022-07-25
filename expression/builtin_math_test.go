@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	utilMath "github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -376,7 +376,7 @@ func TestRand(t *testing.T) {
 	// issue 3211
 	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	require.NoError(t, err)
-	randGen := utilMath.NewWithSeed(20160101)
+	randGen := mathutil.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
 		v, err = evalBuiltinFunc(f2, chunk.Row{})
 		require.NoError(t, err)
@@ -592,10 +592,10 @@ func TestConv(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Conv, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
 		tp := f.GetType()
-		require.Equal(t, mysql.TypeVarString, tp.Tp)
-		require.Equal(t, charset.CharsetUTF8MB4, tp.Charset)
-		require.Equal(t, charset.CollationUTF8MB4, tp.Collate)
-		require.Equal(t, uint(0), tp.Flag)
+		require.Equal(t, mysql.TypeVarString, tp.GetType())
+		require.Equal(t, charset.CharsetUTF8MB4, tp.GetCharset())
+		require.Equal(t, charset.CollationUTF8MB4, tp.GetCollate())
+		require.Equal(t, uint(0), tp.GetFlag())
 
 		d, err := f.Eval(chunk.Row{})
 		if c.getErr {

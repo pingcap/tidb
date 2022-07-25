@@ -357,7 +357,8 @@
           "Group#2 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
           "    TiKVSingleGather_5 input:[Group#4], table:t",
           "Group#4 Schema:[test.t.a,test.t.b,test.t.c], UniqueKey:[test.t.a]",
-          "    TableScan_4 table:t, pk col:test.t.a", "Group#3 Schema:[Column#15,Column#14,test.t.b]",
+          "    TableScan_4 table:t, pk col:test.t.a",
+          "Group#3 Schema:[Column#15,Column#14,test.t.b]",
           "    TiKVSingleGather_5 input:[Group#5], table:t",
           "Group#5 Schema:[Column#15,Column#14,test.t.b]",
           "    Aggregation_6 input:[Group#4], group by:plus(sin(cast(test.t.b, double BINARY)), sin(cast(test.t.c, double BINARY))), test.t.b, funcs:sum(test.t.a)"

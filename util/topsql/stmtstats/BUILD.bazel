@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "stmtstats",
+    srcs = [
+        "aggregator.go",
+        "kv_exec_count.go",
+        "stmtstats.go",
+    ],
+    importpath = "github.com/pingcap/tidb/util/topsql/stmtstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/topsql/state",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "stmtstats_test",
+    timeout = "short",
+    srcs = [
+        "aggregator_test.go",
+        "kv_exec_count_test.go",
+        "main_test.go",
+        "stmtstats_test.go",
+    ],
+    embed = [":stmtstats"],
+    flaky = True,
+    deps = [
+        "//testkit/testsetup",
+        "//util/topsql/state",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

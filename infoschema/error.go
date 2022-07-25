@@ -80,4 +80,6 @@ var (
 	ErrAdminCheckTable = dbterror.ClassSchema.NewStd(mysql.ErrAdminCheckTable)
 	// ErrEmptyDatabase returns when the database is unexpectedly empty.
 	ErrEmptyDatabase = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
+	// ErrForbidSchemaChange returns when the schema change is illegal
+	ErrForbidSchemaChange = dbterror.ClassSchema.NewStd(mysql.ErrForbidSchemaChange)
 )

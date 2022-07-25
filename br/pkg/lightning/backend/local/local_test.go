@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,23 +34,26 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -328,6 +332,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
 	}
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -435,6 +440,7 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.R
 func TestIsIngestRetryable(t *testing.T) {
 	local := &local{
 		splitCli: &mockSplitClient{},
+		logger:   log.L(),
 	}
 
 	resp := &sst.IngestResponse{
@@ -564,6 +570,7 @@ func TestLocalIngestLoop(t *testing.T) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
@@ -781,6 +788,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -1014,7 +1022,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1027,7 +1035,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return version.IsTiFlash(s)
+				return engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1063,10 +1071,10 @@ func TestMultiIngest(t *testing.T) {
 		// test all non-tiflash stores that support multi ingests
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1102,7 +1110,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error but no tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1115,7 +1123,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error and contains offline tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store) || store.State != metapb.StoreState_Up
+				return !engine.IsTiFlash(store) || store.State != metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1179,6 +1187,7 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
+			logger: log.L(),
 		}
 		err := local.checkMultiIngestSupport(context.Background())
 		if err != nil {
@@ -1187,4 +1196,48 @@ func TestMultiIngest(t *testing.T) {
 			require.Equal(t, testCase.supportMutliIngest, local.supportMultiIngest)
 		}
 	}
+}
+
+func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
+	bak := local{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
+	}()
+	err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0)
+	require.Error(t, err)
+	require.Regexp(t, "The available disk of TiKV.*", err.Error())
+}
+
+func TestGetRegionSplitSizeKeys(t *testing.T) {
+	allStores := []*metapb.Store{
+		{
+			Address:       "172.16.102.1:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+		{
+			Address:       "172.16.102.2:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+		{
+			Address:       "172.16.102.3:20160",
+			StatusAddress: "0.0.0.0:20180",
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cli := utils.FakePDClient{Stores: allStores}
+	defer func() {
+		getSplitConfFromStoreFunc = getSplitConfFromStore
+	}()
+	getSplitConfFromStoreFunc = func(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
+		if strings.Contains(host, "172.16.102.3:20180") {
+			return int64(1), int64(2), nil
+		}
+		return 0, 0, errors.New("invalid connection")
+	}
+	splitSize, splitKeys, err := getRegionSplitSizeKeys(ctx, cli, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), splitSize)
+	require.Equal(t, int64(2), splitKeys)
 }

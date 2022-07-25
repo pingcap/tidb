@@ -242,6 +242,7 @@ type PartitionedTable interface {
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
+	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -260,9 +261,14 @@ type CachedTable interface {
 	Init(exec sqlexec.SQLExecutor) error
 
 	// TryReadFromCache checks if the cache table is readable.
-	TryReadFromCache(ts uint64, leaseDuration time.Duration) kv.MemBuffer
+	TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool)
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
+
+	// WriteLockAndKeepAlive first obtain the write lock, then it renew the lease to keep the lock alive.
+	// 'exit' is a channel to tell the keep alive goroutine to exit.
+	// The result is sent to the 'wg' channel.
+	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
 }

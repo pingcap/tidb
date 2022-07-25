@@ -18,10 +18,10 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -153,6 +153,7 @@ func (c *bindCache) GetAllBindRecords() []*BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
+	//nolint: prealloc
 	var bindRecords []*BindRecord
 	for _, vals := range values {
 		bindRecords = append(bindRecords, vals.([]*BindRecord)...)

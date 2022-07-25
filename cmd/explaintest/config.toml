@@ -13,7 +13,6 @@
 # limitations under the License.
 
 lease = "0"
-mem-quota-query = 34359738368
 host = "127.0.0.1"
 new_collations_enabled_on_first_bootstrap = true
 

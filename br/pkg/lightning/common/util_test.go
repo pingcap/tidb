@@ -99,6 +99,9 @@ func TestToDSN(t *testing.T) {
 		},
 	}
 	require.Equal(t, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
+
+	param.Host = "::1"
+	require.Equal(t, "root:123456@tcp([::1]:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
 }
 
 type mockDriver struct {
@@ -187,7 +190,7 @@ func TestSQLWithRetry(t *testing.T) {
 
 	// retry defaultMaxRetry times and still failed
 	for i := 0; i < 3; i++ {
-		mock.ExpectQuery("select a from test.t1").WillReturnError(errors.New("mock error"))
+		mock.ExpectQuery("select a from test.t1").WillReturnError(errors.Annotate(mysql.ErrInvalidConn, "mock error"))
 	}
 	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
 	require.Regexp(t, ".*mock error", err.Error())
