@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -2088,6 +2089,12 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	if err != nil {
 		return err
 	}
+	// A new txn is required because it may need the sessiontxn.TxnContextProvider during the execution.
+	err = sessiontxn.NewTxn(ctx, sysCtx)
+	if err != nil {
+		return err
+	}
+	defer sysCtx.RollbackTxn(ctx)
 	defer b.releaseSysSession(ctx, sysCtx)
 	return fn(sysCtx)
 }
