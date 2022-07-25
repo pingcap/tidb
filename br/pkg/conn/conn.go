@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -100,7 +101,7 @@ func GetAllTiKVStores(
 	j := 0
 	for _, store := range stores {
 		isTiFlash := false
-		if version.IsTiFlash(store) {
+		if engine.IsTiFlash(store) {
 			if storeBehavior == SkipTiFlash {
 				continue
 			} else if storeBehavior == ErrorOnTiFlash {
