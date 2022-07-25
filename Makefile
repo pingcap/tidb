@@ -122,11 +122,7 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
-gotest: failpoint-enable
-	@echo "Running in native mode."
-	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@$(FAILPOINT_DISABLE)
+gotest: ut
 
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
