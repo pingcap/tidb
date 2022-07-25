@@ -8,6 +8,7 @@ go_test(
         "binlog_test.go",
         "main_test.go",
     ],
+    flaky = True,
     deps = [
         "//config",
         "//parser/mysql",

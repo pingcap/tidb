@@ -9,6 +9,7 @@ go_test(
         "txn_state_test.go",
         "txn_test.go",
     ],
+    flaky = True,
     deps = [
         "//kv",
         "//parser",

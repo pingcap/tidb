@@ -12,4 +12,5 @@ go_test(
     name = "opcode_test",
     srcs = ["opcode_test.go"],
     embed = [":opcode"],
+    flaky = True,
 )
