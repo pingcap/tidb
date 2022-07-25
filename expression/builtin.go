@@ -25,6 +25,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/util/set"
 	"strings"
 	"sync"
 
@@ -87,10 +88,32 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
+func adjustNullFlagForReturnType(funcName string, args []Expression, bf baseBuiltinFunc) {
+	if functionSetForReturnTypeAlwaysNotNull.Exist(funcName) {
+		bf.tp.AddFlag(mysql.NotNullFlag)
+	} else if functionSetForReturnTypeAlwaysNullable.Exist(funcName) {
+		bf.tp.DelFlag(mysql.NotNullFlag)
+	} else if functionSetForReturnTypeNotNullOnNotNull.Exist(funcName) {
+		returnNullable := false
+		for _, arg := range args {
+			if !mysql.HasNotNullFlag(arg.GetType().GetFlag()) {
+				returnNullable = true
+				break
+			}
+		}
+		if returnNullable {
+			bf.tp.DelFlag(mysql.NotNullFlag)
+		} else {
+			bf.tp.AddFlag(mysql.NotNullFlag)
+		}
+	}
+}
+
+func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, tp *types.FieldType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
+	retType := tp.EvalType()
 	ec, err := deriveCollation(ctx, funcName, args, retType, retType)
 	if err != nil {
 		return baseBuiltinFunc{}, err
@@ -103,12 +126,13 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldType(mysql.TypeUnspecified),
+		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
+	adjustNullFlagForReturnType(funcName, args, bf)
 	return bf, nil
 }
 
@@ -191,6 +215,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
+	adjustNullFlagForReturnType(funcName, args, bf)
 	return bf, nil
 }
 
@@ -207,7 +232,7 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 
 		args: args,
 		ctx:  ctx,
-		tp:   types.NewFieldType(mysql.TypeUnspecified),
+		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(tp.GetCharset(), tp.GetCollate())
 	bf.setCollator(collate.GetCollator(tp.GetCollate()))
@@ -525,6 +550,29 @@ type functionClassWithName interface {
 
 	// getDisplayName gets the display name of a function
 	getDisplayName() string
+}
+
+// functions that always return not null type
+var functionSetForReturnTypeAlwaysNotNull = set.StringSet{
+	ast.IsNull: {},
+	ast.NullEQ: {},
+}
+
+// functions that always return nullable type
+var functionSetForReturnTypeAlwaysNullable = set.StringSet{
+	ast.Div:    {}, // divide by zero
+	ast.IntDiv: {}, // divide by zero
+	ast.Mod:    {}, // mod by zero
+}
+
+// functions that if all the inputs are not null, then the result is not null
+// Although most of the functions should belong to this, there may be some unknown
+// bugs in TiDB that makes it not true in TiDB's implementation, so only add a few
+// this time. The others can be added to the set case by case in the future
+var functionSetForReturnTypeNotNullOnNotNull = set.StringSet{
+	ast.Plus:  {},
+	ast.Minus: {},
+	ast.Mul:   {},
 }
 
 // funcs holds all registered builtin functions. When new function is added,
