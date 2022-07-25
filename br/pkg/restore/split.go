@@ -541,9 +541,7 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo, isRawKv bool) *RegionInfo
 	if len(splitKey) == 0 {
 		return nil
 	}
-	if !isRawKv {
-		splitKey = codec.EncodeBytes(nil, splitKey)
-	}
+	splitKey = codec.EncodeBytesExt(nil, splitKey, isRawKv)
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
