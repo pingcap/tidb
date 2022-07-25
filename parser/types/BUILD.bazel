@@ -25,6 +25,7 @@ go_test(
         "field_type_test.go",
     ],
     embed = [":types"],
+    flaky = True,
     deps = [
         "//parser",
         "//parser/ast",

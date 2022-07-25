@@ -4,6 +4,7 @@ go_test(
     name = "cte_test_test",
     timeout = "short",
     srcs = ["cte_test.go"],
+    flaky = True,
     deps = [
         "//config",
         "//domain",

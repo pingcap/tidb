@@ -36,6 +36,7 @@ go_test(
         "config_test.go",
         "configlist_test.go",
     ],
+    flaky = True,
     deps = [
         ":config",
         "//parser/mysql",

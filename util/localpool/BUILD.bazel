@@ -19,6 +19,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":localpool"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "//util",

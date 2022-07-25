@@ -48,6 +48,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":lightning"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/config",
