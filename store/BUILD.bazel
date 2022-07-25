@@ -22,6 +22,7 @@ go_test(
         "store_test.go",
     ],
     embed = [":store"],
+    flaky = True,
     deps = [
         "//domain",
         "//kv",

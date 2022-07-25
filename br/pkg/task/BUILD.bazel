@@ -34,7 +34,6 @@ go_library(
         "//config",
         "//kv",
         "//parser/mysql",
-        "//sessionctx",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics/handle",
@@ -77,6 +76,7 @@ go_test(
         "stream_test.go",
     ],
     embed = [":task"],
+    flaky = True,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/metautil",
