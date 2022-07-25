@@ -43,6 +43,7 @@ go_test(
         "types_test.go",
     ],
     data = glob(["testdata/**"]),
+    flaky = True,
     deps = [
         ":ranger",
         "//config",

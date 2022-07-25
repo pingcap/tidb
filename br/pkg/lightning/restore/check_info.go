@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -169,15 +170,6 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 	}
 }
 
-func isTiFlash(store *pdtypes.MetaStore) bool {
-	for _, label := range store.Labels {
-		if label.Key == "engine" && label.Value == "tiflash" {
-			return true
-		}
-	}
-	return false
-}
-
 func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	passed := true
 	message := "Cluster doesn't have too many empty regions"
@@ -228,7 +220,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 			if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 				continue
 			}
-			if isTiFlash(store.Store) {
+			if engine.IsTiFlash(store.Store.Store) {
 				continue
 			}
 			if regionCnt > errorThrehold {
@@ -272,7 +264,7 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
-		if isTiFlash(store.Store) {
+		if engine.IsTiFlash(store.Store.Store) {
 			continue
 		}
 		stores = append(stores, store)

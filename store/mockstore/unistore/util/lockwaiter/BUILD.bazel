@@ -21,6 +21,7 @@ go_test(
         "main_test.go",
     ],
     embed = [":lockwaiter"],
+    flaky = True,
     deps = [
         "//store/mockstore/unistore/config",
         "//testkit/testsetup",

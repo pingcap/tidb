@@ -32,6 +32,7 @@ go_test(
         "path_expr_test.go",
     ],
     embed = [":json"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",
