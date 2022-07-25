@@ -2,6 +2,9 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/set"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -12,16 +15,14 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+type ExecutorWithForeignKeyTrigger interface {
+	Executor
+	GetForeignKeyTriggerExecs() []*ForeignKeyTriggerExec
+}
+
 func getForeignKeyTriggerExecs(e Executor) []*ForeignKeyTriggerExec {
-	switch x := e.(type) {
-	case *DeleteExec:
-		fkTriggerExecs := []*ForeignKeyTriggerExec{}
-		for _, fkts := range x.fkTriggerExecs {
-			fkTriggerExecs = append(fkTriggerExecs, fkts...)
-		}
-		return fkTriggerExecs
-	case *InsertExec:
-		return x.fkTriggerExecs
+	if exec, ok := e.(ExecutorWithForeignKeyTrigger); ok {
+		return exec.GetForeignKeyTriggerExecs()
 	}
 	return nil
 }
@@ -179,14 +180,24 @@ type ForeignKeyTriggerExec struct {
 
 	colsOffsets []int
 	fkValues    [][]types.Datum
+	fkValuesSet set.StringSet
 }
 
-func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(row []types.Datum) error {
+func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementContext, row []types.Datum) error {
 	vals, err := fetchFKValues(row, fkt.colsOffsets)
-	if err != nil || vals == nil {
+	if err != nil || len(vals) == 0 {
 		return err
 	}
+	keyBuf, err := codec.EncodeKey(sc, nil, vals...)
+	if err != nil {
+		return err
+	}
+	key := string(keyBuf)
+	if fkt.fkValuesSet.Exist(key) {
+		return nil
+	}
 	fkt.fkValues = append(fkt.fkValues, vals)
+	fkt.fkValuesSet.Insert(key)
 	return nil
 }
 
@@ -231,15 +242,12 @@ func (fkt *ForeignKeyTriggerExec) buildExecutor() Executor {
 }
 
 func (b *executorBuilder) buildTblID2ForeignKeyTriggerExecs(tblID2Table map[int64]table.Table, tblID2FKTriggerPlans map[int64][]plannercore.FKTriggerPlan) (map[int64][]*ForeignKeyTriggerExec, error) {
+	var err error
 	fkTriggerExecs := make(map[int64][]*ForeignKeyTriggerExec)
 	for tid, tbl := range tblID2Table {
-		fkTriggerPlans := tblID2FKTriggerPlans[tid]
-		for _, fkTriggerPlan := range fkTriggerPlans {
-			fkTriggerExec, err := b.buildForeignKeyTriggerExec(tbl.Meta(), fkTriggerPlan)
-			if err != nil {
-				return nil, err
-			}
-			fkTriggerExecs[tid] = append(fkTriggerExecs[tid], fkTriggerExec)
+		fkTriggerExecs[tid], err = b.buildTblForeignKeyTriggerExecs(tbl, tblID2FKTriggerPlans[tid])
+		if err != nil {
+			return nil, err
 		}
 	}
 	return fkTriggerExecs, nil
@@ -268,6 +276,7 @@ func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fk
 		b:             b,
 		fkTriggerPlan: fkTriggerPlan,
 		colsOffsets:   colsOffsets,
+		fkValuesSet:   set.NewStringSet(),
 	}, nil
 }
 

@@ -244,8 +244,9 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	}
 
 	fkTriggerExecs := e.fkTriggerExecs[t.Meta().ID]
+	sc := ctx.GetSessionVars().StmtCtx
 	for _, fkt := range fkTriggerExecs {
-		err = fkt.addRowNeedToTrigger(data)
+		err = fkt.addRowNeedToTrigger(sc, data)
 	}
 
 	e.memTracker.Consume(int64(txnState.Size() - memUsageOfTxnState))
@@ -265,6 +266,14 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	return e.children[0].Open(ctx)
+}
+
+func (e *DeleteExec) GetForeignKeyTriggerExecs() []*ForeignKeyTriggerExec {
+	fkTriggerExecs := []*ForeignKeyTriggerExec{}
+	for _, fkts := range e.fkTriggerExecs {
+		fkTriggerExecs = append(fkTriggerExecs, fkts...)
+	}
+	return fkTriggerExecs
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.

@@ -436,3 +436,7 @@ func (e *InsertExec) setMessage() {
 		stmtCtx.SetMessage(msg)
 	}
 }
+
+func (e *InsertExec) GetForeignKeyTriggerExecs() []*ForeignKeyTriggerExec {
+	return e.fkTriggerExecs
+}

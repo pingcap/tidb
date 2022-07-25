@@ -1235,7 +1235,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		vars.SetLastInsertID(e.lastInsertID)
 	}
 	for _, fkt := range e.fkTriggerExecs {
-		err = fkt.addRowNeedToTrigger(row)
+		err = fkt.addRowNeedToTrigger(vars.StmtCtx, row)
 		if err != nil {
 			return err
 		}
