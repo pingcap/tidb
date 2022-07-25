@@ -337,12 +337,14 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, subq *ast.Subqu
 	// keep the old analyzing status. once subq is built, the analyzing status is false.
 	outerAnalyzingPhase := er.b.analyzingPhase
 	er.b.analyzingPhase = false
+	er.b.ctx.GetSessionVars().StmtCtx.InAnalyzingPhase = false
 
 	np, err := er.b.buildResultSetNode(ctx, subq.Query)
 	if err != nil {
 		return nil, err
 	}
 	er.b.analyzingPhase = outerAnalyzingPhase
+	er.b.ctx.GetSessionVars().StmtCtx.InAnalyzingPhase = outerAnalyzingPhase
 	// this is used detect direct correlated column in a subq, and register them in the outer scope.
 	// todo: need?
 	//if er.b.analyzingPhase {
@@ -432,31 +434,6 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			_, col := er.b.findAggInScopeBackward(v)
 			Assert(col != nil)
 			er.ctxStackAppend(col, types.EmptyName)
-
-			//if !er.b.analyzingPhase {
-			//	// in building phase, try to find the aggregate and the allocated column in previous analyzing phase.
-			//	// case like: select (select count(a)) from t, the count(a) is built and appended to the outer scope.
-			//	// here in the inner sub-query's building phase (not analyzing), we should find it backward in the nearest outer scope.
-			//	_, col := er.b.findAggInScopeBackward(v)
-			//	if col == nil {
-			//		panic("should be here")
-			//	}
-			//	er.ctxStackAppend(col, types.EmptyName)
-			//} else {
-			//	// in analyzing phase, try to move and build every aggregate out and allocate them with a new scope column.
-			//	if !er.b.curScope.inAgg {
-			//		er.b.curScope.inAgg = true
-			//		defer func() {
-			//			er.b.curScope.inAgg = false
-			//		}()
-			//		er.err = er.buildAggregationDesc(er.ctx, er.p, v, false)
-			//	} else {
-			//		// when to refuse agg nested?
-			//		// In agg(agg(arg1) OP arg2), if one of the arg1 is in current scope, it's a ErrInvalidGroupFuncUse
-			//		// Otherwise, agg(arg1) can be seen as correlated column from outer scope, equal to: agg(corCol OP arg2)
-			//		er.err = er.buildAggregationDesc(er.ctx, er.p, v, true)
-			//	}
-			//}
 		}
 		return inNode, true
 	case *ast.ColumnNameExpr:
@@ -514,6 +491,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStackAppend(expression.NewValuesFunc(er.sctx, col.Index, col.RetType), types.EmptyName)
 		return inNode, true
 	case *ast.WindowFuncExpr:
+		if eNNR && er.b.analyzingPhase {
+			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			return inNode, true
+		}
 		index, ok := -1, false
 		if er.windowMap != nil {
 			index, ok = er.windowMap[v]
@@ -1178,7 +1159,20 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 			er.ctxStackPop(1)
 			if asScalar {
 				// append a zero expr here for the convenience of scalar check. (ignored outside)
-				er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+				if np.Schema().Len() > 1 {
+					newCols := make([]expression.Expression, 0, np.Schema().Len())
+					for i := 0; i < np.Schema().Len(); i++ {
+						newCols = append(newCols, expression.NewZero())
+					}
+					expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(), newCols...)
+					if err1 != nil {
+						er.err = err1
+						return v, true
+					}
+					er.ctxStackAppend(expr, types.EmptyName)
+				} else {
+					er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+				}
 			}
 			return v, true
 		}
@@ -1228,6 +1222,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	if lLen != np.Schema().Len() {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
+	}
+	if strings.HasPrefix(np.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select (2,0) in (select s.a, min(s.b) from s) as f") {
+		fmt.Println(1)
 	}
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
@@ -1342,7 +1339,22 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		er.b.curScope.mapScalarSubQueryByAddr[subq] = &preBuiltSubQueryCacheItem{p: np}
 		if curClause != fieldList {
 			// append a zero expr here for the convenience of scalar check. (ignored outside)
-			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			// select * from t where (c, d) = (select * from t where (c,d) = (1,1)), first where
+			// clause expect and check 2 operand in rowFunc from scalar subQuery.
+			if np.Schema().Len() > 1 {
+				newCols := make([]expression.Expression, 0, np.Schema().Len())
+				for i := 0; i < np.Schema().Len(); i++ {
+					newCols = append(newCols, expression.NewZero())
+				}
+				expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(), newCols...)
+				if err1 != nil {
+					er.err = err1
+					return v, true
+				}
+				er.ctxStackAppend(expr, types.EmptyName)
+			} else {
+				er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			}
 			return v, true
 		}
 		// if scalar sub-query occurs in the select list even in analyzing phase, built the scalar expr out.
@@ -1826,6 +1838,7 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 }
 
 func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
+	eNNR := er.b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
 	pos := v.N
 	str := strconv.Itoa(pos)
 	if v.P != nil {
@@ -1842,10 +1855,18 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 		}
 		er.err = err
 	}
-	if er.err == nil && pos > 0 && pos <= er.schema.Len() && !er.schema.Columns[pos-1].IsHidden {
-		er.ctxStackAppend(er.schema.Columns[pos-1], er.names[pos-1])
+	if eNNR {
+		if er.err == nil && pos > 0 && pos <= len(er.b.curScope.projColumn) && !er.b.curScope.projColumn[pos-1].IsHidden {
+			er.ctxStackAppend(er.b.curScope.projColumn[pos-1], er.b.curScope.projNames[pos-1])
+		} else {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
+		}
 	} else {
-		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
+		if er.err == nil && pos > 0 && pos <= er.schema.Len() && !er.schema.Columns[pos-1].IsHidden {
+			er.ctxStackAppend(er.schema.Columns[pos-1], er.names[pos-1])
+		} else {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
+		}
 	}
 }
 
@@ -2345,14 +2366,14 @@ func (er *expressionRewriter) resolveColRefInSelectAndGroup(scopeIndex int, scop
 	// clause of the current select.
 	// Since in this case: select d, d*d as d from t having d = -1, projName
 	// of 'd' will gain an ambiguous error, we resolve it from origin fields.
-	indexFromOriginSelectFields, err := resolveFromSelectFields(&ast.ColumnNameExpr{Name: v}, scope.selectFields, false)
+	indexFromOriginSelectFields, err := findItemInSelectFields(&ast.ColumnNameExpr{Name: v}, scope.selectFields, false)
 	if err != nil {
 		return nil, nil, err
 	}
 	if indexFromOriginSelectFields == -1 {
 		// select a from t b having b.a
 		if v.Table.L == "" {
-			indexFromOriginSelectFields, err = resolveFromSelectFields(&ast.ColumnNameExpr{Name: v}, scope.selectFields, true)
+			indexFromOriginSelectFields, err = findItemInSelectFields(&ast.ColumnNameExpr{Name: v}, scope.selectFields, true)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2491,6 +2512,9 @@ func (er *expressionRewriter) resolveColRefInSelectAndGroup(scopeIndex int, scop
 func (er *expressionRewriter) resolveHavingColumnRef(v *ast.ColumnName, fixInAggFuncMaxLevel func(selectBlockOffsetOfOuterColumn int),
 	registerColInScope func(scopeIndex int, column *expression.Column, name *types.FieldName)) (expression.Expression, *types.FieldName) {
 	// try to resolve it in select list and group by scope first.
+	if strings.HasPrefix(er.b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select t1.t0, t2.t0 from t1 join t2 using(t0) having t1.t0 > 0") {
+		fmt.Println(1)
+	}
 	col, name, err := er.resolveColRefInSelectAndGroup(len(er.b.outerScopes), er.b.curScope, v)
 	if err != nil {
 		er.err = err
@@ -2594,7 +2618,7 @@ func (er *expressionRewriter) SelectAliasReferencable(clause clauseCode) bool {
 //   clause, and then we search the SELECT and GROUP BY clauses.
 func (er *expressionRewriter) resolveNormalColumn(v *ast.ColumnName, fixInAggFuncMaxLevel func(selectBlockOffsetOfOuterColumn int),
 	registerColInScope func(scopeIndex int, column *expression.Column, name *types.FieldName)) (expression.Expression, *types.FieldName) {
-	process := func(scopeIndex int, scope *ScopeSchema) (*expression.Column, *types.FieldName, error) {
+	process := func(scopeIndex int, scope *ScopeSchema, isItemInCurScopeSelectListLookUp, inOuterScope bool) (*expression.Column, *types.FieldName, error) {
 		// step1: from scope first
 		//
 		// Search for a column or derived column named as 'ref' in the FROM
@@ -2618,21 +2642,25 @@ func (er *expressionRewriter) resolveNormalColumn(v *ast.ColumnName, fixInAggFun
 		//
 		// Search for a column or derived column named as 'ref' in the SELECT & GROUP
 		// clause of the current select.
-		er.SelectAliasReferencable(scope.clauseWhere)
-
-		col, name, err := er.resolveColRefInSelectAndGroup(scopeIndex, scope, v)
-		if err != nil {
-			return nil, nil, err
-		}
-		if col != nil {
-			fixInAggFuncMaxLevel(scopeIndex)
-			registerColInScope(scopeIndex, col, name)
-			return col, name, nil
+		if isItemInCurScopeSelectListLookUp || (inOuterScope && er.SelectAliasReferencable(scope.clauseWhere)) {
+			col, name, err := er.resolveColRefInSelectAndGroup(scopeIndex, scope, v)
+			if err != nil {
+				return nil, nil, err
+			}
+			if col != nil {
+				fixInAggFuncMaxLevel(scopeIndex)
+				registerColInScope(scopeIndex, col, name)
+				return col, name, nil
+			}
 		}
 		return nil, nil, nil
 	}
 	// process curScope.
-	col, name, err := process(len(er.b.outerScopes), er.b.curScope)
+	isItemInCurScopeSelectListLookUp := true
+	if er.b.curScope.clauseWhere == fieldList || er.b.curScope.clauseWhere == whereClause {
+		isItemInCurScopeSelectListLookUp = false
+	}
+	col, name, err := process(len(er.b.outerScopes), er.b.curScope, isItemInCurScopeSelectListLookUp, false)
 	if err != nil {
 		er.err = err
 		return nil, nil
@@ -2644,7 +2672,7 @@ func (er *expressionRewriter) resolveNormalColumn(v *ast.ColumnName, fixInAggFun
 	// process outerScope.
 	for i := len(er.b.outerScopes) - 1; i >= 0; i-- {
 		scope := er.b.outerScopes[i]
-		col, name, err := process(i, scope)
+		col, name, err := process(i, scope, false, true)
 		if err != nil {
 			er.err = err
 			return nil, nil
@@ -2713,7 +2741,7 @@ func (er *expressionRewriter) resolveOrderByColumnRef(v *ast.ColumnName, fixInAg
 		//
 		// Search for a column or derived column named as 'ref' in the SELECT
 		// clause of the current select.
-		idx, err := resolveFromSelectFields(&ast.ColumnNameExpr{Name: v}, scope.selectFields[:scope.selectFieldsLen], false)
+		idx, err := findItemInSelectFields(&ast.ColumnNameExpr{Name: v}, scope.selectFields[:scope.selectFieldsLen], false)
 		if err != nil {
 			return nil, nil, err
 		}

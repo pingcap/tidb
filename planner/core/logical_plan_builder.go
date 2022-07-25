@@ -777,12 +777,10 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	joinPlan.fullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
 	for _, lName := range lFullNames {
 		name := *lName
-		name.Redundant = true
 		joinPlan.fullNames = append(joinPlan.fullNames, &name)
 	}
 	for _, rName := range rFullNames {
 		name := *rName
-		name.Redundant = true
 		joinPlan.fullNames = append(joinPlan.fullNames, &name)
 	}
 
@@ -983,6 +981,13 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 			return err
 		}
 		conds = append(conds, cond)
+		if p.fullSchema != nil {
+			if joinTp == ast.RightJoin {
+				p.fullNames[p.fullSchema.ColumnIndex(lc)].Redundant = true
+			} else {
+				p.fullNames[p.fullSchema.ColumnIndex(rc)].Redundant = true
+			}
+		}
 	}
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
@@ -1300,7 +1305,10 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			newNames = append(newNames, p.OutputNames()[i])
 			continue
 		} else if !considerWindow && isWindowFuncField {
-			if !eNNR {
+			// !eNNR means the old path
+			// (eNNR && i > b.curScope.selectFieldsLen) means the window is added to fields in analyzing having and order by old
+			// havingWindowAndOrderbyExprResolver which we haven't analyzed a projected col for them yet.
+			if !eNNR || (eNNR && i >= b.curScope.selectFieldsLen) {
 				expr := expression.NewZero()
 				proj.Exprs = append(proj.Exprs, expr)
 				col, name, err := b.buildProjectionField(ctx, p, field, expr)
@@ -1604,6 +1612,11 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	if setOpr.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
@@ -1612,6 +1625,10 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		err := b.buildWith(ctx, setOpr.With)
 		if err != nil {
 			return nil, err
+		}
+		if eNNR {
+			// don't let scope elements in with clause pollute main clause.
+			b.cleanCurScope()
 		}
 	}
 
@@ -1657,6 +1674,17 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		b.handleHelper.popMap()
 	}
 	b.handleHelper.pushMap(nil)
+
+	// todo: SetOpr here should feel the origin table ref.
+	join, isJoin := setOprPlan.(*LogicalJoin)
+	if isJoin && join.fullSchema != nil {
+		b.curScope.Add(join.fullSchema, join.fullNames)
+	} else {
+		if b.curScope == nil {
+			fmt.Println(1)
+		}
+		b.curScope.Add(setOprPlan.Schema(), setOprPlan.OutputNames())
+	}
 
 	if setOpr.OrderBy != nil {
 		setOprPlan, err = b.buildSort(ctx, setOprPlan, setOpr.OrderBy.Items, nil, nil)
@@ -2087,6 +2115,26 @@ func matchField(f *ast.SelectField, col *ast.ColumnNameExpr, ignoreAsName bool) 
 		return f.AsName.L == col.Name.Name.L
 	}
 	return false
+}
+
+func findItemInSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, ignoreAsName bool) (index int, err error) {
+	index = -1
+	if v.Name.Table.L == "" {
+		return resolveFromSelectFields(v, fields, ignoreAsName)
+	}
+	// table name is not nil, directly match with ignoring the alias name.
+	fieldName := v.Name.Name.L
+	tableName := v.Name.Table.L
+	dbName := v.Name.Schema.L
+	for i, f := range fields {
+		if curCol, isCol := f.Expr.(*ast.ColumnNameExpr); isCol {
+			if curCol.Name.Name.L == fieldName && curCol.Name.Table.L == tableName && (dbName == "" || curCol.Name.Schema.L == dbName) {
+				index = i
+				break
+			}
+		}
+	}
+	return
 }
 
 func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, ignoreAsName bool) (index int, err error) {
@@ -3913,6 +3961,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if eNNR {
 		// analyzing phase.
 		b.analyzingPhase = true
+		b.ctx.GetSessionVars().StmtCtx.InAnalyzingPhase = true
 		b.curScope.selectFields = sel.Fields.Fields
 		b.curScope.selectFieldsLen = len(sel.Fields.Fields)
 		if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain format = 'brief' select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b") {
@@ -3937,6 +3986,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 		b.analyzingPhase = false
+		b.ctx.GetSessionVars().StmtCtx.InAnalyzingPhase = false
 
 		if err := resolveWindowFunc(); err != nil {
 			return nil, err
@@ -3974,6 +4024,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
+	}
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select (2,0) in (select s.a, min(s.b) from s) as f") {
+		fmt.Println(1)
 	}
 
 	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
@@ -5233,6 +5286,17 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	if err != nil {
 		return nil, err
 	}
+	if eNNR {
+		// build join will add additional scope col into curScope, fullSchema is merged from bottom join up.
+		// eg: select * from (select * from t t1 join t t2 using(a)) as t3; we don't need to keep the fullSchema
+		// from sub-query, fullSchema logic is only used and validated inside a single select query block.
+		join, isJoin := p.(*LogicalJoin)
+		if isJoin && join.fullSchema != nil {
+			b.curScope.Add(join.fullSchema, join.fullNames)
+		} else {
+			b.curScope.Add(p.Schema(), p.OutputNames())
+		}
+	}
 
 	var tableList []*ast.TableName
 	tableList = extractTableList(update.TableRefs.TableRefs, tableList, false)
@@ -5619,6 +5683,17 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 	}
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
+	if eNNR {
+		// build join will add additional scope col into curScope, fullSchema is merged from bottom join up.
+		// eg: select * from (select * from t t1 join t t2 using(a)) as t3; we don't need to keep the fullSchema
+		// from sub-query, fullSchema logic is only used and validated inside a single select query block.
+		join, isJoin := p.(*LogicalJoin)
+		if isJoin && join.fullSchema != nil {
+			b.curScope.Add(join.fullSchema, join.fullNames)
+		} else {
+			b.curScope.Add(p.Schema(), p.OutputNames())
+		}
+	}
 
 	// For explicit column usage, should use the all-public columns.
 	if ds.Where != nil {

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -153,6 +154,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
+	if strings.HasPrefix(p.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select (2,0) in (select s.a, min(s.b) from s) as f") {
+		fmt.Println(1)
+	}
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		predicates = p.outerJoinPropConst(predicates)

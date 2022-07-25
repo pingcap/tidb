@@ -742,6 +742,7 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 func (b *PlanBuilder) analyzeProjectionList(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) error {
 	originClause := b.curClause
 	b.curClause = fieldList
+	b.curScope.clauseWhere = fieldList
 	// set allow eval-context of agg func/correlated agg to true.
 	// eval-context of agg func/correlated agg only be allowed for 3 kind of clause:
 	// select-list clause & having clause & order by clause.
@@ -785,6 +786,11 @@ func (b *PlanBuilder) analyzeProjectionList(ctx context.Context, p LogicalPlan, 
 		if err != nil {
 			return err
 		}
+		if _, ok := newExpr.(*expression.Column); ok {
+			// projected may mean a column after aggregate, in which it's return type has changed.
+			// so we clone the base column here rather ref the base column directly.
+			col, _ = col.Clone().(*expression.Column)
+		}
 		b.curScope.projColumn = append(b.curScope.projColumn, col)
 		b.curScope.projNames = append(b.curScope.projNames, name)
 	}
@@ -802,6 +808,7 @@ func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, w
 	}
 	originClause := b.curClause
 	b.curClause = whereClause
+	b.curScope.clauseWhere = whereClause
 	defer func() {
 		b.curClause = originClause
 	}()
@@ -819,6 +826,7 @@ func (b *PlanBuilder) analyzeGroupByList(ctx context.Context, P LogicalPlan, gby
 	}
 	originClause := b.curClause
 	b.curClause = groupByClause
+	b.curScope.clauseWhere = groupByClause
 	defer func() {
 		b.curClause = originClause
 	}()
@@ -862,6 +870,7 @@ func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, havi
 	}
 	originClause := b.curClause
 	b.curClause = havingClause
+	b.curScope.clauseWhere = havingClause
 	// set allow eval-context of agg func/correlated agg to true.
 	// eval-context of agg func/correlated agg only be allowed for 3 kind of clause:
 	// select-list clause & having clause & order by clause.
@@ -913,6 +922,7 @@ func (b *PlanBuilder) analyzeHavingList(ctx context.Context, p LogicalPlan, havi
 func (b *PlanBuilder) analyzeOrderByList(ctx context.Context, p LogicalPlan, orderBy *ast.OrderByClause, sel *ast.SelectStmt) error {
 	originClause := b.curClause
 	b.curClause = orderByClause
+	b.curScope.clauseWhere = orderByClause
 	// set allow eval-context of agg func/correlated agg to true.
 	// eval-context of agg func/correlated agg only be allowed for 3 kind of clause:
 	// select-list clause & having clause & order by clause.
@@ -1026,16 +1036,26 @@ func (b *PlanBuilder) buildReservedCols(p LogicalPlan, proj *LogicalProjection, 
 		if schema.Contains(col) && newNames[schema.ColumnIndex(col)].String() == b.curScope.reservedColsNames[i].String() {
 			continue
 		}
+		// if it's a natural/using coalesce column, and p is not aggregation, we couldn't find it in p.
+		// get it di
 		index := p.Schema().ColumnIndex(col)
-		if index < 0 {
-			panic("shouldn't be here")
+		if index >= 0 {
+			// the col is in its lower plan's schema
+			proj.Exprs = append(proj.Exprs, p.Schema().Columns[index])
+			schema.Append(p.Schema().Columns[index])
+			newNames = append(newNames, p.OutputNames()[index])
+		} else {
+			index := b.curScope.scopeSchema.ColumnIndex(col)
+			if !(index >= 0 && b.curScope.scopeNames[index].Redundant) {
+				fmt.Println(1)
+			}
+			proj.Exprs = append(proj.Exprs, col)
+			schema.Append(col)
+			cpName := *b.curScope.scopeNames[index]
+			cpName.Redundant = false
+			newNames = append(newNames, &cpName)
 		}
-		// the col is in it's agg's schema
-		proj.Exprs = append(proj.Exprs, p.Schema().Columns[index])
-		schema.Append(p.Schema().Columns[index])
-		newNames = append(newNames, p.OutputNames()[index])
 		continue
-
 	}
 	// link the reserved correlated agg from outer.
 	// case: select (select 1 from t order by count(n.a) limit 1) from t n;
@@ -1220,6 +1240,24 @@ func (b *PlanBuilder) buildAggregation4NNR(ctx context.Context, p LogicalPlan) (
 		schema4Agg.Append(b.curScope.aggColumn[i])
 		names = append(names, types.EmptyName)
 	}
+	// since agg may change the base col's return type in field list, so we change the previous analyzed projected column field type as well.
+	changeProjectedBaseColRetTp := func(col *expression.Column) {
+		for i, projCol := range b.curScope.projColumn {
+			if projCol.UniqueID == col.UniqueID {
+				b.curScope.projColumn[i].RetType = col.RetType
+				break
+			}
+		}
+	}
+	changeReservedBaseColRetTp := func(col *expression.Column) {
+		for i, projCol := range b.curScope.reservedCols {
+			if projCol.UniqueID == col.UniqueID {
+				b.curScope.reservedCols[i].RetType = col.RetType
+				break
+			}
+		}
+	}
+
 	// build the remained column schema as first row.
 	for i, col := range p.Schema().Columns {
 		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
@@ -1286,6 +1324,10 @@ func (b *PlanBuilder) buildAggregation4NNR(ctx context.Context, p LogicalPlan) (
 			return nil, err
 		}
 		schema4Agg.Columns[i].RetType = aggFunc.RetTp
+	}
+	for _, aggColumn := range schema4Agg.Columns {
+		changeProjectedBaseColRetTp(aggColumn)
+		changeReservedBaseColRetTp(aggColumn)
 	}
 	plan4Agg.names = names
 	plan4Agg.SetChildren(p)

@@ -108,8 +108,10 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
+	IsDDLJobInQueue bool
+	DDLJobID        int64
+	// InAnalyzingPhase is used to mark the current (analyzing/building) phase of current statement.
+	InAnalyzingPhase       bool
 	InInsertStmt           bool
 	InUpdateStmt           bool
 	InDeleteStmt           bool
@@ -619,6 +621,10 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	if sc.InAnalyzingPhase {
+		// those expr will be built again in real building phase. we do collect warnings in that phase.
+		return
+	}
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
 	}

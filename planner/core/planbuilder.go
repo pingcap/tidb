@@ -835,6 +835,11 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (Pla
 }
 
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	var p LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
@@ -893,6 +898,11 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 }
 
 func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
@@ -3422,6 +3432,11 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 }
 
 func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (Plan, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()

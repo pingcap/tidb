@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -813,7 +814,7 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	// require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	// test ambiguous column
 	err = tk.ExecToErr("select c from t,x group by t.c")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrAmbiguous), "err %v", err)
+	tk.MustGetErrCode("select c from t,x group by t.c", errno.ErrNonUniq)
 }
 
 func TestIssue16279(t *testing.T) {
