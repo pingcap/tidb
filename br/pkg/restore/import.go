@@ -740,7 +740,7 @@ func (importer *FileImporter) ingest(
 				}
 			}
 
-			if !checkRegionEpoch(newInfo, info) {
+			if !split.CheckRegionEpoch(newInfo, info) {
 				return errors.Trace(berrors.ErrKVEpochNotMatch)
 			}
 			log.Debug("ingest sst returns not leader error, retry it",

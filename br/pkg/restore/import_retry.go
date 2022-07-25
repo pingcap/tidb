@@ -64,7 +64,7 @@ func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region
 		if err != nil {
 			return err
 		}
-		if !checkRegionEpoch(r, region) {
+		if !split.CheckRegionEpoch(r, region) {
 			failed = true
 			return nil
 		}
