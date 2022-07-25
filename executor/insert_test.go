@@ -1288,9 +1288,7 @@ func TestAutoRandomID(t *testing.T) {
 	tk.MustExec(`create table ar (id bigint key clustered auto_random(15), name char(10))`)
 	overflowVal := 1 << (64 - 5)
 	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
-	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), errMsg))
+	tk.MustContainErrMsg(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal), errMsg)
 }
 
 func TestMultiAutoRandomID(t *testing.T) {
@@ -1398,9 +1396,8 @@ func TestInsertErrorMsg(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int primary key, b datetime, d date)`)
-	_, err := tk.Exec(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1")
+	tk.MustContainErrMsg(`insert into t values (1, '2019-02-11 30:00:00', '2019-01-31')`,
+		"Incorrect datetime value: '2019-02-11 30:00:00' for column 'b' at row 1")
 }
 
 func TestIssue16366(t *testing.T) {
@@ -1411,9 +1408,7 @@ func TestIssue16366(t *testing.T) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(c numeric primary key);`)
 	tk.MustExec("insert ignore into t values(null);")
-	_, err := tk.Exec(`insert into t values(0);`)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Duplicate entry '0' for key 'PRIMARY'")
+	tk.MustContainErrMsg(`insert into t values(0);`, "Duplicate entry '0' for key 'PRIMARY'")
 }
 
 func TestClusterPrimaryTablePlainInsert(t *testing.T) {
@@ -1936,10 +1931,7 @@ func TestInsertIssue29892(t *testing.T) {
 
 	// since the origin auto-id (146576795) is cached in retryInfo, it will be fetched again to do the retry again,
 	// which will duplicate with what has been inserted in tk1.
-	rec, err := tk1.Exec("commit")
-	require.Error(t, err)
-	require.Equal(t, true, strings.Contains(err.Error(), "Duplicate entry"))
-	require.NoError(t, rec.Close())
+	tk1.MustContainErrMsg("commit", "Duplicate entry")
 }
 
 // https://github.com/pingcap/tidb/issues/29483.
