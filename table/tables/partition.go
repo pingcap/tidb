@@ -337,6 +337,8 @@ type ForListPruning struct {
 	valueMap map[int64]int
 	// nullPartitionIdx is the partition idx for null value.
 	nullPartitionIdx int
+	// defaultPartitionIdx is the partition idx for default value/fallback.
+	defaultPartitionIdx int
 
 	// For list columns partition pruning
 	ColPrunes []*ForListColumnPruning
@@ -819,8 +821,13 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx sessionctx.Context, def
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) error {
 	lp.valueMap = map[int64]int{}
 	lp.nullPartitionIdx = -1
+	lp.defaultPartitionIdx = -1
 	for partitionIdx, def := range defs {
 		for _, vs := range def.InValues {
+			if strings.EqualFold(vs[0], "DEFAULT") {
+				lp.defaultPartitionIdx = partitionIdx
+				continue
+			}
 			expr, err := parseSimpleExprWithNames(p, ctx, vs[0], schema, names)
 			if err != nil {
 				return errors.Trace(err)
@@ -846,7 +853,7 @@ func (lp *ForListPruning) LocatePartition(value int64, isNull bool) int {
 	}
 	partitionIdx, ok := lp.valueMap[value]
 	if !ok {
-		return -1
+		return lp.defaultPartitionIdx
 	}
 	return partitionIdx
 }
@@ -910,6 +917,7 @@ func (lp *ForListColumnPruning) buildListPartitionValueMapAndSorted(p *parser.Pa
 	sc := lp.ctx.GetSessionVars().StmtCtx
 	for partitionIdx, def := range defs {
 		for groupIdx, vs := range def.InValues {
+			// TODO: Add support for DEFAULT partition
 			keyBytes, err := lp.genConstExprKey(lp.ctx, sc, vs[lp.colIdx], lp.schema, lp.names, p)
 			if err != nil {
 				return errors.Trace(err)

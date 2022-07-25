@@ -7111,6 +7111,12 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 			valStrings = append(valStrings, partitionMaxValue)
 			continue
 		}
+		if d, ok := colExpr.(*ast.DefaultExpr); ok {
+			if d.Name != nil {
+				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+			continue
+		}
 		colType := colTypes[i]
 		val, err := expression.EvalAstExpr(ctx, colExpr)
 		if err != nil {

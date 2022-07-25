@@ -961,6 +961,14 @@ func TestCreateTableWithListPartition(t *testing.T) {
 			generatePartitionTableByNum(mysql.PartitionCountLimit + 1),
 			dbterror.ErrTooManyPartitions,
 		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (maxvalue))",
+			dbterror.ErrMaxvalueInValuesIn,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (default))",
+			dbterror.ErrMultipleDefConstInListPart,
+		},
 	}
 	for i, tt := range cases {
 		_, err := tk.Exec(tt.sql)
@@ -989,7 +997,8 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
-		generatePartitionTableByNum(mysql.PartitionCountLimit),
+		"create table t (a bigint) partition by list (a) (partition p0 values in (1, default),partition p1 values in (0, 22,3))",
+		generatePartitionTableByNum(ddl.PartitionCountLimit),
 	}
 
 	for id, sql := range validCases {
@@ -1168,6 +1177,7 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 			"create table t(b int) partition by hash ( b ) partitions 3 (partition p1, partition p2, partition p2);",
 			dbterror.ErrSameNamePartition,
 		},
+		// TODO: Add tests for DEFAULT partition!
 	}
 	for i, tt := range cases {
 		_, err := tk.Exec(tt.sql)
@@ -1229,6 +1239,7 @@ func TestAlterTableAddPartitionByList(t *testing.T) {
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
 
+	// TODO: Add cases for adding DEFAULT partition (should work if there are no DEFAULT partition defined)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1345,6 +1356,7 @@ func TestAlterTableAddPartitionByListColumns(t *testing.T) {
 		partition p4 values in ((7,'a')),
 		partition p5 values in ((8,'a')));`)
 
+	// TODO: Add cases for adding DEFAULT partition (should work if there are no DEFAULT partition defined)
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1409,6 +1421,7 @@ func TestAlterTableDropPartitionByList(t *testing.T) {
 	    partition p1 values in (3,4),
 	    partition p3 values in (5,null)
 	);`)
+	// TODO: Add cases for dropping DEFAULT partition
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil>", "1", "5"))
@@ -1445,6 +1458,7 @@ func TestAlterTableDropPartitionByListColumns(t *testing.T) {
 	    partition p1 values in ((3,'a'),(4,'b')),
 	    partition p3 values in ((5,'a'),(null,null))
 	);`)
+	// TODO: Add cases for dropping DEFAULT partition
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
 	tk.MustExec(`alter table t drop partition p1`)
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))

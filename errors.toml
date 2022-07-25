@@ -976,6 +976,11 @@ error = '''
 Partition column values of incorrect type
 '''
 
+["ddl:1656"]
+error = '''
+Cannot use MAXVALUE as value in VALUES IN
+'''
+
 ["ddl:1659"]
 error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning

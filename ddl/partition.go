@@ -1261,6 +1261,12 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, expr
 		if _, ok := exp.(*ast.MaxValueExpr); ok {
 			continue
 		}
+		if d, ok := exp.(*ast.DefaultExpr); ok {
+			if d.Name != nil {
+				return dbterror.ErrPartitionConstDomain.GenWithStackByArgs()
+			}
+			continue
+		}
 		val, err := expression.EvalAstExpr(ctx, exp)
 		if err != nil {
 			return err
@@ -1516,6 +1522,13 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		for j, vs := range defs[i].InValues {
 			inValueStrs = inValueStrs[:0]
 			for k, v := range vs {
+				if strings.EqualFold(v, "DEFAULT") {
+					inValueStrs = append(inValueStrs, "DEFAULT")
+					continue
+				}
+				if strings.EqualFold(v, "MAXVALUE") {
+					return nil, errors.Trace(dbterror.ErrMaxvalueInValuesIn)
+				}
 				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k])
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -3377,7 +3390,7 @@ func checkPartitionExprAllowed(_ sessionctx.Context, tb *model.TableInfo, e ast.
 			return errors.Trace(checkNoTimestampArgs(tb, v.V))
 		}
 	case *ast.ColumnNameExpr, *ast.ParenthesesExpr, *driver.ValueExpr, *ast.MaxValueExpr,
-		*ast.TimeUnitExpr:
+		*ast.DefaultExpr, *ast.TimeUnitExpr:
 		return nil
 	}
 	return errors.Trace(dbterror.ErrPartitionFunctionIsNotAllowed)
