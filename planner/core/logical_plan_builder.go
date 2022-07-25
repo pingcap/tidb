@@ -5257,6 +5257,11 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		}
 
 		for i, col := range tbl.WritableCols() {
+			// schema may be changed between building plan and building executor
+			// If i >= len(flags), it means the target table has been added columns, then we directly skip the check
+			if i >= len(flags) {
+				continue
+			}
 			if flags[i] < 0 {
 				continue
 			}

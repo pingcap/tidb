@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,49 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session_test
+package memtest
 
 import (
-	"flag"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/testkit/testmain"
-	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	testmain.ShortCircuitForBench(m)
-
-	testsetup.SetupForCommonTest()
-
-	flag.Parse()
+	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowThreshold = 30000 // 30s
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
+
 	opts := []goleak.Option{
-		// TODO: figure the reason and shorten this list
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/internal/retry.newBackoffFn.func1"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
-		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
-		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
-	callback := func(i int) int {
-		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
-		time.Sleep(time.Second)
-		return i
-	}
-	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+	goleak.VerifyTestMain(m, opts...)
 }
