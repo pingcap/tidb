@@ -2118,6 +2118,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
 	}
+	updateExec.fkTriggerExecs, b.err = b.buildTblID2ForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
+	if b.err != nil {
+		return nil
+	}
 	return updateExec
 }
 

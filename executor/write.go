@@ -50,7 +50,7 @@ var (
 //     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //     2. err (error) : error in the update.
 func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool, memTracker *memory.Tracker) (bool, error) {
+	onDup bool, memTracker *memory.Tracker, fkTriggerExecs []*ForeignKeyTriggerExec) (bool, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("executor.updateRecord", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -195,6 +195,13 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			return false, err
 		}
 
+	}
+
+	for _, fkt := range fkTriggerExecs {
+		err := fkt.updateRowNeedToTrigger(sc, oldData, newData)
+		if err != nil {
+			return false, err
+		}
 	}
 	if onDup {
 		sc.AddAffectedRows(2)

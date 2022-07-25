@@ -5890,7 +5890,7 @@ func (b *PlanBuilder) buildForeignKeyOnUpdateTriggerPlan(ctx context.Context, re
 	if fk == nil || fk.Version == 0 {
 		return nil, nil
 	}
-	switch ast.ReferOptionType(fk.OnDelete) {
+	switch ast.ReferOptionType(fk.OnUpdate) {
 	case ast.ReferOptionCascade:
 		//triggerPlan, err = b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
 		return nil, nil
