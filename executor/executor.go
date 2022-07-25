@@ -399,8 +399,10 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		switch alloc.GetType() {
 		case autoid.RowIDAllocType, autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
-			if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
-				colName = col.Name.O
+			if tblMeta.PKIsHandle {
+				if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
+					colName = col.Name.O
+				}
 			} else {
 				colName = model.ExtraHandleName.O
 			}
