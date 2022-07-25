@@ -14,7 +14,6 @@
 package model_test
 
 import (
-	"reflect"
 	"testing"
 	"unsafe"
 
@@ -34,7 +33,14 @@ func TestJobClone(t *testing.T) {
 		MultiSchemaInfo: nil,
 	}
 	clone := job.Clone()
-	require.True(t, reflect.DeepEqual(job, clone))
+	require.Equal(t, job.ID, clone.ID)
+	require.Equal(t, job.Type, clone.Type)
+	require.Equal(t, job.SchemaID, clone.SchemaID)
+	require.Equal(t, job.TableID, clone.TableID)
+	require.Equal(t, job.SchemaName, clone.SchemaName)
+	require.Equal(t, job.TableName, clone.TableName)
+	require.Equal(t, job.State, clone.State)
+	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
 }
 
 func TestJobSize(t *testing.T) {
