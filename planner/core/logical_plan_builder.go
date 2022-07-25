@@ -5161,7 +5161,50 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.TblColPosInfos, err = buildColumns2Handle(updt.OutputNames(), tblID2Handle, tblID2table, true)
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
+
+	tblID2UpdateColumns := buildTbl2UpdateColumns(updt)
+	updt.FKTriggerPlans, err = b.buildOnUpdateForeignKeyTriggerPlans(ctx, tblID2table, tblID2UpdateColumns)
 	return updt, err
+}
+
+func buildTbl2UpdateColumns(updt *Update) map[int64]map[string]*model.ColumnInfo {
+	colsInfo := make([]*model.ColumnInfo, len(updt.SelectPlan.Schema().Columns))
+	for _, content := range updt.TblColPosInfos {
+		tbl := updt.tblID2Table[content.TblID]
+		for i, c := range tbl.WritableCols() {
+			colsInfo[content.Start+i] = c.ColumnInfo
+		}
+	}
+	tblID2UpdateColumns := make(map[int64]map[string]*model.ColumnInfo)
+	for tid := range updt.tblID2Table {
+		tblID2UpdateColumns[tid] = make(map[string]*model.ColumnInfo)
+	}
+	for _, assign := range updt.OrderedList {
+		col := colsInfo[assign.Col.Index]
+		for _, content := range updt.TblColPosInfos {
+			if assign.Col.Index >= content.Start && assign.Col.Index < content.End {
+				tblID2UpdateColumns[content.TblID][col.Name.L] = col
+				break
+			}
+		}
+	}
+	for tid, tbl := range updt.tblID2Table {
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
+			continue
+		}
+		for _, col := range tbl.WritableCols() {
+			if !col.IsGenerated() || !col.GeneratedStored {
+				continue
+			}
+			for depCol := range col.Dependences {
+				if _, ok := updateCols[depCol]; ok {
+					tblID2UpdateColumns[tid][col.Name.L] = col.ColumnInfo
+				}
+			}
+		}
+	}
+	return tblID2UpdateColumns
 }
 
 type tblUpdateInfo struct {
@@ -5617,6 +5660,39 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 	return del, err
 }
 
+func (b *PlanBuilder) buildOnUpdateForeignKeyTriggerPlans(ctx context.Context, tblID2table map[int64]table.Table, tblID2UpdateColumns map[int64]map[string]*model.ColumnInfo) (map[int64][]FKTriggerPlan, error) {
+	fkTriggerPlans := make(map[int64][]FKTriggerPlan)
+	for tid, tbl := range tblID2table {
+		if len(tbl.Meta().ReferredForeignKeys) == 0 {
+			continue
+		}
+		updateCols := tblID2UpdateColumns[tid]
+		if len(updateCols) == 0 {
+			continue
+		}
+		for _, referredFK := range tbl.Meta().ReferredForeignKeys {
+			exist := false
+			for _, referredCol := range referredFK.Cols {
+				_, exist = updateCols[referredCol.L]
+				if exist {
+					break
+				}
+			}
+			if !exist {
+				continue
+			}
+			triggerPlan, err := b.buildForeignKeyOnUpdateTriggerPlan(ctx, referredFK)
+			if err != nil {
+				return nil, err
+			}
+			if triggerPlan != nil {
+				fkTriggerPlans[tid] = append(fkTriggerPlans[tid], triggerPlan)
+			}
+		}
+	}
+	return fkTriggerPlans, nil
+}
+
 func (b *PlanBuilder) buildDeleteForeignKeyTriggerPlan(ctx context.Context, tblID2table map[int64]table.Table) (map[int64][]FKTriggerPlan, error) {
 	fkTriggerPlans := make(map[int64][]FKTriggerPlan)
 	for tid, tbl := range tblID2table {
@@ -5799,6 +5875,32 @@ func (b *PlanBuilder) buildForeignKeyOnInsertTriggerPlan(dbName string, tbl tabl
 		triggerPlans = append(triggerPlans, triggerPlan)
 	}
 	return triggerPlans, nil
+}
+
+func (b *PlanBuilder) buildForeignKeyOnUpdateTriggerPlan(ctx context.Context, referredFK *model.ReferredFKInfo) (FKTriggerPlan, error) {
+	if !b.ctx.GetSessionVars().ForeignKeyChecks {
+		return nil, nil
+	}
+	childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+	if err != nil {
+		// todo: append warning?
+		return nil, nil
+	}
+	fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+	if fk == nil || fk.Version == 0 {
+		return nil, nil
+	}
+	switch ast.ReferOptionType(fk.OnDelete) {
+	case ast.ReferOptionCascade:
+		//triggerPlan, err = b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
+		return nil, nil
+	case ast.ReferOptionSetNull:
+		return b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
+	case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
+		failedErr := ErrRowIsReferenced2.GenWithStackByArgs(fk.String(referredFK.ChildSchema.L, referredFK.ChildTable.L))
+		return buildFKCheckPlan(b.ctx, childTable, fk, fk.Cols, fk.RefCols, false, failedErr)
+	}
+	return nil, nil
 }
 
 func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]FKTriggerPlan, error) {

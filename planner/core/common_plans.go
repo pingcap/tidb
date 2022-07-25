@@ -1000,6 +1000,8 @@ type Update struct {
 	PartitionedTable []table.PartitionedTable
 
 	tblID2Table map[int64]table.Table
+
+	FKTriggerPlans map[int64][]FKTriggerPlan
 }
 
 // Delete represents a delete plan.
