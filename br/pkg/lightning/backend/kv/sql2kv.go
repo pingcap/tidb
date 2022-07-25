@@ -460,8 +460,8 @@ func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
 }
 
-// GetEncoderAutoIDFn return Auto increment id.
-func GetEncoderAutoIDFn(encoder Encoder, id int64) int64 {
+// GetEncoderIncrementalID return Auto increment id.
+func GetEncoderIncrementalID(encoder Encoder, id int64) int64 {
 	return encoder.(*tableKVEncoder).autoIDFn(id)
 }
 
