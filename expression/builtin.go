@@ -25,7 +25,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/util/set"
 	"strings"
 	"sync"
 
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/exp/slices"
 )
@@ -215,6 +215,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
+	// note this function must be called after wrap cast function to the args
 	adjustNullFlagForReturnType(funcName, args, bf)
 	return bf, nil
 }
