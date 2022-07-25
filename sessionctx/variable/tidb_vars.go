@@ -787,7 +787,7 @@ const (
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
-	// TiDDDLBEnableFastReorg indicates whether use lighting to help acceleate adding index stmt.
+	// TiDBDDLEnableFastReorg indicates whether use lighting to help acceleate adding index stmt.
 	TiDBDDLEnableFastReorg = "tidb_ddl_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
