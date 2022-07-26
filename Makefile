@@ -215,9 +215,8 @@ tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
 
-tools/bin/revive: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/revive github.com/mgechev/revive
+tools/bin/revive:
+	$(GO) build -o ./bin/revive github.com/mgechev/revive
 
 tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
