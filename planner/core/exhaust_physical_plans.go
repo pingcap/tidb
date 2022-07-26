@@ -1021,7 +1021,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	path *util.AccessPath,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
-	outerJoinKeys []*expression.Column,
+	_ []*expression.Column,
 	us *LogicalUnionScan,
 	rangeInfo string,
 	keepOrder bool,
@@ -1332,7 +1332,7 @@ loopOtherConds:
 //   It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
 //   [0 -1 -1].
 //   So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
-func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, outerJoinKeys []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
+func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, _ []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
 	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
 		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
@@ -2100,7 +2100,7 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 	return false
 }
 
-func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
+func (lt *LogicalTopN) getPhysTopN(_ *property.PhysicalProperty) []PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
 	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
@@ -2121,7 +2121,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	return ret
 }
 
-func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []PhysicalPlan {
+func (lt *LogicalTopN) getPhysLimits(_ *property.PhysicalProperty) []PhysicalPlan {
 	p, canPass := GetPropByOrderByItems(lt.ByItems)
 	if !canPass {
 		return nil

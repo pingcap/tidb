@@ -459,9 +459,11 @@ func (job *Job) Clone() *Job {
 		clone.Args = make([]interface{}, len(job.Args))
 		copy(clone.Args, job.Args)
 	}
-	for i, sub := range job.MultiSchemaInfo.SubJobs {
-		clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
-		copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+	if job.MultiSchemaInfo != nil {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			clone.MultiSchemaInfo.SubJobs[i].Args = make([]interface{}, len(sub.Args))
+			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+		}
 	}
 	return &clone
 }

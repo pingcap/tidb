@@ -1155,6 +1155,47 @@ func TestMultiSchemaChangeUnsupportedType(t *testing.T) {
 		"[ddl:8200]Unsupported multi schema change for modify auto id cache")
 }
 
+func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (c_1 int, c_2 char(20), c_pos_1 int, c_idx_visible int, c_3 decimal(5, 3), " +
+		"c_drop_1 time, c_4 datetime, c_drop_idx char(10), c_5 time, c_6 double, c_drop_2 int, c_pos_2 char(10), " +
+		"c_add_idx_1 int, c_add_idx_2 char(20), index idx_1(c_1), index idx_2(c_2), index idx_drop(c_drop_idx), " +
+		"index idx_3(c_drop_1), index idx_4(c_4), index idx_5(c_pos_1, c_pos_2), index idx_visible(c_idx_visible));")
+	tk.MustExec("insert into t values (100, 'c_2_insert', 101, 12, 2.1, '10:00:00', " +
+		"'2020-01-01 10:00:00', 'wer', '10:00:00', 2.1, 12, 'qwer', 12, 'asdf');")
+
+	originHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		if job.MultiSchemaInfo.SubJobs[9].SchemaState == model.StateDeleteOnly {
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test;")
+			_, checkErr = tk2.Exec("update t set c_4 = '2020-01-01 10:00:00', c_5 = 'c_5_update', c_1 = 102, " +
+				"c_2 = '1', c_pos_1 = 102, c_idx_visible = 102, c_3 = 3.1, c_drop_idx = 'er', c_6 = 2, c_pos_2 = 'dddd', " +
+				"c_add_idx_1 = 102, c_add_idx_2 = 'zxc', c_add_2 = 10001, c_add_1 = 10001 where c_drop_idx = 'wer';")
+			if checkErr != nil {
+				return
+			}
+		}
+	}
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add index i_add_1(c_add_idx_1), drop index idx_drop, " +
+		"add index i_add_2(c_add_idx_2), modify column c_2 char(100), add column c_add_2 bigint, " +
+		"modify column c_1 bigint, add column c_add_1 bigint, modify column c_5 varchar(255) first, " +
+		"modify column c_4 datetime first, drop column c_drop_1, drop column c_drop_2, modify column c_6 int, " +
+		"alter index idx_visible invisible, modify column c_3 decimal(10, 2);")
+	require.NoError(t, checkErr)
+	dom.DDL().SetHook(originHook)
+}
+
 type cancelOnceHook struct {
 	store     kv.Storage
 	triggered bool
