@@ -568,3 +568,8 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 func (gs *tidbGlueSession) GetVersion() string {
 	return "TiDB\n" + printer.GetTiDBInfo()
 }
+
+// UseOneShotSession implements glue.Glue
+func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, fn func(se glue.Session) error) error {
+	return fn(gs)
+}

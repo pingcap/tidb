@@ -68,3 +68,8 @@ func (Glue) Record(name string, val uint64) {
 func (Glue) GetVersion() string {
 	return "BR\n" + build.Info()
 }
+
+// UseOneShotSession implements glue.Glue.
+func (g Glue) UseOneShotSession(store kv.Storage, fn func(glue.Session) error) error {
+	return nil
+}
