@@ -133,8 +133,9 @@ func TestClusterTableSendError(t *testing.T) {
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult")) }()
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(1))
-	require.Regexp(t, ".*TiDB server timeout, address is.*", tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error())
+	// Since we avoid making requests to empty addresses, there will be no warnings here.
+	// See: https://github.com/pingcap/tidb/pull/36548
+	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
 }
 
 func TestAutoCommitNeedNotLinearizability(t *testing.T) {
