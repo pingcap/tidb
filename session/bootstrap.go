@@ -2002,7 +2002,6 @@ func inTestSuite() bool {
 
 // doDMLWorks executes DML statements in bootstrap stage.
 // All the statements run in a single transaction.
-// TODO: sanitize.
 func doDMLWorks(s Session) {
 	mustExecute(s, "BEGIN")
 	if config.GetGlobalConfig().Security.SecureBootstrap {
@@ -2062,10 +2061,9 @@ func doDMLWorks(s Session) {
 			vVal = variable.AssertionFastStr
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
-		case variable.TiDBEnablePaging:
-			vVal = variable.BoolToOnOff(variable.DefTiDBEnablePaging)
 		}
-		value := fmt.Sprintf(`("%s", "%s")`, k, vVal)
+		// sanitize k and vVal
+		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
