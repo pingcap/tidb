@@ -138,7 +138,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	if closeDomain {
 		defer func() {
 			dom.Close()
-			log.Info("one shot session domain closed")
+			log.Info("one shot domain closed")
 		}()
 	}
 	err = fn(glueSession)
