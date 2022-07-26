@@ -54,13 +54,14 @@ HashJoin	4166.67	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
 explain format = 'brief' update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Point_Get	1.00	root	table:t1	handle:1
+└─Point_Get	1.00	root	table:t1	handle:1, lock
 explain format = 'brief' delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─IndexLookUp	10.00	root		
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─SelectLock	10.00	root		for update 0
+  └─IndexLookUp	10.00	root		
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	9990.00	root		Column#7
@@ -705,7 +706,7 @@ explain format = 'brief' update t set j = -j where i = 1 and j = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
 └─Selection	1.00	root		eq(test.t.j, 1)
-  └─Point_Get	1.00	root	table:t	handle:1
+  └─Point_Get	1.00	root	table:t	handle:1, lock
 rollback;
 drop table if exists t;
 create table t(a int);
@@ -798,9 +799,10 @@ IndexLookUp	0.10	root
 explain format = 'brief' update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─IndexLookUp	0.10	root		
-  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─SelectLock	0.10	root		for update 0
+  └─IndexLookUp	0.10	root		
+    ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:[0xFA34E1093CB428485734E3917F000000 "xb",0xFA34E1093CB428485734E3917F000000 "xb"], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select (select count(n.a) from t) from t n;
