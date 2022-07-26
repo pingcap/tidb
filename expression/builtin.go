@@ -554,12 +554,14 @@ type functionClassWithName interface {
 }
 
 // functions that always return not null type
+// todo add more functions to this set
 var functionSetForReturnTypeAlwaysNotNull = set.StringSet{
 	ast.IsNull: {},
 	ast.NullEQ: {},
 }
 
 // functions that always return nullable type
+// todo add more functions to this set
 var functionSetForReturnTypeAlwaysNullable = set.StringSet{
 	ast.Div:    {}, // divide by zero
 	ast.IntDiv: {}, // divide by zero
@@ -570,6 +572,7 @@ var functionSetForReturnTypeAlwaysNullable = set.StringSet{
 // Although most of the functions should belong to this, there may be some unknown
 // bugs in TiDB that makes it not true in TiDB's implementation, so only add a few
 // this time. The others can be added to the set case by case in the future
+// todo add more functions to this set
 var functionSetForReturnTypeNotNullOnNotNull = set.StringSet{
 	ast.Plus:  {},
 	ast.Minus: {},
