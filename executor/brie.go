@@ -568,3 +568,9 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 func (gs *tidbGlueSession) GetVersion() string {
 	return "TiDB\n" + printer.GetTiDBInfo()
 }
+
+// UseOneShotSession implements glue.Glue
+func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
+	// in SQL backup. we don't need to close domain.
+	return fn(gs)
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -38,6 +39,7 @@ type testBackup struct {
 	cancel context.CancelFunc
 
 	mockPDClient pd.Client
+	mockGlue     *gluetidb.MockGlue
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
@@ -48,6 +50,7 @@ func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
 	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	s = new(testBackup)
+	s.mockGlue = &gluetidb.MockGlue{}
 	s.mockPDClient = pdClient
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
@@ -280,7 +283,8 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-	err = backup.WriteBackupDDLJobs(metaWriter, tk.Session(), s.cluster.Storage, lastTS, ts)
+	s.mockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts, false)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoError(t, err, "Flush failed", err)
