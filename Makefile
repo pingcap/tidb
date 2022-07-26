@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
 
 default: server buildsucc
 
@@ -87,7 +87,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: test_part_parser gotest gogenerate br_unit_test dumpling_unit_test
+test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test
 
 test_part_parser: parser_yacc test_part_parser_dev
 
@@ -121,12 +121,6 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
-
-gotest: failpoint-enable
-	@echo "Running in native mode."
-	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@$(FAILPOINT_DISABLE)
 
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
