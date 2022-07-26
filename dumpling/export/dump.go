@@ -28,11 +28,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
-	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/dbutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1341,21 +1339,18 @@ func resolveAutoConsistency(d *Dumper) error {
 	}
 
 	if conf.Consistency == ConsistencyTypeFlush {
-		grants, err := dbutil.ShowGrants(d.tctx.Context, d.dbHandle, "", "")
+		// probe if upstream has enough privilege to FLUSH TABLE WITH READ LOCK
+		conn, err := d.dbHandle.Conn(d.tctx.Context)
 		if err != nil {
-			d.tctx.L().Error("failed to query SHOW GRANTS", zap.Error(err))
-			return nil
+			return err
 		}
-		var privMap = map[pmysql.PrivilegeType]map[string]map[string]struct{}{}
-		privMap[pmysql.SuperPriv] = nil
-		err = dbutil.CheckPrivilege(grants, privMap)
+		defer conn.Close()
+		err = FlushTableWithReadLock(d.tctx, conn)
+		defer UnlockTables(d.tctx, conn)
 		if err != nil {
-			d.tctx.L().Error("failed to check SUPER in SHOW GRANTS", zap.Error(err))
-			return nil
-		}
-		if _, ok := privMap[pmysql.SuperPriv]; ok {
-			// when SUPER is not contained in SHOW GRANTS, we can't use FLUSH TABLES WITH READ LOCK.
-			d.tctx.L().Warn("upstream does not have SUPER privilege, dumpling will use read locks per table instead of FLUSH TABLES WITH READ LOCK")
+			// fallback to ConsistencyTypeLock
+			d.tctx.L().Warn("error when use FLUSH TABLE WITH READ LOCK, fallback to LOCK TABLES",
+				zap.Error(err))
 			conf.Consistency = ConsistencyTypeLock
 		}
 	}

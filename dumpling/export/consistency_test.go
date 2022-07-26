@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/errno"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,13 +137,13 @@ func TestResolveAutoConsistency(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 	tctx := tcontext.Background()
+	resultOk := sqlmock.NewResult(0, 1)
 
 	for _, x := range cases {
 		conf.Consistency = ConsistencyTypeAuto
 		conf.ServerInfo.ServerType = x.serverTp
 		d := &Dumper{tctx: tctx, conf: conf, dbHandle: db}
-		mock.ExpectQuery("SHOW GRANTS").WillReturnRows(
-			sqlmock.NewRows([]string{"Grants for root@localhost"}).AddRow("GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION"))
+		mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnResult(resultOk)
 		require.NoError(t, resolveAutoConsistency(d))
 		require.Equalf(t, x.resolvedConsistency, conf.Consistency, "server type: %s", x.serverTp.String())
 	}
@@ -152,11 +153,15 @@ func TestResolveAutoConsistency(t *testing.T) {
 		conf.Consistency = ConsistencyTypeAuto
 		conf.ServerInfo.ServerType = x.serverTp
 		d := &Dumper{tctx: tctx, conf: conf, dbHandle: db}
-		mock.ExpectQuery("SHOW GRANTS").WillReturnRows(
-			sqlmock.NewRows([]string{"Grants for u1@localhost"}).AddRow("GRANT USAGE ON *.* TO `u1`@`localhost`"))
+		mockErr := &mysql.MySQLError{
+			Number:  errno.ErrAccessDenied,
+			Message: "Couldn't execute 'FLUSH TABLES WITH READ LOCK': Access denied for user 'root'@'%' (using password: YES)",
+		}
+		mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnError(mockErr)
 		require.NoError(t, resolveAutoConsistency(d))
 		require.Equalf(t, ConsistencyTypeLock, conf.Consistency, "server type: %s", x.serverTp.String())
 	}
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestConsistencyControllerError(t *testing.T) {
