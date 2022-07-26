@@ -189,7 +189,8 @@ func match(c *C, row []types.Datum, expected ...interface{}) {
 
 func (s *testMainSuite) TestKeysNeedLock(c *C) {
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
-	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
+	uniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
+	nonUniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 2, []byte{1})
 	uniqueValue := make([]byte, 8)
 	uniqueUntouched := append(uniqueValue, '1')
 	nonUniqueVal := []byte{'0'}
@@ -203,12 +204,13 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 	}{
 		{rowKey, rowVal, true},
 		{rowKey, deleteVal, true},
-		{indexKey, nonUniqueVal, false},
-		{indexKey, nonUniqueUntouched, false},
-		{indexKey, uniqueValue, true},
-		{indexKey, uniqueUntouched, false},
-		{indexKey, deleteVal, false},
+		{nonUniqueIndexKey, nonUniqueVal, false},
+		{nonUniqueIndexKey, nonUniqueUntouched, false},
+		{uniqueIndexKey, uniqueValue, true},
+		{uniqueIndexKey, uniqueUntouched, false},
+		{uniqueIndexKey, deleteVal, false},
 	}
+<<<<<<< HEAD
 	for _, tt := range tests {
 		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
 	}
@@ -240,4 +242,16 @@ func (s *testMainSuite) TestIndexUsageSyncLease(c *C) {
 	do.Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
+=======
+
+	for _, test := range tests {
+		need := keyNeedToLock(test.key, test.val, 0)
+		require.Equal(t, test.need, need)
+
+		flag := kv.KeyFlags(1)
+		need = keyNeedToLock(test.key, test.val, flag)
+		require.True(t, flag.HasPresumeKeyNotExists())
+		require.True(t, need)
+	}
+>>>>>>> 87c5b5068... executor: do not acqurie pessimistic lock for non-unique index keys (#36229)
 }
