@@ -1063,7 +1063,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectF
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Context, field *ast.SelectField) (model.CIStr, error) {
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context, field *ast.SelectField) (model.CIStr, error) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
@@ -1503,7 +1503,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
+func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
 
@@ -1795,7 +1795,7 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, aft
 // divide rule ref:
 //		https://dev.mysql.com/doc/refman/5.7/en/union.html
 // "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
-func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
+func (b *PlanBuilder) divideUnionSelectPlans(_ context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
 	firstUnionAllIdx := 0
 	columnNums := selects[0].Schema().Len()
 	for i := len(selects) - 1; i > 0; i-- {
@@ -4862,7 +4862,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
 }
 
-func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
+func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
 	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
@@ -5877,7 +5877,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // buildWindowFunctionFrameBound builds the bounds of window function frames.
 // For type `Rows`, the bound expr must be an unsigned integer.
 // For type `Range`, the bound expr must be temporal or numeric types.
-func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
+func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
 	if bound.UnBounded {
@@ -6942,7 +6942,7 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 	return nil
 }
 
-func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {
+func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {
 	if seed.Schema().Len() != recur.Schema().Len() {
 		return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}

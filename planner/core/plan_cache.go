@@ -506,7 +506,7 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 	return
 }
 
-func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
+func checkPreparedPriv(_ context.Context, sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := VisitInfo4PrivCheck(is, preparedObj.PreparedAst.Stmt, preparedObj.VisitInfos)
@@ -520,8 +520,8 @@ func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
 
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
-func tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
-	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
+func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
+	preparedStmt *CachedPrepareStmt, _ infoschema.InfoSchema, p Plan) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache || sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return nil
 	}
