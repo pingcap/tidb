@@ -19,7 +19,6 @@ package realtikvtest
 import (
 	"context"
 	"flag"
-	"github.com/pingcap/tidb/testkit"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -136,17 +135,12 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 		store, err = d.Open("tikv://127.0.0.1:2379?disableGC=true")
 		require.NoError(t, err)
 
-		//clearTiKVStorage(t, store)
-		//clearEtcdStorage(t, store.(kv.EtcdBackend))
+		clearTiKVStorage(t, store)
+		clearEtcdStorage(t, store.(kv.EtcdBackend))
 
-		//session.ResetStoreForWithTiKVTest(store)
+		session.ResetStoreForWithTiKVTest(store)
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
-
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("drop database if exists test")
-		tk.MustExec("create database test")
-
 	} else {
 		store, err = mockstore.NewMockStore(opts...)
 		require.NoError(t, err)
