@@ -115,7 +115,7 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
-func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
+func (opt *Optimizer) onPhasePreprocessing(_ sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
 	err := plan.PruneColumns(plan.Schema().Columns, nil)
 	if err != nil {
 		return nil, err
@@ -123,7 +123,7 @@ func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan planner
 	return plan, nil
 }
 
-func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
+func (opt *Optimizer) onPhaseExploration(_ sessionctx.Context, g *memo.Group) error {
 	for round, ruleBatch := range opt.transformationRuleBatches {
 		for !g.Explored(round) {
 			err := opt.exploreGroup(g, round, ruleBatch)
@@ -240,7 +240,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 }
 
 // onPhaseImplementation starts implementation physical operators from given root Group.
-func (opt *Optimizer) onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, float64, error) {
+func (opt *Optimizer) onPhaseImplementation(_ sessionctx.Context, g *memo.Group) (plannercore.PhysicalPlan, float64, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}

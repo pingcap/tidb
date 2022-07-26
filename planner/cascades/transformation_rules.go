@@ -159,7 +159,7 @@ type baseRule struct {
 }
 
 // Match implements Transformation Interface.
-func (r *baseRule) Match(expr *memo.ExprIter) bool {
+func (*baseRule) Match(_ *memo.ExprIter) bool {
 	return true
 }
 
@@ -1296,7 +1296,7 @@ func (r *PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
 
 // OnTransform implements Transformation interface.
 // This rule tries to pushes the TopN through Projection.
-func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+func (*PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	childGroup := old.Children[0].GetExpr().Children[0]
@@ -1446,7 +1446,7 @@ func NewRuleMergeAdjacentTopN() Transformation {
 }
 
 // Match implements Transformation interface.
-func (r *MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
+func (*MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 	topN := expr.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	child := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
 
@@ -1464,7 +1464,7 @@ func (r *MergeAdjacentTopN) Match(expr *memo.ExprIter) bool {
 
 // OnTransform implements Transformation interface.
 // This rule tries to merge adjacent TopN.
-func (r *MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+func (*MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalTopN)
 	childGroups := old.Children[0].GetExpr().Children
@@ -1508,14 +1508,14 @@ func NewRuleMergeAggregationProjection() Transformation {
 }
 
 // Match implements Transformation interface.
-func (r *MergeAggregationProjection) Match(old *memo.ExprIter) bool {
+func (*MergeAggregationProjection) Match(old *memo.ExprIter) bool {
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	return !plannercore.ExprsHasSideEffects(proj.Exprs)
 }
 
 // OnTransform implements Transformation interface.
 // It will transform `Aggregation->Projection->X` to `Aggregation->X`.
-func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	oldAgg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	projSchema := old.Children[0].GetExpr().Schema()
@@ -1665,7 +1665,7 @@ func NewRuleMergeAdjacentSelection() Transformation {
 
 // OnTransform implements Transformation interface.
 // This rule tries to merge adjacent selection, with no simplification.
-func (r *MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+func (*MergeAdjacentSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalSelection)
 	childGroups := old.Children[0].GetExpr().Children
