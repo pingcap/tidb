@@ -250,6 +250,9 @@
       "telemetry/": "telemetry code",
       "planner/memo": "planner code",
       "planner/funcdep": "planner code",
+      "planner/util": "planner code",
+      "planner/implementation": "planner code",
+      "planner/cascades": "planner code",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
