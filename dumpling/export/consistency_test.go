@@ -113,8 +113,6 @@ func TestResolveAutoConsistency(t *testing.T) {
 		resolvedConsistency string
 	}{
 		{version.ServerTypeTiDB, ConsistencyTypeSnapshot},
-		{version.ServerTypeMySQL, ConsistencyTypeFlush},
-		{version.ServerTypeMariaDB, ConsistencyTypeFlush},
 		{version.ServerTypeUnknown, ConsistencyTypeNone},
 	}
 
@@ -124,6 +122,40 @@ func TestResolveAutoConsistency(t *testing.T) {
 		d := &Dumper{conf: conf}
 		require.NoError(t, resolveAutoConsistency(d))
 		require.Equalf(t, x.resolvedConsistency, conf.Consistency, "server type: %s", x.serverTp.String())
+	}
+
+	cases = []struct {
+		serverTp            version.ServerType
+		resolvedConsistency string
+	}{
+		{version.ServerTypeMySQL, ConsistencyTypeFlush},
+		{version.ServerTypeMariaDB, ConsistencyTypeFlush},
+	}
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	tctx := tcontext.Background()
+
+	for _, x := range cases {
+		conf.Consistency = ConsistencyTypeAuto
+		conf.ServerInfo.ServerType = x.serverTp
+		d := &Dumper{tctx: tctx, conf: conf, dbHandle: db}
+		mock.ExpectQuery("SHOW GRANTS").WillReturnRows(
+			sqlmock.NewRows([]string{"Grants for root@localhost"}).AddRow("GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION"))
+		require.NoError(t, resolveAutoConsistency(d))
+		require.Equalf(t, x.resolvedConsistency, conf.Consistency, "server type: %s", x.serverTp.String())
+	}
+
+	// test no SUPER privilege will fallback to ConsistencyTypeLock
+	for _, x := range cases {
+		conf.Consistency = ConsistencyTypeAuto
+		conf.ServerInfo.ServerType = x.serverTp
+		d := &Dumper{tctx: tctx, conf: conf, dbHandle: db}
+		mock.ExpectQuery("SHOW GRANTS").WillReturnRows(
+			sqlmock.NewRows([]string{"Grants for u1@localhost"}).AddRow("GRANT USAGE ON *.* TO `u1`@`localhost`"))
+		require.NoError(t, resolveAutoConsistency(d))
+		require.Equalf(t, ConsistencyTypeLock, conf.Consistency, "server type: %s", x.serverTp.String())
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/mysql"
 )
 
 // ShowVersion queries variable 'version' and returns its value.
@@ -152,4 +153,146 @@ func ShowGrants(ctx context.Context, db QueryExecutor, user, host string) ([]str
 	query = s.String()
 
 	return readGrantsFunc()
+}
+
+// CheckPrivilege uses the output of ShowGrants, to check `lackPriv` has been granted. Elements in `lackPriv` is deleted
+// during CheckPrivilege, and after it returns, `lackPriv` is the privileges that are not found in SHOW GRANTS.
+// level of keys of `lackPriv`: privilege => schema => table.
+func CheckPrivilege(grants []string, lackPriv map[mysql.PrivilegeType]map[string]map[string]struct{}) error {
+	if len(grants) == 0 {
+		return errors.New("there is no such grant defined for current user on host '%'")
+	}
+
+	p := parser.New()
+GRANTLOOP:
+	for _, grant := range grants {
+		if len(lackPriv) == 0 {
+			break
+		}
+		node, err := p.ParseOneStmt(grant, "", "")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		grantStmt, ok := node.(*ast.GrantStmt)
+		if !ok {
+			switch node.(type) {
+			case *ast.GrantProxyStmt, *ast.GrantRoleStmt:
+				continue
+			default:
+				return errors.Errorf("%s is not grant statement", grant)
+			}
+		}
+
+		if len(grantStmt.Users) == 0 {
+			return errors.Errorf("grant has no user %s", grant)
+		}
+
+		dbName := grantStmt.Level.DBName
+		tableName := grantStmt.Level.TableName
+		switch grantStmt.Level.Level {
+		case ast.GrantLevelGlobal:
+			for _, privElem := range grantStmt.Privs {
+				// all privileges available at a given privilege level (except GRANT OPTION)
+				// from https://dev.mysql.com/doc/refman/5.7/en/privileges-provided.html#priv_all
+				if privElem.Priv == mysql.AllPriv {
+					for k := range lackPriv {
+						if k == mysql.GrantPriv {
+							continue
+						}
+						delete(lackPriv, k)
+					}
+					continue GRANTLOOP
+				}
+				// mysql> show master status;
+				// ERROR 1227 (42000): Access denied; you need (at least one of) the SUPER, REPLICATION CLIENT privilege(s) for this operation
+				if privElem.Priv == mysql.SuperPriv {
+					delete(lackPriv, mysql.ReplicationClientPriv)
+				}
+				delete(lackPriv, privElem.Priv)
+			}
+		case ast.GrantLevelDB:
+			for _, privElem := range grantStmt.Privs {
+				// all privileges available at a given privilege level (except GRANT OPTION)
+				// from https://dev.mysql.com/doc/refman/5.7/en/privileges-provided.html#priv_all
+				if privElem.Priv == mysql.AllPriv {
+					for priv := range lackPriv {
+						if priv == mysql.GrantPriv {
+							continue
+						}
+						if _, ok := lackPriv[priv][dbName]; !ok {
+							continue
+						}
+						delete(lackPriv[priv], dbName)
+						if len(lackPriv[priv]) == 0 {
+							delete(lackPriv, priv)
+						}
+					}
+					continue
+				}
+				if _, ok := lackPriv[privElem.Priv]; !ok {
+					continue
+				}
+				if _, ok := lackPriv[privElem.Priv][dbName]; !ok {
+					continue
+				}
+				// dumpling could report error if an allow-list table is lack of privilege.
+				// we only check that SELECT is granted on all columns, otherwise we can't SHOW CREATE TABLE
+				if privElem.Priv == mysql.SelectPriv && len(privElem.Cols) != 0 {
+					continue
+				}
+				delete(lackPriv[privElem.Priv], dbName)
+				if len(lackPriv[privElem.Priv]) == 0 {
+					delete(lackPriv, privElem.Priv)
+				}
+			}
+		case ast.GrantLevelTable:
+			for _, privElem := range grantStmt.Privs {
+				// all privileges available at a given privilege level (except GRANT OPTION)
+				// from https://dev.mysql.com/doc/refman/5.7/en/privileges-provided.html#priv_all
+				if privElem.Priv == mysql.AllPriv {
+					for priv := range lackPriv {
+						if priv == mysql.GrantPriv {
+							continue
+						}
+						if _, ok := lackPriv[priv][dbName]; !ok {
+							continue
+						}
+						if _, ok := lackPriv[priv][dbName][tableName]; !ok {
+							continue
+						}
+						delete(lackPriv[priv][dbName], tableName)
+						if len(lackPriv[priv][dbName]) == 0 {
+							delete(lackPriv[priv], dbName)
+						}
+						if len(lackPriv[priv]) == 0 {
+							delete(lackPriv, priv)
+						}
+					}
+					continue
+				}
+				if _, ok := lackPriv[privElem.Priv]; !ok {
+					continue
+				}
+				if _, ok := lackPriv[privElem.Priv][dbName]; !ok {
+					continue
+				}
+				if _, ok := lackPriv[privElem.Priv][dbName][tableName]; !ok {
+					continue
+				}
+				// dumpling could report error if an allow-list table is lack of privilege.
+				// we only check that SELECT is granted on all columns, otherwise we can't SHOW CREATE TABLE
+				if privElem.Priv == mysql.SelectPriv && len(privElem.Cols) != 0 {
+					continue
+				}
+				delete(lackPriv[privElem.Priv][dbName], tableName)
+				if len(lackPriv[privElem.Priv][dbName]) == 0 {
+					delete(lackPriv[privElem.Priv], dbName)
+				}
+				if len(lackPriv[privElem.Priv]) == 0 {
+					delete(lackPriv, privElem.Priv)
+				}
+			}
+		}
+	}
+	return nil
 }
