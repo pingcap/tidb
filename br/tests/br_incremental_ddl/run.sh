@@ -31,6 +31,9 @@ for i in $(seq $ROW_COUNT); do
     run_sql "INSERT INTO ${DB}.${TABLE}(c1) VALUES ($i);"
 done
 
+
+# Do not log to terminal
+unset BR_LOG_TO_TERM
 # full backup
 echo "full backup start..."
 run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/full" --db $DB -t $TABLE --log-file $LOG
@@ -81,6 +84,7 @@ if [ "${one_shot_session_count}" -ne "2" ] || [ "$one_shot_domain_count" -ne "2"
     exit 1
 fi
 rm -rf $LOG
+BR_LOG_TO_TERM=1
 
 run_sql "DROP DATABASE $DB;"
 # full restore
