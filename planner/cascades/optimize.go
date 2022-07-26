@@ -115,7 +115,7 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	return p, cost, err
 }
 
-func (opt *Optimizer) onPhasePreprocessing(_ sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
+func (*Optimizer) onPhasePreprocessing(_ sessionctx.Context, plan plannercore.LogicalPlan) (plannercore.LogicalPlan, error) {
 	err := plan.PruneColumns(plan.Schema().Columns, nil)
 	if err != nil {
 		return nil, err
@@ -169,7 +169,7 @@ func (opt *Optimizer) exploreGroup(g *memo.Group, round int, ruleBatch Transform
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int, ruleBatch TransformationRuleBatch) (eraseCur bool, err error) {
+func (*Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element, round int, ruleBatch TransformationRuleBatch) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
 	operand := memo.GetOperand(expr.ExprNode)
 	for _, rule := range ruleBatch[operand] {
