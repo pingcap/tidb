@@ -5,7 +5,6 @@ package restore_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"math"
 	"strconv"
 	"testing"

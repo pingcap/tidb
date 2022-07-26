@@ -33,7 +33,7 @@ type Glue interface {
 	// UseOneShotSession temporary creates session from store when run backup job.
 	// because we don't have to own domain/session during the whole backup.
 	// we can close domain as soon as possible.
-	// and in SQL backup job. we must reuse the exists session and don't close it.
+	// and we must reuse the exists session and don't close it in SQL backup job.
 	UseOneShotSession(store kv.Storage, fn func(se Session) error) error
 }
 
