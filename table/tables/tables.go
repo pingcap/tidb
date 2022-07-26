@@ -847,7 +847,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	if setPresume {
-		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
+		flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+		if sessVars.SkipInsertLock && sessVars.TxnCtx.IsPessimistic {
+			flags = append(flags, kv.SetNeedConflictCheckInPrewrite)
+		}
+		err = memBuffer.SetWithFlags(key, value, flags...)
 	} else {
 		err = memBuffer.Set(key, value)
 	}

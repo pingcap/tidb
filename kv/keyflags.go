@@ -31,6 +31,7 @@ const (
 	// it's expected to be unchangeable within the current transaction.
 	flagAssertExists
 	flagAssertNotExists
+	flagNeedConflictCheckInPrewrite
 )
 
 // HasPresumeKeyNotExists returns whether the associated key use lazy check.
@@ -63,6 +64,11 @@ func (f KeyFlags) HasAssertionFlags() bool {
 	return f&flagAssertExists != 0 || f&flagAssertNotExists != 0
 }
 
+// HasNeedConflictCheckInPrewrite returns whether the key needs to do conflict check in prewrite.
+func (f KeyFlags) HasNeedConflictCheckInPrewrite() bool {
+	return f&flagNeedConflictCheckInPrewrite != 0
+}
+
 // FlagsOp describes KeyFlags modify operation.
 type FlagsOp uint16
 
@@ -79,6 +85,8 @@ const (
 	SetAssertUnknown
 	// SetAssertNone marks the associated key without any assert.
 	SetAssertNone
+	// SetNeedConflictCheckInPrewrite indicates the prewrite should check write conflict for this key.
+	SetNeedConflictCheckInPrewrite
 )
 
 // ApplyFlagsOps applys flagspos to origin.
@@ -98,6 +106,8 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 		case SetAssertUnknown:
 			origin |= flagAssertExists
 			origin |= flagAssertNotExists
+		case SetNeedConflictCheckInPrewrite:
+			origin |= flagNeedConflictCheckInPrewrite
 		}
 	}
 	return origin

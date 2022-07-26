@@ -158,6 +158,11 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	} else if flag.HasAssertUnknown() {
 		v = kv.ApplyFlagsOps(v, kv.SetAssertUnknown)
 	}
+
+	if flag.HasNeedConflictCheckInPrewrite() {
+		v = kv.ApplyFlagsOps(v, kv.SetNeedConflictCheckInPrewrite)
+	}
+
 	return v
 }
 
@@ -175,6 +180,8 @@ func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 		return tikvstore.SetAssertUnknown
 	case kv.SetAssertNone:
 		return tikvstore.SetAssertNone
+	case kv.SetNeedConflictCheckInPrewrite:
+		return tikvstore.SetNeedConflictCheckInPrewrite
 	}
 	return 0
 }

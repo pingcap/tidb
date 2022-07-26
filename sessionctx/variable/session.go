@@ -1187,6 +1187,9 @@ type SessionVars struct {
 	// when > 0: it's the selectivity for the expression.
 	// when = 0: try to use TopN to evaluate the like expression to estimate the selectivity.
 	DefaultStrMatchSelectivity float64
+
+	// skip the locking of some keys in pessimistic transactions. Postpone the conflict check and constraint check to prewrite.
+	SkipInsertLock bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

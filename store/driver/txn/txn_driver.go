@@ -324,8 +324,12 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 	if err == nil && f.HasAssertionFlags() {
 		return nil
 	}
-	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(assertion)...)
+	txn.UpdateMemBufferFlags(key, assertion...)
 	return nil
+}
+
+func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
+	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
 }
 
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.

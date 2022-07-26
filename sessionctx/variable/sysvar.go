@@ -1719,6 +1719,11 @@ var defaultSysVars = []*SysVar{
 			s.DefaultStrMatchSelectivity = tidbOptFloat64(val, DefTiDBDefaultStrMatchSelectivity)
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipInsertLock, Value: BoolToOnOff(DefTiDBSkipInsertLock), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.SkipInsertLock = TiDBOptOn(val)
+			return nil
+		}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

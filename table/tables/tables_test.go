@@ -956,3 +956,26 @@ func TestTxnAssertion(t *testing.T) {
 	testUntouchedIndexImpl("OFF", false)
 	testUntouchedIndexImpl("OFF", true)
 }
+
+func TestInsertNotLock(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, v int)")
+
+	tk.MustExec("set @@tidb_skip_insert_lock = 1")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values(1, 0)")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("insert into t values (1, 1)")
+	tk2.MustExec("commit")
+	_, err := tk.Exec("commit")
+	require.NotNil(t, err)
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("admin check table t")
+}

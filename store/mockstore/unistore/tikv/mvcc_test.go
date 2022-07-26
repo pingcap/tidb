@@ -196,12 +196,20 @@ func PrewritePessimisticWithAssertion(pk []byte, key []byte, value []byte, start
 	store *TestStore) error {
 	mutation := newMutation(kvrpcpb.Op_Put, key, value)
 	mutation.Assertion = assertion
+	pessimisticLockTypes := make([]kvrpcpb.PessimisticLockType, len(isPessimisticLock))
+	for i := range isPessimisticLock {
+		if isPessimisticLock[i] {
+			pessimisticLockTypes[i] = kvrpcpb.PessimisticLockType_PessimisticLocked
+		} else {
+			pessimisticLockTypes[i] = kvrpcpb.PessimisticLockType_NonPessimisticLocked
+		}
+	}
 	prewriteReq := &kvrpcpb.PrewriteRequest{
 		Mutations:         []*kvrpcpb.Mutation{mutation},
 		PrimaryLock:       pk,
 		StartVersion:      startTs,
 		LockTtl:           lockTTL,
-		IsPessimisticLock: isPessimisticLock,
+		IsPessimisticLock: pessimisticLockTypes,
 		ForUpdateTs:       forUpdateTs,
 		AssertionLevel:    assertionLevel,
 	}

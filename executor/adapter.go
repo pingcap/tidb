@@ -729,7 +729,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			}
 			continue
 		}
-		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
+		skipLockInInsert := isSimpleInsert(a)
+		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock(skipLockInInsert)
 		if err1 != nil {
 			return err1
 		}
@@ -764,6 +765,15 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return err
 		}
 	}
+}
+
+func isSimpleInsert(a *ExecStmt) bool {
+	insertPlan, ok := a.Plan.(*plannercore.Insert)
+	if !ok {
+		return false
+	}
+	// TODO: is this condition safe?
+	return insertPlan.SelectPlan == nil && insertPlan.OnDuplicate == nil && !insertPlan.IsReplace
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
@@ -838,7 +848,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 type pessimisticTxn interface {
 	kv.Transaction
 	// KeysNeedToLock returns the keys need to be locked.
-	KeysNeedToLock() ([]kv.Key, error)
+	KeysNeedToLock(skipPostponedConflictCheckKey bool) ([]kv.Key, error)
 }
 
 // buildExecutor build an executor from plan, prepared statement may need additional procedure.

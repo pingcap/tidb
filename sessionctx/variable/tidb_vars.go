@@ -717,6 +717,9 @@ const (
 	// When set to (0, 1], Selectivity() will use the value of this variable as the default selectivity of those
 	// functions instead of the selectionFactor (0.8).
 	TiDBDefaultStrMatchSelectivity = "tidb_default_string_match_selectivity"
+
+	// TiDBSkipInsertLock is used in pessimistic transaction to skip the locking of simple insert statements.
+	TiDBSkipInsertLock = "tidb_skip_insert_lock"
 )
 
 // TiDB vars that have only global scope
@@ -762,7 +765,7 @@ const (
 	TiDBMemQuotaAnalyze = "tidb_mem_quota_analyze"
 	// TiDBEnableAutoAnalyze determines whether TiDB executes automatic analysis.
 	TiDBEnableAutoAnalyze = "tidb_enable_auto_analyze"
-	//TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
+	// TiDBMemOOMAction indicates what operation TiDB perform when a single SQL statement exceeds
 	// the memory quota specified by tidb_mem_quota_query and cannot be spilled to disk.
 	TiDBMemOOMAction = "tidb_mem_oom_action"
 	// TiDBEnablePrepPlanCache indicates whether to enable prepared plan cache
@@ -996,6 +999,7 @@ const (
 	DefTiDBGenerateBinaryPlan                      = true
 	DefEnableTiDBGCAwareMemoryTrack                = true
 	DefTiDBDefaultStrMatchSelectivity              = 0.8
+	DefTiDBSkipInsertLock                          = false
 )
 
 // Process global variables.

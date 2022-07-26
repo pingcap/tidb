@@ -449,13 +449,16 @@ func (txn *LazyTxn) cleanup() {
 }
 
 // KeysNeedToLock returns the keys need to be locked.
-func (txn *LazyTxn) KeysNeedToLock() ([]kv.Key, error) {
+func (txn *LazyTxn) KeysNeedToLock(skipInsertLock bool) ([]kv.Key, error) {
 	if txn.stagingHandle == kv.InvalidStagingHandle {
 		return nil, nil
 	}
 	keys := make([]kv.Key, 0, txn.countHint())
 	buf := txn.Transaction.GetMemBuffer()
 	buf.InspectStage(txn.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
+		if skipInsertLock && flags.HasNeedConflictCheckInPrewrite() {
+			return
+		}
 		if !keyNeedToLock(k, v, flags) {
 			return
 		}
@@ -495,12 +498,12 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		return true
 	}
 
+	// a pessimistic locking is skipped, perform the conflict check and constraint check (i.e. PresumeKeyNotExist) in prewrite
+	if flags.HasNeedConflictCheckInPrewrite() {
+		return false
+	}
+
 	if flags.HasPresumeKeyNotExists() {
-		// For a PUT with PresumeNotExists, lock it or not does not affect the rate of success.
-		// If there will be a write conflict, locking won't help.
-		if len(v) > 0 {
-			return false
-		}
 		return true
 	}
 
