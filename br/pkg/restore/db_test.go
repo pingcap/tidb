@@ -29,13 +29,15 @@ import (
 )
 
 type testRestoreSchemaSuite struct {
-	mock    *mock.Cluster
-	storage storage.ExternalStorage
+	mock     *mock.Cluster
+	mockGlue *gluetidb.MockGlue
+	storage  storage.ExternalStorage
 }
 
 func createRestoreSchemaSuite(t *testing.T) (s *testRestoreSchemaSuite, clean func()) {
 	var err error
 	s = new(testRestoreSchemaSuite)
+	s.mockGlue = &gluetidb.MockGlue{}
 	s.mock, err = mock.NewCluster()
 	require.NoError(t, err)
 	base := t.TempDir()
