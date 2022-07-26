@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -307,18 +306,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	e.names = names
 	e.Stmt = prepared.Stmt
 	return nil
-}
-
-func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
-	preparedObj *CachedPrepareStmt, is infoschema.InfoSchema) error {
-	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := VisitInfo4PrivCheck(is, preparedObj.PreparedAst.Stmt, preparedObj.VisitInfos)
-		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
-			return err
-		}
-	}
-	err := CheckTableLock(sctx, is, preparedObj.VisitInfos)
-	return err
 }
 
 // GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
