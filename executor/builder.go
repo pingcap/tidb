@@ -305,6 +305,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildDelete(v.Delete)
 	case *plannercore.FKOnDeleteSetNullPlan:
 		return b.buildUpdate(v.Update)
+	case *plannercore.FKOnUpdateCascadePlan:
+		return b.buildUpdate(v.Update)
 	case *plannercore.FKCheckPlan:
 		return b.buildFKCheck(v)
 	default:

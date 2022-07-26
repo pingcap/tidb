@@ -500,10 +500,14 @@ func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPe
 		return nil
 	}
 	fkTriggerExecs := exec.GetForeignKeyTriggerExecs()
-	for _, fkt := range fkTriggerExecs {
-		err := fkt.buildIndexReaderRange()
+	for i := 0; i < len(fkTriggerExecs); {
+		fkt := fkTriggerExecs[i]
+		done, err := fkt.buildIndexReaderRange()
 		if err != nil {
 			return err
+		}
+		if done {
+			i = i + 1
 		}
 		e := fkt.buildExecutor()
 		if err := e.Open(ctx); err != nil {

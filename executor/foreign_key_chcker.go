@@ -176,6 +176,8 @@ type ForeignKeyTriggerExec struct {
 	fkValuesSet set.StringSet
 	// new-value-key => updatedValuesCouple
 	fkUpdatedValuesMap map[string]*updatedValuesCouple
+
+	buildFKValues set.StringSet
 }
 
 type updatedValuesCouple struct {
@@ -257,13 +259,28 @@ func fetchFKValues(row []types.Datum, colsOffsets []int) ([]types.Datum, error) 
 	return vals, nil
 }
 
-func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() error {
+func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() (bool, error) {
+	switch p := fkt.fkTriggerPlan.(type) {
+	case *plannercore.FKOnUpdateCascadePlan:
+		for key, couple := range fkt.fkUpdatedValuesMap {
+			if fkt.buildFKValues.Exist(key) {
+				continue
+			}
+			fkt.buildFKValues.Insert(key)
+			err := p.SetRangeForSelectPlan(couple.oldValsList)
+			if err != nil {
+				return false, err
+			}
+			return len(fkt.buildFKValues) == len(fkt.fkUpdatedValuesMap), p.SetUpdatedValues(couple.newVals)
+		}
+		return true, nil
+	}
 	valsList := make([][]types.Datum, 0, len(fkt.fkValues))
 	valsList = append(valsList, fkt.fkValues...)
 	for _, couple := range fkt.fkUpdatedValuesMap {
 		valsList = append(valsList, couple.oldValsList...)
 	}
-	return fkt.fkTriggerPlan.SetRangeForSelectPlan(valsList)
+	return true, fkt.fkTriggerPlan.SetRangeForSelectPlan(valsList)
 }
 
 func (fkt *ForeignKeyTriggerExec) buildExecutor() Executor {
@@ -306,6 +323,7 @@ func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fk
 		fkTriggerPlan:      fkTriggerPlan,
 		colsOffsets:        colsOffsets,
 		fkValuesSet:        set.NewStringSet(),
+		buildFKValues:      set.NewStringSet(),
 		fkUpdatedValuesMap: make(map[string]*updatedValuesCouple),
 	}, nil
 }
