@@ -564,11 +564,8 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	return nil
 }
 
-func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
-	if hintInfo == nil {
-		return
-	}
-
+// SetPreferredJoinType set the table hint for the join node
+func (p *LogicalJoin) SetPreferredJoinType(hintInfo *tableHintInfo) {
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
@@ -598,12 +595,22 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
 	}
+}
+
+func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	p.SetPreferredJoinType(hintInfo)
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
 		warning := ErrInternal.GenWithStack(errMsg)
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
+	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
+	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	// set the join order
 	if hintInfo.leadingJoinOrder != nil {
 		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)

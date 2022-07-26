@@ -34,30 +34,33 @@ import (
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction,
-	otherConds []expression.Expression, joinTypes []JoinType, hintInfo []*tableHintInfo, hasOuterJoin bool) {
+	otherConds []expression.Expression, joinTypes []JoinType, leadingHintInfo []*tableHintInfo, joinTypeHintInfo []*tableHintInfo, hasOuterJoin bool) {
 	join, isJoin := p.(*LogicalJoin)
 	if isJoin && join.preferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
 		// For example, the join type is cross join or straight join, or exists the join algorithm hint, etc.
 		// We need to return the hint information to warn
-		hintInfo = append(hintInfo, join.hintInfo)
+		leadingHintInfo = append(leadingHintInfo, join.hintInfo)
 	}
-	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
+	if !isJoin || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
 		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
-		if hintInfo != nil {
+		if leadingHintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.hintInfo = nil
 		}
-		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
+		return []LogicalPlan{p}, nil, nil, nil, leadingHintInfo, nil, false
 	}
 	// If the session var is set to off, we will still reject the outer joins.
 	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) {
-		return []LogicalPlan{p}, nil, nil, nil, hintInfo, false
+		return []LogicalPlan{p}, nil, nil, nil, leadingHintInfo, nil, false
+	}
+	if join.preferJoinType > uint(0) {
+		joinTypeHintInfo = append(joinTypeHintInfo, join.hintInfo)
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != InnerJoin)
 	if join.JoinType != RightOuterJoin {
-		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsLeadingHintInfo, lhsJoinTypeHintInfo, lhsHasOuterJoin := extractJoinGroup(join.children[0])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == LeftOuterJoin {
@@ -80,20 +83,21 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil, nil, false
+			return []LogicalPlan{p}, nil, nil, nil, nil, nil, false
 		}
 		group = append(group, lhsGroup...)
 		eqEdges = append(eqEdges, lhsEqualConds...)
 		otherConds = append(otherConds, lhsOtherConds...)
 		joinTypes = append(joinTypes, lhsJoinTypes...)
-		hintInfo = append(hintInfo, lhsHintInfo...)
+		leadingHintInfo = append(leadingHintInfo, lhsLeadingHintInfo...)
+		joinTypeHintInfo = append(joinTypeHintInfo, lhsJoinTypeHintInfo...)
 		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
 	} else {
 		group = append(group, join.children[0])
 	}
 
 	if join.JoinType != LeftOuterJoin {
-		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsHintInfo, rhsHasOuterJoin := extractJoinGroup(join.children[1])
+		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsLeadingHintInfo, rhsJoinTypeHintInfo, rhsHasOuterJoin := extractJoinGroup(join.children[1])
 		noExpand := false
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
 		if join.JoinType == RightOuterJoin {
@@ -116,13 +120,14 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 			}
 		}
 		if noExpand {
-			return []LogicalPlan{p}, nil, nil, nil, nil, false
+			return []LogicalPlan{p}, nil, nil, nil, nil, nil, false
 		}
 		group = append(group, rhsGroup...)
 		eqEdges = append(eqEdges, rhsEqualConds...)
 		otherConds = append(otherConds, rhsOtherConds...)
 		joinTypes = append(joinTypes, rhsJoinTypes...)
-		hintInfo = append(hintInfo, rhsHintInfo...)
+		leadingHintInfo = append(leadingHintInfo, rhsLeadingHintInfo...)
+		joinTypeHintInfo = append(joinTypeHintInfo, rhsJoinTypeHintInfo...)
 		hasOuterJoin = hasOuterJoin || rhsHasOuterJoin
 	} else {
 		group = append(group, join.children[1])
@@ -135,7 +140,10 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	for range join.EqualConditions {
 		joinTypes = append(joinTypes, join.JoinType)
 	}
-	return group, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin
+	//if len(leadingHintInfo) == 0 && join.preferJoinType > uint(0) {
+	//	return []LogicalPlan{p}, nil, nil, nil, nil, nil, false
+	//}
+	return group, eqEdges, otherConds, joinTypes, leadingHintInfo, joinTypeHintInfo, hasOuterJoin
 }
 
 type joinReOrderSolver struct {
@@ -159,7 +167,7 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	var err error
 
-	curJoinGroup, eqEdges, otherConds, joinTypes, hintInfo, hasOuterJoin := extractJoinGroup(p)
+	curJoinGroup, eqEdges, otherConds, joinTypes, joinOrderHintInfo, joinTypeHintInfo, hasOuterJoin := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
@@ -188,7 +196,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		joinGroupNum := len(curJoinGroup)
 		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
 
-		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(hintInfo)
+		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
 		if hasDiffLeadingHint {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 		}
@@ -240,9 +248,19 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			proj.SetChildren(p)
 			p = proj
 		}
+		if len(joinTypeHintInfo) > 0 {
+			for i := 0; i < len(joinTypeHintInfo); i++ {
+				for j := 0; j < i; j++ {
+					if joinTypeHintInfo[i] == joinTypeHintInfo[j] {
+						joinTypeHintInfo = append(joinTypeHintInfo[:i], joinTypeHintInfo[i+1:]...)
+					}
+				}
+			}
+		}
+		resetJoinTypeHint(p, joinTypeHintInfo)
 		return p, nil
 	}
-	if len(curJoinGroup) == 1 && hintInfo != nil {
+	if len(curJoinGroup) == 1 && joinOrderHintInfo != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check the join type or the join algorithm hint"))
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
@@ -255,6 +273,22 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+func resetJoinTypeHint(p LogicalPlan, hintInfo []*tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+	join, isJoin := p.(*LogicalJoin)
+	if isJoin {
+		for _, hint := range hintInfo {
+			join.SetPreferredJoinType(hint)
+		}
+
+	}
+	for _, child := range p.Children() {
+		resetJoinTypeHint(child, hintInfo)
+	}
 }
 
 // checkAndGenerateLeadingHint used to check and generate the valid leading hint.
