@@ -5,7 +5,6 @@ package backup_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"math"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
