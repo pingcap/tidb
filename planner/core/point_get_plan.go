@@ -1299,8 +1299,7 @@ func getPointGetValue(stmtCtx *stmtctx.StatementContext, col *model.ColumnInfo, 
 
 func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 	kind := d.Kind()
-	switch col.FieldType.EvalType() {
-	case ptypes.ETString:
+	if col.FieldType.EvalType() == ptypes.ETString {
 		switch kind {
 		case types.KindInt64, types.KindUint64,
 			types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
@@ -1308,10 +1307,8 @@ func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
 			return false
 		}
 	}
-	switch col.FieldType.GetType() {
-	case mysql.TypeBit:
-		switch kind {
-		case types.KindString:
+	if col.FieldType.GetType() == mysql.TypeBit {
+		if kind == types.KindString {
 			// column type is Bit and constant type is string
 			return false
 		}
