@@ -37,6 +37,7 @@ go_library(
         "//util/topsql/stmtstats",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
@@ -49,6 +50,7 @@ go_test(
         "sql2kv_test.go",
     ],
     embed = [":kv"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",

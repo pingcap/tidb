@@ -22,11 +22,13 @@ go_library(
 
 go_test(
     name = "util_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "path_test.go",
     ],
     embed = [":util"],
+    flaky = True,
     deps = [
         "//parser/model",
         "//planner/core",

@@ -221,7 +221,7 @@ func TestNormalOperations(t *testing.T) {
 	s.mock.ExpectCommit()
 
 	s.mock.MatchExpectationsInOrder(false)
-	cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
+	cpdb.Update(ctx, map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
 	s.mock.MatchExpectationsInOrder(true)
 	require.Nil(t, s.mock.ExpectationsWereMet())
 

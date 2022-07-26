@@ -213,13 +213,15 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	is := testGetIS(t, tk.Session())
 	for i, tt := range tests {
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
 		tk.Session().GetSessionVars().PlanID = 0
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err)
-		require.NoError(t, sessiontxn.WarmUpTxn(tk.Session()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)
@@ -253,21 +255,21 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	}{
 		{
 			sql: "select * from X where exists (select * from Y where m=a limit 1)",
-			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			// For this query, it's essentially a semi join, for every `a` in X, do the inner loop once.
 			//   +- datasource(x)
-			//   +- limit
+			//    +- where
 			//     +- datasource(Y)
-			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection",
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection",
 			// Since semi join will keep the **all** rows of the outer table, it's FD can be derived.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5)}",
 		},
 		{
 			sql: "select a, b from X where exists (select * from Y where m=a limit 1)",
-			// For this Apply, it's essentially a semi join, for every `a` in X, do the inner loop once.
+			// For this query, it's essentially a semi join, for every `a` in X, do the inner loop once.
 			//   +- datasource(x)
-			//   +- limit
+			//   +- where
 			//     +- datasource(Y)
-			best: "Apply{DataScan(X)->DataScan(Y)->Limit}->Projection", // semi join
+			best: "Join{DataScan(X)->DataScan(Y)}(test.x.a,test.y.m)->Projection", // semi join
 			// Since semi join will keep the **part** rows of the outer table, it's FD can be derived.
 			fd: "{(1)-->(2-5), (2,3)~~>(1,4,5)} >>> {(1)-->(2)}",
 		},
@@ -309,6 +311,8 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	ctx := context.TODO()
 	is := testGetIS(t, tk.Session())
 	for i, tt := range tests {
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err, comment)
@@ -316,7 +320,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.WarmUpTxn(tk.Session()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)
@@ -365,7 +369,7 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		tk.Session().GetSessionVars().PlanColumnID = 0
 		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
-		require.NoError(t, sessiontxn.WarmUpTxn(tk.Session()))
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)

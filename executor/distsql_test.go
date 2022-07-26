@@ -19,13 +19,16 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"regexp"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -34,6 +37,9 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/paging"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -369,7 +375,7 @@ func TestIndexLookUpStats(t *testing.T) {
 	require.Equal(t, "index_task: {total_time: 5s, fetch_handle: 2s, build: 1s, wait: 2s}, table_task: {total_time: 2s, num: 2, concurrency: 1}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 2}", stats.String())
+	require.Equal(t, "index_task: {total_time: 10s, fetch_handle: 4s, build: 2s, wait: 4s}, table_task: {total_time: 4s, num: 4, concurrency: 1}", stats.String())
 }
 
 func TestIndexLookUpGetResultChunk(t *testing.T) {
@@ -417,4 +423,161 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 		result := tk.MustQuery("select t1.* from tnormal t1, tnormal t2 use index(a) where t1.a=t2.b and " + cond).Sort().Rows()
 		tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ t1.* from t t1, t t2 use index(a) where t1.a=t2.b and " + cond).Sort().Check(result)
 	}
+}
+
+func TestCoprocessorPagingSize(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_paging (a int, b int, key(a), key(b))")
+	nRows := 512
+	values := make([]string, 0, nRows)
+	for i := 0; i < nRows; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
+	tk.MustQuery("select @@tidb_min_paging_size").Check(testkit.Rows(strconv.FormatUint(paging.MinPagingSize, 10)))
+
+	// When the min paging size is small, we need more RPC roundtrip!
+	// Check 'rpc_num' in the execution information
+	//
+	// mysql> explain analyze select * from t_paging;
+	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// | id                 |task      | execution info                                                                                                                                                                                       |
+	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// | TableReader_5      |root      | time:7.27ms, loops:2, cop_task: {num: 10, max: 1.57ms, min: 313.3µs, avg: 675.9µs, p95: 1.57ms, tot_proc: 2ms, rpc_num: 10, rpc_time: 6.69ms, copr_cache_hit_ratio: 0.00, distsql_concurrency: 15}   |
+	// | └─TableFullScan_4  |cop[tikv] | tikv_task:{proc max:1.48ms, min:294µs, avg: 629µs, p80:1.21ms, p95:1.48ms, iters:0, tasks:10}                                                                                                        |
+	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+	// 2 rows in set (0.01 sec)
+
+	getRPCNumFromExplain := func(rows [][]interface{}) (res uint64) {
+		re := regexp.MustCompile("rpc_num: ([0-9]+)")
+		for _, row := range rows {
+			buf := bytes.NewBufferString("")
+			_, _ = fmt.Fprintf(buf, "%s\n", row)
+			if matched := re.FindStringSubmatch(buf.String()); matched != nil {
+				require.Equal(t, len(matched), 2)
+				c, err := strconv.ParseUint(matched[1], 10, 64)
+				require.NoError(t, err)
+				return c
+			}
+		}
+		return res
+	}
+
+	// This is required here because only the chunk encoding collect the execution information and contains 'rpc_num'.
+	tk.MustExec("set @@tidb_enable_chunk_rpc = on")
+
+	tk.MustExec("set @@tidb_min_paging_size = 1")
+	rows := tk.MustQuery("explain analyze select * from t_paging").Rows()
+	rpcNum := getRPCNumFromExplain(rows)
+	require.Greater(t, rpcNum, uint64(2))
+
+	tk.MustExec("set @@tidb_min_paging_size = 1000")
+	rows = tk.MustQuery("explain analyze select * from t_paging").Rows()
+	rpcNum = getRPCNumFromExplain(rows)
+	require.Equal(t, rpcNum, uint64(1))
+}
+
+func TestAdaptiveClosestRead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// the avg row size is more accurate in check_rpc mode when unistre is used.
+	// See: https://github.com/pingcap/tidb/issues/31744#issuecomment-1016309883
+	tk.MustExec("set @@tidb_enable_chunk_rpc = '1'")
+
+	readCounter := func(counter prometheus.Counter) float64 {
+		var metric dto.Metric
+		require.Nil(t, counter.Write(&metric))
+		return metric.Counter.GetValue()
+	}
+
+	checkMetrics := func(q string, hit, miss int) {
+		beforeHit := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("hit"))
+		beforeMiss := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("miss"))
+		tk.MustQuery(q)
+		afterHit := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("hit"))
+		afterMiss := readCounter(metrics.DistSQLCoprClosestReadCounter.WithLabelValues("miss"))
+		require.Equal(t, hit, int(afterHit-beforeHit), "exec query '%s' check hit failed", q)
+		require.Equal(t, miss, int(afterMiss-beforeMiss), "exec query '%s' check miss failed", q)
+	}
+
+	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16));")
+	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003');")
+	tk.MustExec("analyze table t;")
+
+	tk.MustExec("set @@tidb_partition_prune_mode  ='static';")
+	tk.MustExec("set tidb_replica_read = 'closest-adaptive';")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 25;")
+
+	// table reader
+	// estimate cost is 19
+	checkMetrics("select s from t where id >= 1 and id < 2;", 0, 1)
+	// estimate cost is 37
+	checkMetrics("select * from t where id >= 1 and id < 2;", 1, 0)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 50;")
+	checkMetrics("select * from t where id >= 1 and id < 2;", 0, 1)
+	// estimate cost is 74
+	checkMetrics("select * from t where id >= 1 and id <= 2;", 1, 0)
+
+	partitionDef := "PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (3), PARTITION p3 VALUES LESS THAN MAXVALUE);"
+
+	// test TableReader with partition
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, s varchar(8), p varchar(16)) " + partitionDef)
+	tk.MustExec("insert into t values (1, '00000001', '0000000000000001'), (2, '00000003', '0000000000000002'), (3, '00000011', '0000000000000003'), (4, '00000044', '0000000000000004');")
+	tk.MustExec("analyze table t;")
+	// estimate cost is 38
+	checkMetrics("select s from t where id >= 1 and id < 3;", 1, 0)
+	// estimate cost is 39 with 2 cop request
+	checkMetrics("select s from t where id >= 2 and id < 4;", 0, 2)
+
+	// index reader
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, s varchar(8), p varchar(8), key `idx_s_p`(`s`, `p`));")
+	tk.MustExec("insert into t values (1, 'test1000', '11111111'), (2, 'test2000', '11111111');")
+	tk.MustExec("analyze table t;")
+	// avg row size = 27.91
+	checkMetrics("select p from t where s >= 'test' and s < 'test11'", 0, 1)
+	checkMetrics("select p from t where s >= 'test' and s < 'test22'", 1, 0)
+
+	// index reader with partitions
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (v int, id int, p varchar(8), key `idx_id_p`(`id`, `p`)) " + partitionDef)
+	tk.MustExec("insert into t values (1, 1, '11111111'), (2, 2, '22222222'), (3, 3, '33333333'), (4, 4, '44444444');")
+	tk.MustExec("analyze table t;")
+	// avg row size = 19
+	checkMetrics("select p from t where id >= 1 and id < 3", 1, 0)
+	checkMetrics("select p from t where id >= 2 and id < 4", 0, 2)
+	checkMetrics("select p from t where id >= 1 and id < 4", 1, 1)
+
+	// index lookup reader
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, s varchar(8), p varchar(50), key `idx_s`(`s`));")
+	str := "this_is_a_string_with_length_of_50________________"
+	tk.MustExec(fmt.Sprintf("insert into t values (1, 'test1000', '%s'), (2, 'test2000', '%s');", str, str))
+	tk.MustExec("analyze table t;")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 80;")
+	// IndexReader cost is 22, TableReader cost (1 row) is 67
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test11'", 0, 2)
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 100;")
+	checkMetrics("select/*+ FORCE_INDEX(t, idx_s) */ p from t where s >= 'test' and s < 'test22'", 1, 1)
+
+	// index merge reader
+	tk.MustExec("drop table if exists t;")
+	// use int field to avoid the planer estimation with big random fluctuation.
+	tk.MustExec("create table t (id int, v bigint not null, s1 int not null, s2 int not null, key `idx_v_s1`(`s1`, `v`), key `idx_s2`(`s2`));")
+	tk.MustExec("insert into t values (1, 1,  1, 1), (2, 2, 2, 2), (3, 3, 3, 3);")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("set tidb_adaptive_closest_read_threshold = 30;")
+	// 2 IndexScan with cost 19/56, 2 TableReader with cost 32.5/65.
+	checkMetrics("select/* +USE_INDEX_MERGE(t) */ id from t use index(`idx_v_s1`) use index(idx_s2) where (s1 < 3 and v > 0) or s2 = 3;", 3, 1)
 }

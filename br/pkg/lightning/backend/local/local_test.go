@@ -41,18 +41,19 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -331,6 +332,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
 	}
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -438,6 +440,7 @@ func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.R
 func TestIsIngestRetryable(t *testing.T) {
 	local := &local{
 		splitCli: &mockSplitClient{},
+		logger:   log.L(),
 	}
 
 	resp := &sst.IngestResponse{
@@ -567,6 +570,7 @@ func TestLocalIngestLoop(t *testing.T) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 	f.sstIngester = testIngester{}
 	f.wg.Add(1)
@@ -784,6 +788,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 			CompactThreshold:   100,
 			CompactConcurrency: 4,
 		},
+		logger: log.L(),
 	}
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -1017,7 +1022,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1030,7 +1035,7 @@ func TestMultiIngest(t *testing.T) {
 				return store.State == metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
-				return version.IsTiFlash(s)
+				return engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1066,10 +1071,10 @@ func TestMultiIngest(t *testing.T) {
 		// test all non-tiflash stores that support multi ingests
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
-				return !version.IsTiFlash(s)
+				return !engine.IsTiFlash(s)
 			},
 			0,
 			nil,
@@ -1105,7 +1110,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error but no tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store)
+				return !engine.IsTiFlash(store)
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1118,7 +1123,7 @@ func TestMultiIngest(t *testing.T) {
 		// test grpc return error and contains offline tiflash
 		{
 			func(store *metapb.Store) bool {
-				return !version.IsTiFlash(store) || store.State != metapb.StoreState_Up
+				return !engine.IsTiFlash(store) || store.State != metapb.StoreState_Up
 			},
 			func(s *metapb.Store) bool {
 				return true
@@ -1182,6 +1187,7 @@ func TestMultiIngest(t *testing.T) {
 					return importCli
 				},
 			},
+			logger: log.L(),
 		}
 		err := local.checkMultiIngestSupport(context.Background())
 		if err != nil {

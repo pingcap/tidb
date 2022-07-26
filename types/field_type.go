@@ -301,10 +301,10 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.SetType(mysql.TypeNewDecimal)
-		tp.SetFlen(len(x.ToString()))
-		tp.SetDecimal(int(x.digitsFrac))
+		tp.SetFlenUnderLimit(len(x.ToString()))
+		tp.SetDecimalUnderLimit(int(x.digitsFrac))
 		// Add the length for `.`.
-		tp.SetFlen(tp.GetFlen() + 1)
+		tp.SetFlenUnderLimit(tp.GetFlen() + 1)
 		SetBinChsClnFlag(tp)
 	case Enum:
 		tp.SetType(mysql.TypeEnum)
@@ -332,7 +332,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 }
 
 // DefaultCharsetForType returns the default charset/collation for mysql type.
-func DefaultCharsetForType(tp byte) (string, string) {
+func DefaultCharsetForType(tp byte) (defaultCharset string, defaultCollation string) {
 	switch tp {
 	case mysql.TypeVarString, mysql.TypeString, mysql.TypeVarchar:
 		// Default charset for string types is utf8mb4.

@@ -68,4 +68,6 @@ func TestRandWithSeed1AndSeed2(t *testing.T) {
 	require.Equal(t, rng.Gen(), 0.028870999839968048)
 	require.Equal(t, rng.Gen(), 0.11641535266900002)
 	require.Equal(t, rng.Gen(), 0.49546379455874096)
+	require.Equal(t, rng.GetSeed1(), uint32(532000198))
+	require.Equal(t, rng.GetSeed2(), uint32(689000330))
 }

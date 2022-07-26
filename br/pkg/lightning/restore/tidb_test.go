@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -277,9 +278,11 @@ func TestDropTable(t *testing.T) {
 func TestLoadSchemaInfo(t *testing.T) {
 	s, clean := newTiDBSuite(t)
 	defer clean()
-	ctx := context.Background()
 
-	tableCntBefore := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
+	ctx := metric.NewContext(context.Background(), metrics)
+
+	tableCntBefore := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
 	// Prepare the mock reply.
 	nodes, _, err := s.timgr.parser.Parse(
@@ -351,7 +354,7 @@ func TestLoadSchemaInfo(t *testing.T) {
 		},
 	}, loaded)
 
-	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
+	tableCntAfter := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
 	require.Equal(t, 3.0, tableCntAfter-tableCntBefore)
 }

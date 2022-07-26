@@ -13,7 +13,6 @@ go_library(
         "//metrics",
         "//parser",
         "//parser/ast",
-        "//parser/model",
         "//planner/cascades",
         "//planner/core",
         "//privilege",

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -114,6 +113,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
+	txnManger := sessiontxn.GetTxnManager(sctx)
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp plannercore.Plan
 		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
@@ -123,15 +123,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			fp = plannercore.TryFastPlan(sctx, node)
 		}
 		if fp != nil {
-			if !useMaxTS(sctx, fp) {
-				if err := sessiontxn.WarmUpTxn(sctx); err != nil {
-					return nil, nil, err
-				}
-			}
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	if err := sessiontxn.WarmUpTxn(sctx); err != nil {
+	if err := txnManger.AdviseWarmup(); err != nil {
 		return nil, nil, err
 	}
 
@@ -191,9 +186,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			for _, warn := range warns {
 				sessVars.StmtCtx.AppendWarning(warn)
 			}
-			if err := setFoundInBinding(sctx, true, chosenBinding.BindSQL); err != nil {
-				logutil.BgLogger().Warn("set tidb_found_in_binding failed", zap.Error(err))
-			}
+			sessVars.StmtCtx.BindSQL = chosenBinding.BindSQL
+			sessVars.FoundInBinding = true
 			if sessVars.StmtCtx.InVerboseExplain {
 				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
@@ -486,29 +480,6 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
-// useMaxTS returns true when meets following conditions:
-//  1. ctx is auto commit tagged.
-//  2. plan is point get by pk.
-//  3. not a cache table.
-func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
-	if !plannercore.IsAutoCommitTxn(ctx) {
-		return false
-	}
-	v, ok := p.(*plannercore.PointGetPlan)
-	if !ok {
-		return false
-	}
-	noSecondRead := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
-	if !noSecondRead {
-		return false
-	}
-
-	if v.TblInfo != nil && (v.TblInfo.TableCacheStatusType != model.TableCacheStatusDisable) {
-		return false
-	}
-	return true
-}
-
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
 // this is a short path ONLY does things filling prepare related params
 // for point select like plan which does not need extra things
@@ -690,13 +661,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	offs = append(offs, setVarsOffs...)
 	return
-}
-
-func setFoundInBinding(sctx sessionctx.Context, opt bool, bindSQL string) error {
-	vars := sctx.GetSessionVars()
-	vars.StmtCtx.BindSQL = bindSQL
-	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(opt))
-	return err
 }
 
 func init() {

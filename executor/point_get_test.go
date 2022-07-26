@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -783,7 +782,6 @@ func TestPointGetLockExistKey(t *testing.T) {
 		))
 	}
 
-	var wg sync.WaitGroup
 	for i, one := range []struct {
 		rc  bool
 		key string
@@ -793,14 +791,12 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "primary key"},
 		{rc: true, key: "unique key"},
 	} {
-		wg.Add(1)
+
 		tableName := fmt.Sprintf("t_%d", i)
-		go func(rc bool, key string, tableName string) {
-			defer wg.Done()
+		func(rc bool, key string, tableName string) {
 			testLock(rc, key, tableName)
 		}(one.rc, one.key, tableName)
 	}
-	wg.Wait()
 }
 
 func TestWithTiDBSnapshot(t *testing.T) {

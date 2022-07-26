@@ -822,6 +822,7 @@ func TestLimitIndexEstimation(t *testing.T) {
 		SQL  string
 		Plan []string
 	}
+
 	analyzeSuiteData := core.GetAnalyzeSuiteData()
 	analyzeSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {

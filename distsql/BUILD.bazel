@@ -6,7 +6,6 @@ go_library(
         "distsql.go",
         "request_builder.go",
         "select_result.go",
-        "stream.go",
     ],
     importpath = "github.com/pingcap/tidb/distsql",
     visibility = ["//visibility:public"],
@@ -54,6 +53,7 @@ go_library(
 
 go_test(
     name = "distsql_test",
+    timeout = "short",
     srcs = [
         "bench_test.go",
         "distsql_test.go",
@@ -62,6 +62,7 @@ go_test(
         "select_result_test.go",
     ],
     embed = [":distsql"],
+    flaky = True,
     deps = [
         "//kv",
         "//parser/charset",

@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "gofmt",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/gofmt",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_golangci_gofmt//gofmt",
+        "@org_golang_x_tools//go/analysis",
+    ],
+)

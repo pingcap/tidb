@@ -15,6 +15,7 @@
 package sessiontxn_test
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -22,10 +23,14 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/internal"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -56,6 +61,27 @@ func TestEnterNewTxn(t *testing.T) {
 			name: "EnterNewTxnDefault",
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnDefault,
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				txn := checkBasicActiveTxn(t, sctx)
+				checkInfoSchemaVersion(t, sctx, domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion())
+
+				sessVars := sctx.GetSessionVars()
+				require.False(t, txn.IsPessimistic())
+				require.False(t, sessVars.InTxn())
+				require.False(t, sessVars.TxnCtx.IsStaleness)
+
+				require.False(t, sctx.GetSessionVars().TxnCtx.CouldRetry)
+				require.True(t, txn.GetOption(kv.GuaranteeLinearizability).(bool))
+			},
+		},
+		{
+			name: "EnterNewTxnDefault",
+			request: &sessiontxn.EnterNewTxnRequest{
+				Type: sessiontxn.EnterNewTxnDefault,
+			},
+			prepare: func(t *testing.T) {
+				tk.MustExec("set @@autocommit=0")
 			},
 			check: func(t *testing.T, sctx sessionctx.Context) {
 				txn := checkBasicActiveTxn(t, sctx)
@@ -135,8 +161,8 @@ func TestEnterNewTxn(t *testing.T) {
 					Type: sessiontxn.EnterNewTxnBeforeStmt,
 				})
 				require.NoError(t, err)
-				require.NoError(t, mgr.OnStmtStart(context.TODO()))
-				require.NoError(t, mgr.Advise(sessiontxn.AdviceWarmUp))
+				require.NoError(t, mgr.OnStmtStart(context.TODO(), nil))
+				require.NoError(t, mgr.AdviseWarmup())
 			},
 			request: &sessiontxn.EnterNewTxnRequest{
 				Type: sessiontxn.EnterNewTxnWithBeginStmt,
@@ -229,6 +255,254 @@ func TestEnterNewTxn(t *testing.T) {
 	}
 }
 
+func TestGetSnapshot(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+
+	isSnapshotEqual := func(t *testing.T, snap1 kv.Snapshot, snap2 kv.Snapshot) bool {
+		require.NotNil(t, snap1)
+		require.NotNil(t, snap2)
+
+		iter1, err := snap1.Iter([]byte{}, []byte{})
+		require.NoError(t, err)
+		iter2, err := snap2.Iter([]byte{}, []byte{})
+		require.NoError(t, err)
+
+		for {
+			if iter1.Valid() && iter2.Valid() {
+				if iter1.Key().Cmp(iter2.Key()) != 0 {
+					return false
+				}
+				if !bytes.Equal(iter1.Value(), iter2.Value()) {
+					return false
+				}
+				err = iter1.Next()
+				require.NoError(t, err)
+				err = iter2.Next()
+				require.NoError(t, err)
+			} else if !iter1.Valid() && !iter2.Valid() {
+				return true
+			} else {
+				return false
+			}
+		}
+	}
+
+	mgr := sessiontxn.GetTxnManager(tk.Session())
+
+	cases := []struct {
+		isolation string
+		prepare   func(t *testing.T)
+		check     func(t *testing.T, sctx sessionctx.Context)
+	}{
+		{
+			isolation: "Pessimistic Repeatable Read",
+			prepare: func(t *testing.T) {
+				tk.MustExec("set @@tx_isolation='REPEATABLE-READ'")
+				tk.MustExec("begin pessimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3", "10"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.False(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetSnapshotWithStmtForUpdateTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.False(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+		{
+			isolation: "Pessimistic Read Committed",
+			prepare: func(t *testing.T) {
+				tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+				tk.MustExec("begin pessimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t").Check(testkit.Rows("1", "3", "10"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetSnapshotWithStmtForUpdateTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.False(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+		{
+			isolation: "Optimistic",
+			prepare: func(t *testing.T) {
+				tk.MustExec("begin optimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetSnapshotWithStmtForUpdateTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+		{
+			isolation: "Pessimistic Serializable",
+			prepare: func(t *testing.T) {
+				tk.MustExec("set tidb_skip_isolation_level_check = 1")
+				tk.MustExec("set tx_isolation = 'SERIALIZABLE'")
+				tk.MustExec("begin pessimistic")
+			},
+			check: func(t *testing.T, sctx sessionctx.Context) {
+				ts, err := mgr.GetStmtReadTS()
+				require.NoError(t, err)
+				compareSnap := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err := mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+
+				tk2.MustExec("insert into t values(10)")
+
+				tk.MustQuery("select * from t for update").Check(testkit.Rows("1", "3"))
+				ts, err = mgr.GetStmtForUpdateTS()
+				require.NoError(t, err)
+				compareSnap2 := internal.GetSnapshotWithTS(sctx, ts)
+				snap, err = mgr.GetSnapshotWithStmtReadTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+				snap, err = mgr.GetSnapshotWithStmtForUpdateTS()
+				require.NoError(t, err)
+				require.True(t, isSnapshotEqual(t, compareSnap2, snap))
+
+				require.True(t, isSnapshotEqual(t, compareSnap, snap))
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.isolation, func(t *testing.T) {
+			se := tk.Session()
+			tk.MustExec("truncate t")
+			tk.MustExec("set @@tidb_txn_mode=''")
+			tk.MustExec("set @@autocommit=1")
+			tk.MustExec("insert into t values(1), (3)")
+			tk.MustExec("commit")
+
+			if c.prepare != nil {
+				c.prepare(t)
+			}
+
+			if c.check != nil {
+				c.check(t, se)
+			}
+			tk.MustExec("rollback")
+		})
+	}
+}
+
+func TestSnapshotInterceptor(t *testing.T) {
+	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
+	tbl, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
+	require.NoError(t, err)
+	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
+	tblID := tbl.Meta().ID
+
+	// prepare a kv pair for temporary table
+	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
+	require.NoError(t, tk.Session().GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1")))
+
+	initTxnFuncs := []func() error{
+		func() error {
+			err := tk.Session().PrepareTxnCtx(context.TODO())
+			if err == nil {
+				err = sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
+			}
+			return err
+		},
+		func() error {
+			return sessiontxn.NewTxn(context.Background(), tk.Session())
+		},
+		func() error {
+			return sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
+				Type:        sessiontxn.EnterNewTxnWithBeginStmt,
+				StaleReadTS: 0,
+			})
+		},
+	}
+
+	for _, initFunc := range initTxnFuncs {
+		require.NoError(t, initFunc())
+
+		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+
+		val, err := txn.Get(context.Background(), k)
+		require.NoError(t, err)
+		require.Equal(t, []byte("v1"), val)
+
+		val, err = txn.GetSnapshot().Get(context.Background(), k)
+		require.NoError(t, err)
+		require.Equal(t, []byte("v1"), val)
+
+		tk.Session().RollbackTxn(context.Background())
+	}
+
+	// Also check GetSnapshotWithTS
+	snap := internal.GetSnapshotWithTS(tk.Session(), 0)
+	val, err := snap.Get(context.Background(), k)
+	require.NoError(t, err)
+	require.Equal(t, []byte("v1"), val)
+}
+
 func checkBasicActiveTxn(t *testing.T, sctx sessionctx.Context) kv.Transaction {
 	txn, err := sctx.Txn(false)
 	require.NoError(t, err)
@@ -270,7 +544,7 @@ func checkTxnBeforeStmt(t *testing.T, sctx sessionctx.Context) {
 }
 
 func checkStmtTxnAfterActive(t *testing.T, sctx sessionctx.Context) {
-	require.NoError(t, sessiontxn.WarmUpTxn(sctx))
+	require.NoError(t, sessiontxn.GetTxnManager(sctx).AdviseWarmup())
 	_, err := sctx.Txn(true)
 	require.NoError(t, err)
 	txn := checkBasicActiveTxn(t, sctx)

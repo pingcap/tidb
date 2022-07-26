@@ -14,6 +14,7 @@ go_library(
 go_test(
     name = "verification_test",
     srcs = ["checksum_test.go"],
+    flaky = True,
     deps = [
         ":verification",
         "//br/pkg/lightning/common",

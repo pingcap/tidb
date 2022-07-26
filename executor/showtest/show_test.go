@@ -404,6 +404,7 @@ func TestShowCreateTable(t *testing.T) {
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
     	partition p0 values in ((3, '1'), (5, '5')),
     	partition p1 values in ((1, '1')));`)
+	// The strings are single quoted in MySQL even if sql_mode doesn't contain ANSI_QUOTES.
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) DEFAULT NULL,\n"+
@@ -411,8 +412,8 @@ func TestShowCreateTable(t *testing.T) {
 			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 			"PARTITION BY LIST COLUMNS(`id`,`name`)\n"+
-			"(PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
-			" PARTITION `p1` VALUES IN ((1,\"1\")))"))
+			"(PARTITION `p0` VALUES IN ((3,'1'),(5,'5')),\n"+
+			" PARTITION `p1` VALUES IN ((1,'1')))"))
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar')`)
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
@@ -456,6 +457,17 @@ func TestShowCreateTable(t *testing.T) {
 			"  `a` int(11) NOT NULL,\n"+
 			"  `b` varchar(20) DEFAULT '\\\\',\n"+
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(" +
+		"a set('a', 'b') charset binary," +
+		"b enum('a', 'b') charset ascii);")
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` set('a','b') CHARACTER SET binary COLLATE binary DEFAULT NULL,\n"+
+			"  `b` enum('a','b') CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
@@ -525,8 +537,8 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY LIST COLUMNS(`b`)\n"+
-		"(PARTITION `pLow` VALUES IN (\"1\",\"2\",\"3\",\"5\",\"8\") COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES IN (\"10\",\"11\",\"12\"))",
+		"(PARTITION `pLow` VALUES IN ('1','2','3','5','8') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES IN ('10','11','12'))",
 	))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -540,8 +552,8 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY LIST COLUMNS(`a`,`b`)\n"+
-		"(PARTITION `pLow` VALUES IN ((1,\"1\"),(2,\"2\"),(3,\"3\"),(5,\"5\"),(8,\"8\")) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
-		" PARTITION `pMax` VALUES IN ((10,\"10\"),(11,\"11\"),(12,\"12\")))",
+		"(PARTITION `pLow` VALUES IN ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		" PARTITION `pMax` VALUES IN ((10,'10'),(11,'11'),(12,'12')))",
 	))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -570,7 +582,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		"  `b` varchar(255) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY RANGE COLUMNS(`b`)\n"+
-		"(PARTITION `pLow` VALUES LESS THAN (\"1000000\") COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
+		"(PARTITION `pLow` VALUES LESS THAN ('1000000') COMMENT 'a comment' /*T![placement] PLACEMENT POLICY=`x` */,\n"+
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))",
 	))
 
@@ -794,20 +806,32 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 
 	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
+	e := "[planner:1142]SHOW command denied to user 'show_stats'@'%' for table"
+	err := tk1.ExecToErr("show stats_meta")
+	require.ErrorContains(t, err, e)
+	err = tk1.ExecToErr("SHOW STATS_BUCKETS")
+	require.ErrorContains(t, err, e)
+	err = tk1.ExecToErr("SHOW STATS_HISTOGRAMS")
+	require.ErrorContains(t, err, e)
+
 	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
-	_, err := tk1.Exec("show stats_meta")
-	require.EqualError(t, err, eqErr.Error())
-	_, err = tk1.Exec("SHOW STATS_BUCKETS")
-	require.EqualError(t, err, eqErr.Error())
-	_, err = tk1.Exec("SHOW STATS_HEALTHY")
-	require.EqualError(t, err, eqErr.Error())
-	_, err = tk1.Exec("SHOW STATS_HISTOGRAMS")
+	err = tk1.ExecToErr("SHOW STATS_HEALTHY")
 	require.EqualError(t, err, eqErr.Error())
 	tk.MustExec("grant select on mysql.* to show_stats")
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
 	tk1.MustExec("SHOW STATS_HEALTHY")
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+
+	tk.MustExec("create user a@'%' identified by '';")
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "a", Hostname: "%"}, nil, nil))
+	tk.MustExec("grant select on mysql.stats_meta to a@'%';")
+	tk.MustExec("grant select on mysql.stats_buckets to a@'%';")
+	tk.MustExec("grant select on mysql.stats_histograms to a@'%';")
+	tk1.MustExec("show stats_meta")
+	tk1.MustExec("SHOW STATS_BUCKETS")
+	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+
 }
 
 func TestIssue18878(t *testing.T) {
@@ -1432,7 +1456,7 @@ func TestShowBuiltin(t *testing.T) {
 	res := tk.MustQuery("show builtins;")
 	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 275
+	const builtinFuncNum = 276
 	require.Equal(t, len(rows), builtinFuncNum)
 	require.Equal(t, rows[0][0].(string), "abs")
 	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
@@ -1573,10 +1597,6 @@ func TestShowVar(t *testing.T) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if v.Hidden {
-			continue
-		}
-
 		if v.Scope == variable.ScopeSession {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
@@ -1600,10 +1620,6 @@ func TestShowVar(t *testing.T) {
 	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
-
-	// Test Hidden tx_read_ts
-	res = tk.MustQuery("show variables like '%tx_read_ts'")
-	require.Len(t, res.Rows(), 0)
 
 	// Test versions' related variables
 	res = tk.MustQuery("show variables like 'version%'")
@@ -1733,7 +1749,7 @@ func TestShowTemporaryTable(t *testing.T) {
 		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=3"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
 

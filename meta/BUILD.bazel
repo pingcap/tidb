@@ -30,7 +30,9 @@ go_test(
         "meta_test.go",
     ],
     embed = [":meta"],
+    flaky = True,
     deps = [
+        "//ddl",
         "//kv",
         "//parser/model",
         "//store/mockstore",

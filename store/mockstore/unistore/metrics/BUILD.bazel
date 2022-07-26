@@ -5,8 +5,5 @@ go_library(
     srcs = ["metrics.go"],
     importpath = "github.com/pingcap/tidb/store/mockstore/unistore/metrics",
     visibility = ["//visibility:public"],
-    deps = [
-        "@com_github_prometheus_client_golang//prometheus",
-        "@com_github_prometheus_client_golang//prometheus/promhttp",
-    ],
+    deps = ["@com_github_prometheus_client_golang//prometheus"],
 )

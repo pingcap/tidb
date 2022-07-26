@@ -40,6 +40,7 @@ func TestMain(m *testing.M) {
 
 	autoid.SetStep(5000)
 	ddl.ReorgWaitTimeout = 30 * time.Millisecond
+	ddl.RunInGoTest = true
 	ddl.SetBatchInsertDeleteRangeSize(2)
 
 	config.UpdateGlobal(func(conf *config.Config) {

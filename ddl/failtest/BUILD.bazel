@@ -6,6 +6,7 @@ go_test(
         "fail_db_test.go",
         "main_test.go",
     ],
+    flaky = True,
     deps = [
         "//config",
         "//ddl",

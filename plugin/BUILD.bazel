@@ -36,7 +36,9 @@ go_test(
         "spi_test.go",
     ],
     embed = [":plugin"],
+    flaky = True,
     deps = [
+        "//kv",
         "//parser/mysql",
         "//server",
         "//session",

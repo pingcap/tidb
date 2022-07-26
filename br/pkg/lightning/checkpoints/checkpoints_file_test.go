@@ -119,7 +119,7 @@ func newFileCheckpointsDB(t *testing.T) (*checkpoints.FileCheckpointsDB, func())
 	}
 	ccm.MergeInto(cpd)
 
-	cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
+	cpdb.Update(ctx, map[string]*checkpoints.TableCheckpointDiff{"`db1`.`t2`": cpd})
 	return cpdb, func() {
 		err := cpdb.Close()
 		require.NoError(t, err)
@@ -135,7 +135,7 @@ func setInvalidStatus(cpdb *checkpoints.FileCheckpointsDB) {
 	scm.SetInvalid()
 	scm.MergeInto(cpd)
 
-	cpdb.Update(map[string]*checkpoints.TableCheckpointDiff{
+	cpdb.Update(context.Background(), map[string]*checkpoints.TableCheckpointDiff{
 		"`db1`.`t2`": cpd,
 		"`db2`.`t3`": cpd,
 	})

@@ -25,15 +25,14 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -122,6 +121,7 @@ type ErrorManager struct {
 	configError    *config.MaxError
 	remainingError config.MaxError
 	dupResolution  config.DuplicateResolutionAlgorithm
+	logger         log.Logger
 }
 
 func (em *ErrorManager) TypeErrorsRemain() int64 {
@@ -129,12 +129,13 @@ func (em *ErrorManager) TypeErrorsRemain() int64 {
 }
 
 // New creates a new error manager.
-func New(db *sql.DB, cfg *config.Config) *ErrorManager {
+func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 	em := &ErrorManager{
 		taskID:         cfg.TaskID,
 		configError:    &cfg.App.MaxError,
 		remainingError: cfg.App.MaxError,
 		dupResolution:  cfg.TikvImporter.DuplicateResolution,
+		logger:         logger,
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
@@ -151,7 +152,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 
 	exec := common.SQLWithRetry{
 		DB:     em.db,
-		Logger: log.L(),
+		Logger: em.logger,
 	}
 
 	sqls := make([][2]string, 0)
@@ -351,6 +352,7 @@ func (em *ErrorManager) ResolveAllConflictKeys(
 
 	go func() {
 		//nolint:staticcheck
+		//lint:ignore SA2000
 		taskWg.Add(1)
 		taskCh <- [2]int64{0, math.MaxInt64}
 		taskWg.Wait()
@@ -456,17 +458,17 @@ func (em *ErrorManager) LogErrorDetails() {
 			cnt, errType, em.fmtTableName(tblName))
 	}
 	if errCnt := em.typeErrors(); errCnt > 0 {
-		log.L().Warn(fmtErrMsg(errCnt, "data type", typeErrorTableName))
+		em.logger.Warn(fmtErrMsg(errCnt, "data type", typeErrorTableName))
 	}
 	if errCnt := em.syntaxError(); errCnt > 0 {
-		log.L().Warn(fmtErrMsg(errCnt, "data type", syntaxErrorTableName))
+		em.logger.Warn(fmtErrMsg(errCnt, "data type", syntaxErrorTableName))
 	}
 	if errCnt := em.charsetError(); errCnt > 0 {
 		// TODO: add charset table name
-		log.L().Warn(fmtErrMsg(errCnt, "data type", ""))
+		em.logger.Warn(fmtErrMsg(errCnt, "data type", ""))
 	}
 	if errCnt := em.conflictError(); errCnt > 0 {
-		log.L().Warn(fmtErrMsg(errCnt, "data type", conflictErrorTableName))
+		em.logger.Warn(fmtErrMsg(errCnt, "data type", conflictErrorTableName))
 	}
 }
 

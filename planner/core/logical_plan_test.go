@@ -55,6 +55,7 @@ func createPlannerSuite() (s *plannerSuite) {
 		MockRangePartitionTable(),
 		MockHashPartitionTable(),
 		MockListPartitionTable(),
+		MockStateNoneColumnTable(),
 	}
 	id := int64(0)
 	for _, tblInfo := range tblInfos {
@@ -505,7 +506,7 @@ func TestSubquery(t *testing.T) {
 		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
 		require.NoError(t, err)
 		if lp, ok := p.(LogicalPlan); ok {
-			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, lp)
+			p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain|flagSemiJoinRewrite, lp)
 			require.NoError(t, err)
 		}
 		testdata.OnRecord(func() {
@@ -909,6 +910,10 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select a+1 from t having t.a",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "update T_StateNoneColumn set c = 1 where a = 1",
 			err: ErrUnknownColumn,
 		},
 	}

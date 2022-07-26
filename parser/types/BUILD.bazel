@@ -14,6 +14,7 @@ go_library(
         "//parser/format",
         "//parser/mysql",
         "//parser/terror",
+        "@com_github_cznic_mathutil//:mathutil",
     ],
 )
 
@@ -24,6 +25,7 @@ go_test(
         "field_type_test.go",
     ],
     embed = [":types"],
+    flaky = True,
     deps = [
         "//parser",
         "//parser/ast",
