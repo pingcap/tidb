@@ -31,7 +31,7 @@ import (
 
 type collectPredicateColumnsPoint struct{}
 
-func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
+func (c collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
@@ -57,7 +57,7 @@ func (c collectPredicateColumnsPoint) name() string {
 
 type syncWaitStatsLoadPoint struct{}
 
-func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, op *logicalOptimizeOp) (LogicalPlan, error) {
+func (s syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, nil
 	}
