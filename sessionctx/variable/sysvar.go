@@ -438,12 +438,7 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(s *SessionVars, val string) error {
 			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load(), TiDBOptOn(val)
 			if oldVal != newVal {
-				var err error
-				if newVal && EnableDDL != nil {
-					err = EnableDDL()
-				} else if !newVal && DisableDDL != nil {
-					err = DisableDDL()
-				}
+				err := switchDDL(newVal)
 				config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(newVal)
 				return err
 			}
