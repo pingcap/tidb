@@ -1931,6 +1931,8 @@ func (local *local) isIngestRetryable(
 		//   read index not ready, reason can not read index due to split, region 64037
 		// we have paused schedule, but it's temporary,
 		// if next request takes a long time, there's chance schedule is enabled again
+		// or on key range border, another engine sharing this region tries to split this
+		// region may cause this error too.
 		newRegion, err = getRegion()
 		if err != nil {
 			return retryNone, nil, errors.Trace(err)
