@@ -1161,10 +1161,21 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		statsVer = version
 	} else {
 		modifyCnt := curModifyCnt - results.BaseModifyCnt
+		logutil.BgLogger().Error("calculate modifyCnt",
+			zap.Int64("tableID", tableID),
+			zap.Int64("curModifyCnt", curModifyCnt),
+			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
+			zap.Int64("modifyCnt", modifyCnt))
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
 		cnt := curCnt + results.Count - results.BaseCount
+		logutil.BgLogger().Error("calculate modifyCnt",
+			zap.Int64("tableID", tableID),
+			zap.Int64("curCnt", curCnt),
+			zap.Int64("results.Count", results.Count),
+			zap.Int64("results.BaseCount", results.BaseCount),
+			zap.Int64("cnt", cnt))
 		if cnt < 0 {
 			cnt = 0
 		}
