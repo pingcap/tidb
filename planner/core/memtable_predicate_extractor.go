@@ -605,7 +605,7 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
-func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *ClusterTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1006,7 +1006,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	return remained
 }
 
-func (e *MetricSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *MetricSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	return ""
 }
 
@@ -1039,7 +1039,7 @@ func (e *InspectionResultTableExtractor) Extract(
 	return remained
 }
 
-func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *InspectionResultTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipInspection {
 		return "skip_inspection:true"
 	}
@@ -1081,7 +1081,7 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	return remained
 }
 
-func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *InspectionSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipInspection {
 		return "skip_inspection: true"
 	}
@@ -1134,7 +1134,7 @@ func (e *InspectionRuleTableExtractor) Extract(
 	return remained
 }
 
-func (e *InspectionRuleTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *InspectionRuleTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1289,7 +1289,7 @@ func (e *TableStorageStatsExtractor) Extract(
 	return remained
 }
 
-func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *TableStorageStatsExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1362,7 +1362,7 @@ func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
-func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *TiFlashSystemTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1418,7 +1418,7 @@ func (e *StatementsSummaryExtractor) Extract(
 	return remained
 }
 
-func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *StatementsSummaryExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1462,7 +1462,7 @@ func (e *TikvRegionPeersExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
-func (e *TikvRegionPeersExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *TikvRegionPeersExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1527,7 +1527,7 @@ func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
-func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *ColumnsTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1588,7 +1588,7 @@ func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
-func (e *TiKVRegionStatusExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *TiKVRegionStatusExtractor) explainInfo(_ *PhysicalMemTable) string {
 	r := new(bytes.Buffer)
 	if len(e.tablesID) > 0 {
 		r.WriteString("table_id in {")
