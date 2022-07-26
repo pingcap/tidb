@@ -195,17 +195,6 @@ func (c *MetaDataClient) CleanLastErrorOfTask(ctx context.Context, taskName stri
 	return nil
 }
 
-func (c *MetaDataClient) UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error {
-	key := GlobalCheckpointOf(taskName)
-	value := string(encodeUint64(checkpoint))
-	_, err := c.KV.Put(ctx, key, value)
-
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 // GetTask get the basic task handle from the metadata storage.
 func (c *MetaDataClient) GetTask(ctx context.Context, taskName string) (*Task, error) {
 	resp, err := c.Get(ctx, TaskOf(taskName))

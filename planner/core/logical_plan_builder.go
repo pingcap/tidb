@@ -5257,6 +5257,11 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		}
 
 		for i, col := range tbl.WritableCols() {
+			// schema may be changed between building plan and building executor
+			// If i >= len(flags), it means the target table has been added columns, then we directly skip the check
+			if i >= len(flags) {
+				continue
+			}
 			if flags[i] < 0 {
 				continue
 			}
@@ -6939,6 +6944,8 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		b.outerCTEs[len(b.outerCTEs)-1].optFlag = b.optFlag
 		b.outerCTEs[len(b.outerCTEs)-1].isBuilding = false
 		b.optFlag = saveFlag
+		// each cte (select statement) will generate a handle map, pop it out here.
+		b.handleHelper.popMap()
 	}
 	return nil
 }

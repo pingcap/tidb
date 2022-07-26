@@ -1643,3 +1643,36 @@ func TestIssue27751(t *testing.T) {
 	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
 	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
 }
+
+func TestIssue26885(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`SET sql_mode = 'NO_ENGINE_SUBSTITUTION';`)
+	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
+
+	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', '', 'b'));")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "", "a", "", ""))
+	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
+
+	tk.MustExec("alter table t1 add index idx(c1); ")
+	tk.MustQuery("select c1 + 0 from t1").Check(testkit.Rows("3", "2", "1", "2", "0"))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
+	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', 'b', 'c'));")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES ('c');")
+	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "a", "b", "c", ""))
+	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
+}

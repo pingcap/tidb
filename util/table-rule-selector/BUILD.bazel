@@ -13,5 +13,6 @@ go_test(
     timeout = "short",
     srcs = ["selector_test.go"],
     embed = [":table-rule-selector"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )
