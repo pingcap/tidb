@@ -7,6 +7,7 @@ go_test(
         "main_test.go",
         "pessimistic_test.go",
     ],
+    flaky = True,
     deps = [
         "//config",
         "//domain",

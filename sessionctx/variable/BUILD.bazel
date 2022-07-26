@@ -43,6 +43,7 @@ go_library(
         "//util/execdetails",
         "//util/logutil",
         "//util/mathutil",
+        "//util/memory",
         "//util/paging",
         "//util/rowcodec",
         "//util/stmtsummary",
@@ -77,6 +78,7 @@ go_test(
         "varsutil_test.go",
     ],
     embed = [":variable"],
+    flaky = True,
     deps = [
         "//config",
         "//kv",

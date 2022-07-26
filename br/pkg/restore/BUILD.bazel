@@ -103,6 +103,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":restore"],
+    flaky = True,
     deps = [
         "//br/pkg/backup",
         "//br/pkg/conn",
