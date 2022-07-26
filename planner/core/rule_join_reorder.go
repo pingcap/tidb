@@ -248,11 +248,13 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			proj.SetChildren(p)
 			p = proj
 		}
+		// Remove the same hint here
 		if len(joinTypeHintInfo) > 0 {
 			for i := 0; i < len(joinTypeHintInfo); i++ {
 				for j := 0; j < i; j++ {
 					if joinTypeHintInfo[i] == joinTypeHintInfo[j] {
 						joinTypeHintInfo = append(joinTypeHintInfo[:i], joinTypeHintInfo[i+1:]...)
+						j = 0
 					}
 				}
 			}
