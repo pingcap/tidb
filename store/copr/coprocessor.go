@@ -265,6 +265,13 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 			continue
 		}
 
+		// Some components (like BR) will register tidb nodes with empty IP
+		// addresses in etcd, which will cause cop requests to time out. We
+		// avoid this problem when building cop tasks.
+		if ser.IP == "" {
+			continue
+		}
+
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,
