@@ -33,12 +33,18 @@ func TestT(t *testing.T) {
 var _ = Suite(&testRestoreSchemaSuite{})
 
 type testRestoreSchemaSuite struct {
-	mock    *mock.Cluster
-	storage storage.ExternalStorage
+	mock     *mock.Cluster
+	mockGlue *gluetidb.MockGlue
+	storage  storage.ExternalStorage
 }
 
 func (s *testRestoreSchemaSuite) SetUpSuite(c *C) {
 	var err error
+<<<<<<< HEAD
+=======
+	s = new(testRestoreSchemaSuite)
+	s.mockGlue = &gluetidb.MockGlue{}
+>>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	s.mock, err = mock.NewCluster()
 	c.Assert(err, IsNil)
 	base := c.MkDir()
@@ -152,8 +158,14 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+<<<<<<< HEAD
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
 	c.Assert(err, IsNil, Commentf("Error get ddl jobs: %s", err))
+=======
+	s.mockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
+	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+>>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	c.Assert(err, IsNil, Commentf("Flush failed", err))
 	err = metaWriter.FlushBackupMeta(ctx)
@@ -214,8 +226,14 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+<<<<<<< HEAD
 	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
 	c.Assert(err, IsNil, Commentf("Error get ddl jobs: %s", err))
+=======
+	s.mockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
+	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+>>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	c.Assert(err, IsNil, Commentf("Flush failed", err))
 	err = metaWriter.FlushBackupMeta(ctx)

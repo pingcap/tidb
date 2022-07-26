@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -38,12 +39,14 @@ type testBackup struct {
 	cancel context.CancelFunc
 
 	mockPDClient pd.Client
+	mockGlue     *gluetidb.MockGlue
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
 	storage storage.ExternalStorage
 }
 
+<<<<<<< HEAD
 var _ = Suite(&testBackup{})
 
 func TestT(t *testing.T) {
@@ -55,6 +58,15 @@ func (r *testBackup) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	r.mockPDClient = pdClient
 	r.ctx, r.cancel = context.WithCancel(context.Background())
+=======
+func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
+	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	s = new(testBackup)
+	s.mockGlue = &gluetidb.MockGlue{}
+	s.mockPDClient = pdClient
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+>>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
 	mockMgr.SetPDClient(r.mockPDClient)
 	mockMgr.SetHTTP([]string{"test"}, nil)
@@ -319,8 +331,14 @@ func (r *testBackup) TestskipUnsupportedDDLJob(c *C) {
 	metaWriter := metautil.NewMetaWriter(r.storage, metautil.MetaFileSize, false, &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+<<<<<<< HEAD
 	err = backup.WriteBackupDDLJobs(metaWriter, r.cluster.Storage, lastTS, ts)
 	c.Assert(err, IsNil, Commentf("Error get ddl jobs: %s", err))
+=======
+	s.mockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts, false)
+	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+>>>>>>> 6ae88c430... br: use one shot session to close domain ASAP (#36558)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	c.Assert(err, IsNil, Commentf("Flush failed", err))
 	err = metaWriter.FlushBackupMeta(ctx)
