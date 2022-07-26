@@ -1405,7 +1405,6 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) stmtType() string {
-
 	switch p.stmtTp {
 	case TypeDelete:
 		return "DELETE"
@@ -1432,7 +1431,6 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
 				return
