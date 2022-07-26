@@ -36,7 +36,7 @@ func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 }
 
 // CalcCost calculates the cost of the table dual Implementation.
-func (impl *TableDualImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
+func (*TableDualImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
 	return 0
 }
 
@@ -51,7 +51,7 @@ func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
 }
 
 // CalcCost calculates the cost of the table dual Implementation.
-func (impl *MemTableScanImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
+func (*MemTableScanImpl) CalcCost(_ float64, _ ...memo.Implementation) float64 {
 	return 0
 }
 
