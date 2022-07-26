@@ -123,6 +123,10 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	glueSession := &tidbSession{
 		se: se,
 	}
+	defer func() {
+		se.Close()
+		log.Info("one shot session closed")
+	}()
 	// dom will be created during session.CreateSession.
 	dom, err := session.GetDomain(store)
 	if err != nil {
@@ -132,7 +136,10 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	// and it will register br info to info syncer.
 	// we'd better close it as soon as possible.
 	if closeDomain {
-		defer dom.Close()
+		defer func() {
+			dom.Close()
+			log.Info("one shot session domain closed")
+		}()
 	}
 	err = fn(glueSession)
 	if err != nil {
