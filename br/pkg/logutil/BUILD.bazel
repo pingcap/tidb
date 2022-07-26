@@ -28,6 +28,7 @@ go_library(
 go_test(
     name = "logutil_test",
     srcs = ["logging_test.go"],
+    flaky = True,
     deps = [
         ":logutil",
         "//br/pkg/errors",

@@ -58,6 +58,7 @@ go_test(
         "util_test.go",
     ],
     embed = [":telemetry"],
+    flaky = True,
     deps = [
         "//config",
         "//ddl",

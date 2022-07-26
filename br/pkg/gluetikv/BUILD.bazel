@@ -22,5 +22,6 @@ go_test(
     name = "gluetikv_test",
     srcs = ["glue_test.go"],
     embed = [":gluetikv"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )
