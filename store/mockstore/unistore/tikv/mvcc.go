@@ -696,7 +696,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 			return kverrors.ErrInvalidOp{Op: m.Op}
 		}
 		lock := store.getLock(reqCtx, m.Key)
-		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
+		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i] == kvrpcpb.PessimisticLockType_PessimisticLocked
 		lockExists := lock != nil
 		lockMatch := lockExists && lock.StartTS == startTS
 		if isPessimisticLock {
