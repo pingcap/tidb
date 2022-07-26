@@ -249,6 +249,7 @@
       "structure/": "structure code",
       "telemetry/": "telemetry code",
       "planner/memo": "planner code",
+      "planner/funcdep": "planner code",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
