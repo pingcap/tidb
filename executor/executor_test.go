@@ -3965,6 +3965,8 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists pu_test2")
 	defer tk1.MustExec("drop database if exists pu_test2")
