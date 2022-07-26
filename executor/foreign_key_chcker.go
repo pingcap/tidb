@@ -187,7 +187,7 @@ type updatedValuesCouple struct {
 
 func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementContext, row []types.Datum) error {
 	vals, err := fetchFKValues(row, fkt.colsOffsets)
-	if err != nil || len(vals) == 0 {
+	if err != nil || hasNullValue(vals) {
 		return err
 	}
 	keyBuf, err := codec.EncodeKey(sc, nil, vals...)
@@ -205,11 +205,11 @@ func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementConte
 
 func (fkt *ForeignKeyTriggerExec) updateRowNeedToTrigger(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
 	oldVals, err := fetchFKValues(oldRow, fkt.colsOffsets)
-	if err != nil || len(oldVals) == 0 {
+	if err != nil || hasNullValue(oldVals) {
 		return err
 	}
 	newVals, err := fetchFKValues(newRow, fkt.colsOffsets)
-	if err != nil || len(newVals) == 0 {
+	if err != nil {
 		return err
 	}
 	keyBuf, err := codec.EncodeKey(sc, nil, newVals...)
@@ -233,30 +233,36 @@ func fetchFKValues(row []types.Datum, colsOffsets []int) ([]types.Datum, error) 
 		if offset >= len(row) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs("", offset, row)
 		}
-		// If any foreign key column value is null, no need to check this row.
-		// test case:
-		// create table t1 (id int key,a int, b int, index(a, b));
-		// create table t2 (id int key,a int, b int, foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);
-		// > insert into t2 values (2, null, 1);
-		// Query OK, 1 row affected
-		// > insert into t2 values (3, 1, null);
-		// Query OK, 1 row affected
-		// > insert into t2 values (4, null, null);
-		// Query OK, 1 row affected
-		// > select * from t2;
-		// 	+----+--------+--------+
-		// 	| id | a      | b      |
-		// 		+----+--------+--------+
-		// 	| 4  | <null> | <null> |
-		// 	| 2  | <null> | 1      |
-		// 	| 3  | 1      | <null> |
-		// 	+----+--------+--------+
-		if row[offset].IsNull() {
-			return nil, nil
-		}
 		vals[i] = row[offset]
 	}
 	return vals, nil
+}
+
+func hasNullValue(vals []types.Datum) bool {
+	// If any foreign key column value is null, no need to check this row.
+	// test case:
+	// create table t1 (id int key,a int, b int, index(a, b));
+	// create table t2 (id int key,a int, b int, foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);
+	// > insert into t2 values (2, null, 1);
+	// Query OK, 1 row affected
+	// > insert into t2 values (3, 1, null);
+	// Query OK, 1 row affected
+	// > insert into t2 values (4, null, null);
+	// Query OK, 1 row affected
+	// > select * from t2;
+	// 	+----+--------+--------+
+	// 	| id | a      | b      |
+	// 		+----+--------+--------+
+	// 	| 4  | <null> | <null> |
+	// 	| 2  | <null> | 1      |
+	// 	| 3  | 1      | <null> |
+	// 	+----+--------+--------+
+	for _, val := range vals {
+		if val.IsNull() {
+			return true
+		}
+	}
+	return false
 }
 
 func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() (bool, error) {
