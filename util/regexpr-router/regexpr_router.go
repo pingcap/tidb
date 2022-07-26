@@ -108,7 +108,7 @@ func (r *RouteTable) AddRule(rule *router.TableRule) error {
 }
 
 // Route is to route table
-func (r *RouteTable) Route(schema, table string) (string, string, error) {
+func (r *RouteTable) Route(schema, table string) (targetSchema string, targetTable string, err error) {
 	curTable := &filter.Table{
 		Schema: schema,
 		Name:   table,
@@ -124,10 +124,6 @@ func (r *RouteTable) Route(schema, table string) (string, string, error) {
 			}
 		}
 	}
-	var (
-		targetSchema string
-		targetTable  string
-	)
 	if table == "" || len(tblRules) == 0 {
 		// 1. no need to match table or
 		// 2. match no table
@@ -158,11 +154,11 @@ func (r *RouteTable) AllRules() ([]router.TableRule, []router.TableRule) {
 		schmRouteRules  []router.TableRule
 		tableRouteRules []router.TableRule
 	)
-	for _, filter := range r.filters {
-		if filter.typ == SchmFilter {
-			schmRouteRules = append(schmRouteRules, *filter.rawRule)
+	for _, f := range r.filters {
+		if f.typ == SchmFilter {
+			schmRouteRules = append(schmRouteRules, *f.rawRule)
 		} else {
-			tableRouteRules = append(tableRouteRules, *filter.rawRule)
+			tableRouteRules = append(tableRouteRules, *f.rawRule)
 		}
 	}
 	return schmRouteRules, tableRouteRules
@@ -177,9 +173,9 @@ func (r *RouteTable) FetchExtendColumn(schema, table, source string) ([]string, 
 		Schema: schema,
 		Name:   table,
 	}
-	for _, filter := range r.filters {
-		if filter.filter.Match(curTable) {
-			rules = append(rules, filter)
+	for _, f := range r.filters {
+		if f.filter.Match(curTable) {
+			rules = append(rules, f)
 		}
 	}
 	var (

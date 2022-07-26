@@ -41,31 +41,17 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 	tk.MustExec("create table t(a int, primary key (a))")
 	testcases := []struct {
 		sql          string
-		logicalList  []string
 		physicalList []string
-		bests        []string
 	}{
 		{
 			sql: "select * from t",
-			logicalList: []string{
-				"DataSource_1", "Projection_2",
-			},
 			physicalList: []string{
-				"Projection_3", "TableReader_5",
-			},
-			bests: []string{
-				"Projection_3", "TableReader_5",
+				"Projection_3", "TableFullScan_4", "TableReader_5",
 			},
 		},
 		{
 			sql: "select * from t where a = 1",
-			logicalList: []string{
-				"DataSource_1", "Projection_3",
-			},
 			physicalList: []string{
-				"Point_Get_5", "Projection_4",
-			},
-			bests: []string{
 				"Point_Get_5", "Projection_4",
 			},
 		},
@@ -83,14 +69,11 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), stmt)
 		require.NoError(t, err)
-		flag := uint64(0)
-		flag = flag | 1<<3 | 1<<8
-		_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
+		_, _, err = core.DoOptimize(context.TODO(), sctx, builder.GetOptFlag(), plan.(core.LogicalPlan))
 		require.NoError(t, err)
 		otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 		require.NotNil(t, otrace)
-		logicalList, physicalList := getList(otrace)
-		require.True(t, checkList(logicalList, testcase.logicalList))
+		physicalList := getList(otrace)
 		require.True(t, checkList(physicalList, testcase.physicalList))
 	}
 }
@@ -107,14 +90,82 @@ func checkList(d []string, s []string) bool {
 	return true
 }
 
-func getList(otrace *tracing.PhysicalOptimizeTracer) (ll []string, pl []string) {
-	for logicalPlan, v := range otrace.State {
-		ll = append(ll, logicalPlan)
-		for physicalPlanKey := range v {
-			pl = append(pl, physicalPlanKey)
+func getList(otrace *tracing.PhysicalOptimizeTracer) (pl []string) {
+	for _, v := range otrace.Candidates {
+		pl = append(pl, tracing.CodecPlanName(v.TP, v.ID))
+	}
+	sort.Strings(pl)
+	return pl
+}
+
+// assert the case in https://github.com/pingcap/tidb/issues/34863
+func TestPhysicalOptimizerTrace(t *testing.T) {
+	p := parser.New()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	ctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("use test")
+	tk.MustExec("create table customer2(c_id bigint);")
+	tk.MustExec("create table orders2(o_id bigint, c_id bigint);")
+	tk.MustExec("insert into customer2 values(1),(2),(3),(4),(5);")
+	tk.MustExec("insert into orders2 values(1,1),(2,1),(3,2),(4,2),(5,2);")
+	tk.MustExec("set @@tidb_opt_agg_push_down=1;")
+
+	sql := "select count(*) from customer2 c left join orders2 o on c.c_id=o.c_id;"
+
+	stmt, err := p.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	err = core.Preprocess(ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
+	require.NoError(t, err)
+	sctx := core.MockContext()
+	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
+	sctx.GetSessionVars().AllowAggPushDown = true
+	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
+	plan, err := builder.Build(context.TODO(), stmt)
+	require.NoError(t, err)
+	flag := uint64(0)
+	flag = flag | 1<<1 | 1<<3 | 1<<8 | 1<<12 | 1<<15
+	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
+	require.NoError(t, err)
+	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
+	require.NotNil(t, otrace)
+	elements := map[int]string{
+		12: "TableReader",
+		14: "TableReader",
+		13: "TableFullScan",
+		15: "HashJoin",
+		6:  "Projection",
+		11: "TableFullScan",
+		9:  "HashJoin",
+		10: "HashJoin",
+		7:  "HashAgg",
+		16: "HashJoin",
+		8:  "StreamAgg",
+	}
+	final := map[int]struct{}{
+		11: {},
+		12: {},
+		13: {},
+		14: {},
+		9:  {},
+		7:  {},
+		6:  {},
+	}
+	for _, c := range otrace.Candidates {
+		tp, ok := elements[c.ID]
+		if !ok || tp != c.TP {
+			t.FailNow()
 		}
 	}
-	sort.Strings(ll)
-	sort.Strings(pl)
-	return ll, pl
+	require.Len(t, otrace.Candidates, len(elements))
+	for _, p := range otrace.Final {
+		_, ok := final[p.ID]
+		if !ok {
+			t.FailNow()
+		}
+	}
+	require.Len(t, otrace.Final, len(final))
 }

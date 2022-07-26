@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessiontest
+package session_test
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -23,21 +22,16 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLocalTemporaryTableInsert(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -93,7 +87,7 @@ func TestLocalTemporaryTableInsert(t *testing.T) {
 }
 
 func TestLocalTemporaryTableUpdate(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -284,69 +278,10 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 	}
 }
 
-func TestTemporaryTableInterceptor(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Session().GetInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
-	require.NoError(t, err)
-	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
-	tblID := tbl.Meta().ID
-
-	// prepare a kv pair for temporary table
-	k := append(tablecodec.EncodeTablePrefix(tblID), 1)
-	require.NoError(t, tk.Session().GetSessionVars().TemporaryTableData.SetTableKey(tblID, k, []byte("v1")))
-
-	initTxnFuncs := []func() error{
-		func() error {
-			err := tk.Session().PrepareTxnCtx(context.TODO())
-			if err == nil {
-				err = sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
-			}
-			return err
-		},
-		func() error {
-			return sessiontxn.NewTxn(context.Background(), tk.Session())
-		},
-		func() error {
-			return sessiontxn.GetTxnManager(tk.Session()).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-				Type:        sessiontxn.EnterNewTxnWithBeginStmt,
-				StaleReadTS: 0,
-			})
-		},
-	}
-
-	for _, initFunc := range initTxnFuncs {
-		require.NoError(t, initFunc())
-
-		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
-		txn, err := tk.Session().Txn(true)
-		require.NoError(t, err)
-
-		val, err := txn.Get(context.Background(), k)
-		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
-
-		val, err = txn.GetSnapshot().Get(context.Background(), k)
-		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
-
-		tk.Session().RollbackTxn(context.Background())
-	}
-
-	// Also check GetSnapshotWithTS
-	snap := sessiontxn.GetSnapshotWithTS(tk.Session(), 0)
-	val, err := snap.Get(context.Background(), k)
-	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
-}
-
 func TestTemporaryTableSize(t *testing.T) {
 	// Test the @@tidb_tmp_table_max_size system variable.
 
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -393,7 +328,7 @@ func TestTemporaryTableSize(t *testing.T) {
 }
 
 func TestGlobalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -420,7 +355,7 @@ func TestGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryGlobalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -468,7 +403,7 @@ func TestRetryGlobalTemporaryTable(t *testing.T) {
 }
 
 func TestRetryLocalTemporaryTable(t *testing.T) {
-	store, clean := realtikvtest.CreateMockStoreAndSetup(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)

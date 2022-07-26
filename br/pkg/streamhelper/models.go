@@ -1,5 +1,5 @@
 // Copyright 2021 PingCAP, Inc. Licensed under Apache-2.0.
-package stream
+package streamhelper
 
 import (
 	"bytes"
@@ -21,10 +21,14 @@ const (
 	streamKeyPrefix = "/tidb/br-stream"
 	taskInfoPath    = "/info"
 	// nolint:deadcode,varcheck
-	taskCheckpointPath = "/checkpoint"
-	taskRangesPath     = "/ranges"
-	taskPausePath      = "/pause"
-	taskLastErrorPath  = "/last-error"
+	taskCheckpointPath   = "/checkpoint"
+	storageCheckPoint    = "/storage-checkpoint"
+	taskRangesPath       = "/ranges"
+	taskPausePath        = "/pause"
+	taskLastErrorPath    = "/last-error"
+	checkpointTypeGlobal = "central_global"
+	checkpointTypeRegion = "region"
+	checkpointTypeStore  = "store"
 )
 
 var (
@@ -78,6 +82,16 @@ func CheckPointsOf(task string) string {
 	return buf.String()
 }
 
+// GlobalCheckpointOf returns the path to the "global" checkpoint of some task.
+func GlobalCheckpointOf(task string) string {
+	return path.Join(streamKeyPrefix, taskCheckpointPath, task, checkpointTypeGlobal)
+}
+
+// StorageCheckpointOf get the prefix path of the `storage checkpoint status` of a task.
+func StorageCheckpointOf(task string) string {
+	return path.Join(streamKeyPrefix, storageCheckPoint, task)
+}
+
 // CheckpointOf returns the checkpoint prefix of some store.
 // Normally it would be <prefix>/checkpoint/<task-name>/<store-id(binary-u64)>.
 func CheckPointOf(task string, store uint64) string {
@@ -111,7 +125,7 @@ type TaskInfo struct {
 }
 
 // NewTask creates a new task with the name.
-func NewTask(name string) *TaskInfo {
+func NewTaskInfo(name string) *TaskInfo {
 	return &TaskInfo{
 		PBInfo: backuppb.StreamBackupTaskInfo{
 			Name: name,

@@ -564,7 +564,7 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
-func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	if alloc.tbID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
@@ -584,7 +584,7 @@ func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset i
 	return alloc.alloc4Signed(ctx, n, increment, offset)
 }
 
-func (alloc *allocator) AllocSeqCache() (int64, int64, int64, error) {
+func (alloc *allocator) AllocSeqCache() (min int64, max int64, round int64, err error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	return alloc.alloc4Sequence()
@@ -615,65 +615,65 @@ func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 }
 
 // CalcSequenceBatchSize calculate the next sequence batch size.
-func CalcSequenceBatchSize(base, size, increment, offset, MIN, MAX int64) (int64, error) {
+func CalcSequenceBatchSize(base, size, increment, offset, min, max int64) (int64, error) {
 	// The sequence is positive growth.
 	if increment > 0 {
 		if increment == 1 {
 			// Sequence is already allocated to the end.
-			if base >= MAX {
+			if base >= max {
 				return 0, ErrAutoincReadFailed
 			}
 			// The rest of sequence < cache size, return the rest.
-			if MAX-base < size {
-				return MAX - base, nil
+			if max-base < size {
+				return max - base, nil
 			}
 			// The rest of sequence is adequate.
 			return size, nil
 		}
-		nr, ok := SeekToFirstSequenceValue(base, increment, offset, MIN, MAX)
+		nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
 		if !ok {
 			return 0, ErrAutoincReadFailed
 		}
 		// The rest of sequence < cache size, return the rest.
-		if MAX-nr < (size-1)*increment {
-			return MAX - base, nil
+		if max-nr < (size-1)*increment {
+			return max - base, nil
 		}
 		return (nr - base) + (size-1)*increment, nil
 	}
 	// The sequence is negative growth.
 	if increment == -1 {
-		if base <= MIN {
+		if base <= min {
 			return 0, ErrAutoincReadFailed
 		}
-		if base-MIN < size {
-			return base - MIN, nil
+		if base-min < size {
+			return base - min, nil
 		}
 		return size, nil
 	}
-	nr, ok := SeekToFirstSequenceValue(base, increment, offset, MIN, MAX)
+	nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
 	if !ok {
 		return 0, ErrAutoincReadFailed
 	}
 	// The rest of sequence < cache size, return the rest.
-	if nr-MIN < (size-1)*(-increment) {
-		return base - MIN, nil
+	if nr-min < (size-1)*(-increment) {
+		return base - min, nil
 	}
 	return (base - nr) + (size-1)*(-increment), nil
 }
 
-// SeekToFirstSequenceValue seeks to the next valid value (must be in range of [MIN, MAX]),
+// SeekToFirstSequenceValue seeks to the next valid value (must be in range of [MIN, max]),
 // the bool indicates whether the first value is got.
 // The seeking formula is describe as below:
 //  nr  := (base + increment - offset) / increment
 // first := nr*increment + offset
 // Because formula computation will overflow Int64, so we transfer it to uint64 for distance computation.
-func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, bool) {
+func SeekToFirstSequenceValue(base, increment, offset, min, max int64) (int64, bool) {
 	if increment > 0 {
 		// Sequence is already allocated to the end.
-		if base >= MAX {
+		if base >= max {
 			return 0, false
 		}
-		uMax := EncodeIntToCmpUint(MAX)
+		uMax := EncodeIntToCmpUint(max)
 		uBase := EncodeIntToCmpUint(base)
 		uOffset := EncodeIntToCmpUint(offset)
 		uIncrement := uint64(increment)
@@ -692,10 +692,10 @@ func SeekToFirstSequenceValue(base, increment, offset, MIN, MAX int64) (int64, b
 		return first, true
 	}
 	// Sequence is already allocated to the end.
-	if base <= MIN {
+	if base <= min {
 		return 0, false
 	}
-	uMin := EncodeIntToCmpUint(MIN)
+	uMin := EncodeIntToCmpUint(min)
 	uBase := EncodeIntToCmpUint(base)
 	uOffset := EncodeIntToCmpUint(offset)
 	uIncrement := uint64(-increment)
@@ -728,7 +728,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 	return nr
 }
 
-func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		if err := alloc.rebase4Signed(ctx, offset-1, true); err != nil {
@@ -813,12 +813,12 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
-	min := alloc.base
+	min = alloc.base
 	alloc.base += n1
 	return min, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
@@ -903,7 +903,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
-	min := alloc.base
+	min = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
@@ -1083,7 +1083,7 @@ func NewShardIDLayout(fieldType *types.FieldType, shardBits uint64) *ShardIDLayo
 	incrementalBits := typeBitsLength - shardBits
 	hasSignBit := !mysql.HasUnsignedFlag(fieldType.GetFlag())
 	if hasSignBit {
-		incrementalBits -= 1
+		incrementalBits--
 	}
 	return &ShardIDLayout{
 		FieldType:       fieldType,

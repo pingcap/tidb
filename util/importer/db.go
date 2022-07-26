@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func intRangeValue(column *column, min int64, max int64) (int64, int64) {
+func intRangeValue(column *column, min int64, max int64) (maxInt int64, minInt int64) {
 	var err error
 	if len(column.min) > 0 {
 		min, err = strconv.ParseInt(column.min, 10, 64)

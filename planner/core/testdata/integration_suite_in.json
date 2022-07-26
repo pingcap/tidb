@@ -285,7 +285,9 @@
     "cases": [
       // Query with WHERE or ON should have the same plan, i.e, the Apply has been decorrelated.
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
-      "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
+      "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)",
+      "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
+      "explain format = 'brief' select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
     ]
   },
   {
@@ -495,6 +497,13 @@
     ]
   },
   {
+    "name": "TestPushDownToTiFlashWithKeepOrderInFastMode",
+    "cases": [
+      "explain format = 'brief' select max(a) from t",
+      "explain format = 'brief' select min(a) from t"
+    ]
+  },
+  {
     "name": "TestMPPJoin",
     "cases": [
       "explain format = 'brief' select count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
@@ -509,6 +518,8 @@
       "explain format = 'brief' select count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k and d1_t.value > 10 and fact_t.col1 > d1_t.value",
       "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
       "explain format = 'brief' select count(*) from fact_t where exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
+      "explain format = 'brief' select count(*) from fact_t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from d1_t where d1_k = fact_t.d1_k)",
+      "explain format = 'brief' select count(*) from fact_t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
       "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k)",
       "explain format = 'brief' select count(*) from fact_t where not exists (select 1 from d1_t where d1_k = fact_t.d1_k and value > fact_t.col1)",
       "explain format = 'brief' select count(*) from fact_t join d1_t on fact_t.d1_k > d1_t.d1_k",
@@ -763,6 +774,13 @@
       "desc format = 'brief' select id from t as A where not exists (select 1 from t where t.id=A.id)",
       "desc format = 'brief' select b*2, id from (select avg(value+2) as b, id from t group by id) C order by id",
       "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
+    ]
+  },
+  {
+    "name": "TestPushDownSelectionForMPP",
+    "cases": [
+      "desc format = 'brief' select /*+ hash_agg()*/ count(*) c, id from t group by id having id >c",
+      "desc format = 'brief' select * from t where id < 2"
     ]
   },
   {
