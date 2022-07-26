@@ -631,13 +631,6 @@ func TestErrnoErrorCode(t *testing.T) {
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
 	tk.MustGetErrCode(sql, errno.ErrBadNull)
-	// disable tidb_enable_change_multi_schema
-	tk.MustExec("set global tidb_enable_change_multi_schema = false")
-	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
-	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("set global tidb_enable_change_multi_schema = true")
 }
 
 func TestTableDDLWithFloatType(t *testing.T) {

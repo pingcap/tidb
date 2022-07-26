@@ -29,6 +29,8 @@ go_test(
         "session_token_test.go",
     ],
     embed = [":sessionstates"],
+    flaky = True,
+    race = "on",
     deps = [
         "//config",
         "//errno",

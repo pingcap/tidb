@@ -101,6 +101,10 @@ func TestMergeRanges(t *testing.T) {
 			parameter: []kv.KeyRange{r("", "01"), r("01", ""), r("", "02"), r("", "03"), r("01", "02")},
 			expected:  []kv.KeyRange{r("", "")},
 		},
+		{
+			parameter: []kv.KeyRange{r("", ""), r("", "01"), r("01", ""), r("01", "02")},
+			expected:  []kv.KeyRange{r("", "")},
+		},
 	}
 
 	for i, c := range cases {

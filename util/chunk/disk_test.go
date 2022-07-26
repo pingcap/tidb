@@ -259,42 +259,84 @@ func testListInDisk(t *testing.T, concurrency int) {
 	wg.Wait()
 }
 
-func TestListInDiskWithChecksum(t *testing.T) {
+func TestListInDiskWithChecksum1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
 	})
-	t.Run("testListInDisk", func(t *testing.T) {
-		testListInDisk(t, 1)
-	})
-	t.Run("testListInDisk", func(t *testing.T) {
-		testListInDisk(t, 2)
-	})
-	t.Run("testListInDisk", func(t *testing.T) {
-		testListInDisk(t, 8)
-	})
-
-	t.Run("testReaderWithCache", testReaderWithCache)
-	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
+	testListInDisk(t, 1)
 }
 
-func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
+func TestListInDiskWithChecksum2(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testListInDisk(t, 2)
+}
+
+func TestListInDiskWithChecksum8(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testListInDisk(t, 8)
+}
+
+func TestListInDiskWithChecksumReaderWithCache(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testReaderWithCache(t)
+}
+
+func TestListInDiskWithChecksumReaderWithCacheNoFlush(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testReaderWithCacheNoFlush(t)
+}
+
+func TestListInDiskWithChecksumAndEncrypt1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
-	t.Run("testListInDisk", func(t *testing.T) {
-		testListInDisk(t, 1)
-	})
-	t.Run("testListInDisk", func(t *testing.T) {
-		testListInDisk(t, 2)
-	})
-	t.Run("testListInDisk", func(t *testing.T) {
-		testListInDisk(t, 8)
-	})
+	testListInDisk(t, 1)
+}
 
-	t.Run("testReaderWithCache", testReaderWithCache)
-	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
+func TestListInDiskWithChecksumAndEncrypt2(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testListInDisk(t, 2)
+}
+
+func TestListInDiskWithChecksumAndEncrypt8(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testListInDisk(t, 8)
+}
+
+func TestListInDiskWithChecksumAndEncryptReaderWithCache(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testReaderWithCache(t)
+}
+
+func TestListInDiskWithChecksumAndEncryptReaderWithCacheNoFlush(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testReaderWithCacheNoFlush(t)
 }
 
 // Following diagram describes the testdata we use to test:

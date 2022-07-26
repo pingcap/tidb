@@ -555,6 +555,48 @@ func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
 	}
 }
 
+func TestPushDownToTiFlashWithKeepOrderInFastMode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("alter table t set tiflash mode fast")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestMPPJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -4376,6 +4418,48 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 	}
 }
 
+func TestPushDownSelectionForMPP(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, value decimal(6,3), name char(128))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestPushDownProjectionForMPP(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -5576,24 +5660,24 @@ func TestIndexJoinCost(t *testing.T) {
 		`│ └─Selection_17 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_16 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─TableReader_8(Probe) 1.00 3.88 root  data:TableRangeScan_7`,
-		`  └─TableRangeScan_7 1.00 0.00 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo`))
+		`  └─TableRangeScan_7 1.00 30.00 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo`))
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexScan
 		`IndexJoin_10 12487.50 235192.19 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
 		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
 		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexReader_9(Probe) 1.25 5.89 root  index:Selection_8`,
-		`  └─Selection_8 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
+		`  └─Selection_8 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_7 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ * from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexLookup
 		`IndexJoin_11 12487.50 531469.38 root  inner join, inner:IndexLookUp_10, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
 		`├─TableReader_23(Build) 9990.00 36412.58 root  data:Selection_22`,
 		`│ └─Selection_22 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_21 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexLookUp_10(Probe) 1.25 35.55 root  `,
-		`  ├─Selection_9(Build) 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`  │ └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`,
-		`  └─TableRowIDScan_8(Probe) 1.25 0.00 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo`))
+		`  ├─Selection_9(Build) 1.25 75.08 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`  │ └─IndexRangeScan_7 1.25 71.32 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`,
+		`  └─TableRowIDScan_8(Probe) 1.25 71.25 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo`))
 
 	tk.MustQuery("explain format=verbose select /*+ inl_hash_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a").Check(testkit.Rows(
 		`IndexHashJoin_12 12487.50 235192.19 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
@@ -5601,16 +5685,16 @@ func TestIndexJoinCost(t *testing.T) {
 		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexReader_9(Probe) 1.25 5.89 root  index:Selection_8`,
-		`  └─Selection_8 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
+		`  └─Selection_8 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_7 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
 	tk.MustQuery("explain format=verbose select /*+ inl_merge_join(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a").Check(testkit.Rows(
 		`IndexMergeJoin_17 12487.50 229210.68 root  inner join, inner:IndexReader_15, outer key:test.t_outer.a, inner key:test.t_inner_idx.a`,
 		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
 		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
 		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
 		`└─IndexReader_15(Probe) 1.25 5.89 root  index:Selection_14`,
-		`  └─Selection_14 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
-		`    └─IndexRangeScan_13 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:true, stats:pseudo`))
+		`  └─Selection_14 1.25 58.18 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_13 1.25 54.43 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:true, stats:pseudo`))
 }
 
 func TestHeuristicIndexSelection(t *testing.T) {
@@ -6990,6 +7074,41 @@ func TestIssue25813(t *testing.T) {
 		"    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
 
+func TestRepeatPushDownToTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(2147483647, 2)")
+	tk.MustExec("insert into t values(12, 2)")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"TableReader_9", "root", "data:ExchangeSender_8"},
+		{"└─ExchangeSender_8", "mpp[tiflash]", "ExchangeType: PassThrough"},
+		{"  └─Projection_4", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#4"},
+		{"    └─TableFullScan_7", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+}
+
 func TestIssue36194(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -7016,4 +7135,77 @@ func TestIssue36194(t *testing.T) {
 		"    └─Limit 100.00 mpp[tiflash]  offset:0, count:100",
 		"      └─Selection 100.00 mpp[tiflash]  gt(plus(test.t.a, 1), 20)",
 		"        └─TableFullScan 125.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+}
+
+func TestGetFormatPushDownToTiFlash(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(location varchar(10));")
+	tk.MustExec("insert into t values('USA'), ('JIS'), ('ISO'), ('EUR'), ('INTERNAL')")
+	tk.MustExec("set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash';")
+
+	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t", L: "t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	tk.MustQuery("explain format = 'brief' select GET_FORMAT(DATE, location) from t;").Check(testkit.Rows(
+		"TableReader 10000.00 root  data:ExchangeSender",
+		"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─Projection 10000.00 mpp[tiflash]  get_format(DATE, test.t.location)->Column#3",
+		"    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"))
+}
+
+func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a json);")
+	tk.MustExec("insert into t values(null);")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	rows := [][]interface{}{
+		{"HashAgg_6", "root", "funcs:avg(Column#4)->Column#3"},
+		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
+		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
+		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+
+	rows = [][]interface{}{
+		{"HashAgg_6", "root", "funcs:sum(Column#4)->Column#3"},
+		{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
+		{"  └─TableReader_12", "root", "data:TableFullScan_11"},
+		{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+
+	rows = [][]interface{}{
+		{"HashAgg_6", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
+		{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#4"},
+		{"  └─TableReader_10", "root", "data:TableFullScan_9"},
+		{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 }

@@ -42,6 +42,7 @@ func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializePessimisticSerializableProvider(t, tk)
 
@@ -75,6 +76,7 @@ func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	provider := initializePessimisticSerializableProvider(t, tk)
 
@@ -116,6 +118,7 @@ func TestSerializableInitialize(t *testing.T) {
 		defer clearScopeSettings()
 
 		tk := testkit.NewTestKit(t, store)
+		defer tk.MustExec("rollback")
 		se := tk.Session()
 		tk.MustExec("set tidb_skip_isolation_level_check = 1")
 		tk.MustExec("set @@tx_isolation = 'SERIALIZABLE'")
@@ -179,6 +182,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("rollback")
 	se := tk.Session()
 	tk.MustExec("set tidb_skip_isolation_level_check = 1")
 	tk.MustExec("set @@tx_isolation = 'SERIALIZABLE'")
