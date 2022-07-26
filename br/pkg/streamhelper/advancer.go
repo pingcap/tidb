@@ -333,7 +333,7 @@ func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskE
 				return nil
 			}
 			log.Info("meet task event", zap.Stringer("event", &e))
-			if err := c.onTaskEvent(e); err != nil {
+			if err := c.onTaskEvent(ctx, e); err != nil {
 				if errors.Cause(e.Err) != context.Canceled {
 					log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
 					return err
@@ -391,7 +391,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 					return
 				}
 				log.Info("meet task event", zap.Stringer("event", &e))
-				if err := c.onTaskEvent(e); err != nil {
+				if err := c.onTaskEvent(ctx, e); err != nil {
 					if errors.Cause(e.Err) != context.Canceled {
 						log.Error("listen task meet error, would reopen.", logutil.ShortError(err))
 						time.AfterFunc(c.cfg.BackoffTime, func() { c.StartTaskListener(ctx) })
@@ -403,7 +403,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 	}()
 }
 
-func (c *CheckpointAdvancer) onTaskEvent(e TaskEvent) error {
+func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 	switch e.Type {
@@ -412,6 +412,10 @@ func (c *CheckpointAdvancer) onTaskEvent(e TaskEvent) error {
 	case EventDel:
 		c.task = nil
 		c.state = &fullScan{}
+		if err := c.env.ClearV3GlobalCheckpointForTask(ctx, e.Name); err != nil {
+			log.Warn("failed to clear global checkpoint", logutil.ShortError(err))
+		}
+		metrics.LastCheckpoint.DeleteLabelValues(e.Name)
 		c.cache.Clear()
 	case EventErr:
 		return e.Err
