@@ -261,7 +261,7 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
-			input: "READ_FROM_STORAGE(@foo TIKV[a, b], TIFLASH[c, d]) HASH_AGG() READ_FROM_STORAGE(TIKV[e])",
+			input: "READ_FROM_STORAGE(@foo TIKV[a, b], TIFLASH[c, d]) HASH_AGG() SEMI_JOIN_REWRITE() READ_FROM_STORAGE(TIKV[e])",
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: model.NewCIStr("READ_FROM_STORAGE"),
@@ -283,6 +283,9 @@ func TestParseHint(t *testing.T) {
 				},
 				{
 					HintName: model.NewCIStr("HASH_AGG"),
+				},
+				{
+					HintName: model.NewCIStr("SEMI_JOIN_REWRITE"),
 				},
 				{
 					HintName: model.NewCIStr("READ_FROM_STORAGE"),

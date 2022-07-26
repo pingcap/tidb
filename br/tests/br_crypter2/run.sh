@@ -70,7 +70,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_fil
 
 drop_db
 
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
+run_br --pd $PD_ADDR restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
         --check-requirements=false --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_KEY
 
 check_db_row

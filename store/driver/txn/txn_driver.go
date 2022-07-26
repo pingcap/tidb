@@ -34,6 +34,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -232,7 +233,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	case kv.TxnScope:
 		txn.SetScope(val.(string))
 	case kv.IsStalenessReadOnly:
-		txn.KVTxn.GetSnapshot().SetIsStatenessReadOnly(val.(bool))
+		txn.KVTxn.GetSnapshot().SetIsStalenessReadOnly(val.(bool))
 	case kv.MatchStoreLabels:
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
@@ -255,6 +256,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetRequestSourceInternal(val.(bool))
 	case kv.RequestSourceType:
 		txn.KVTxn.SetRequestSourceType(val.(string))
+	case kv.ReplicaReadAdjuster:
+		txn.KVTxn.GetSnapshot().SetReplicaReadAdjuster(val.(txnkv.ReplicaReadAdjuster))
 	}
 }
 

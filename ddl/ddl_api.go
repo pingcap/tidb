@@ -88,7 +88,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 	sessionVars := ctx.GetSessionVars()
 
 	// If no charset and/or collation is specified use collation_server and character_set_server
-	charsetOpt := &ast.CharsetOpt{}
+	charsetOpt := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
 		charsetOpt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
 		if err != nil {
@@ -102,19 +102,17 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	explicitCharset := false
 	explicitCollation := false
-	if len(stmt.Options) != 0 {
-		for _, val := range stmt.Options {
-			switch val.Tp {
-			case ast.DatabaseOptionCharset:
-				charsetOpt.Chs = val.Value
-				explicitCharset = true
-			case ast.DatabaseOptionCollate:
-				charsetOpt.Col = val.Value
-				explicitCollation = true
-			case ast.DatabaseOptionPlacementPolicy:
-				placementPolicyRef = &model.PolicyRefInfo{
-					Name: model.NewCIStr(val.Value),
-				}
+	for _, val := range stmt.Options {
+		switch val.Tp {
+		case ast.DatabaseOptionCharset:
+			charsetOpt.Chs = val.Value
+			explicitCharset = true
+		case ast.DatabaseOptionCollate:
+			charsetOpt.Col = val.Value
+			explicitCollation = true
+		case ast.DatabaseOptionPlacementPolicy:
+			placementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(val.Value),
 			}
 		}
 	}
@@ -140,7 +138,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 
 	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation(ast.CharsetOpt{Chs: charsetOpt.Chs, Col: charsetOpt.Col})
+	chs, coll, err := ResolveCharsetCollation(charsetOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -344,8 +342,9 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
+
 	if util.IsMemOrSysDB(dbInfo.Name.L) {
-		return errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
+		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	}
 
 	total := len(dbInfo.Tables)
@@ -512,7 +511,7 @@ func checkMultiSchemaSpecs(_sctx sessionctx.Context, specs []*ast.DatabaseOption
 	for _, spec := range specs {
 		if spec.Tp == ast.DatabaseSetTiFlashReplica {
 			if hasSetTiFlashReplica {
-				return dbterror.ErrRunMultiSchemaChanges
+				return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(model.ActionSetTiFlashReplica.String())
 			}
 			hasSetTiFlashReplica = true
 		}
@@ -707,7 +706,6 @@ func buildColumnsAndConstraints(
 	tblCharset string,
 	tblCollate string,
 ) ([]*table.Column, []*ast.Constraint, error) {
-	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
 	for _, v := range constraints {
@@ -717,6 +715,8 @@ func buildColumnsAndConstraints(
 		}
 	}
 	cols := make([]*table.Column, 0, len(colDefs))
+	colMap := make(map[string]*table.Column, len(colDefs))
+
 	for i, colDef := range colDefs {
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate)
 		if err != nil {
@@ -1784,13 +1784,15 @@ func convertAutoRandomBitsToUnsigned(autoRandomBits int) (uint64, error) {
 	return uint64(autoRandomBits), nil
 }
 
-func buildTableInfo(
+// BuildTableInfo creates a TableInfo.
+func BuildTableInfo(
 	ctx sessionctx.Context,
 	tableName model.CIStr,
 	cols []*table.Column,
 	constraints []*ast.Constraint,
 	charset string,
-	collate string) (tbInfo *model.TableInfo, err error) {
+	collate string,
+) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name:    tableName,
 		Version: model.CurrLatestTableInfoVersion,
@@ -1994,6 +1996,11 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	return err
 }
 
+// CheckTableInfoValidWithStmt exposes checkTableInfoValidWithStmt to SchemaTracker. Maybe one day we can delete it.
+func CheckTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
+	return checkTableInfoValidWithStmt(ctx, tbInfo, s)
+}
+
 func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
@@ -2052,7 +2059,8 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return checkInvisibleIndexOnPK(tblInfo)
 }
 
-func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+// BuildTableInfoWithLike builds a new table info according to CREATE TABLE ... LIKE statement.
+func BuildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
@@ -2102,7 +2110,7 @@ func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
 func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
-	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
+	tbInfo, err := BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -2135,15 +2143,15 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 		if err != nil {
 			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 		}
-		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
+		tbInfo, err = BuildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
 		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	}
 	return tbInfo, err
 }
 
-// buildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
-func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+// BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
+func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	colDefs := s.Cols
 	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
@@ -2168,7 +2176,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	}
 
 	var tbInfo *model.TableInfo
-	tbInfo, err = buildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate)
+	tbInfo, err = BuildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2246,9 +2254,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
+		tbInfo, err = BuildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -2626,7 +2634,7 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 }
 
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
-	viewInfo, err := buildViewInfo(ctx, s)
+	viewInfo, err := BuildViewInfo(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -2650,7 +2658,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		tblCollate = v
 	}
 
-	tbInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil, tblCharset, tblCollate)
+	tbInfo, err := BuildTableInfo(ctx, s.ViewName.Name, cols, nil, tblCharset, tblCollate)
 	if err != nil {
 		return err
 	}
@@ -2664,7 +2672,8 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	return d.CreateTableWithInfo(ctx, s.ViewName.Schema, tbInfo, onExist)
 }
 
-func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
+// BuildViewInfo builds a ViewInfo structure from an ast.CreateViewStmt.
+func BuildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
 	// Always Use `format.RestoreNameBackQuotes` to restore `SELECT` statement despite the `ANSI_QUOTES` SQL Mode is enabled or not.
 	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
 	var sb strings.Builder
@@ -2753,7 +2762,7 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 	}
 	for i := 0; i < len(pi.Columns); i++ {
 		// Special handling for MAXVALUE.
-		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) {
+		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
 			// If current is maxvalue, it certainly >= previous.
 			return true, nil
 		}
@@ -2997,11 +3006,21 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 // `ALTER TABLE ADD COLUMN (c1 INT, c2 INT)` is split into
 // `ALTER TABLE ADD COLUMN c1 INT, ADD COLUMN c2 INT`.
 func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
-	specs := make([]*ast.AlterTableSpec, len(spec.NewColumns))
-	for i, col := range spec.NewColumns {
+	specs := make([]*ast.AlterTableSpec, 0, len(spec.NewColumns)+len(spec.NewConstraints))
+	for _, col := range spec.NewColumns {
 		t := *spec
 		t.NewColumns = []*ast.ColumnDef{col}
-		specs[i] = &t
+		t.NewConstraints = []*ast.Constraint{}
+		specs = append(specs, &t)
+	}
+	// Split the add constraints from AlterTableSpec.
+	for _, con := range spec.NewConstraints {
+		t := *spec
+		t.NewColumns = []*ast.ColumnDef{}
+		t.NewConstraints = []*ast.Constraint{}
+		t.Constraint = con
+		t.Tp = ast.AlterTableAddConstraint
+		specs = append(specs, &t)
 	}
 	return specs
 }
@@ -3019,7 +3038,7 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
-		if spec.Tp == ast.AlterTableAddColumns && len(spec.NewColumns) > 1 {
+		if spec.Tp == ast.AlterTableAddColumns && (len(spec.NewColumns) > 1 || len(spec.NewConstraints) > 0) {
 			validSpecs = append(validSpecs, resolveAlterTableAddColumns(spec)...)
 		} else {
 			validSpecs = append(validSpecs, spec)
@@ -3043,48 +3062,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 	// Only handle valid specs.
 	return validSpecs, nil
-}
-
-func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
-	specType := specs[0].Tp
-	for _, spec := range specs {
-		// We think AlterTableDropPrimaryKey and AlterTableDropIndex are the same types.
-		if spec.Tp == ast.AlterTableDropPrimaryKey || spec.Tp == ast.AlterTableDropIndex {
-			continue
-		}
-		if spec.Tp != specType {
-			return false
-		}
-	}
-	return true
-}
-
-func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
-	if !variable.EnableChangeMultiSchema.Load() {
-		if len(specs) > 1 {
-			return dbterror.ErrRunMultiSchemaChanges
-		}
-		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
-			return dbterror.ErrRunMultiSchemaChanges
-		}
-	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) && !allSupported(specs) {
-			return dbterror.ErrRunMultiSchemaChanges
-		}
-	}
-	return nil
-}
-
-func allSupported(specs []*ast.AlterTableSpec) bool {
-	for _, s := range specs {
-		switch s.Tp {
-		case ast.AlterTableAddColumns, ast.AlterTableDropColumn, ast.AlterTableDropIndex, ast.AlterTableDropPrimaryKey,
-			ast.AlterTableAddConstraint:
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast.AlterTableStmt) (err error) {
@@ -3111,15 +3088,9 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 		}
 	}
 
-	err = checkMultiSpecs(sctx, validSpecs)
-	if err != nil {
-		return err
-	}
-
 	if len(validSpecs) > 1 {
 		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	}
-
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
@@ -3988,12 +3959,14 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		Type:       model.ActionExchangeTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
+		CtxVars:    []interface{}{[]int64{ntSchema.ID, ptSchema.ID}, []int64{ntMeta.ID, ptMeta.ID}},
 	}
 
 	err = d.DoDDLJob(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("after the exchange, please analyze related table of the exchange to update statistics"))
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -4018,21 +3991,15 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return err
 	}
 
-	var multiSchemaInfo *model.MultiSchemaInfo
-	if variable.EnableChangeMultiSchema.Load() {
-		multiSchemaInfo = &model.MultiSchemaInfo{}
-	}
-
 	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		SchemaState:     model.StatePublic,
-		TableName:       t.Meta().Name.L,
-		Type:            model.ActionDropColumn,
-		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: multiSchemaInfo,
-		Args:            []interface{}{colName, spec.IfExists},
+		SchemaID:    schema.ID,
+		TableID:     t.Meta().ID,
+		SchemaName:  schema.Name.L,
+		SchemaState: model.StatePublic,
+		TableName:   t.Meta().Name.L,
+		Type:        model.ActionDropColumn,
+		BinlogInfo:  &model.HistoryInfo{},
+		Args:        []interface{}{colName, spec.IfExists},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -4054,7 +4021,7 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, err
 	}
 
-	if err = isDroppableColumn(variable.EnableChangeMultiSchema.Load(), tblInfo, colName); err != nil {
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
 	// We don't support dropping column with PK handle covered now.
@@ -4469,7 +4436,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		CtxVars: []interface{}{needChangeColData},
-		Args:    []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
@@ -4930,19 +4897,10 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Ban setting replica count for tables in system database.
-	if util.IsMemOrSysDB(schema.Name.L) {
-		return errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
-	} else if tb.Meta().TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set tiflash replica")
-	}
 
-	// Ban setting replica count for tables which has charset not supported by TiFlash
-	for _, col := range tb.Cols() {
-		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
-		if !ok {
-			return dbterror.ErrAlterReplicaForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
-		}
+	err = isTableTiFlashSupported(schema, tb)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	tbReplicaInfo := tb.Meta().TiFlashReplica
@@ -4969,6 +4927,26 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	return errors.Trace(err)
 }
 
+func isTableTiFlashSupported(schema *model.DBInfo, tb table.Table) error {
+
+	// Memory tables and system tables are not supported by TiFlash
+	if util.IsMemOrSysDB(schema.Name.L) {
+		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
+	} else if tb.Meta().TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set on tiflash")
+	}
+
+	// Tables that has charset are not supported by TiFlash
+	for _, col := range tb.Cols() {
+		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
+		if !ok {
+			return dbterror.ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
+		}
+	}
+
+	return nil
+}
+
 func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, mode model.TiFlashMode) error {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -4977,6 +4955,18 @@ func (d *ddl) AlterTableSetTiFlashMode(ctx sessionctx.Context, ident ast.Ident, 
 
 	if mode != model.TiFlashModeNormal && mode != model.TiFlashModeFast {
 		return fmt.Errorf("unsupported TiFlash mode %s", mode)
+	}
+
+	err = isTableTiFlashSupported(schema, tb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Prompt warning when there is no TiFlash replica, as TiFlash mode will
+	// only take effect when executing in TiFlash.
+	tbReplicaInfo := tb.Meta().TiFlashReplica
+	if tbReplicaInfo == nil || tbReplicaInfo.Count == 0 {
+		ctx.GetSessionVars().StmtCtx.AppendNote(dbterror.ErrAlterTiFlashModeForTableWithoutTiFlashReplica)
 	}
 
 	job := &model.Job{
@@ -5457,7 +5447,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, s *ast.RenameTableStmt) error 
 func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	tables := make(map[string]int64)
-	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable, tables)
+	schemas, tableID, err := ExtractTblInfos(is, oldIdent, newIdent, isAlterTable, tables)
 	if err != nil {
 		return err
 	}
@@ -5480,6 +5470,7 @@ func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{schemas[0].ID, newIdent.Name, schemas[0].Name},
+		CtxVars:    []interface{}{[]int64{schemas[0].ID, schemas[1].ID}, []int64{tableID}},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5502,7 +5493,7 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 
 	tables := make(map[string]int64)
 	for i := 0; i < len(oldIdents); i++ {
-		schemas, tableID, err = extractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
+		schemas, tableID, err = ExtractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
 		if err != nil {
 			return err
 		}
@@ -5528,6 +5519,7 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
+		CtxVars:    []interface{}{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5535,7 +5527,8 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	return errors.Trace(err)
 }
 
-func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool, tables map[string]int64) ([]*model.DBInfo, int64, error) {
+// ExtractTblInfos extracts the table information from the infoschema.
+func ExtractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool, tables map[string]int64) ([]*model.DBInfo, int64, error) {
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
 		if isAlterTable {
@@ -6171,7 +6164,7 @@ func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t 
 	return isPK, nil
 }
 
-func isDroppableColumn(multiSchemaChange bool, tblInfo *model.TableInfo, colName model.CIStr) error {
+func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
 		if isHidden {
 			return dbterror.ErrDependentByFunctionalIndex.GenWithStackByArgs(dep)
@@ -6184,7 +6177,7 @@ func isDroppableColumn(multiSchemaChange bool, tblInfo *model.TableInfo, colName
 			colName, tblInfo.Name)
 	}
 	// We only support dropping column with single-value none Primary Key index covered now.
-	err := isColumnCanDropWithIndex(multiSchemaChange, colName.L, tblInfo.Indices)
+	err := isColumnCanDropWithIndex(colName.L, tblInfo.Indices)
 	if err != nil {
 		return err
 	}
@@ -6586,7 +6579,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		return err
 	}
 	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
-	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil, "", "")
+	tbInfo, err := BuildTableInfo(ctx, ident.Name, nil, nil, "", "")
 	if err != nil {
 		return err
 	}
@@ -6659,7 +6652,7 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 		invisible = true
 	}
 
-	skip, err := validateAlterIndexVisibility(indexName, invisible, tb.Meta())
+	skip, err := validateAlterIndexVisibility(ctx, indexName, invisible, tb.Meta())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -7046,7 +7039,7 @@ func (d *ddl) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err error)
 		return nil
 	}
 
-	// forbit cache table in system database.
+	// forbidden cache table in system database.
 	if util.IsMemOrSysDB(schema.Name.L) {
 		return errors.Trace(dbterror.ErrUnsupportedAlterCacheForSysTable)
 	} else if t.Meta().TempTableType != model.TempTableNone {
