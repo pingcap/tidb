@@ -142,7 +142,8 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if len(hg.Buckets) == 0 && len(hg.scalars) == 0 && hg.Bounds.Capacity() == 0 {
 		return
 	}
-	return hg.Bounds.MemoryUsage()
+	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
+	return sum
 }
 
 // AppendBucket appends a bucket into `hg`.
