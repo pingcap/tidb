@@ -2685,7 +2685,7 @@ func (er *expressionRewriter) resolveNormalColumn(v *ast.ColumnName, fixInAggFun
 	return nil, nil
 }
 
-func (er *expressionRewriter) resolveFromPlan(v *ast.ColumnName, fixInAggFuncMaxLevel func(selectBlockOffsetOfOuterColumn int),
+func (er *expressionRewriter) resolveOrderByColumnRef2(v *ast.ColumnName, fixInAggFuncMaxLevel func(selectBlockOffsetOfOuterColumn int),
 	registerColInScope func(scopeIndex int, column *expression.Column, name *types.FieldName)) (expression.Expression, *types.FieldName) {
 	process := func(scopeIndex int, scope *ScopeSchema) (*expression.Column, *types.FieldName, error) {
 		// step2: FROM scope first.
@@ -2705,6 +2705,17 @@ func (er *expressionRewriter) resolveFromPlan(v *ast.ColumnName, fixInAggFuncMax
 			fixInAggFuncMaxLevel(scopeIndex)
 			registerColInScope(scopeIndex, column, name)
 			return column, name, nil
+		}
+		if scope.clauseWhere != fieldList && scope.clauseWhere != windowOrderByClause && scope.clauseWhere != partitionByClause {
+			col, name, err := er.resolveColRefInSelectAndGroup(scopeIndex, scope, v)
+			if err != nil {
+				return nil, nil, err
+			}
+			if col != nil {
+				fixInAggFuncMaxLevel(scopeIndex)
+				registerColInScope(scopeIndex, col, name)
+				return col, name, nil
+			}
 		}
 		return nil, nil, nil
 	}
@@ -2734,7 +2745,7 @@ func (er *expressionRewriter) resolveFromPlan(v *ast.ColumnName, fixInAggFuncMax
 	return nil, nil
 }
 
-func (er *expressionRewriter) resolveOrderByColumnRef(v *ast.ColumnName, fixInAggFuncMaxLevel func(selectBlockOffsetOfOuterColumn int),
+func (er *expressionRewriter) resolveOrderByColumnRef1(v *ast.ColumnName, fixInAggFuncMaxLevel func(selectBlockOffsetOfOuterColumn int),
 	registerColInScope func(scopeIndex int, column *expression.Column, name *types.FieldName)) (expression.Expression, *types.FieldName) {
 	process := func(scopeIndex int, scope *ScopeSchema) (*expression.Column, *types.FieldName, error) {
 		// step1: select scope first
@@ -2858,13 +2869,20 @@ func (er *expressionRewriter) analyzeColumn(v *ast.ColumnName) {
 			name *types.FieldName
 		)
 		if v.ResolveFieldsFirst {
-			col, name = er.resolveOrderByColumnRef(v, fixInAggFuncMaxLevel, registerColInScope)
+			col, name = er.resolveOrderByColumnRef1(v, fixInAggFuncMaxLevel, registerColInScope)
 			if er.err != nil {
 				return
 			}
 		} else {
-			// if col appears in Expr in order by clause, treat it as a normal col.
-			col, name = er.resolveFromPlan(v, fixInAggFuncMaxLevel, registerColInScope)
+			// if col appears in Expr in order by clause, treat it as a normal col first.
+			// once we couldn't find it in base scope col, try find it in select list as well.
+			// eg: select distinct v1+1 as z, v2 from ttest order by v1+1, z+v2 (z should be a projected column here)
+			// for this case: mysql can resolve (v1+1) to the first projected item ignoring alias.
+			// while for the second one, it's hard, so it adds (z+v2) to select list and didn't resolve it again.
+			// which means if mysql treat it as a normal fieldList item (z+v2) and resolve it, it couldn't ref z forward here.
+			//
+			// so let just find it from select list lower priority from base cols.(as did in old resolveHavingAndOrderBy)
+			col, name = er.resolveOrderByColumnRef2(v, fixInAggFuncMaxLevel, registerColInScope)
 			if er.err != nil {
 				return
 			}

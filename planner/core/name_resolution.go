@@ -665,6 +665,16 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 		return err
 	}
 	newFunc.OrderByItems = newOrderByItems
+
+	// As for adapt to old runtime, for those correlated agg from having and order by, we should keep a position in projection.
+	registerAggColumn := func(scope *ScopeSchema, aggCol *expression.Column) {
+		// As for adapt to old runtime, for those correlated agg from having and order by, we should keep a position in projection.
+		if scope.clauseWhere == havingClause || scope.clauseWhere == orderByClause {
+			// eg1: occupy a position in projection eg: select s.a from t3 s having sum(s.a); reserve sum(s.a) in projection.
+			// eg2: select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)+1
+			scope.AddReservedCols(aggCol, types.EmptyName)
+		}
+	}
 	// check whether there is already an equivalence agg there. Refer it if any. (acting like aggMapper before)
 	if inCurrentScope {
 		for i, oldFunc := range b.curScope.aggFuncs {
@@ -678,6 +688,7 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 				//                                      |
 				//  b.curScope.aggFunc[offset]     <----+  (same offset)
 				//  b.curScope.aggColumn[offset]
+				registerAggColumn(b.curScope, b.curScope.aggColumn[i])
 				b.curScope.aggMapper[aggFunc] = i
 				er.ctxStackAppend(b.curScope.aggColumn[i], types.EmptyName)
 				return nil
@@ -687,6 +698,7 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 		for i, oldFunc := range b.outerScopes[scopeIndex].aggFuncs {
 			if oldFunc.Equal(b.ctx, newFunc) {
 				// same as comments above, while the scope is outer scope.
+				registerAggColumn(b.outerScopes[scopeIndex], b.outerScopes[scopeIndex].aggColumn[i])
 				b.outerScopes[scopeIndex].aggMapper[aggFunc] = i
 				er.ctxStackAppend(&expression.CorrelatedColumn{Column: *b.outerScopes[scopeIndex].aggColumn[i], Data: new(types.Datum)}, types.EmptyName)
 				return nil
@@ -708,23 +720,14 @@ func (er *expressionRewriter) buildAggregationDesc(ctx context.Context, p Logica
 		// if it's in the having or orderby of outer clause, select n.b from t n order by (select count(a + n.a) from t);
 		// we should keep n.a in main select block even count(a + n.a) is evaluated in current scope.
 		// b.curScope.AddReservedCols(corCols, cols)
+		registerAggColumn(b.curScope, &column)
 	} else {
 		b.outerScopes[scopeIndex].aggFuncs = append(b.outerScopes[scopeIndex].aggFuncs, newFunc)
 		b.outerScopes[scopeIndex].aggColumn = append(b.outerScopes[scopeIndex].aggColumn, &column)
 		b.outerScopes[scopeIndex].aggMapper[aggFunc] = len(b.outerScopes[scopeIndex].aggFuncs) - 1
 		b.outerScopes[scopeIndex].astAggFunc = append(b.outerScopes[scopeIndex].astAggFunc, aggFunc)
 		// b.outerScopes[scopeIndex].AddReservedCols(corCols, cols)
-	}
-	// As for adapt to old runtime, for those correlated agg from having and order by, we should keep a position in projection.
-	if b.curClause == havingClause || b.curClause == orderByClause {
-		if !inCurrentScope {
-			// occupy a position in projection of current scope.
-			// b.curScope.AddReservedCorrelatedCols(&column)
-			b.outerScopes[scopeIndex].AddReservedCols(&column, types.EmptyName)
-		} else {
-			// occupy a position in projection eg: select s.a from t3 s having sum(s.a); reserve sum(s.a) in projection.
-			b.curScope.AddReservedCols(&column, types.EmptyName)
-		}
+		registerAggColumn(b.outerScopes[scopeIndex], &column)
 	}
 
 	if !inCurrentScope {

@@ -3883,7 +3883,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "SELECT * FROM t1 dt WHERE EXISTS(   WITH RECURSIVE qn AS (SELECT a*0 AS b UNION ALL SELECT b+1 FROM qn WHERE b=0)   SELECT * FROM qn WHERE b=a )") {
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)+1") {
 		fmt.Println(1)
 	}
 
