@@ -1437,17 +1437,18 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 
 func (b *PlanBuilder) buildPhysicalTableReader(ds *DataSource) (PhysicalPlan, error) {
 	tblInfo := ds.tableInfo
-	physicalID, isPartition := getPhysicalID(ds.table)
 	ts := PhysicalTableScan{
-		Columns:         tblInfo.Columns,
 		Table:           tblInfo,
+		Columns:         ds.Columns,
+		DBName:          ds.DBName,
 		TableAsName:     &tblInfo.Name,
-		physicalTableID: physicalID,
-		isPartition:     isPartition,
+		physicalTableID: ds.physicalTableID,
+		isPartition:     ds.isPartition,
+		tblCols:         ds.TblCols,
 		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(ds.schema)
-	ts.Columns = ds.Columns
+	ts.stats = &property.StatsInfo{}
 	var extraCol *expression.Column
 	for _, col := range ds.schema.Columns {
 		if col.ID == model.ExtraHandleID {
@@ -1456,10 +1457,11 @@ func (b *PlanBuilder) buildPhysicalTableReader(ds *DataSource) (PhysicalPlan, er
 	}
 	_, commonCols, _ := tryGetCommonHandleCols(ds.table, ds.schema)
 	cop := &copTask{
-		tablePlan:        ts,
-		tblColHists:      ts.tblColHists,
-		extraHandleCol:   extraCol,
-		commonHandleCols: commonCols,
+		tablePlan:         ts,
+		indexPlanFinished: true,
+		tblColHists:       ts.tblColHists,
+		extraHandleCol:    extraCol,
+		commonHandleCols:  commonCols,
 	}
 	rootT := cop.convertToRootTask(b.ctx)
 	if err := rootT.p.ResolveIndices(); err != nil {

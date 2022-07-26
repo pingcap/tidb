@@ -6477,26 +6477,6 @@ func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
 		{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
 	}
 	checkCaseFn()
-
-	// todo: fix me
-	// Case-10: test primary key is handle and contain foreign key column.
-	cases = []struct {
-		sql string
-		err *terror.Error
-	}{
-		{sql: "set @@tidb_enable_clustered_index=0;"},
-		{sql: "drop table if exists t2;"},
-		{sql: "drop table if exists t1;"},
-		{sql: "create table t1 (id int,a int, primary key(id));"},
-		{sql: "create table t2 (id int,a int, primary key(a), foreign key fk(a) references t1(id) ON DELETE CASCADE);"},
-		{sql: "insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4);"},
-		{sql: "insert into t2 values (1, 1);"},
-		{sql: "delete from t1 where id = 2;"},
-		{sql: "delete from t1 where a = 3 or a = 4;"},
-		// todo: test for cascade.
-		//{sql: "delete from t1 where id = 1", err: plannercore.ErrRowIsReferenced2},
-	}
-	checkCaseFn()
 }
 
 func TestForeignKeyOnDeleteCascade(t *testing.T) {
@@ -6506,13 +6486,109 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@foreign_key_checks=1")
 
-	// Case-1: test unique index only contain foreign key columns.
-	tk.MustExec("create table t1 (id int,a int, b int, unique index(a, b));")
-	tk.MustExec("create table t2 (id int,a int, b int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);")
-	tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2),(3, 3, 3), (4, 4, 4);")
-	tk.MustExec("insert into t2 values (1, 1, 1),(2, 2, 2),(3, 3, 3), (4, 4, 4);")
-	tk.MustExec("delete from t1 where a=1 or a=3")
-	tk.MustQuery("select a from t2").Check(testkit.Rows("2", "4"))
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int, a int, b int,  unique index(a, b));",
+				"create table t2 (b int, a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-2: test unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
+				"create table t2 (b int, a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-3: test non-unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int, index(a, b));",
+				"create table t2 (b int, a int, id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-4: test non-unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int,  index(a, b, id));",
+				"create table t2 (b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
+		tk.MustExec("insert into t2 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (null, 5, 5), (6, null, 6), (null, null, 7);")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7)")
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("5 5 <nil>", "6 <nil> 6", "7 <nil> <nil>"))
+	}
+
+	cases = []struct {
+		prepareSQLs []string
+	}{
+		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int,  a int, id int, primary key (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+			},
+		},
+		// Case-9: test primary key is handle and contain foreign key column.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (id));",
+				"create table t2 (b int,  a int, id int, primary key (a), foreign key fk(a) references t1(id) ON DELETE CASCADE);",
+			},
+		},
+	}
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+		tk.MustExec("insert into t2 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4);")
+		tk.MustExec("delete from t1 where id = 1 or a = 2")
+		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("3 3 3", "4 4 4"))
+		tk.MustExec("delete from t1 where a in (2,3) or b < 5")
+		tk.MustQuery("select id, a, b from t2").Check(testkit.Rows())
+	}
 }
 
 func TestForeignKeyOnDeleteSetNull(t *testing.T) {

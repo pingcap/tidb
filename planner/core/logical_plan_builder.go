@@ -5743,6 +5743,9 @@ func (p *baseFKTriggerPlan) setRangeForSelectPlan(selectPlan PhysicalPlan, fkVal
 	case *PhysicalIndexLookUpReader:
 		is := p.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges = ranges
+	case *PhysicalTableReader:
+		reader := p.tablePlan.(*PhysicalTableScan)
+		reader.Ranges = ranges
 	default:
 		return errors.Errorf("unknown")
 	}
@@ -6103,6 +6106,9 @@ func (b *PlanBuilder) buildTableReaderForFK(ds *DataSource, cols []model.CIStr) 
 	idx := model.FindIndexByColumns(tblInfo.Indices, cols...)
 	if idx == nil {
 		return nil, errors.Errorf("foreign key doesn't have related index to use, should never happen")
+	}
+	if ds.tableInfo.IsCommonHandle && idx.Primary {
+		return b.buildPhysicalTableReader(ds)
 	}
 
 	return b.buildPhysicalIndexLookUpReader(ds.DBName, ds.table, idx, ds.schema, ds.Columns)
