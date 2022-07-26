@@ -70,6 +70,6 @@ func (Glue) GetVersion() string {
 }
 
 // UseOneShotSession implements glue.Glue.
-func (g Glue) UseOneShotSession(store kv.Storage, fn func(glue.Session) error) error {
+func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
 	return nil
 }

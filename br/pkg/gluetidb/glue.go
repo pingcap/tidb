@@ -115,7 +115,7 @@ func (g Glue) GetVersion() string {
 }
 
 // UseOneShotSession implements glue.Glue.
-func (g Glue) UseOneShotSession(store kv.Storage, fn func(glue.Session) error) error {
+func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
 	se, err := session.CreateSession(store)
 	if err != nil {
 		return errors.Trace(err)
@@ -131,7 +131,9 @@ func (g Glue) UseOneShotSession(store kv.Storage, fn func(glue.Session) error) e
 	// because domain was created during the whole program exists.
 	// and it will register br info to info syncer.
 	// we'd better close it as soon as possible.
-	defer dom.Close()
+	if closeDomain {
+		defer dom.Close()
+	}
 	err = fn(glueSession)
 	if err != nil {
 		return errors.Trace(err)
@@ -410,7 +412,7 @@ func (*MockGlue) GetVersion() string {
 }
 
 // UseOneShotSession implements glue.Glue.
-func (m *MockGlue) UseOneShotSession(store kv.Storage, fn func(glue.Session) error) error {
+func (m *MockGlue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
 	glueSession := &mockSession{
 		se: m.se,
 	}

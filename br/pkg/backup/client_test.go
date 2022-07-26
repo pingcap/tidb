@@ -284,7 +284,7 @@ func TestSkipUnsupportedDDLJob(t *testing.T) {
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 	s.mockGlue.SetSession(tk.Session())
-	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts)
+	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts, false)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoError(t, err, "Flush failed", err)

@@ -264,7 +264,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	var newCollationEnable string
-	err = g.UseOneShotSession(mgr.GetStorage(), func(se glue.Session) error {
+	err = g.UseOneShotSession(mgr.GetStorage(), !needDomain, func(se glue.Session) error {
 		newCollationEnable, err = se.GetGlobalVariable(tidbNewCollationEnabled)
 		if err != nil {
 			return errors.Trace(err)
@@ -402,7 +402,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 
 		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS)
+		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)
 		if err != nil {
 			return errors.Trace(err)
 		}

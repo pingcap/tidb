@@ -34,7 +34,7 @@ type Glue interface {
 	// because we don't have to own domain/session during the whole backup.
 	// we can close domain as soon as possible.
 	// and we must reuse the exists session and don't close it in SQL backup job.
-	UseOneShotSession(store kv.Storage, fn func(se Session) error) error
+	UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se Session) error) error
 }
 
 // Session is an abstraction of the session.Session interface.

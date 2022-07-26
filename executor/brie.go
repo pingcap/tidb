@@ -570,7 +570,7 @@ func (gs *tidbGlueSession) GetVersion() string {
 }
 
 // UseOneShotSession implements glue.Glue
-func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, fn func(se glue.Session) error) error {
+func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
 	// in SQL backup. we don't need to close domain.
 	return fn(gs)
 }
