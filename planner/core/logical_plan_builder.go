@@ -4193,7 +4193,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 			if cte.recurLP == nil && cte.isInline {
 				lp.MergeHints.preferMerge = cte.isInline
-				saveCte := b.outerCTEs[i:]
+				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
+				copy(saveCte, b.outerCTEs[i:])
 				b.outerCTEs = b.outerCTEs[:i]
 				o := b.buildingCTE
 				b.buildingCTE = false
@@ -5256,6 +5257,11 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 		}
 
 		for i, col := range tbl.WritableCols() {
+			// schema may be changed between building plan and building executor
+			// If i >= len(flags), it means the target table has been added columns, then we directly skip the check
+			if i >= len(flags) {
+				continue
+			}
 			if flags[i] < 0 {
 				continue
 			}
@@ -5357,7 +5363,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		if !found {
 			return nil, nil, false, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
-		for i, colInfo := range tableInfo.Columns {
+		for i, colInfo := range tableVal.Cols() {
 			if !colInfo.IsGenerated() {
 				continue
 			}

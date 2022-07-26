@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testfork"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -881,4 +882,99 @@ func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("1 12"))
 		}
 	})
+}
+
+func TestTSOCmdCountForPrepareExecute(t *testing.T) {
+	// This is a mock workload mocks one which discovers that the tso request count is abnormal.
+	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
+	// to reject future works that accidentally causes tso request increasing.
+	// Note, we do not record all tso requests but some typical requests.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
+	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ctx := context.Background()
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+
+	tk.MustExec("create table t1(id int, v int, v2 int, primary key (id), unique key uk (v))")
+	tk.MustExec("create table t2(id int, v int, unique key i1(v))")
+	tk.MustExec("create table t3(id int, v int, key i1(v))")
+
+	sqlSelectID, _, _, _ := tk.Session().PrepareStmt("select * from t1 where id = ? for update")
+	sqlUpdateID, _, _, _ := tk.Session().PrepareStmt("update t1 set v = v + 10 where id = ?")
+	sqlInsertID1, _, _, _ := tk.Session().PrepareStmt("insert into t2 values(?, ?)")
+	sqlInsertID2, _, _, _ := tk.Session().PrepareStmt("insert into t3 values(?, ?)")
+
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+
+	for i := 1; i < 100; i++ {
+		tk.MustExec("begin pessimistic")
+		stmt, err := tk.Session().ExecutePreparedStmt(ctx, sqlSelectID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.NoError(t, stmt.Close())
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlUpdateID, []types.Datum{types.NewDatum(1)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+
+		val := i * 10
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID1, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		stmt, err = tk.Session().ExecutePreparedStmt(ctx, sqlInsertID2, []types.Datum{types.NewDatum(val), types.NewDatum(val)})
+		require.NoError(t, err)
+		require.Nil(t, stmt)
+		tk.MustExec("commit")
+	}
+	count := sctx.Value(sessiontxn.TsoRequestCount)
+	require.Equal(t, uint64(99), count)
+
+}
+
+func TestTSOCmdCountForTextSql(t *testing.T) {
+	// This is a mock workload mocks one which discovers that the tso request count is abnormal.
+	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
+	// to reject future works that accidentally causes tso request increasing.
+	// Note, we do not record all tso requests but some typical requests.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/sessiontxn/isolation/requestTsoFromPD"))
+	}()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+
+	tk.MustExec("create table t1(id int, v int, v2 int, primary key (id), unique key uk (v))")
+	tk.MustExec("create table t2(id int, v int, unique key i1(v))")
+	tk.MustExec("create table t3(id int, v int, key i1(v))")
+
+	tk.MustExec("insert into t1 values (1, 1, 1)")
+	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
+	for i := 1; i < 100; i++ {
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t1 where id = 1 for update")
+		tk.MustExec("update t1 set v = v + 10 where id = 1")
+		val := i * 10
+		tk.MustExec(fmt.Sprintf("insert into t2 values(%v, %v)", val, val))
+		tk.MustExec(fmt.Sprintf("insert into t3 values(%v, %v)", val, val))
+		tk.MustExec("commit")
+	}
+	count := sctx.Value(sessiontxn.TsoRequestCount)
+	require.Equal(t, uint64(99), count)
 }

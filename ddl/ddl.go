@@ -723,7 +723,9 @@ func (d *ddl) close() {
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
 	}
-	d.sessPool.close()
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
 	variable.UnregisterStatistics(d)
 
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
@@ -1121,7 +1123,9 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	} else {
 		err = d.MoveJobFromTable2Queue()
 	}
-	variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+	if err == nil {
+		variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+	}
 	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	return err
 }

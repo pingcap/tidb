@@ -67,6 +67,7 @@ go_test(
         "mvcc_test.go",
     ],
     embed = [":tikv"],
+    flaky = True,
     deps = [
         "//store/mockstore/unistore/config",
         "//store/mockstore/unistore/lockstore",

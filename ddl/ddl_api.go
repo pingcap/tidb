@@ -706,7 +706,6 @@ func buildColumnsAndConstraints(
 	tblCharset string,
 	tblCollate string,
 ) ([]*table.Column, []*ast.Constraint, error) {
-	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
 	for _, v := range constraints {
@@ -716,6 +715,8 @@ func buildColumnsAndConstraints(
 		}
 	}
 	cols := make([]*table.Column, 0, len(colDefs))
+	colMap := make(map[string]*table.Column, len(colDefs))
+
 	for i, colDef := range colDefs {
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate)
 		if err != nil {
@@ -2761,7 +2762,7 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 	}
 	for i := 0; i < len(pi.Columns); i++ {
 		// Special handling for MAXVALUE.
-		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) {
+		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
 			// If current is maxvalue, it certainly >= previous.
 			return true, nil
 		}

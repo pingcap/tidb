@@ -329,7 +329,7 @@ func TestShow(t *testing.T) {
 	))
 	testSQL = "show create database if not exists show_test_DB;"
 	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+		"show_test_DB|CREATE DATABASE IF NOT EXISTS `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
@@ -811,6 +811,10 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r = tk.MustQuery(str + " tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
+	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows("test1 t _tidb_rowid 1 AUTO_INCREMENT"))
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 

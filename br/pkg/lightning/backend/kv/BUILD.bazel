@@ -50,6 +50,7 @@ go_test(
         "sql2kv_test.go",
     ],
     embed = [":kv"],
+    flaky = True,
     deps = [
         "//br/pkg/lightning/common",
         "//br/pkg/lightning/log",
