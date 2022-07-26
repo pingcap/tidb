@@ -20,13 +20,6 @@ type ExecutorWithForeignKeyTrigger interface {
 	GetForeignKeyTriggerExecs() []*ForeignKeyTriggerExec
 }
 
-func getForeignKeyTriggerExecs(e Executor) []*ForeignKeyTriggerExec {
-	if exec, ok := e.(ExecutorWithForeignKeyTrigger); ok {
-		return exec.GetForeignKeyTriggerExecs()
-	}
-	return nil
-}
-
 type ForeignKeyCheckExec struct {
 	baseExecutor
 
@@ -181,6 +174,15 @@ type ForeignKeyTriggerExec struct {
 	colsOffsets []int
 	fkValues    [][]types.Datum
 	fkValuesSet set.StringSet
+	// new-value-key => updatedValuesCouple
+	fkUpdatedValuesMap map[string]*updatedValuesCouple
+
+	buildFKValues set.StringSet
+}
+
+type updatedValuesCouple struct {
+	newVals     []types.Datum
+	oldValsList [][]types.Datum
 }
 
 func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementContext, row []types.Datum) error {
@@ -198,6 +200,30 @@ func (fkt *ForeignKeyTriggerExec) addRowNeedToTrigger(sc *stmtctx.StatementConte
 	}
 	fkt.fkValues = append(fkt.fkValues, vals)
 	fkt.fkValuesSet.Insert(key)
+	return nil
+}
+
+func (fkt *ForeignKeyTriggerExec) updateRowNeedToTrigger(sc *stmtctx.StatementContext, oldRow, newRow []types.Datum) error {
+	oldVals, err := fetchFKValues(oldRow, fkt.colsOffsets)
+	if err != nil || len(oldVals) == 0 {
+		return err
+	}
+	newVals, err := fetchFKValues(newRow, fkt.colsOffsets)
+	if err != nil || len(newVals) == 0 {
+		return err
+	}
+	keyBuf, err := codec.EncodeKey(sc, nil, newVals...)
+	if err != nil {
+		return err
+	}
+	couple := fkt.fkUpdatedValuesMap[string(keyBuf)]
+	if couple == nil {
+		couple = &updatedValuesCouple{
+			newVals: newVals,
+		}
+	}
+	couple.oldValsList = append(couple.oldValsList, oldVals)
+	fkt.fkUpdatedValuesMap[string(keyBuf)] = couple
 	return nil
 }
 
@@ -233,8 +259,28 @@ func fetchFKValues(row []types.Datum, colsOffsets []int) ([]types.Datum, error) 
 	return vals, nil
 }
 
-func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() error {
-	return fkt.fkTriggerPlan.SetRangeForSelectPlan(fkt.fkValues)
+func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() (bool, error) {
+	switch p := fkt.fkTriggerPlan.(type) {
+	case *plannercore.FKOnUpdateCascadePlan:
+		for key, couple := range fkt.fkUpdatedValuesMap {
+			if fkt.buildFKValues.Exist(key) {
+				continue
+			}
+			fkt.buildFKValues.Insert(key)
+			err := p.SetRangeForSelectPlan(couple.oldValsList)
+			if err != nil {
+				return false, err
+			}
+			return len(fkt.buildFKValues) == len(fkt.fkUpdatedValuesMap), p.SetUpdatedValues(couple.newVals)
+		}
+		return true, nil
+	}
+	valsList := make([][]types.Datum, 0, len(fkt.fkValues))
+	valsList = append(valsList, fkt.fkValues...)
+	for _, couple := range fkt.fkUpdatedValuesMap {
+		valsList = append(valsList, couple.oldValsList...)
+	}
+	return true, fkt.fkTriggerPlan.SetRangeForSelectPlan(valsList)
 }
 
 func (fkt *ForeignKeyTriggerExec) buildExecutor() Executor {
@@ -273,10 +319,12 @@ func (b *executorBuilder) buildForeignKeyTriggerExec(tbInfo *model.TableInfo, fk
 	}
 
 	return &ForeignKeyTriggerExec{
-		b:             b,
-		fkTriggerPlan: fkTriggerPlan,
-		colsOffsets:   colsOffsets,
-		fkValuesSet:   set.NewStringSet(),
+		b:                  b,
+		fkTriggerPlan:      fkTriggerPlan,
+		colsOffsets:        colsOffsets,
+		fkValuesSet:        set.NewStringSet(),
+		buildFKValues:      set.NewStringSet(),
+		fkUpdatedValuesMap: make(map[string]*updatedValuesCouple),
 	}, nil
 }
 

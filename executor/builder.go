@@ -305,6 +305,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildDelete(v.Delete)
 	case *plannercore.FKOnDeleteSetNullPlan:
 		return b.buildUpdate(v.Update)
+	case *plannercore.FKOnUpdateCascadePlan:
+		return b.buildUpdate(v.Update)
 	case *plannercore.FKCheckPlan:
 		return b.buildFKCheck(v)
 	default:
@@ -2117,6 +2119,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
+	}
+	updateExec.fkTriggerExecs, b.err = b.buildTblID2ForeignKeyTriggerExecs(tblID2table, v.FKTriggerPlans)
+	if b.err != nil {
+		return nil
 	}
 	return updateExec
 }

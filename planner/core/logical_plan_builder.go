@@ -5764,6 +5764,12 @@ type FKOnDeleteSetNullPlan struct {
 	*Update
 }
 
+type FKOnUpdateCascadePlan struct {
+	baseFKTriggerPlan
+
+	*Update
+}
+
 type FKCheckPlan struct {
 	baseSchemaProducer
 	baseFKTriggerPlan
@@ -5785,20 +5791,23 @@ type FKCheckPlan struct {
 	ToBeCheckedIndexKeys  []kv.Key
 }
 
-func (p *FKOnDeleteCascadePlan) GetTriggerPlan() Plan {
-	return p.Delete
-}
-
 func (p *FKOnDeleteCascadePlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
 	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
 }
 
-func (p *FKOnDeleteSetNullPlan) GetTriggerPlan() Plan {
-	return p.Update
-}
-
 func (p *FKOnDeleteSetNullPlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
 	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
+}
+
+func (p *FKOnUpdateCascadePlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
+	return p.setRangeForSelectPlan(p.SelectPlan, fkValues)
+}
+
+func (p *FKOnUpdateCascadePlan) SetUpdatedValues(fkValues []types.Datum) error {
+	for i, assgisn := range p.Update.OrderedList {
+		assgisn.Expr = &expression.Constant{Value: fkValues[i], RetType: assgisn.Col.RetType}
+	}
+	return nil
 }
 
 func (p *FKCheckPlan) SetRangeForSelectPlan(fkValues [][]types.Datum) error {
@@ -5893,10 +5902,9 @@ func (b *PlanBuilder) buildForeignKeyOnUpdateTriggerPlan(ctx context.Context, re
 	if fk == nil || fk.Version == 0 {
 		return nil, nil
 	}
-	switch ast.ReferOptionType(fk.OnDelete) {
+	switch ast.ReferOptionType(fk.OnUpdate) {
 	case ast.ReferOptionCascade:
-		//triggerPlan, err = b.buildForeignKeyCascadeDelete(ctx, referredFK.ChildSchema, childTable, fk)
-		return nil, nil
+		return b.buildUpdateForeignKeyCascade(ctx, referredFK.ChildSchema, childTable, fk)
 	case ast.ReferOptionSetNull:
 		return b.buildUpdateForeignKeySetNull(ctx, referredFK.ChildSchema, childTable, fk)
 	case ast.ReferOptionRestrict, ast.ReferOptionNoOption, ast.ReferOptionNoAction, ast.ReferOptionSetDefault:
@@ -5980,7 +5988,18 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName m
 	}, nil
 }
 
-func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
+func (b *PlanBuilder) buildUpdateForeignKeyCascade(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (FKTriggerPlan, error) {
+	triggerPlan, err := b.buildUpdateForeignKeySetNull(ctx, dbName, tbl, fk)
+	if err != nil {
+		return nil, err
+	}
+	return &FKOnUpdateCascadePlan{
+		baseFKTriggerPlan: triggerPlan.baseFKTriggerPlan,
+		Update:            triggerPlan.Update,
+	}, nil
+}
+
+func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName model.CIStr, tbl table.Table, fk *model.FKInfo) (*FKOnDeleteSetNullPlan, error) {
 	tn := &ast.TableName{
 		Schema: dbName,
 		Name:   tbl.Meta().Name,

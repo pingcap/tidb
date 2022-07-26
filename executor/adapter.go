@@ -495,11 +495,19 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 }
 
 func (a *ExecStmt) handleForeignKeyTrigger(ctx context.Context, e Executor, isPessimistic bool) error {
-	fkTriggerExecs := getForeignKeyTriggerExecs(e)
-	for _, fkt := range fkTriggerExecs {
-		err := fkt.buildIndexReaderRange()
+	exec, ok := e.(ExecutorWithForeignKeyTrigger)
+	if !ok {
+		return nil
+	}
+	fkTriggerExecs := exec.GetForeignKeyTriggerExecs()
+	for i := 0; i < len(fkTriggerExecs); {
+		fkt := fkTriggerExecs[i]
+		done, err := fkt.buildIndexReaderRange()
 		if err != nil {
 			return err
+		}
+		if done {
+			i = i + 1
 		}
 		e := fkt.buildExecutor()
 		if err := e.Open(ctx); err != nil {

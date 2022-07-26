@@ -66,6 +66,8 @@ type UpdateExec struct {
 	tableUpdatable []bool
 	changed        []bool
 	matches        []bool
+
+	fkTriggerExecs map[int64][]*ForeignKeyTriggerExec
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -191,7 +193,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		flags := bAssignFlag[content.Start:content.End]
 
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
+		fkTriggerExecs := e.fkTriggerExecs[content.TblID]
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkTriggerExecs)
 		if err1 == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
@@ -536,4 +539,12 @@ func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
 // Tp implements the RuntimeStats interface.
 func (e *updateRuntimeStats) Tp() int {
 	return execdetails.TpUpdateRuntimeStats
+}
+
+func (e *UpdateExec) GetForeignKeyTriggerExecs() []*ForeignKeyTriggerExec {
+	fkTriggerExecs := []*ForeignKeyTriggerExec{}
+	for _, fkts := range e.fkTriggerExecs {
+		fkTriggerExecs = append(fkTriggerExecs, fkts...)
+	}
+	return fkTriggerExecs
 }
