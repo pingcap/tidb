@@ -32,7 +32,7 @@ func NewSortImpl(sort *plannercore.PhysicalSort) *SortImpl {
 }
 
 // CalcCost calculates the cost of the sort Implementation.
-func (impl *SortImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *SortImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	cnt := math.Min(children[0].GetPlan().Stats().RowCount, impl.plan.GetChildReqProps(0).ExpectedCnt)
 	sort := impl.plan.(*plannercore.PhysicalSort)
 	impl.cost = sort.GetCost(cnt, children[0].GetPlan().Schema()) + children[0].GetCost()
