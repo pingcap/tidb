@@ -1175,7 +1175,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Error("[stats] incrementally update count",
+			logutil.BgLogger().Info("[stats] incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -1186,7 +1186,7 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Error("[stats] directly update count",
+			logutil.BgLogger().Info("[stats] directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
