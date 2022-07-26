@@ -436,9 +436,12 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
-	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
-	// Put row key and unique index need to lock.
-	return !isNonUniqueIndex
+
+	if !tablecodec.IsIndexKey(k) {
+		return true
+	}
+
+	return tablecodec.IndexKVIsUnique(v)
 }
 
 // Info dump the TxnState to Datum for displaying in `TIDB_TRX`
