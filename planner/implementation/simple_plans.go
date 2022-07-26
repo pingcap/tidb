@@ -190,7 +190,7 @@ func (impl *UnionAllImpl) CalcCost(_ float64, children ...memo.Implementation) f
 }
 
 // GetCostLimit implements Implementation interface.
-func (impl *UnionAllImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
+func (*UnionAllImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
 	return costLimit
 }
 
