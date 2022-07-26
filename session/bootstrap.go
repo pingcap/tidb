@@ -2032,7 +2032,7 @@ func doDMLWorks(s Session) {
 		vVal := v.Value
 		switch v.Name {
 		case variable.TiDBTxnMode:
-			if config.GetGlobalConfig().Store == "tikv" {
+			if config.GetGlobalConfig().Store == "tikv" || config.GetGlobalConfig().Store == "unistore" {
 				vVal = "pessimistic"
 			}
 		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
