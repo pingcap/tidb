@@ -329,13 +329,15 @@ func getTaskPlanCost(t task) (float64, bool, error) {
 	default:
 		return 0, false, errors.New("unknown task type")
 	}
-	cost, err := t.plan().GetPlanCost(taskType, 0)
+	cost, err := t.plan().GetPlanCost(taskType, NewDefaultPlanCostOption())
 	return cost, false, err
 }
 
 type physicalOptimizeOp struct {
 	// tracer is goring to track optimize steps during physical optimizing
 	tracer *tracing.PhysicalOptimizeTracer
+
+	currCostDetail *tracing.PhysicalPlanCostDetail
 }
 
 func defaultPhysicalOptimizeOption() *physicalOptimizeOp {
@@ -357,6 +359,34 @@ func (op *physicalOptimizeOp) appendCandidate(lp LogicalPlan, pp PhysicalPlan, p
 		MappingLogicalPlan: tracing.CodecPlanName(lp.TP(), lp.ID())}
 	op.tracer.AppendCandidate(candidate)
 	pp.appendChildCandidate(op)
+}
+
+func (op *physicalOptimizeOp) appendPlanCostDetail(pp PhysicalPlan) *physicalOptimizeOp {
+	if op == nil || op.tracer == nil {
+		return nil
+	}
+	if op.currCostDetail != nil {
+		op.tracer.PhysicalPlanCostDetails[pp.ID()] = op.currCostDetail
+		op.currCostDetail = nil
+	}
+	op.currCostDetail = tracing.NewPhysicalPlanCostDetail(pp.ID(), pp.TP())
+	return op
+}
+
+func (op *physicalOptimizeOp) appendParamCostDetail(k string, v interface{}) *physicalOptimizeOp {
+	if op == nil || op.tracer == nil || op.currCostDetail == nil {
+		return nil
+	}
+	op.currCostDetail.AddParam(k, v)
+	return op
+}
+
+func (op *physicalOptimizeOp) appendCurrCostDesc(desc string) *physicalOptimizeOp {
+	if op == nil || op.tracer == nil || op.currCostDetail == nil {
+		return nil
+	}
+	op.currCostDetail.SetDesc(desc)
+	return op
 }
 
 // findBestTask implements LogicalPlan interface.
@@ -2018,7 +2048,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
 		pointGetPlan.PartitionInfo = partitionInfo
 		pointGetPlan.accessCols = ds.TblCols
-		cost = pointGetPlan.GetCost()
+		cost = pointGetPlan.GetCost(opt)
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
@@ -2040,7 +2070,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		} else {
 			pointGetPlan.accessCols = ds.TblCols
 		}
-		cost = pointGetPlan.GetCost()
+		cost = pointGetPlan.GetCost(opt)
 		// Add index condition to table plan now.
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
