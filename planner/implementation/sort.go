@@ -55,7 +55,7 @@ type NominalSortImpl struct {
 }
 
 // AttachChildren implements Implementation AttachChildren interface.
-func (impl *NominalSortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+func (*NominalSortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
 	return children[0]
 }
 

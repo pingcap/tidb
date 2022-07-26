@@ -53,11 +53,11 @@ func (impl *baseImpl) AttachChildren(children ...memo.Implementation) memo.Imple
 	return impl
 }
 
-func (impl *baseImpl) ScaleCostLimit(costLimit float64) float64 {
+func (*baseImpl) ScaleCostLimit(costLimit float64) float64 {
 	return costLimit
 }
 
-func (impl *baseImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
+func (*baseImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
 	childrenCost := 0.0
 	for _, child := range children {
 		childrenCost += child.GetCost()
