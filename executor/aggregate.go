@@ -211,6 +211,8 @@ type HashAggExec struct {
 	spillAction *AggSpillDiskAction
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
+
+	test *chunk.Chunk
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -789,9 +791,9 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		}
 		mSize := chk.MemoryUsage()
 		err = Next(ctx, e.children[0], chk)
-		chk.CopyConstruct()
-		chk.CopyConstruct()
-		chk.CopyConstruct()
+		e.test = chk.CopyConstruct()
+		e.test = chk.CopyConstruct()
+		e.test = chk.CopyConstruct()
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
 			e.memTracker.Consume(-mSize)
