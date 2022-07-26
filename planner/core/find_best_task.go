@@ -137,7 +137,7 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 	return &property.PhysicalProperty{SortItems: propItems}, true, onlyColumn
 }
 
-func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
+func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, _ *physicalOptimizeOp) (task, int64, error) {
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -152,7 +152,7 @@ func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty, planCou
 	return &rootTask{p: dual, isEmpty: p.RowCount == 0}, 1, nil
 }
 
-func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
+func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, _ *physicalOptimizeOp) (task, int64, error) {
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -162,7 +162,7 @@ func (p *LogicalShow) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return &rootTask{p: pShow}, 1, nil
 }
 
-func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
+func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, _ *physicalOptimizeOp) (task, int64, error) {
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
@@ -288,7 +288,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 }
 
 // compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
-func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+func compareTaskCost(_ sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
 	curCost, curInvalid, err := getTaskPlanCost(curTask)
 	if err != nil {
 		return false, err
@@ -1068,7 +1068,7 @@ func (ds *DataSource) canConvertToPointGetForPlanCache(path *util.AccessPath) bo
 	return false
 }
 
-func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
+func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if prop.TaskTp != property.RootTaskType || !prop.IsSortItemEmpty() {
 		return invalidTask, nil
 	}
@@ -1223,7 +1223,7 @@ func setIndexMergeTableScanHandleCols(ds *DataSource, ts *PhysicalTableScan) (er
 
 // buildIndexMergeTableScan() returns Selection that will be pushed to TiKV.
 // Filters that cannot be pushed to TiKV are also returned, and an extra Selection above IndexMergeReader will be constructed later.
-func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression,
+func (ds *DataSource) buildIndexMergeTableScan(_ *property.PhysicalProperty, tableFilters []expression.Expression,
 	totalRowCount float64) (PhysicalPlan, float64, []expression.Expression, error) {
 	var partialCost float64
 	sessVars := ds.ctx.GetSessionVars()
@@ -1358,7 +1358,7 @@ func (ds *DataSource) addSelection4PlanCache(task *rootTask, stats *property.Sta
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
-	candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
+	candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
@@ -1845,7 +1845,7 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 }
 
 // GetPhysicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
-func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
+func (s *LogicalIndexScan) GetPhysicalIndexScan(_ *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
 	ds := s.Source
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -1869,7 +1869,7 @@ func (s *LogicalIndexScan) GetPhysicalIndexScan(schema *expression.Schema, stats
 }
 
 // convertToTableScan converts the DataSource to table scan.
-func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
+func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
@@ -1948,7 +1948,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 }
 
 func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
-	candidate *candidatePath, opt *physicalOptimizeOp) (task task, err error) {
+	candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
@@ -1972,7 +1972,7 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty,
 	}, nil
 }
 
-func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, opt *physicalOptimizeOp) (task task) {
+func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2059,7 +2059,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 }
 
 func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty,
-	candidate *candidatePath, hashPartColName *ast.ColumnName, opt *physicalOptimizeOp) (task task) {
+	candidate *candidatePath, hashPartColName *ast.ColumnName, _ *physicalOptimizeOp) (task task) {
 	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
@@ -2308,7 +2308,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	return is, cost, rowCount
 }
 
-func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
@@ -2326,7 +2326,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 	return t, 1, nil
 }
 
-func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() {
 		return nil, 1, nil
 	}
