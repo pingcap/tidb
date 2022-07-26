@@ -210,13 +210,15 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 		{uniqueIndexKey, uniqueUntouched, false},
 		{uniqueIndexKey, deleteVal, false},
 	}
-<<<<<<< HEAD
-	for _, tt := range tests {
-		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
+	for _, test := range tests {
+		need := keyNeedToLock(test.key, test.val, 0)
+		c.Assert(test.need, Equals, need)
+
+		flag := kv.KeyFlags(1)
+		need = keyNeedToLock(test.key, test.val, flag)
+		c.Assert(flag.HasPresumeKeyNotExists(), IsTrue)
+		c.Assert(need, IsTrue)
 	}
-	flag := kv.KeyFlags(1)
-	c.Assert(flag.HasPresumeKeyNotExists(), IsTrue)
-	c.Assert(keyNeedToLock(indexKey, deleteVal, flag), IsTrue)
 }
 
 func (s *testMainSuite) TestIndexUsageSyncLease(c *C) {
@@ -242,16 +244,4 @@ func (s *testMainSuite) TestIndexUsageSyncLease(c *C) {
 	do.Close()
 	err = store.Close()
 	c.Assert(err, IsNil)
-=======
-
-	for _, test := range tests {
-		need := keyNeedToLock(test.key, test.val, 0)
-		require.Equal(t, test.need, need)
-
-		flag := kv.KeyFlags(1)
-		need = keyNeedToLock(test.key, test.val, flag)
-		require.True(t, flag.HasPresumeKeyNotExists())
-		require.True(t, need)
-	}
->>>>>>> 87c5b5068... executor: do not acqurie pessimistic lock for non-unique index keys (#36229)
 }
