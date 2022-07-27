@@ -238,7 +238,7 @@ func TestConsistencyLockTiDBCheck(t *testing.T) {
 	mock.ExpectQuery("SELECT @@tidb_config").WillReturnRows(
 		sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
 	err = ctrl.Setup(tctx)
-	require.ErrorIs(t, err, tiDBDisableTableLockErr)
+	require.ErrorIs(t, err, errTiDBDisableTableLock)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// enable-table-lock is true, allow to lock tables
