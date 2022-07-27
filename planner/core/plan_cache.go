@@ -16,10 +16,9 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/sessionctx/variable"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -75,13 +75,13 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	varsNum, binVarTypes, txtVarTypes := getParamValue(sctx, isBinProtocol, binProtoVars, txtProtoVars)
 
 	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
-		if plan, names, err, done := getPointQueryPlan(prepared, sessVars, stmtCtx); done == true {
+		if plan, names, done, err := getPointQueryPlan(prepared, sessVars, stmtCtx); done == true {
 			return plan, names, err
 		}
 	}
 
 	if prepared.UseCache && !ignorePlanCache { // for general plans
-		if plan, names, err, done := getGeneralPlan(sctx, sessVars, stmtCtx, cacheKey, bindSQL, ctx, is,
+		if plan, names, done, err := getGeneralPlan(ctx, sctx, sessVars, stmtCtx, cacheKey, bindSQL, is,
 			preparedStmt, binVarTypes, txtVarTypes); err != nil || done == true {
 			return plan, names, err
 		}
@@ -117,7 +117,7 @@ func getParamValue(sctx sessionctx.Context, isBinProtocol bool, binProtoVars []t
 }
 
 func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext) (plan Plan,
-	names []*types.FieldName, err error, done bool) {
+	names []*types.FieldName, done bool, err error) {
 	// short path for point-get plans
 	// Rewriting the expression in the select.where condition  will convert its
 	// type from "paramMarker" to "Constant".When Point Select queries are executed,
@@ -128,7 +128,7 @@ func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, s
 	err = RebuildPlan4CachedPlan(plan)
 	if err != nil {
 		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-		return plan, names, nil, false
+		return plan, names, false, nil
 	}
 	if metrics.ResettablePlanCacheCounterFortTest {
 		metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
@@ -137,15 +137,15 @@ func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, s
 	}
 	sessVars.FoundInPlanCache = true
 	stmtCtx.PointExec = true
-	return plan, names, nil, true
+	return plan, names, true, nil
 }
 
-func getGeneralPlan(sctx sessionctx.Context, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext,
-	cacheKey kvcache.Key, bindSQL string, ctx context.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
-	binVarTypes []byte, txtVarTypes []*types.FieldType) (plan Plan, names []*types.FieldName, err error, done bool) {
+func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext,
+	cacheKey kvcache.Key, bindSQL string, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
+	binVarTypes []byte, txtVarTypes []*types.FieldType) (plan Plan, names []*types.FieldName, done bool, err error) {
 	if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 		if err := checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
-			return nil, nil, err, false
+			return nil, nil, false, err
 		}
 		cachedVals := cacheValue.([]*PlanCacheValue)
 		for _, cachedVal := range cachedVals {
@@ -173,7 +173,7 @@ func getGeneralPlan(sctx sessionctx.Context, sessVars *variable.SessionVars, stm
 				err := RebuildPlan4CachedPlan(cachedVal.Plan)
 				if err != nil {
 					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
-					return nil, nil, nil, false
+					return nil, nil, false, nil
 
 				}
 				sessVars.FoundInPlanCache = true
@@ -188,13 +188,13 @@ func getGeneralPlan(sctx sessionctx.Context, sessVars *variable.SessionVars, stm
 					planCacheCounter.Inc()
 				}
 				stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
-				return cachedVal.Plan, cachedVal.OutPutNames, nil, true
+				return cachedVal.Plan, cachedVal.OutPutNames, true, nil
 			}
 			break
 		}
 	}
 
-	return nil, nil, nil, false
+	return nil, nil, false, nil
 }
 
 func rebuildPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema,
