@@ -19,10 +19,7 @@ package testutil
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -77,10 +74,4 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 		}
 	}
 	return len(m) == 0
-}
-
-// BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
-// Note: TableID and PartitionID are left as uninitialized value.
-func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return ddl.BuildTableInfoFromAST(s)
 }
