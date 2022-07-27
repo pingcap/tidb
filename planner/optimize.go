@@ -372,6 +372,25 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
+// OptimizeExecStmt to handle the "execute" statement
+func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
+	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, nil)
+	p, err := builder.Build(ctx, execAst)
+	if err != nil {
+		return nil, nil, err
+	}
+	if execPlan, ok := p.(*plannercore.Execute); ok {
+		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
+		return execPlan.Plan, execPlan.OutputNames(), err
+	}
+	err = errors.Errorf("invalid result plan type, should be Execute")
+	return nil, nil, err
+}
+
 // ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
 func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error) {
 	switch x := stmtNode.(type) {
