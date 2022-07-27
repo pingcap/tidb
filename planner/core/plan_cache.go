@@ -193,7 +193,6 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, sessVars *vari
 			break
 		}
 	}
-
 	return nil, nil, false, nil
 }
 
