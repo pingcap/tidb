@@ -569,14 +569,15 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		err      error
 		names    types.NameSlice
 	)
-	switch p.(type) {
-	case *PointGetPlan:
+
+	if _, _ok := p.(*PointGetPlan); _ok {
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
 		names = p.OutputNames()
 		if err != nil {
 			return err
 		}
 	}
+	
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
