@@ -148,7 +148,7 @@ func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 				})
 			}
 		}
-		return errors.Trace(err)
+		return errors.Annotatef(err, "sql: %s", lockTablesSQL)
 	}, newLockTablesBackoffer(tctx, blockList, c.conf))
 }
 
