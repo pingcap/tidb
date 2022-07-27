@@ -5656,7 +5656,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 	if err != nil {
 		return nil, err
 	}
-	del.FKTriggerPlans, err = b.buildDeleteForeignKeyTriggerPlan(ctx, tblID2table)
+	del.FKTriggerPlans, err = b.buildOnDeleteForeignKeyTrigger(tblID2table)
 	return del, err
 }
 
@@ -5693,8 +5693,31 @@ func (b *PlanBuilder) buildOnUpdateForeignKeyTriggerPlans(ctx context.Context, t
 	return fkTriggerPlans, nil
 }
 
+func (b *PlanBuilder) buildOnDeleteForeignKeyTrigger(tblID2table map[int64]table.Table) (map[int64][]ForeignKeyTrigger, error) {
+	fkTriggers := make(map[int64][]ForeignKeyTrigger)
+	for tid, tbl := range tblID2table {
+		tblInfo := tbl.Meta()
+		for _, referredFK := range tblInfo.ReferredForeignKeys {
+			childTable, err := b.is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+			if err != nil {
+				// todo: append warning?
+				continue
+			}
+			fk := model.FindFKInfoByName(childTable.Meta().ForeignKeys, referredFK.ChildFKName.L)
+			if fk == nil || fk.Version == 0 {
+				continue
+			}
+			fkTriggers[tid] = append(fkTriggers[tid], ForeignKeyTrigger{Tp: FKTriggerOnDelete, ReferredFK: referredFK})
+		}
+	}
+	return fkTriggers, nil
+}
+
 func (b *PlanBuilder) buildDeleteForeignKeyTriggerPlan(ctx context.Context, tblID2table map[int64]table.Table) (map[int64][]FKTriggerPlan, error) {
 	fkTriggerPlans := make(map[int64][]FKTriggerPlan)
+	if !b.ctx.GetSessionVars().ForeignKeyChecks {
+		return fkTriggerPlans, nil
+	}
 	for tid, tbl := range tblID2table {
 		if len(tbl.Meta().ReferredForeignKeys) == 0 {
 			continue
@@ -5915,9 +5938,6 @@ func (b *PlanBuilder) buildForeignKeyOnUpdateTriggerPlan(ctx context.Context, re
 }
 
 func (b *PlanBuilder) buildForeignKeyOnDeleteTriggerPlan(ctx context.Context, tbl table.Table) ([]FKTriggerPlan, error) {
-	if !b.ctx.GetSessionVars().ForeignKeyChecks {
-		return nil, nil
-	}
 	tblInfo := tbl.Meta()
 	triggerPlans := make([]FKTriggerPlan, 0, len(tblInfo.ReferredForeignKeys))
 	for _, referredFK := range tblInfo.ReferredForeignKeys {
