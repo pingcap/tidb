@@ -2,11 +2,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 package_group(
     name = "ddl_friend",
-    includes = [
+    packages = [
         "//...",
         "-//planner/...",
-        "//planner/core:core_test"
     ],
+    includes = [
+        "//planner/core:core_test"
+    ]
 )
 
 
