@@ -320,7 +320,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		})
 
 		failpoint.Inject("mockBackfillSlow", func() {
-			time.Sleep(30 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		})
 
 		// Dynamic change batch size.

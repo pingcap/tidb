@@ -148,9 +148,18 @@ StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6
     └─TopN	1.00	cop[tikv]		collation_agg_func.tt.a, offset:0, count:1
       └─Selection	9990.00	cop[tikv]		not(isnull(collation_agg_func.tt.a))
         └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
-select min(a) from tt;
-min(a)
-B
+desc format='brief' select lower(min(a)) from tt;
+id	estRows	task	access object	operator info
+Projection	1.00	root		lower(Column#6)->Column#7
+└─StreamAgg	1.00	root		funcs:min(collation_agg_func.tt.a)->Column#6
+  └─TopN	1.00	root		collation_agg_func.tt.a, offset:0, count:1
+    └─TableReader	1.00	root		data:TopN
+      └─TopN	1.00	cop[tikv]		collation_agg_func.tt.a, offset:0, count:1
+        └─Selection	9990.00	cop[tikv]		not(isnull(collation_agg_func.tt.a))
+          └─TableFullScan	10000.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+select lower(min(a)) from tt;
+lower(min(a))
+b
 desc format='brief' select min(a collate utf8mb4_bin) from tt;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#6

@@ -42,6 +42,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
@@ -395,6 +396,8 @@ func TestTxnContextInOptimisticRetry(t *testing.T) {
 func TestTxnContextForHistoricalRead(t *testing.T) {
 	store, do, deferFunc := setupTxnContextTest(t)
 	defer deferFunc()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()

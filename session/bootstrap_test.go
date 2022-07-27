@@ -42,7 +42,7 @@ func TestBootstrap(t *testing.T) {
 	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
 	se := createSessionAndSetID(t, store)
-
+	mustExec(t, se, "set global tidb_txn_mode=''")
 	mustExec(t, se, "use mysql")
 	r := mustExec(t, se, "select * from user")
 	require.NotNil(t, r)
