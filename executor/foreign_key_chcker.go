@@ -265,6 +265,14 @@ func hasNullValue(vals []types.Datum) bool {
 	return false
 }
 
+func (fkt *ForeignKeyTriggerExec) isNeedTrigger() bool {
+	switch fkt.fkTriggerPlan.(type) {
+	case *plannercore.FKOnUpdateCascadePlan:
+		return len(fkt.fkUpdatedValuesMap) > 0
+	}
+	return len(fkt.fkValues) > 0
+}
+
 func (fkt *ForeignKeyTriggerExec) buildIndexReaderRange() (bool, error) {
 	switch p := fkt.fkTriggerPlan.(type) {
 	case *plannercore.FKOnUpdateCascadePlan:

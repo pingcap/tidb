@@ -5978,6 +5978,10 @@ func (b *PlanBuilder) buildForeignKeyCascadeDelete(ctx context.Context, dbName m
 	tid := ds.tableInfo.ID
 	tblID2Handle[tid] = []HandleCols{ds.handleCols}
 	tblID2Table[tid] = tbl
+	tblID2Handle, err = resolveIndicesForTblID2Handle(tblID2Handle, tableReader.Schema())
+	if err != nil {
+		return nil, err
+	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2Table, false)
 	if err != nil {
 		return nil, err
@@ -6052,6 +6056,11 @@ func (b *PlanBuilder) buildUpdateForeignKeySetNull(ctx context.Context, dbName m
 	tid := ds.tableInfo.ID
 	tblID2Handle[tid] = []HandleCols{ds.handleCols}
 	tblID2Table[tid] = tbl
+
+	tblID2Handle, err = resolveIndicesForTblID2Handle(tblID2Handle, tableReader.Schema())
+	if err != nil {
+		return nil, err
+	}
 	update.TblColPosInfos, err = buildColumns2Handle(update.names, tblID2Handle, tblID2Table, false)
 	update.tblID2Table = tblID2Table
 	if err != nil {
