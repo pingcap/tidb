@@ -1585,6 +1585,8 @@ func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/distsql/mockNextRawError", `return(true)`))
-	err := tk.ExecToErr("analyze table t1")
-	require.EqualError(t, err, "mockNextRawError")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/distsql/mockNextRawError"))
+	}()
+	tk.MustGetErrMsg("analyze table t1", "mockNextRawError")
 }

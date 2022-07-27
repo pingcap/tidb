@@ -173,10 +173,10 @@ func (p *LogicalShowDDLJobs) findBestTask(prop *property.PhysicalProperty, planC
 }
 
 // rebuildChildTasks rebuilds the childTasks to make the clock_th combination.
-func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, planCounter int64, TS uint64, opt *physicalOptimizeOp) error {
+func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan, childCnts []int64, planCounter int64, ts uint64, opt *physicalOptimizeOp) error {
 	// The taskMap of children nodes should be rolled back first.
 	for _, child := range p.children {
-		child.rollBackTaskMap(TS)
+		child.rollBackTaskMap(ts)
 	}
 
 	multAll := int64(1)
@@ -215,7 +215,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		childTasks = childTasks[:0]
 		// The curCntPlan records the number of possible plans for pp
 		curCntPlan = 1
-		TimeStampNow := p.GetLogicalTS4TaskMap()
+		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.ctx.GetSessionVars().PlanID
 		for j, child := range p.children {
 			childProp := pp.GetChildReqProps(j)
@@ -240,7 +240,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		if planCounter.IsForce() && int64(*planCounter) <= curCntPlan {
 			p.ctx.GetSessionVars().PlanID = savedPlanID
 			curCntPlan = int64(*planCounter)
-			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), TimeStampNow, opt)
+			err := p.rebuildChildTasks(&childTasks, pp, childCnts, int64(*planCounter), timeStampNow, opt)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -876,7 +876,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				return nil, 0, err
 			}
 			if !idxMergeTask.invalid() {
-				cntPlan += 1
+				cntPlan++
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, idxMergeTask, prop, opt)
@@ -901,7 +901,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
-			cntPlan += 1
+			cntPlan++
 			planCounter.Dec(1)
 			return &rootTask{
 				p: dual,
@@ -970,7 +970,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 				appendCandidate(ds, pointGetTask, prop, opt)
 				if !pointGetTask.invalid() {
-					cntPlan += 1
+					cntPlan++
 					planCounter.Dec(1)
 				}
 				curIsBetter, cerr := compareTaskCost(ds.ctx, pointGetTask, t)
@@ -1003,7 +1003,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				return nil, 0, err
 			}
 			if !tblTask.invalid() {
-				cntPlan += 1
+				cntPlan++
 				planCounter.Dec(1)
 			}
 			appendCandidate(ds, tblTask, prop, opt)
@@ -1028,7 +1028,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			return nil, 0, err
 		}
 		if !idxTask.invalid() {
-			cntPlan += 1
+			cntPlan++
 			planCounter.Dec(1)
 		}
 		appendCandidate(ds, idxTask, prop, opt)
@@ -2308,7 +2308,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	return is, cost, rowCount
 }
 
-func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, _ *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
@@ -2326,7 +2326,7 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, _ *PlanCounte
 	return t, 1, nil
 }
 
-func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, opt *physicalOptimizeOp) (t task, cntPlan int64, err error) {
+func (p *LogicalCTETable) findBestTask(prop *property.PhysicalProperty, _ *PlanCounterTp, _ *physicalOptimizeOp) (t task, cntPlan int64, err error) {
 	if !prop.IsSortItemEmpty() {
 		return nil, 1, nil
 	}

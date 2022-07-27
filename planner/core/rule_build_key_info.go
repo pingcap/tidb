@@ -25,7 +25,7 @@ import (
 
 type buildKeySolver struct{}
 
-func (s *buildKeySolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (s *buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	buildKeyInfo(p)
 	return p, nil
 }
