@@ -37,7 +37,7 @@ import (
 type resultReorder struct {
 }
 
-func (rs *resultReorder) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
 	ordered := rs.completeSort(lp)
 	if !ordered {
 		lp = rs.injectSort(lp)
