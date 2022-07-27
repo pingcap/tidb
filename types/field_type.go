@@ -1450,8 +1450,8 @@ func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
 		(oldCol == mysql.TypeString && IsTypeVarchar(newCol) && collate.NewCollationEnabled())
 }
 
-// IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
-func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
+// IsVarcharTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
+func IsVarcharTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
 	desc, err := charset.GetCharsetInfo(setCharset)
 	if err != nil {
 		return errors.Trace(err)

@@ -1278,7 +1278,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := types.IsTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
+		err := types.IsVarcharTooBigFieldLength(colDef.Tp.GetFlen(), colDef.Name.Name.O, tp.GetCharset())
 		if err != nil {
 			return err
 		}

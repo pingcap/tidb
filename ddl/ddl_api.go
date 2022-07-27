@@ -1596,7 +1596,7 @@ func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 
 func checkColumnFieldLength(col *table.Column) error {
 	if col.GetType() == mysql.TypeVarchar {
-		if err := types.IsTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
+		if err := types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, col.GetCharset()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -5125,7 +5125,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 
 	for _, col := range tblInfo.Columns {
 		if col.GetType() == mysql.TypeVarchar {
-			if err = types.IsTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
+			if err = types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
 				return doNothing, err
 			}
 		}
@@ -7134,7 +7134,7 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 // in non-strict mode and varchar column. If it is, will try to adjust to blob or text, see issue #30328
 func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string, sessVars *variable.SessionVars) error {
 	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && tp.GetType() == mysql.TypeVarchar {
-		err := types.IsTooBigFieldLength(tp.GetFlen(), colName, tp.GetCharset())
+		err := types.IsVarcharTooBigFieldLength(tp.GetFlen(), colName, tp.GetCharset())
 		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
 			tp.SetType(mysql.TypeBlob)
 			if err = adjustBlobTypesFlen(tp, tp.GetCharset()); err != nil {
