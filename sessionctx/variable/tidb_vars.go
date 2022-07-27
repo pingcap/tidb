@@ -377,6 +377,9 @@ const (
 	// TiDBMinPagingSize is used to control the min paging size in the coprocessor paging protocol.
 	TiDBMinPagingSize = "tidb_min_paging_size"
 
+	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
+	TiDBMaxPagingSize = "tidb_max_paging_size"
+
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -850,6 +853,7 @@ const (
 	DefCurretTS                                    = 0
 	DefInitChunkSize                               = 32
 	DefMinPagingSize                               = int(paging.MinPagingSize)
+	DefMaxPagingSize                               = int(paging.MaxPagingSize)
 	DefMaxChunkSize                                = 1024
 	DefDMLBatchSize                                = 0
 	DefMaxPreparedStmtCount                        = -1
