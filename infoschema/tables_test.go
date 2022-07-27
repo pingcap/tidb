@@ -1577,6 +1577,7 @@ func TestVariablesInfo(t *testing.T) {
 
 	// current_value != default_value
 	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'innodb_compression_level'`).Check(testkit.Rows("innodb_compression_level GLOBAL 6 8 <nil> <nil> <nil> YES"))
+	tk.MustExec("SET GLOBAL innodb_compression_level = DEFAULT;")
 
 	// enum
 	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb_txn_mode SESSION,GLOBAL   <nil> <nil> pessimistic,optimistic NO"))
@@ -1592,6 +1593,24 @@ func TestVariablesInfo(t *testing.T) {
 
 	// min, max populated for TypeUnsigned
 	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_metric_query_step'`).Check(testkit.Rows("tidb_metric_query_step SESSION 60 60 10 216000 <nil> NO"))
+
+	// stabalize timestamp val and EnableCollectExecutionInfo
+	tk.MustExec("SET TIMESTAMP=123456789")
+	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo = false
+	// Test that in the current_value matches the default value in all
+	// but a few permitted special cases.
+	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
+	stmt := tk.MustQuery(`SELECT variable_name, default_value, current_value FROM information_schema.variables_info WHERE current_value != default_value and default_value  != '' ORDER BY variable_name`)
+	stmt.Check(testkit.Rows(
+		"tidb_enable_auto_analyze ON OFF",           // always changed for tests
+		"tidb_enable_collect_execution_info ON OFF", // for test stability
+		"tidb_enable_mutation_checker OFF ON",       // for new installs
+		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
+		"tidb_partition_prune_mode static dynamic",  // for new installs
+		"tidb_row_format_version 1 2",               // for new installs
+		"tidb_txn_assertion_level OFF FAST",         // for new installs
+		"timestamp 0 123456789",                     // always dynamic
+	))
 }
 
 // TestTableConstraintsContainForeignKeys TiDB Issue: https://github.com/pingcap/tidb/issues/28918
