@@ -56,7 +56,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 		// We need to return the hint information to warn
 		leadingHintInfo = append(leadingHintInfo, join.hintInfo)
 	}
-	if canSplitJoinNode(p) {
+	if !canSplitJoinNode(p) {
 		return []LogicalPlan{p}, nil, nil, nil, leadingHintInfo, nil, false
 	}
 	if join.preferJoinType > uint(0) {
