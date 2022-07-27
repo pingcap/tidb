@@ -29,6 +29,7 @@ go_library(
         "pb_to_plan.go",
         "physical_plans.go",
         "plan.go",
+        "plan_cache.go",
         "plan_cost.go",
         "plan_stats.go",
         "plan_to_pb.go",
@@ -69,7 +70,6 @@ go_library(
     deps = [
         "//bindinfo",
         "//config",
-        "//ddl",
         "//distsql",
         "//domain",
         "//errno",
