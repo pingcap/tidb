@@ -46,7 +46,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/ddl",
     visibility = [
         ":ddl_friend",
-        "//planner/core:core_test",
     ],
     deps = [
         "//config",
