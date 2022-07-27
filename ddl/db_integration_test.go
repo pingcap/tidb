@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/schematracker"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -51,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	goctx "golang.org/x/net/context"
 )
 
 func TestNoZeroDateMode(t *testing.T) {
@@ -148,8 +148,13 @@ func TestInvalidNameWhenCreateTable(t *testing.T) {
 
 // TestCreateTableIfNotExistsLike for issue #6879
 func TestCreateTableIfNotExistsLike(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("USE test;")
@@ -175,8 +180,13 @@ func TestCreateTableIfNotExistsLike(t *testing.T) {
 
 // for issue #9910
 func TestCreateTableWithKeyWord(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+	ddlChecker.CreateTestDB()
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("USE test;")
@@ -620,13 +630,6 @@ func TestErrnoErrorCode(t *testing.T) {
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
 	tk.MustGetErrCode(sql, errno.ErrBadNull)
-	// disable tidb_enable_change_multi_schema
-	tk.MustExec("set global tidb_enable_change_multi_schema = false")
-	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
-	sql = "alter table test_error_code_null add column (x1 int, x2 int)"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
-	tk.MustExec("set global tidb_enable_change_multi_schema = true")
 }
 
 func TestTableDDLWithFloatType(t *testing.T) {
@@ -823,7 +826,7 @@ func TestChangingTableCharset(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
+		err := sessiontxn.NewTxn(context.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -1067,7 +1070,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
+		err := sessiontxn.NewTxn(context.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -1907,7 +1910,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
+		err := sessiontxn.NewTxn(context.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -2131,8 +2134,12 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 }
 
 func TestChangingDBCharset(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+
+	ddlChecker := schematracker.NewChecker(dom.DDL())
+	dom.SetDDL(ddlChecker)
+
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("DROP DATABASE IF EXISTS alterdb1")

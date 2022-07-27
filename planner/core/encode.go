@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"hash"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/failpoint"
@@ -25,6 +26,106 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/plancodec"
 )
+
+// EncodeFlatPlan encodes a FlatPhysicalPlan with compression.
+func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
+	if len(flat.Main) == 0 {
+		return ""
+	}
+	// We won't collect the plan when we're in "EXPLAIN FOR" statement and the plan is from EXECUTE statement (please
+	// read comments of InExecute for details about the meaning of InExecute) because we are unable to get some
+	// necessary information when the execution of the plan is finished and some states in the session such as
+	// PreparedParams are cleaned.
+	// The behavior in BinaryPlanStrFromFlatPlan() is also the same.
+	if flat.InExecute {
+		return ""
+	}
+	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+		selectPlan := flat.Main.GetSelectPlan()
+		for _, op := range selectPlan {
+			op.Origin.statsInfo().RowCount = float64(val.(int))
+		}
+	})
+	pn := encoderPool.Get().(*planEncoder)
+	defer func() {
+		pn.buf.Reset()
+		encoderPool.Put(pn)
+	}()
+	buf := pn.buf
+	buf.Reset()
+	opCount := len(flat.Main)
+	for _, cte := range flat.CTEs {
+		opCount += len(cte)
+	}
+	// assume an operator costs around 80 bytes, preallocate space for them
+	buf.Grow(80 * opCount)
+	encodeFlatPlanTree(flat.Main, 0, &buf)
+	for _, cte := range flat.CTEs {
+		op := cte[0]
+		cteDef := cte[0].Origin.(*CTEDefinition)
+		id := cteDef.CTE.IDForStorage
+		tp := plancodec.TypeCTEDefinition
+		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
+		p := op.Origin
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
+		var estRows float64
+		if statsInfo := p.statsInfo(); statsInfo != nil {
+			estRows = statsInfo.RowCount
+		}
+		plancodec.EncodePlanNode(
+			int(op.Depth),
+			strconv.Itoa(id)+op.Label.String(),
+			tp,
+			estRows,
+			taskTypeInfo,
+			op.Origin.ExplainInfo(),
+			actRows,
+			analyzeInfo,
+			memoryInfo,
+			diskInfo,
+			&buf,
+		)
+		if len(cte) > 1 {
+			encodeFlatPlanTree(cte[1:], 1, &buf)
+		}
+	}
+	return plancodec.Compress(buf.Bytes())
+}
+
+func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
+	for _, op := range flatTree {
+		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
+		p := op.Origin
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
+		var estRows float64
+		if statsInfo := p.statsInfo(); statsInfo != nil {
+			estRows = statsInfo.RowCount
+		}
+		plancodec.EncodePlanNode(
+			int(op.Depth),
+			strconv.Itoa(op.Origin.ID())+op.Label.String(),
+			op.Origin.TP(),
+			estRows,
+			taskTypeInfo,
+			op.Origin.ExplainInfo(),
+			actRows,
+			analyzeInfo,
+			memoryInfo,
+			diskInfo,
+			buf,
+		)
+
+		// If NeedReverseDriverSide is true, we stop using the order of the slice and switch to recursively
+		// call encodeFlatPlanTree to keep build side before probe side.
+		if op.NeedReverseDriverSide {
+			buildSide := flatTree[op.ChildrenIdx[1]-offset:]
+			probeSide := flatTree[op.ChildrenIdx[0]-offset : op.ChildrenIdx[1]-offset]
+			encodeFlatPlanTree(buildSide, op.ChildrenIdx[1], buf)
+			encodeFlatPlanTree(probeSide, op.ChildrenIdx[0], buf)
+			break
+		}
+	}
+}
 
 var encoderPool = sync.Pool{
 	New: func() interface{} {
@@ -40,6 +141,7 @@ type planEncoder struct {
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
+// Deprecated: FlattenPhysicalPlan() + EncodeFlatPlan() is preferred.
 func EncodePlan(p Plan) string {
 	if explain, ok := p.(*Explain); ok {
 		p = explain.TargetPlan
@@ -79,12 +181,12 @@ func (pn *planEncoder) encodeCTEPlan() {
 			continue
 		}
 		taskTypeInfo := plancodec.EncodeTaskType(true, kv.TiKV)
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(x.SCtx(), x, nil)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(x.SCtx(), x, nil)
 		rowCount := 0.0
 		if statsInfo := x.statsInfo(); statsInfo != nil {
 			rowCount = x.statsInfo().RowCount
 		}
-		plancodec.EncodePlanNode(0, x.CTE.IDForStorage, plancodec.TypeCTEDefinition, rowCount, taskTypeInfo, x.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+		plancodec.EncodePlanNode(0, strconv.Itoa(x.CTE.IDForStorage), plancodec.TypeCTEDefinition, rowCount, taskTypeInfo, x.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 		pn.encodePlan(x.SeedPlan, true, kv.TiKV, 1)
 		if x.RecurPlan != nil {
 			pn.encodePlan(x.RecurPlan, true, kv.TiKV, 1)
@@ -95,12 +197,12 @@ func (pn *planEncoder) encodeCTEPlan() {
 
 func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
-	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p, nil)
+	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
 	if statsInfo := p.statsInfo(); statsInfo != nil {
 		rowCount = p.statsInfo().RowCount
 	}
-	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+	plancodec.EncodePlanNode(depth, strconv.Itoa(p.ID()), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
 	depth++
 
@@ -152,23 +254,61 @@ type planDigester struct {
 	hasher       hash.Hash
 }
 
+// NormalizeFlatPlan normalizes a FlatPhysicalPlan and generates plan digest.
+func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parser.Digest) {
+	selectPlan := flat.Main.GetSelectPlan()
+	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
+		return "", parser.NewDigest(nil)
+	}
+	d := digesterPool.Get().(*planDigester)
+	defer func() {
+		d.buf.Reset()
+		d.hasher.Reset()
+		digesterPool.Put(d)
+	}()
+	// assume an operator costs around 30 bytes, preallocate space for them
+	d.buf.Grow(30 * len(selectPlan))
+	depthOffset := len(flat.Main) - len(selectPlan)
+	for _, op := range selectPlan {
+		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
+		p := op.Origin.(PhysicalPlan)
+		plancodec.NormalizePlanNode(
+			int(op.Depth-uint32(depthOffset)),
+			op.Origin.TP(),
+			taskTypeInfo,
+			p.ExplainNormalizedInfo(),
+			&d.buf,
+		)
+	}
+	normalized = d.buf.String()
+	_, err := d.hasher.Write(d.buf.Bytes())
+	if err != nil {
+		panic(err)
+	}
+	digest = parser.NewDigest(d.hasher.Sum(nil))
+	return
+}
+
 // NormalizePlan is used to normalize the plan and generate plan digest.
+// Deprecated: FlattenPhysicalPlan() + NormalizeFlatPlan() is preferred.
 func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
 		return "", parser.NewDigest(nil)
 	}
 	d := digesterPool.Get().(*planDigester)
-	defer digesterPool.Put(d)
+	defer func() {
+		d.buf.Reset()
+		d.hasher.Reset()
+		digesterPool.Put(d)
+	}()
 	d.normalizePlanTree(selectPlan)
 	normalized = d.buf.String()
 	_, err := d.hasher.Write(d.buf.Bytes())
 	if err != nil {
 		panic(err)
 	}
-	d.buf.Reset()
 	digest = parser.NewDigest(d.hasher.Sum(nil))
-	d.hasher.Reset()
 	return
 }
 

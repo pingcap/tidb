@@ -40,6 +40,7 @@ go_library(
 
 go_test(
     name = "chunk_test",
+    timeout = "short",
     srcs = [
         "alloc_test.go",
         "chunk_test.go",
@@ -55,6 +56,7 @@ go_test(
         "row_container_test.go",
     ],
     embed = [":chunk"],
+    flaky = True,
     race = "on",
     deps = [
         "//config",
