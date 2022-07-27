@@ -253,6 +253,7 @@
       "planner/util": "planner code",
       "planner/implementation": "planner code",
       "planner/cascades": "planner code",
+      "planner/core/plan_cache.go": "planner code",
       "util/": "util code",
       "parser/": "parser code",
       "meta/": "parser code"
