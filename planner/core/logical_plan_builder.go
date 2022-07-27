@@ -141,8 +141,7 @@ type aggOrderByResolver struct {
 
 func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	a.exprDepth++
-	switch n := inNode.(type) {
-	case *driver.ParamMarkerExpr:
+	if n, ok := inNode.(*driver.ParamMarkerExpr); ok {
 		if a.exprDepth == 1 {
 			_, isNull, isExpectedType := getUintFromNode(a.ctx, n)
 			// For constant uint expression in top level, it should be treated as position expression.
@@ -155,8 +154,7 @@ func (a *aggOrderByResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
-	case *ast.PositionExpr:
+	if v, ok := inNode.(*ast.PositionExpr); ok {
 		pos, isNull, err := expression.PosFromPositionExpr(a.ctx, v)
 		if err != nil {
 			a.err = err
@@ -1065,7 +1063,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectF
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(ctx context.Context, field *ast.SelectField) (model.CIStr, error) {
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(_ context.Context, field *ast.SelectField) (model.CIStr, error) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
@@ -1505,7 +1503,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
+func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
 
@@ -1797,7 +1795,7 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, aft
 // divide rule ref:
 //		https://dev.mysql.com/doc/refman/5.7/en/union.html
 // "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
-func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
+func (b *PlanBuilder) divideUnionSelectPlans(_ context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
 	firstUnionAllIdx := 0
 	columnNums := selects[0].Schema().Len()
 	for i := len(selects) - 1; i > 0; i-- {
@@ -1826,8 +1824,7 @@ type itemTransformer struct {
 }
 
 func (t *itemTransformer) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch n := inNode.(type) {
-	case *driver.ParamMarkerExpr:
+	if n, ok := inNode.(*driver.ParamMarkerExpr); ok {
 		newNode := expression.ConstructPositionExpr(n)
 		return newNode, true
 	}
@@ -2509,8 +2506,7 @@ type correlatedAggregateResolver struct {
 
 // Enter implements Visitor interface.
 func (r *correlatedAggregateResolver) Enter(n ast.Node) (ast.Node, bool) {
-	switch v := n.(type) {
-	case *ast.SelectStmt:
+	if v, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
 			outerSchema := r.outerPlan.Schema()
 			r.b.outerSchemas = append(r.b.outerSchemas, outerSchema)
@@ -2664,8 +2660,7 @@ func (r *correlatedAggregateResolver) collectFromWhere(p LogicalPlan, where ast.
 
 // Leave implements Visitor interface.
 func (r *correlatedAggregateResolver) Leave(n ast.Node) (ast.Node, bool) {
-	switch n.(type) {
-	case *ast.SelectStmt:
+	if _, ok := n.(*ast.SelectStmt); ok {
 		if r.outerPlan != nil {
 			r.b.outerSchemas = r.b.outerSchemas[0 : len(r.b.outerSchemas)-1]
 			r.b.outerNames = r.b.outerNames[0 : len(r.b.outerNames)-1]
@@ -3297,8 +3292,7 @@ type aggColNameResolver struct {
 }
 
 func (c *aggColNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch inNode.(type) {
-	case *ast.ColumnNameExpr:
+	if _, ok := inNode.(*ast.ColumnNameExpr); ok {
 		return inNode, true
 	}
 	return inNode, false
@@ -3328,8 +3322,7 @@ func (c *colNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (c *colNameResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
-	case *ast.ColumnNameExpr:
+	if v, ok := inNode.(*ast.ColumnNameExpr); ok {
 		idx, err := expression.FindFieldName(c.p.OutputNames(), v.Name)
 		if err == nil && idx >= 0 {
 			c.names[c.p.OutputNames()[idx]] = struct{}{}
@@ -4869,7 +4862,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	return b.buildProjUponView(ctx, dbName, tableInfo, selectLogicalPlan)
 }
 
-func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
+func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName model.CIStr, tableInfo *model.TableInfo, selectLogicalPlan Plan) (LogicalPlan, error) {
 	columnInfo := tableInfo.Cols()
 	cols := selectLogicalPlan.Schema().Clone().Columns
 	outputNamesOfUnderlyingSelect := selectLogicalPlan.OutputNames().Shallow()
@@ -5884,7 +5877,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // buildWindowFunctionFrameBound builds the bounds of window function frames.
 // For type `Rows`, the bound expr must be an unsigned integer.
 // For type `Range`, the bound expr must be temporal or numeric types.
-func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
+func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
 	if bound.UnBounded {
@@ -6476,8 +6469,7 @@ func (u *updatableTableListResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (u *updatableTableListResolver) Leave(inNode ast.Node) (ast.Node, bool) {
-	switch v := inNode.(type) {
-	case *ast.TableSource:
+	if v, ok := inNode.(*ast.TableSource); ok {
 		if s, ok := v.Source.(*ast.TableName); ok {
 			if v.AsName.L != "" {
 				newTableName := *s
@@ -6950,7 +6942,7 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 	return nil
 }
 
-func (b *PlanBuilder) buildProjection4CTEUnion(ctx context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {
+func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed LogicalPlan, recur LogicalPlan) (LogicalPlan, error) {
 	if seed.Schema().Len() != recur.Schema().Len() {
 		return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}

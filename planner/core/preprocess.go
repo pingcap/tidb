@@ -680,7 +680,6 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 			p.err = errors.Errorf("Incorrect column specifier for column '%s'", col.Name.Name.O)
 		}
 	}
-
 }
 
 // checkSetOprSelectList checks union's selectList.
@@ -776,7 +775,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
-
 		}
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
@@ -1407,7 +1405,6 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) stmtType() string {
-
 	switch p.stmtTp {
 	case TypeDelete:
 		return "DELETE"
@@ -1434,7 +1431,6 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
 				return
