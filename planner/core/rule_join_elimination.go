@@ -230,7 +230,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	return p, nil
 }
 
-func (o *outerJoinEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (o *outerJoinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	p, err := o.doOptimize(p, nil, nil, opt)
 	return p, err
 }
