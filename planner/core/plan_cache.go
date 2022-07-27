@@ -174,7 +174,6 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, sessVars *vari
 				if err != nil {
 					logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 					return nil, nil, false, nil
-
 				}
 				sessVars.FoundInPlanCache = true
 				if len(bindSQL) > 0 {
