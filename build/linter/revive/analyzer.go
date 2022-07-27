@@ -84,7 +84,7 @@ var allRules = append([]lint.Rule{
 	//&rule.FlagParamRule{},
 	&rule.UnnecessaryStmtRule{},
 	//&rule.StructTagRule{},
-	&rule.ModifiesValRecRule{},
+	//&rule.ModifiesValRecRule{},
 	&rule.ConstantLogicalExprRule{},
 	&rule.BoolLiteralRule{},
 	//&rule.RedefinesBuiltinIDRule{},

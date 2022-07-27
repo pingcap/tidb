@@ -1523,7 +1523,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else {
 		// If we rewrite IN to EQ, we need to decide what's the collation EQ uses.
-		coll := er.deriveCollationForIn(l, lLen, stkLen, args)
+		coll := er.deriveCollationForIn(l, lLen, args)
 		if er.err != nil {
 			return
 		}
@@ -1553,7 +1553,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 
 // deriveCollationForIn derives collation for in expression.
 // We don't handle the cases if the element is a tuple, such as (a, b, c) in ((x1, y1, z1), (x2, y2, z2)).
-func (er *expressionRewriter) deriveCollationForIn(colLen int, _ int, stkLen int, args []expression.Expression) *expression.ExprCollation {
+func (er *expressionRewriter) deriveCollationForIn(colLen int, _ int, args []expression.Expression) *expression.ExprCollation {
 	if colLen == 1 {
 		// a in (x, y, z) => coll[0]
 		coll2, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "IN", types.ETInt, args...)
