@@ -3,14 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 package_group(
     name = "ddl_friend",
     packages = [
-        "//...",
         "-//planner/...",
+        "//...",
     ],
-    includes = [
-        "//planner/core:core_test"
-    ]
 )
-
 
 go_library(
     name = "ddl",
@@ -48,7 +44,10 @@ go_library(
         "table_lock.go",
     ],
     importpath = "github.com/pingcap/tidb/ddl",
-    visibility = [":ddl_friend"],
+    visibility = [
+        ":ddl_friend",
+        "//planner/core:core_test",
+    ],
     deps = [
         "//config",
         "//ddl/label",
