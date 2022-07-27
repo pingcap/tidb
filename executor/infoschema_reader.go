@@ -360,7 +360,7 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, sv := range sysVars {
-		currentVal, err := variable.GetSessionOrGlobalSystemVar(ctx.GetSessionVars(), sv.Name)
+		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(sv.Name)
 		if err != nil {
 			currentVal = ""
 		}

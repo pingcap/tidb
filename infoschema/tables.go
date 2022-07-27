@@ -1857,7 +1857,7 @@ func GetDataFromSessionVariables(ctx sessionctx.Context) ([][]types.Datum, error
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, v := range sysVars {
 		var value string
-		value, err := variable.GetSessionOrGlobalSystemVar(sessionVars, v.Name)
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(v.Name)
 		if err != nil {
 			return nil, err
 		}
