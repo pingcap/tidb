@@ -1875,7 +1875,7 @@ func BuildTableInfo(
 			primary, unique bool
 		)
 
-		// check if the index is primary or unique.
+		// Check if the index is primary or unique.
 		switch constr.Tp {
 		case ast.ConstraintPrimaryKey:
 			primary = true
@@ -2711,7 +2711,7 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 	for _, col := range tbInfo.Partition.Columns {
-		colInfo := getColumnInfoByName(tbInfo, col.L)
+		colInfo := GetColumnInfoByName(tbInfo, col.L)
 		if colInfo == nil {
 			return errors.Trace(dbterror.ErrFieldNotFoundPart)
 		}
@@ -5737,7 +5737,7 @@ func precheckBuildHiddenColumnInfo(
 			// TODO: Refine the error message.
 			return dbterror.ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
-		// TODO: refine the error message.
+		// TODO: Refine the error message.
 		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
 			return errors.Trace(err)
 		}
@@ -6531,7 +6531,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	newTableInfo.AutoIncID = oldTableInfo.AutoIncID
 	// If any old columnInfo has lost, that means the old column ID lost too, repair failed.
 	for i, newOne := range newTableInfo.Columns {
-		old := getColumnInfoByName(oldTableInfo, newOne.Name.L)
+		old := GetColumnInfoByName(oldTableInfo, newOne.Name.L)
 		if old == nil {
 			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Column " + newOne.Name.L + " has lost")
 		}

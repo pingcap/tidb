@@ -1699,21 +1699,23 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 	return odValue, nil
 }
 
-// FindColumnIndexCols finds column in index
-func FindColumnIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
+// FindColumnInIndexCols finds column and its slice offset in index. When not found, returned slice offset is -1 and
+// *IndexColumn is nil.
+func FindColumnInIndexCols(c string, cols []*model.IndexColumn) (int, *model.IndexColumn) {
 	return findColumnInIndexCols(c, cols)
 }
 
-func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
-	for _, c1 := range cols {
+func findColumnInIndexCols(c string, cols []*model.IndexColumn) (int, *model.IndexColumn) {
+	for i, c1 := range cols {
 		if c == c1.Name.L {
-			return c1
+			return i, c1
 		}
 	}
-	return nil
+	return -1, nil
 }
 
-func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
+// GetColumnInfoByName finds the column by name.
+func GetColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
 	for _, colInfo := range tbInfo.Cols() {
 		if colInfo.Name.L == column {
 			return colInfo

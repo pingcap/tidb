@@ -1828,7 +1828,7 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
-			colInfo := getColumnInfoByName(tblInfo, col.L)
+			colInfo := GetColumnInfoByName(tblInfo, col.L)
 			if colInfo == nil {
 				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
@@ -1906,7 +1906,7 @@ type stringSlice interface {
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
 	for i := 0; i < partCols.Len(); i++ {
 		partCol := partCols.At(i)
-		idxCol := findColumnInIndexCols(partCol, idxCols)
+		_, idxCol := findColumnInIndexCols(partCol, idxCols)
 		if idxCol == nil {
 			// Partition column is not found in the index columns.
 			return false

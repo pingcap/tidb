@@ -138,7 +138,7 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 			if idx.Meta().State != model.StatePublic {
 				continue
 			}
-			idxCol := ddl.FindColumnIndexCols(colName, idx.Meta().Columns)
+			_, idxCol := ddl.FindColumnInIndexCols(colName, idx.Meta().Columns)
 			idxID := idx.Meta().ID
 			if idxCol != nil {
 				tblStats := stats.GetTableStats(tbl.Meta())

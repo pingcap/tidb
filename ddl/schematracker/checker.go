@@ -197,12 +197,20 @@ func (d Checker) CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) 
 	if err != nil {
 		return err
 	}
+
 	// some unit test will also check warnings, we reset the warnings after SchemaTracker use session context again.
 	count := ctx.GetSessionVars().StmtCtx.WarningCount()
+	// backup old session variables because CreateTable will change them.
+	strictSQLMode := ctx.GetSessionVars().StrictSQLMode
+	enableClusteredIndex := ctx.GetSessionVars().EnableClusteredIndex
+
 	err = d.tracker.CreateTable(ctx, stmt)
 	if err != nil {
 		panic(err)
 	}
+
+	ctx.GetSessionVars().StrictSQLMode = strictSQLMode
+	ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndex
 	ctx.GetSessionVars().StmtCtx.TruncateWarnings(int(count))
 
 	d.checkTableInfo(ctx, stmt.Table.Schema, stmt.Table.Name)

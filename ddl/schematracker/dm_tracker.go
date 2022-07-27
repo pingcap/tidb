@@ -171,14 +171,6 @@ func (d SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStm
 	if schema == nil {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
-
-	strictSQLMode := ctx.GetSessionVars().StrictSQLMode
-	enableClusteredIndex := ctx.GetSessionVars().EnableClusteredIndex
-	// avoid to interfere session context in unit test
-	defer func() {
-		ctx.GetSessionVars().StrictSQLMode = strictSQLMode
-		ctx.GetSessionVars().EnableClusteredIndex = enableClusteredIndex
-	}()
 	// suppress ErrTooLongKey
 	ctx.GetSessionVars().StrictSQLMode = false
 	// support drop PK
@@ -432,15 +424,8 @@ func (d SchemaTracker) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName
 	if err != nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
-	t := tables.MockTableFromMeta(tblInfo)
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
-
-	_, err = ddl.CheckIsDropPrimaryKey(indexName, indexInfo, t)
-	if err != nil {
-		return err
-	}
-
 	if indexInfo == nil {
 		if ifExists {
 			return nil
@@ -513,18 +498,8 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 	}
 
 	colName := spec.OldColumnName.Name
-	var (
-		colInfo *model.ColumnInfo
-		found   = false
-	)
-
-	for _, colInfo = range tblInfo.Columns {
-		if colInfo.Name.L == colName.L {
-			found = true
-			break
-		}
-	}
-	if !found {
+	colInfo := ddl.GetColumnInfoByName(tblInfo, colName.L)
+	if colInfo == nil {
 		if spec.IfExists {
 			return nil
 		}
@@ -541,15 +516,8 @@ func (d *SchemaTracker) dropColumn(ctx sessionctx.Context, ti ast.Ident, spec *a
 
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
-		var i int
-		found = false
-		for i = range idx.Columns {
-			if idx.Columns[i].Name.L == colName.L {
-				found = true
-				break
-			}
-		}
-		if !found {
+		i, _ := ddl.FindColumnInIndexCols(colName.L, idx.Columns)
+		if i == -1 {
 			newIndices = append(newIndices, idx)
 			continue
 		}
