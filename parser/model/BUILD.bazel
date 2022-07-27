@@ -21,7 +21,10 @@ go_library(
 
 go_test(
     name = "model_test",
-    srcs = ["model_test.go"],
+    srcs = [
+        "ddl_test.go",
+        "model_test.go",
+    ],
     embed = [":model"],
     flaky = True,
     deps = [
