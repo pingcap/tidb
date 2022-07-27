@@ -25,7 +25,7 @@ type HashJoinImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *HashJoinImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *HashJoinImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	hashJoin := impl.plan.(*plannercore.PhysicalHashJoin)
 	// The children here are only used to calculate the cost.
 	hashJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
@@ -52,7 +52,7 @@ type MergeJoinImpl struct {
 }
 
 // CalcCost implements Implementation CalcCost interface.
-func (impl *MergeJoinImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+func (impl *MergeJoinImpl) CalcCost(_ float64, children ...memo.Implementation) float64 {
 	mergeJoin := impl.plan.(*plannercore.PhysicalMergeJoin)
 	// The children here are only used to calculate the cost.
 	mergeJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
