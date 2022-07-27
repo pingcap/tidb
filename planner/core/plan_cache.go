@@ -577,7 +577,7 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 			return err
 		}
 	}
-	
+
 	if ok {
 		// just cache point plan now
 		prepared.CachedPlan = p
