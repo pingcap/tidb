@@ -183,9 +183,9 @@ type ForRangeColumnsPruning struct {
 
 func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
-	res.LessThan = make([][]*expression.Expression, len(pi.Definitions))
+	res.LessThan = make([][]*expression.Expression, 0, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
-		lessThanCols := make([]*expression.Expression, len(pi.Columns))
+		lessThanCols := make([]*expression.Expression, 0, len(pi.Columns))
 		for j := range pi.Definitions[i].LessThan {
 			if strings.EqualFold(pi.Definitions[i].LessThan[j], "MAXVALUE") {
 				// Use a nil pointer instead of math.MaxInt64 to avoid the corner cases.
