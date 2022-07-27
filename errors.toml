@@ -386,6 +386,11 @@ error = '''
 not leader
 '''
 
+["Lightning:KV:ReadIndexNotReady"]
+error = '''
+read index not ready
+'''
+
 ["Lightning:KV:RegionNotFound"]
 error = '''
 region not found
