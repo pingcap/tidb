@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -70,6 +71,11 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
+	if config.CheckTableBeforeDrop && !checkKeyRangeSorted(req.KeyRanges) {
+		// In checking mode
+		logutil.BgLogger().Fatal("distsql request key range not sorted!")
+	}
+
 	eventCb := option.EventCb
 	enabledRateLimitAction := option.EnabledRateLimitAction
 	sessionMemTracker := option.SessionMemTracker
@@ -1359,4 +1365,22 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}
+}
+
+func checkKeyRangeSorted(keyRanges []kv.KeyRange) bool {
+	if len(keyRanges) == 0 {
+		return true
+	}
+	lastKey := keyRanges[0].EndKey
+	for i := 1; i < len(keyRanges); i++ {
+		r := keyRanges[i]
+		if r.StartKey.Cmp(r.EndKey) >= 0 {
+			return false
+		}
+		if r.StartKey.Cmp(lastKey) < 0 {
+			return false
+		}
+		lastKey = r.EndKey
+	}
+	return true
 }
