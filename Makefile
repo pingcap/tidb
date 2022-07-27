@@ -211,17 +211,9 @@ tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
 	$(GO) build -o ../bin/xprog xprog.go
 
-tools/bin/megacheck: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
-
 tools/bin/revive: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/revive github.com/mgechev/revive
-
-tools/bin/goword: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
 
 tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \
