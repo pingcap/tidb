@@ -43,10 +43,6 @@ goword:tools/bin/goword
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
-unconvert:tools/bin/unconvert
-	@echo "unconvert check(skip check the generated or copied code in lightning)"
-	@GO111MODULE=on tools/bin/unconvert $(UNCONVERT_PACKAGES)
-
 gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
@@ -214,10 +210,6 @@ tools/bin/xprog: tools/check/xprog.go
 tools/bin/revive: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/revive github.com/mgechev/revive
-
-tools/bin/unconvert: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
 
 tools/bin/failpoint-ctl: tools/check/go.mod
 	cd tools/check; \
