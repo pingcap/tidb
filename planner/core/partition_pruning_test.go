@@ -15,6 +15,7 @@
 package core
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
@@ -261,17 +262,23 @@ func TestPartitionRangeOperation(t *testing.T) {
 	}
 }
 
-func TestPartitionRangePrunner2VarChar(t *testing.T) {
+func TestPartitionRangePruner2VarChar(t *testing.T) {
 	tc := prepareTestCtx(t, "create table t (a varchar(32))", "a")
-	lessThanDataInt := []string{"'c'", "'f'", "'h'", "'l'", "'t'"}
-	lessThan := make([]expression.Expression, len(lessThanDataInt)+1) // +1 for maxvalue
+	lessThanDataInt := []string{"'c'", "'f'", "'h'", "'l'", "'t'", "maxvalue"}
+	lessThan := make([][]*expression.Expression, len(lessThanDataInt))
 	for i, str := range lessThanDataInt {
-		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
-		require.NoError(t, err)
-		lessThan[i] = tmp[0]
+		e := make([]*expression.Expression, 0, 1)
+		if strings.EqualFold(str, "MAXVALUE") {
+			e = append(e, nil)
+		} else {
+			tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+			require.NoError(t, err)
+			e = append(e, &tmp[0])
+		}
+		lessThan[i] = e
 	}
 
-	pruner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
+	pruner := &rangeColumnsPruner{lessThan, tc.columns}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -300,20 +307,26 @@ func TestPartitionRangePrunner2VarChar(t *testing.T) {
 	}
 }
 
-func TestPartitionRangePrunner2CharWithCollation(t *testing.T) {
+func TestPartitionRangePruner2CharWithCollation(t *testing.T) {
 	tc := prepareTestCtx(t,
 		"create table t (a char(32) collate utf8mb4_unicode_ci)",
 		"a",
 	)
-	lessThanDataInt := []string{"'c'", "'F'", "'h'", "'L'", "'t'"}
-	lessThan := make([]expression.Expression, len(lessThanDataInt)+1) // +1 for maxvalue
+	lessThanDataInt := []string{"'c'", "'F'", "'h'", "'L'", "'t'", "MAXVALUE"}
+	lessThan := make([][]*expression.Expression, len(lessThanDataInt))
 	for i, str := range lessThanDataInt {
-		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
-		require.NoError(t, err)
-		lessThan[i] = tmp[0]
+		e := make([]*expression.Expression, 0, 1)
+		if strings.EqualFold(str, "MAXVALUE") {
+			e = append(e, nil)
+		} else {
+			tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+			require.NoError(t, err)
+			e = append(e, &tmp[0])
+		}
+		lessThan[i] = e
 	}
 
-	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
+	pruner := &rangeColumnsPruner{lessThan, tc.columns}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -339,12 +352,12 @@ func TestPartitionRangePrunner2CharWithCollation(t *testing.T) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
 	}
 }
 
-func TestPartitionRangePrunner2Date(t *testing.T) {
+func TestPartitionRangePruner2Date(t *testing.T) {
 	tc := prepareTestCtx(t,
 		"create table t (a date)",
 		"a",
@@ -355,30 +368,37 @@ func TestPartitionRangePrunner2Date(t *testing.T) {
 		"'20080401'",
 		"'2010-03-01'",
 		"'20160201'",
-		"'2020-01-01'"}
-	lessThan := make([]expression.Expression, len(lessThanDataInt))
+		"'2020-01-01'",
+		"MAXVALUE"}
+	lessThan := make([][]*expression.Expression, len(lessThanDataInt))
 	for i, str := range lessThanDataInt {
-		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
-		require.NoError(t, err)
-		lessThan[i] = tmp[0]
+		e := make([]*expression.Expression, 0, 1)
+		if strings.EqualFold(str, "MAXVALUE") {
+			e = append(e, nil)
+		} else {
+			tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+			require.NoError(t, err)
+			e = append(e, &tmp[0])
+		}
+		lessThan[i] = e
 	}
 
-	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], false}
+	pruner := &rangeColumnsPruner{lessThan, tc.columns}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
 	}{
 		{"a < '1943-02-12'", partitionRangeOR{{0, 1}}},
-		{"a >= '19690213'", partitionRangeOR{{0, 6}}},
-		{"a > '2003-03-13'", partitionRangeOR{{2, 6}}},
+		{"a >= '19690213'", partitionRangeOR{{0, 7}}},
+		{"a > '2003-03-13'", partitionRangeOR{{2, 7}}},
 		{"a < '2006-02-03'", partitionRangeOR{{0, 3}}},
 		{"a = '20070707'", partitionRangeOR{{2, 3}}},
-		{"a > '1949-10-10'", partitionRangeOR{{0, 6}}},
+		{"a > '1949-10-10'", partitionRangeOR{{0, 7}}},
 		{"a > '2016-02-01' and a < '20000103'", partitionRangeOR{}},
-		{"a < '19691112' or a >= '2019-09-18'", partitionRangeOR{{0, 1}, {5, 6}}},
+		{"a < '19691112' or a >= '2019-09-18'", partitionRangeOR{{0, 1}, {5, 7}}},
 		{"a is null", partitionRangeOR{{0, 1}}},
 		{"'2003-02-27' >= a", partitionRangeOR{{0, 3}}},
-		{"'20141024' < a", partitionRangeOR{{4, 6}}},
+		{"'20141024' < a", partitionRangeOR{{4, 7}}},
 		{"'2003-03-30' > a", partitionRangeOR{{0, 3}}},
 	}
 
@@ -386,7 +406,7 @@ func TestPartitionRangePrunner2Date(t *testing.T) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
-		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		result = partitionRangeForExpr(tc.sctx, expr[0], pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v", ca.input)
 	}
 }
