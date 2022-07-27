@@ -66,6 +66,7 @@ const (
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
+	flagPartitionEliminator
 	flagCollectPredicateColumnsPoint
 	flagPushDownAgg
 	flagPushDownTopN

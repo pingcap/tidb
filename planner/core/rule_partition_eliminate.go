@@ -50,11 +50,6 @@ func (e *partitionEliminator) optimize(_ context.Context, p LogicalPlan, opt *lo
 // into
 // select max(x) from (select * from p2)
 func (e *partitionEliminator) pruneRangePartitionByMinMax(p LogicalPlan) LogicalPlan {
-	newChildren := make([]LogicalPlan, 0, len(p.Children()))
-	for _, child := range p.Children() {
-		newChildren = append(newChildren, e.pruneRangePartitionByMinMax(child))
-	}
-	p.SetChildren(newChildren...)
 	if agg, ok := p.(*LogicalAggregation); ok {
 		if !e.checkAggFuncs(agg) {
 			return p
@@ -68,6 +63,10 @@ func (e *partitionEliminator) pruneRangePartitionByMinMax(p LogicalPlan) Logical
 			}
 			e.eliminatePartitionByMinMax(pu, agg.AggFuncs[0])
 		}
+		return p
+	}
+	for _, child := range p.Children() {
+		e.pruneRangePartitionByMinMax(child)
 	}
 	return p
 }
