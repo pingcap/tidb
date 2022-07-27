@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 var (
@@ -82,18 +81,13 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	var (
 		finalPlan plannercore.Plan
 		names     types.NameSlice
-		execAST   *ast.ExecuteStmt
-		ok        bool
 	)
-	if execAST, ok = stmtNode.(*ast.ExecuteStmt); ok {
+	if execAST, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		finalPlan, names, err = planner.OptimizeExecStmt(ctx, c.Ctx, execAST, is)
 		if err != nil {
-			// Record the error and use the general path
-			ok = false
-			logutil.Logger(ctx).Info("Execute statement ...")
+			return nil, err
 		}
-	}
-	if !ok {
+	} else {
 		finalPlan, names, err = planner.Optimize(ctx, c.Ctx, stmtNode, is)
 		if err != nil {
 			return nil, err
