@@ -570,7 +570,7 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, childSchema []*expression.Schema) {
+func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
 	childMaxOneRow := make([]bool, len(p.children))
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()

@@ -30,7 +30,7 @@ func preparePossibleProperties(lp LogicalPlan) [][]*expression.Column {
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
@@ -56,7 +56,7 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, childrenPr
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	if ts.HandleCols != nil {
 		cols := make([]*expression.Column, ts.HandleCols.NumCols())
 		for i := 0; i < ts.HandleCols.NumCols(); i++ {
@@ -68,7 +68,7 @@ func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, chil
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	if len(is.IdxCols) == 0 {
 		return nil
 	}
@@ -91,7 +91,7 @@ func (p *LogicalSelection) PreparePossibleProperties(_ *expression.Schema, child
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
 	for i := range p.PartitionBy {
 		result = append(result, p.PartitionBy[i].Col)
@@ -103,7 +103,7 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, children
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalSort) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalSort) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
 		return nil
@@ -112,7 +112,7 @@ func (p *LogicalSort) PreparePossibleProperties(_ *expression.Schema, childrenPr
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	propCols := getPossiblePropertyFromByItems(p.ByItems)
 	if len(propCols) == 0 {
 		return nil
@@ -133,7 +133,7 @@ func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column 
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (p *baseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *baseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	return nil
 }
 
