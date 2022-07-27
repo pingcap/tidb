@@ -207,7 +207,7 @@ func isGetVarBinaryLiteral(sctx sessionctx.Context, expr expression.Expression) 
 		if err != nil || isNull {
 			res = false
 		} else if dt, ok2 := sctx.GetSessionVars().Users[name]; ok2 {
-			res = (dt.Kind() == types.KindBinaryLiteral)
+			res = dt.Kind() == types.KindBinaryLiteral
 		}
 	}
 	return res
@@ -259,7 +259,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 				if convErr != nil {
 					return convErr
 				}
-				val.SetBinaryLiteral(types.BinaryLiteral(binVal))
+				val.SetBinaryLiteral(binVal)
 			}
 			param.Datum = val
 			param.InExecute = true

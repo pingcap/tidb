@@ -68,7 +68,7 @@ type MemTablePredicateExtractor interface {
 // to avoid polluting the global scope of current package.
 type extractHelper struct{}
 
-func (helper extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
+func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
 	col, isCol := args[0].(*expression.Column)
 	if !isCol {
@@ -91,7 +91,7 @@ func (helper extractHelper) extractColInConsExpr(extractCols map[int64]*types.Fi
 	return name.ColName.L, results
 }
 
-func (helper extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
+func (extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
 	var col *expression.Column
 	var colIdx int
@@ -162,7 +162,7 @@ func (helper extractHelper) extractColOrExpr(extractCols map[int64]*types.FieldN
 // merges `lhs` and `datums` with CNF logic
 // 1. Returns `datums` set if the `lhs` is an empty set
 // 2. Returns the intersection of `datums` and `lhs` if the `lhs` is not an empty set
-func (helper extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
+func (extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool) set.StringSet {
 	tmpNodeTypes := set.NewStringSet()
 	for _, datum := range datums {
 		s, err := datum.ToString()
@@ -553,7 +553,7 @@ func (helper extractHelper) convertToTime(t int64) time.Time {
 	return time.Unix(0, t)
 }
 
-func (helper extractHelper) convertToBoolSlice(uint64Slice []uint64) []bool {
+func (extractHelper) convertToBoolSlice(uint64Slice []uint64) []bool {
 	if len(uint64Slice) == 0 {
 		return []bool{false, true}
 	}
@@ -561,7 +561,7 @@ func (helper extractHelper) convertToBoolSlice(uint64Slice []uint64) []bool {
 	// use to keep res unique
 	b := make(map[bool]struct{}, 2)
 	for _, l := range uint64Slice {
-		tmpBool := (l == 1)
+		tmpBool := l == 1
 		_, ok := b[tmpBool]
 		if !ok {
 			b[tmpBool] = struct{}{}
