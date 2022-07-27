@@ -56,7 +56,7 @@ func GetStorageSize(dir string) (size StorageSize, err error) {
 	}
 
 	// Available blocks * size per block = available space in bytes
-	size.Available = uint64(stat.Bavail) * bSize
+	size.Available = uint64(stat.Bavail) * bSize //nolint: unconvert
 	size.Capacity = stat.Blocks * bSize
 
 	return
