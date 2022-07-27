@@ -1339,12 +1339,17 @@ func resolveAutoConsistency(d *Dumper) error {
 	}
 
 	if conf.Consistency == ConsistencyTypeFlush {
+		timeout := time.Second * 5
+		ctx, cancel := context.WithTimeout(d.tctx.Context, timeout)
+		defer cancel()
+
 		// probe if upstream has enough privilege to FLUSH TABLE WITH READ LOCK
-		conn, err := d.dbHandle.Conn(d.tctx.Context)
+		conn, err := d.dbHandle.Conn(ctx)
 		if err != nil {
-			return err
+			return errors.New("failed to get connection from db pool after 5 seconds")
 		}
 		defer conn.Close()
+
 		err = FlushTableWithReadLock(d.tctx, conn)
 		//nolint: errcheck
 		defer UnlockTables(d.tctx, conn)
