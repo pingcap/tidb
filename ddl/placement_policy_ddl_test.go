@@ -127,9 +127,10 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	require.NoError(t, err)
 	is := builder.Build()
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	for _, policy := range []*model.PolicyInfo{p1, p2, p4, p5} {
 		require.True(t, dbterror.ErrPlacementPolicyInUse.Equal(ddl.CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)))
-		require.NoError(t, kv.RunInNewTxn(context.Background(), sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
+		require.NoError(t, kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			require.True(t, dbterror.ErrPlacementPolicyInUse.Equal(ddl.CheckPlacementPolicyNotInUseFromMeta(m, policy)))
 			return nil
@@ -137,7 +138,7 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	}
 
 	require.NoError(t, ddl.CheckPlacementPolicyNotInUseFromInfoSchema(is, p3))
-	require.NoError(t, kv.RunInNewTxn(context.Background(), sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
+	require.NoError(t, kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		require.NoError(t, ddl.CheckPlacementPolicyNotInUseFromMeta(m, p3))
 		return nil

@@ -17,7 +17,6 @@ package variable
 import (
 	"fmt"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"golang.org/x/exp/slices"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -528,7 +528,7 @@ func collectAllowFuncName4ExpressionIndex() string {
 	for funcName := range GAFunction4ExpressionIndex {
 		str = append(str, funcName)
 	}
-	sort.Strings(str)
+	slices.Sort(str)
 	return strings.Join(str, ", ")
 }
 

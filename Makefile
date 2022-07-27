@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
+.PHONY: all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test
 
 default: server buildsucc
 
@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt check-parallel unconvert lint tidy testSuite check-static vet errdoc
+check: check-parallel lint tidy testSuite check-static errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -87,7 +87,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: test_part_parser gotest gogenerate br_unit_test dumpling_unit_test
+test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test
 
 test_part_parser: parser_yacc test_part_parser_dev
 
@@ -121,12 +121,6 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
-
-gotest: failpoint-enable
-	@echo "Running in native mode."
-	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -timeout 20m -cover $(PACKAGES_TIDB_TESTS) -coverprofile=coverage.txt > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
-	@$(FAILPOINT_DISABLE)
 
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
@@ -327,14 +321,6 @@ build_for_br_integration_test:
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
-build_for_lightning_test:
-	@make failpoint-enable
-	$(GOTEST) -c -cover -covermode=count \
-		-coverpkg=github.com/pingcap/tidb/br/... \
-		-o $(LIGHTNING_BIN).test \
-		github.com/pingcap/tidb/br/cmd/tidb-lightning
-	@make failpoint-disable
-
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
@@ -420,6 +406,7 @@ dumpling_integration_test: dumpling_bins failpoint-enable build_dumpling
 dumpling_bins:
 	@which bin/tidb-server
 	@which bin/minio
+	@which bin/mc
 	@which bin/tidb-lightning
 	@which bin/sync_diff_inspector
 
@@ -442,13 +429,16 @@ bazel_test: failpoint-enable bazel_ci_prepare
 
 
 bazel_coverage_test: failpoint-enable bazel_ci_prepare
-	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_1.json --@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
+	bazel --output_user_root=/home/jenkins/.tidb/tmp coverage --config=ci --build_event_json_file=bazel_2.json --@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=featuretag \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test
 
 bazel_build: bazel_ci_prepare
 	mkdir -p bin
-	bazel --output_user_root=/home/jenkins/.tidb/tmp build --config=ci  //tidb-server/... //br/cmd/... //cmd/...
+	bazel --output_user_root=/home/jenkins/.tidb/tmp build -k --config=ci //tidb-server/... //br/cmd/... //cmd/... //util/... //dumpling/cmd/... //tidb-binlog/... --//build:with_nogo_flag=true
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin

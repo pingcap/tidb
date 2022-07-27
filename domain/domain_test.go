@@ -82,7 +82,9 @@ func TestInfo(t *testing.T) {
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop", `return(true)`))
 	require.NoError(t, dom.Init(ddlLease, sysMockFactory))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockReplaceDDL"))
 
 	// Test for GetServerInfo and GetServerInfoByID.
@@ -122,13 +124,22 @@ func TestInfo(t *testing.T) {
 	}
 	require.True(t, syncerStarted)
 
-	// Make sure loading schema is normal.
-	cs := &ast.CharsetOpt{
-		Chs: "utf8",
-		Col: "utf8_bin",
+	stmt := &ast.CreateDatabaseStmt{
+		Name: model.NewCIStr("aaa"),
+		// Make sure loading schema is normal.
+		Options: []*ast.DatabaseOption{
+			{
+				Tp:    ast.DatabaseOptionCharset,
+				Value: "utf8",
+			},
+			{
+				Tp:    ast.DatabaseOptionCollate,
+				Value: "utf8_bin",
+			},
+		},
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil))
+	require.NoError(t, dom.ddl.CreateSchema(ctx, stmt))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 

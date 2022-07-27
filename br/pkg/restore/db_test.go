@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -29,13 +30,15 @@ import (
 )
 
 type testRestoreSchemaSuite struct {
-	mock    *mock.Cluster
-	storage storage.ExternalStorage
+	mock     *mock.Cluster
+	mockGlue *gluetidb.MockGlue
+	storage  storage.ExternalStorage
 }
 
 func createRestoreSchemaSuite(t *testing.T) (s *testRestoreSchemaSuite, clean func()) {
 	var err error
 	s = new(testRestoreSchemaSuite)
+	s.mockGlue = &gluetidb.MockGlue{}
 	s.mock, err = mock.NewCluster()
 	require.NoError(t, err)
 	base := t.TempDir()
@@ -193,7 +196,8 @@ func TestFilterDDLJobs(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
+	s.mockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoErrorf(t, err, "Flush failed", err)
@@ -257,7 +261,8 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, true, "", &cipher)
 	ctx := context.Background()
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
-	err = backup.WriteBackupDDLJobs(metaWriter, s.mock.Storage, lastTS, ts)
+	s.mockGlue.SetSession(tk.Session())
+	err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.mock.Storage, lastTS, ts, false)
 	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	require.NoErrorf(t, err, "Flush failed", err)
@@ -367,4 +372,53 @@ func TestFilterDDLJobByRules(t *testing.T) {
 	for i, ddlJob := range ddlJobs {
 		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
 	}
+}
+
+func TestGetExistedUserDBs(t *testing.T) {
+	m, err := mock.NewCluster()
+	require.Nil(t, err)
+	defer m.Stop()
+	dom := m.Domain
+
+	dbs := restore.GetExistedUserDBs(dom)
+	require.Equal(t, 0, len(dbs))
+
+	builder, err := infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+		[]*model.DBInfo{
+			{Name: model.NewCIStr("mysql")},
+			{Name: model.NewCIStr("test")},
+		},
+		nil, 1)
+	require.Nil(t, err)
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dbs = restore.GetExistedUserDBs(dom)
+	require.Equal(t, 0, len(dbs))
+
+	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+		[]*model.DBInfo{
+			{Name: model.NewCIStr("mysql")},
+			{Name: model.NewCIStr("test")},
+			{Name: model.NewCIStr("d1")},
+		},
+		nil, 1)
+	require.Nil(t, err)
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dbs = restore.GetExistedUserDBs(dom)
+	require.Equal(t, 1, len(dbs))
+
+	builder, err = infoschema.NewBuilder(m.Store(), nil).InitWithDBInfos(
+		[]*model.DBInfo{
+			{Name: model.NewCIStr("mysql")},
+			{Name: model.NewCIStr("d1")},
+			{
+				Name:   model.NewCIStr("test"),
+				Tables: []*model.TableInfo{{Name: model.NewCIStr("t1"), State: model.StatePublic}},
+				State:  model.StatePublic,
+			},
+		},
+		nil, 1)
+	require.Nil(t, err)
+	dom.MockInfoCacheAndLoadInfoSchema(builder.Build())
+	dbs = restore.GetExistedUserDBs(dom)
+	require.Equal(t, 2, len(dbs))
 }

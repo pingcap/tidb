@@ -16,6 +16,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -56,11 +57,12 @@ const (
 	FlagStreamFullBackupStorage = "full-backup-storage"
 
 	defaultRestoreConcurrency       = 128
-	defaultRestoreStreamConcurrency = 64
+	defaultRestoreStreamConcurrency = 16
 	maxRestoreBatchSizeLimit        = 10240
 	defaultPDConcurrency            = 1
 	defaultBatchFlushInterval       = 16 * time.Second
 	defaultFlagDdlBatchSize         = 128
+	resetSpeedLimitRetryTimes       = 3
 )
 
 const (
@@ -182,14 +184,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.StartTS, err = ParseTSString(tsString); err != nil {
+	if cfg.StartTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 	tsString, err = flags.GetString(FlagStreamRestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -264,8 +266,9 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 }
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
-	if cfg.Config.Concurrency == 0 {
-		cfg.Config.Concurrency = 16
+	if cfg.Config.Concurrency == 0 || cfg.Config.Concurrency > defaultRestoreStreamConcurrency {
+		log.Info("set restore kv files concurrency", zap.Int("concurrency", defaultRestoreStreamConcurrency))
+		cfg.Config.Concurrency = defaultRestoreStreamConcurrency
 	}
 }
 
@@ -381,7 +384,6 @@ func IsStreamRestore(cmdName string) bool {
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	if IsStreamRestore(cmdName) {
-		cfg.adjustRestoreConfigForStreamRestore()
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
 
@@ -399,7 +401,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Restore needs domain to do DDL.
 	needDomain := true
 	keepaliveCfg := GetKeepalive(&cfg.Config)
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -467,6 +469,22 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreTS, err := client.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// todo: move this check into InitFullClusterRestore, we should move restore config into a separate package
+	// to avoid import cycle problem which we won't do it in this pr, then refactor this
+	//
+	// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
+	if cmdName == FullRestoreCmd {
+		client.InitFullClusterRestore(cfg.ExplicitFilter)
+	}
+	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
+		if err = client.CheckTargetClusterFresh(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	sp := utils.BRServiceSafePoint{
@@ -613,6 +631,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// when user skip checksum, just collect tables, and drop them.
 		finish = dropToBlackhole(ctx, afterRestoreStream, errCh, updateCh)
 	}
+
+	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
+	defer func() {
+		var resetErr error
+		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+		for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
+			resetErr = client.ResetSpeedLimit(ctx)
+			if resetErr != nil {
+				log.Warn("failed to reset speed limit, retry it",
+					zap.Int("retry time", retry), logutil.ShortError(resetErr))
+				time.Sleep(time.Duration(retry+3) * time.Second)
+				continue
+			}
+			break
+		}
+		if resetErr != nil {
+			log.Error("failed to reset speed limit", zap.Error(resetErr))
+		}
+	}()
 
 	select {
 	case err = <-errCh:

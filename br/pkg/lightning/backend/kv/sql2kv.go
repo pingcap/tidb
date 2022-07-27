@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -33,7 +32,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
+	// Import tidb/planner/core to initialize expression.RewriteAstExpr
+	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -42,9 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	// Import tidb/planner/core to initialize expression.RewriteAstExpr
-	_ "github.com/pingcap/tidb/planner/core"
+	"golang.org/x/exp/slices"
 )
 
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()
@@ -189,8 +188,8 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 	}
 
 	// order the result by column offset so they match the evaluation order.
-	sort.Slice(genCols, func(i, j int) bool {
-		return cols[genCols[i].index].Offset < cols[genCols[j].index].Offset
+	slices.SortFunc(genCols, func(i, j genCol) bool {
+		return cols[i.index].Offset < cols[j.index].Offset
 	})
 	return genCols, nil
 }
@@ -450,49 +449,6 @@ func isPKCol(colInfo *model.ColumnInfo) bool {
 	return mysql.HasPriKeyFlag(colInfo.GetFlag())
 }
 
-func isRowIDOverflow(meta *model.ColumnInfo, rowID int64) bool {
-	isUnsigned := mysql.HasUnsignedFlag(meta.GetFlag())
-	switch meta.GetType() {
-	// MEDIUM INT
-	case mysql.TypeInt24:
-		if !isUnsigned {
-			return rowID > mysql.MaxInt24
-		}
-		return rowID > mysql.MaxUint24
-	// INT
-	case mysql.TypeLong:
-		if !isUnsigned {
-			return rowID > math.MaxInt32
-		}
-		return rowID > math.MaxUint32
-	// SMALLINT
-	case mysql.TypeShort:
-		if !isUnsigned {
-			return rowID > math.MaxInt16
-		}
-		return rowID > math.MaxUint16
-	// TINYINT
-	case mysql.TypeTiny:
-		if !isUnsigned {
-			return rowID > math.MaxInt8
-		}
-		return rowID > math.MaxUint8
-	// FLOAT
-	case mysql.TypeFloat:
-		if !isUnsigned {
-			return float32(rowID) > math.MaxFloat32
-		}
-		return float64(rowID) > math.MaxFloat32*2
-	// DOUBLE
-	case mysql.TypeDouble:
-		if !isUnsigned {
-			return float64(rowID) > math.MaxFloat64
-		}
-		// impossible for rowID exceeding MaxFloat64
-	}
-	return false
-}
-
 func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDatum *types.Datum) (types.Datum, error) {
 	var (
 		value types.Datum
@@ -520,11 +476,6 @@ func (kvcodec *tableKVEncoder) getActualDatum(rowID int64, colIndex int, inputDa
 	// handle special values
 	switch {
 	case isAutoIncCol(col.ToInfo()):
-		// rowID is going to auto-filled the omitted column,
-		// which should be checked before restore
-		if isRowIDOverflow(col.ToInfo(), rowID) {
-			return value, errors.Errorf("PK %d is out of range", rowID)
-		}
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
 		value, err = table.CastValue(kvcodec.se, types.NewIntDatum(rowID), col.ToInfo(), false, false)
 	case isTableAutoRandom(tblMeta) && isPKCol(col.ToInfo()):

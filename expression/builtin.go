@@ -25,7 +25,6 @@
 package expression
 
 import (
-	"sort"
 	"strings"
 	"sync"
 
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
+	"golang.org/x/exp/slices"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -834,6 +834,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBVersion:          &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 	ast.TiDBIsDDLOwner:       &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBDecodePlan:       &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 
 	// TiDB Sequence function.
@@ -882,7 +883,7 @@ func GetBuiltinList() []string {
 		}
 		res = append(res, funcName)
 	}
-	sort.Strings(res)
+	slices.Sort(res)
 	return res
 }
 

@@ -1576,21 +1576,6 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	}
 }
 
-func TestDropColWithPrimaryKey(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
-	tk.MustExec("set global tidb_enable_change_multi_schema = off")
-	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
-	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
-	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
-	tk.MustExec("set global tidb_enable_change_multi_schema = on")
-	tk.MustExec("alter table t drop column c3")
-}
-
 func TestUnsignedFeedback(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2644,6 +2629,8 @@ func TestSelectForUpdate(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3470,10 +3457,10 @@ func TestUnreasonablyClose(t *testing.T) {
 		err = sessiontxn.NewTxn(context.Background(), tk.Session())
 		require.NoError(t, err, comment)
 
-		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO())
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
 		require.NoError(t, err, comment)
 
-		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil, oracle.GlobalTxnScope)
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
 
 		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
 		require.NotNil(t, p)
@@ -3802,6 +3789,8 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists ps_text")
 	defer tk1.MustExec("drop database if exists ps_text")
@@ -3976,6 +3965,8 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists pu_test2")
 	defer tk1.MustExec("drop database if exists pu_test2")
@@ -4374,8 +4365,8 @@ func TestGetResultRowsCount(t *testing.T) {
 		require.NotNil(t, info)
 		p, ok := info.Plan.(plannercore.Plan)
 		require.True(t, ok)
-		cnt := executor.GetResultRowsCount(tk.Session(), p)
-		require.Equal(t, cnt, ca.row, fmt.Sprintf("sql: %v", ca.sql))
+		cnt := executor.GetResultRowsCount(tk.Session().GetSessionVars().StmtCtx, p)
+		require.Equal(t, ca.row, cnt, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
 
@@ -4404,7 +4395,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
+	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
@@ -5417,7 +5408,8 @@ func TestHistoryReadInTxn(t *testing.T) {
 				// After `ExecRestrictedSQL` with a specified snapshot and use current session, the original snapshot ts should not be reset
 				// See issue: https://github.com/pingcap/tidb/issues/34529
 				exec := tk.Session().(sqlexec.RestrictedSQLExecutor)
-				rows, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
+				ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+				rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(ts2), sqlexec.ExecOptionUseCurSession}, "select * from his_t0 where id=1")
 				require.NoError(t, err)
 				require.Equal(t, 1, len(rows))
 				require.Equal(t, int64(1), rows[0].GetInt64(0))
@@ -5622,9 +5614,10 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 6, row.Len())
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	ddlInfo, err := ddl.GetDDLInfo(txn)
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("begin")
+	sess := tk.Session()
+	ddlInfo, err := ddl.GetDDLInfo(sess)
 	require.NoError(t, err)
 	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
 	// TODO: Pass this test.
@@ -5639,8 +5632,7 @@ func TestAdmin(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Zero(t, req.NumRows())
-	err = txn.Rollback()
-	require.NoError(t, err)
+	tk.MustExec("rollback")
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
@@ -5650,9 +5642,9 @@ func TestAdmin(t *testing.T) {
 	require.NoError(t, err)
 	row = req.GetRow(0)
 	require.Equal(t, 12, row.Len())
-	txn, err = store.Begin()
+	txn, err := store.Begin()
 	require.NoError(t, err)
-	historyJobs, err := ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	require.Greater(t, len(historyJobs), 1)
 	require.Greater(t, len(row.GetString(1)), 0)
 	require.NoError(t, err)
@@ -5677,9 +5669,34 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, ddl.DefNumHistoryJobs)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
 	result.Check(testkit.Rows(historyJobs[0].Query))
+	require.NoError(t, err)
+
+	// show DDL job queries with range test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test2")
+	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test3")
+	tk.MustExec("create table admin_test3 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test4")
+	tk.MustExec("create table admin_test4 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test5")
+	tk.MustExec("create table admin_test5 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test6")
+	tk.MustExec("create table admin_test6 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test7")
+	tk.MustExec("create table admin_test7 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test8")
+	tk.MustExec("create table admin_test8 (c1 int, c2 int, c3 int default 1, index (c1))")
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
+	result = tk.MustQuery(`admin show ddl job queries limit 3`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[0].ID, historyJobs[0].Query), fmt.Sprintf("%d %s", historyJobs[1].ID, historyJobs[1].Query), fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query)))
+	result = tk.MustQuery(`admin show ddl job queries limit 3, 2`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
+	result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
 	require.NoError(t, err)
 
 	// check table test
@@ -5741,7 +5758,7 @@ func TestAdmin(t *testing.T) {
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	historyJobs, err = ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 
 	// Split region for history ddl job queues.
@@ -5750,7 +5767,7 @@ func TestAdmin(t *testing.T) {
 	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
 	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
 
-	historyJobs2, err := ddl.GetHistoryDDLJobs(txn, 20)
+	historyJobs2, err := ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), 20)
 	require.NoError(t, err)
 	require.Equal(t, historyJobs2, historyJobs)
 }
@@ -5758,6 +5775,8 @@ func TestAdmin(t *testing.T) {
 func TestForSelectScopeInUnion(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	// A union B for update, the "for update" option belongs to union statement, so
 	// it should works on both A and B.
 	tk1 := testkit.NewTestKit(t, store)
@@ -6069,4 +6088,27 @@ func TestIsFastPlan(t *testing.T) {
 		ok = executor.IsFastPlan(p)
 		require.Equal(t, ca.isFastPlan, ok)
 	}
+}
+
+func TestBinaryStrNumericOperator(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varbinary(10))")
+	tk.MustExec("insert into t values ('123.12')")
+	tk.MustQuery("select 1+a from t").Check(testkit.Rows(
+		"124.12"))
+	tk.MustQuery("select a-1 from t").Check(testkit.Rows(
+		"122.12"))
+	tk.MustQuery("select -10*a from t").Check(testkit.Rows(
+		"-1231.2"))
+	tk.MustQuery("select a/-2 from t").Check(testkit.Rows(
+		"-61.56"))
+	// there should be no warning.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }

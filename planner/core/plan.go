@@ -375,6 +375,10 @@ type PhysicalPlan interface {
 
 	// Clone clones this physical plan.
 	Clone() (PhysicalPlan, error)
+
+	// appendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
+	// be tracked during findBestTask or enumeratePhysicalPlans4Task
+	appendChildCandidate(op *physicalOptimizeOp)
 }
 
 type baseLogicalPlan struct {
@@ -427,6 +431,11 @@ type basePhysicalPlan struct {
 	// used by the new cost interface
 	planCostInit bool
 	planCost     float64
+
+	// Only for MPP. If TiFlashFineGrainedShuffleStreamCount > 0:
+	// 1. For ExchangeSender, means its output will be partitioned by hash key.
+	// 2. For ExchangeReceiver/Window/Sort, means its input is already partitioned.
+	TiFlashFineGrainedShuffleStreamCount uint64
 }
 
 // Cost implements PhysicalPlan interface.
@@ -441,8 +450,9 @@ func (p *basePhysicalPlan) SetCost(cost float64) {
 
 func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPlan, error) {
 	base := &basePhysicalPlan{
-		basePlan: p.basePlan,
-		self:     newSelf,
+		basePlan:                             p.basePlan,
+		self:                                 newSelf,
+		TiFlashFineGrainedShuffleStreamCount: p.TiFlashFineGrainedShuffleStreamCount,
 	}
 	for _, child := range p.children {
 		cloned, err := child.Clone()
@@ -560,7 +570,7 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *baseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Schema) {
 	childMaxOneRow := make([]bool, len(p.children))
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
@@ -645,10 +655,10 @@ func (p *basePlan) OutputNames() types.NameSlice {
 	return nil
 }
 
-func (p *basePlan) SetOutputNames(names types.NameSlice) {
+func (p *basePlan) SetOutputNames(_ types.NameSlice) {
 }
 
-func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *basePlan) replaceExprColumns(_ map[string]*expression.Column) {
 }
 
 // ID implements Plan ID interface.
@@ -764,4 +774,21 @@ func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
 func (p *basePlan) buildPlanTrace() *tracing.PlanTrace {
 	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
 	return planTrace
+}
+
+func (p *basePhysicalPlan) appendChildCandidate(op *physicalOptimizeOp) {
+	if len(p.Children()) < 1 {
+		return
+	}
+	childrenID := make([]int, 0)
+	for _, child := range p.Children() {
+		childCandidate := &tracing.CandidatePlanTrace{
+			PlanTrace: &tracing.PlanTrace{TP: child.TP(), ID: child.ID(),
+				ExplainInfo: child.ExplainInfo(), Cost: child.Cost()},
+		}
+		op.tracer.AppendCandidate(childCandidate)
+		child.appendChildCandidate(op)
+		childrenID = append(childrenID, child.ID())
+	}
+	op.tracer.Candidates[p.ID()].PlanTrace.ChildrenID = childrenID
 }

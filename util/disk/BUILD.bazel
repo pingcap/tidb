@@ -22,11 +22,13 @@ go_library(
 
 go_test(
     name = "disk_test",
+    timeout = "short",
     srcs = [
         "main_test.go",
         "tempDir_test.go",
     ],
     embed = [":disk"],
+    flaky = True,
     deps = [
         "//config",
         "//testkit/testsetup",

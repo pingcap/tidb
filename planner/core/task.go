@@ -174,8 +174,9 @@ func (t *copTask) finishIndexPlan() {
 	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 
 	// net seek cost
-	var p PhysicalPlan
-	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	p := t.indexPlan
+	for len(p.Children()) > 0 {
+		p = p.Children()[0]
 	}
 	is := p.(*PhysicalIndexScan)
 	t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
@@ -185,7 +186,9 @@ func (t *copTask) finishIndexPlan() {
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
+	p = t.tablePlan
+	for len(p.Children()) > 0 {
+		p = p.Children()[0]
 	}
 	ts := p.(*PhysicalTableScan)
 	t.cst += cnt * ts.getScanRowSize() * sessVars.GetScanFactor(tableInfo)
@@ -667,7 +670,7 @@ func calcPagingCost(ctx sessionctx.Context, indexPlan PhysicalPlan, expectCnt ui
 
 	// we want the diff between idxCst and pagingCst here,
 	// however, the idxCst does not contain seekFactor, so a seekFactor needs to be removed
-	return pagingCst - sessVars.GetSeekFactor(nil)
+	return math.Max(pagingCst-sessVars.GetSeekFactor(nil), 0)
 }
 
 func (t *rootTask) convertToRootTask(_ sessionctx.Context) *rootTask {
@@ -809,6 +812,7 @@ func (t *copTask) handleRootTaskConds(ctx sessionctx.Context, newTask *rootTask)
 			selectivity = SelectionFactor
 		}
 		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo().Scale(selectivity), newTask.p.SelectBlockOffset())
+		sel.fromDataSource = true
 		sel.SetChildren(newTask.p)
 		newTask.p = sel
 		sel.cost = newTask.cost()
@@ -1337,7 +1341,15 @@ func BuildFinalModeAggregation(
 
 			finalAggFunc.OrderByItems = byItems
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
-			finalAggFunc.Mode = aggregation.CompleteMode
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
+			if aggFunc.Mode == aggregation.CompleteMode {
+				finalAggFunc.Mode = aggregation.CompleteMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
+			}
 		} else {
 			if aggFunc.Name == ast.AggFuncGroupConcat && len(aggFunc.OrderByItems) > 0 {
 				// group_concat can only run in one phase if it has order by items but without distinct property
@@ -1417,7 +1429,15 @@ func BuildFinalModeAggregation(
 				}
 			}
 
-			finalAggFunc.Mode = aggregation.FinalMode
+			// In logical optimize phase, the Agg->PartitionUnion->TableReader may become
+			// Agg1->PartitionUnion->Agg2->TableReader, and the Agg2 is a partial aggregation.
+			// So in the push down here, we need to add a new if-condition check:
+			// If the original agg mode is partial already, the finalAggFunc's mode become Partial2.
+			if aggFunc.Mode == aggregation.CompleteMode {
+				finalAggFunc.Mode = aggregation.FinalMode
+			} else if aggFunc.Mode == aggregation.Partial1Mode || aggFunc.Mode == aggregation.Partial2Mode {
+				finalAggFunc.Mode = aggregation.Partial2Mode
+			}
 		}
 
 		finalAggFunc.Args = args
@@ -1483,7 +1503,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	}
 	// no avgs
 	// for final agg, always add project due to in-compatibility between TiDB and TiFlash
-	if len(p.schema.Columns) == len(newSchema.Columns) && !p.isFinalAgg() {
+	if len(p.schema.Columns) == len(newSchema.Columns) && !p.IsFinalAgg() {
 		return nil
 	}
 	// add remaining columns to exprs

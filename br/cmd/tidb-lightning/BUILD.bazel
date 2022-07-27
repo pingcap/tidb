@@ -25,4 +25,5 @@ go_test(
     name = "tidb-lightning_test",
     srcs = ["main_test.go"],
     embed = [":tidb-lightning_lib"],
+    flaky = True,
 )

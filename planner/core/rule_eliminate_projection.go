@@ -49,14 +49,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
 		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
-			if physicalAgg.isFinalAgg() {
+			if physicalAgg.IsFinalAgg() {
 				return false
 			}
 		}
@@ -154,7 +154,7 @@ type projectionEliminator struct {
 }
 
 // optimize implements the logicalOptRule interface.
-func (pe *projectionEliminator) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (pe *projectionEliminator) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)
 	return root, nil
 }

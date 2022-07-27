@@ -117,7 +117,7 @@ func (m *ownerManager) Cancel() {
 }
 
 // RequireOwner implements Manager.RequireOwner interface.
-func (m *ownerManager) RequireOwner(ctx context.Context) error {
+func (*ownerManager) RequireOwner(_ context.Context) error {
 	return nil
 }
 
@@ -253,7 +253,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 	}
 }
 
-func (m *ownerManager) revokeSession(logPrefix string, leaseID clientv3.LeaseID) {
+func (m *ownerManager) revokeSession(_ string, leaseID clientv3.LeaseID) {
 	// Revoke the session lease.
 	// If revoke takes longer than the ttl, lease is expired anyway.
 	cancelCtx, cancel := context.WithTimeout(context.Background(),

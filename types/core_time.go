@@ -142,7 +142,7 @@ func (t CoreTime) Weekday() gotime.Weekday {
 }
 
 // YearWeek returns year and week.
-func (t CoreTime) YearWeek(mode int) (int, int) {
+func (t CoreTime) YearWeek(mode int) (year int, week int) {
 	behavior := weekMode(mode) | weekBehaviourYear
 	return calcWeek(t, behavior)
 }

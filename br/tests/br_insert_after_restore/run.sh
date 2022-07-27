@@ -48,7 +48,7 @@ run_sql "DROP DATABASE $DB;"
 
 # restore full
 echo "restore start..."
-run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
+run_br restore full --filter '*.*' --filter '!mysql.*' -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 row_count_new=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
 

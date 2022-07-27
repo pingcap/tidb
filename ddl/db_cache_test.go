@@ -273,6 +273,7 @@ func TestIssue34069(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	sem.Enable()
+	defer sem.Disable()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)

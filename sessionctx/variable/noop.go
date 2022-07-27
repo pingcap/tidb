@@ -75,7 +75,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ft_max_word_len", Value: "84"},
 	{Scope: ScopeGlobal, Name: "log_backward_compatible_user_definitions", Value: ""},
 	{Scope: ScopeNone, Name: "lc_messages_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
-	{Scope: ScopeGlobal, Name: "ft_boolean_syntax", Value: "+ -><()~*:\"\"&|"},
+	{Scope: ScopeGlobal, Name: "ft_boolean_syntax", Value: `+ -><()~*:""&|`},
 	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "2000", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_handles", Value: "32768"},
 	{Scope: ScopeSession, Name: "transaction_allow_batching", Value: ""},
@@ -155,7 +155,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_buffer_pool_instances", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_length_for_sort_data", Value: "1024", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: CharacterSetSystem, Value: "utf8"},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetFilesystem)
 	}},
 	{Scope: ScopeGlobal, Name: InnodbOptimizeFullTextOnly, Value: "0"},

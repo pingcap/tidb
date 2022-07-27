@@ -650,7 +650,7 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.force-priority, performance.memory-usage-alarm-ratio, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
+		`, errors.New("The following configuration options are no longer supported in this version of TiDB. Check the release notes for more information: check-mb4-value-in-utf8, enable-batch-dml, log.enable-slow-log, log.query-log-max-len, log.record-plan-in-slow-log, log.slow-threshold, lower-case-table-names, mem-quota-query, oom-action, performance.committer-concurrency, performance.feedback-probability, performance.force-priority, performance.memory-usage-alarm-ratio, performance.query-feedback-limit, performance.run-auto-analyze, prepared-plan-cache.capacity, prepared-plan-cache.enabled, prepared-plan-cache.memory-guard-ratio")},
 	}
 
 	for _, test := range configTest {
@@ -1244,8 +1244,6 @@ func TestGetJSONConfig(t *testing.T) {
 	require.NotContains(t, conf, "query-log-max-len")
 	require.NotContains(t, conf, "oom-action")
 
-	require.Contains(t, conf, "query-feedback-limit")
-	require.Contains(t, conf, "feedback-probability")
 	require.Contains(t, conf, "stmt-count-limit")
 	require.Contains(t, conf, "rpc-metrics")
 }

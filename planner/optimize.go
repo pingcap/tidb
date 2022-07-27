@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"runtime/trace"
 	"strings"
 	"sync"
 	"time"
@@ -186,9 +185,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			for _, warn := range warns {
 				sessVars.StmtCtx.AppendWarning(warn)
 			}
-			if err := setFoundInBinding(sctx, true, chosenBinding.BindSQL); err != nil {
-				logutil.BgLogger().Warn("set tidb_found_in_binding failed", zap.Error(err))
-			}
+			sessVars.StmtCtx.BindSQL = chosenBinding.BindSQL
+			sessVars.FoundInBinding = true
 			if sessVars.StmtCtx.InVerboseExplain {
 				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
@@ -481,30 +479,6 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
 }
 
-// OptimizeExecStmt to optimize prepare statement protocol "execute" statement
-// this is a short path ONLY does things filling prepare related params
-// for point select like plan which does not need extra things
-func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
-	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
-	defer trace.StartRegion(ctx, "Optimize").End()
-	var err error
-
-	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
-	defer planBuilderPool.Put(builder.ResetForReuse())
-
-	builder.Init(sctx, is, nil)
-	p, err := builder.Build(ctx, execAst)
-	if err != nil {
-		return nil, err
-	}
-	if execPlan, ok := p.(*plannercore.Execute); ok {
-		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return execPlan.Plan, err
-	}
-	err = errors.Errorf("invalid result plan type, should be Execute")
-	return nil, err
-}
-
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
 		return
@@ -662,13 +636,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	offs = append(offs, setVarsOffs...)
 	return
-}
-
-func setFoundInBinding(sctx sessionctx.Context, opt bool, bindSQL string) error {
-	vars := sctx.GetSessionVars()
-	vars.StmtCtx.BindSQL = bindSQL
-	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(opt))
-	return err
 }
 
 func init() {
