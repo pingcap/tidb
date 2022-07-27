@@ -3661,6 +3661,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		} else if b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
+	}
+	if leadingHintCnt == 1 {
 		b.ctx.GetSessionVars().StmtCtx.HasLeadingHint = true
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
