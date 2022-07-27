@@ -1580,7 +1580,7 @@ func TestVariablesInfo(t *testing.T) {
 	tk.MustExec("SET GLOBAL innodb_compression_level = DEFAULT;")
 
 	// enum
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb_txn_mode SESSION,GLOBAL   <nil> <nil> pessimistic,optimistic NO"))
+	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb_txn_mode SESSION,GLOBAL  pessimistic <nil> <nil> pessimistic,optimistic NO"))
 
 	// noop
 	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO'`).Check(testkit.Rows("max_connections INSTANCE 0 0 0 100000 <nil> NO"))
