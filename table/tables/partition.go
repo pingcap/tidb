@@ -192,13 +192,12 @@ func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo,
 				lessThanCols = append(lessThanCols, nil)
 				// No column after MAXVALUE matters
 				break
-			} else {
-				tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[j], schema, names)
-				if err != nil {
-					return nil, err
-				}
-				lessThanCols = append(lessThanCols, &tmp)
 			}
+			tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[j], schema, names)
+			if err != nil {
+				return nil, err
+			}
+			lessThanCols = append(lessThanCols, &tmp)
 		}
 		res.LessThan = append(res.LessThan, lessThanCols)
 	}
