@@ -1346,6 +1346,7 @@ func resolveAutoConsistency(d *Dumper) error {
 		}
 		defer conn.Close()
 		err = FlushTableWithReadLock(d.tctx, conn)
+		//nolint: errcheck
 		defer UnlockTables(d.tctx, conn)
 		if err != nil {
 			// fallback to ConsistencyTypeLock
