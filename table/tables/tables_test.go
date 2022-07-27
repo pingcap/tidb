@@ -979,3 +979,15 @@ func TestInsertNotLock(t *testing.T) {
 
 	tk.MustExec("admin check table t")
 }
+
+func TestPoc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_skip_insert_lock=1")
+	tk.MustExec("CREATE TABLE `account_dynamic` (\n  `area_code` varchar(10) NOT NULL,\n  `account_no` varchar(40) NOT NULL,\n  `product_code` varchar(10) NOT NULL,\n  `gl_class` varchar(10) NOT NULL,\n  `virtual_flag` varchar(1) NOT NULL,\n  `real_flag` varchar(1) NOT NULL,\n  `collect_flag` varchar(1) NOT NULL,\n  `balance_type` varchar(1) NOT NULL,\n  `balance_ctrl` varchar(1) NOT NULL,\n  `sync_flag` varchar(1) DEFAULT NULL,\n  `cur_type` varchar(3) NOT NULL,\n  `spot_type` varchar(2) NOT NULL,\n  `close_flag` varchar(1) NOT NULL,\n  `max_acc_cycle_no` bigint(20) DEFAULT NULL,\n  `max_clearing_times` bigint(20) DEFAULT NULL,\n  `dayend_cycle_no` bigint(20) DEFAULT NULL,\n  `acc_date` datetime DEFAULT NULL,\n  `last_acc_date` datetime DEFAULT NULL,\n  `open_date` datetime NOT NULL,\n  `close_date` datetime DEFAULT NULL,\n  `detail_cnt` bigint(20) DEFAULT NULL,\n  `debit_amt` decimal(16,2) DEFAULT NULL,\n  `credit_amt` decimal(16,2) DEFAULT NULL,\n  `debit_cnt` bigint(20) DEFAULT NULL,\n  `credit_cnt` bigint(20) DEFAULT NULL,\n  `balance` decimal(16,2) DEFAULT NULL,\n  `pre_clearing_times` bigint(20) DEFAULT NULL,\n  `pre_times_balance` decimal(16,2) DEFAULT NULL,\n  `pre_times_dcnt` bigint(20) DEFAULT NULL,\n  `pre_times_damt` decimal(16,2) DEFAULT NULL,\n  `pre_times_ccnt` bigint(20) DEFAULT NULL,\n  `pre_times_camt` decimal(16,2) DEFAULT NULL,\n  `pre_cycle_no` bigint(20) DEFAULT NULL,\n  `pre_balance` decimal(16,2) DEFAULT NULL,\n  `pre_debit_cnt` bigint(20) DEFAULT NULL,\n  `pre_credit_cnt` bigint(20) DEFAULT NULL,\n  `pre_debit_amt` decimal(16,2) DEFAULT NULL,\n  `pre_credit_amt` decimal(16,2) DEFAULT NULL,\n  `dac` varchar(16) DEFAULT NULL,\n  PRIMARY KEY (`account_no`) CLUSTERED,\n  unique KEY `account_dynamic_i1` (`area_code`,`product_code`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("INSERT INTO account_dynamic VALUES(\n'10100', \n'33010101000000000000',\n'1', \n'ssssssssss',\n's',\n's',\n's',\n's',\n's',\n's',\n'sss',\n'ss','s',100,100,100,now(),\nnow(),now(),now(),1000,12.00,1111.01,1000,100000,12.01,1200,1240.02,122,1245.02,2222,124.02,123,125.01,2541,111,123.12,242.21,'ssssssssssssssss');")
+	tk.MustExec("commit")
+}

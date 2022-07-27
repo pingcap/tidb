@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -100,7 +101,7 @@ func GetAllTiKVStores(
 	j := 0
 	for _, store := range stores {
 		isTiFlash := false
-		if version.IsTiFlash(store) {
+		if engine.IsTiFlash(store) {
 			if storeBehavior == SkipTiFlash {
 				continue
 			} else if storeBehavior == ErrorOnTiFlash {
@@ -239,6 +240,15 @@ func NewMgr(
 		dom, err = g.GetDomain(storage)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		// we must check tidb(tikv version) any time after concurrent ddl feature implemented in v6.2.
+		// when tidb < 6.2 we need set EnableConcurrentDDL false to make ddl works.
+		// we will keep this check until 7.0, which allow the breaking changes.
+		// NOTE: must call it after domain created!
+		// FIXME: remove this check in v7.0
+		err = version.CheckClusterVersion(ctx, controller.GetPDClient(), version.CheckVersionForDDL)
+		if err != nil {
+			return nil, errors.Annotate(err, "unable to check cluster version for ddl")
 		}
 	}
 

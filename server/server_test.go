@@ -1635,6 +1635,7 @@ func (cli *testServerClient) runTestExplainForConn(t *testing.T) {
 
 func (cli *testServerClient) runTestErrorCode(t *testing.T) {
 	cli.runTestsOnNewDB(t, nil, "ErrorCode", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_txn_mode=''")
 		dbt.MustExec("create table test (c int PRIMARY KEY);")
 		dbt.MustExec("insert into test values (1);")
 		txn1, err := dbt.GetDB().Begin()
