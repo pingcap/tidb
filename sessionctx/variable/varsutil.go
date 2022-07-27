@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
-	_ "go.uber.org/automaxprocs"
 	"golang.org/x/exp/slices"
 )
 
