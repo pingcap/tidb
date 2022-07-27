@@ -40,7 +40,7 @@ type RegionIter struct {
 	currentStartKey  []byte
 	// When the endKey become "", we cannot check whether the scan is done by
 	// comparing currentStartKey and endKey (because "" has different meaning in start key and end key).
-	// So set this to `ture` when endKey == "" and the scan is done.
+	// So set this to `true` when endKey == "" and the scan is done.
 	infScanFinished bool
 
 	// The max slice size returned by `Next`.
