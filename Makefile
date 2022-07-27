@@ -31,7 +31,7 @@ dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword
 
-check: check-parallel lint tidy testSuite check-static errdoc
+check: check-parallel lint tidy testSuite check-static errdoc check-file-perm
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -42,6 +42,10 @@ goword:tools/bin/goword
 
 check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
+
+check-file-perm:
+	@echo "check file permission"
+	./tools/check/check-file-perm.sh
 
 gogenerate:
 	@echo "go generate ./..."
