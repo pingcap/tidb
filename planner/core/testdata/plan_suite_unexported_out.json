@@ -108,7 +108,7 @@
     "Cases": [
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->Projection",
       "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,test.t.a)->Projection->Projection",
-      "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,test.t.a)->Aggr(firstrow(Column#25),count(test.t.b))->Projection->Projection",
+      "Join{DataScan(t)->Aggr(count(test.t.c),firstrow(test.t.a))->DataScan(s)}(test.t.a,test.t.a)->Aggr(firstrow(Column#13),count(test.t.b))->Projection->Projection",
       "Apply{DataScan(t)->DataScan(s)->Sel([eq(test.t.a, test.t.a)])->Aggr(count(test.t.b))}->Projection",
       "Join{DataScan(t)->DataScan(s)->Aggr(count(test.t.b),firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Projection->Projection",
       "Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(s)->Aggr(count(test.t.b),firstrow(test.t.a))}(test.t.a,test.t.a)->Projection->Projection->Projection",
@@ -121,7 +121,7 @@
       "Join{DataScan(t)->Join{DataScan(s)->DataScan(k)}(test.t.d,test.t.d)(test.t.c,test.t.c)->Aggr(sum(test.t.a))->Projection}->Projection",
       "Join{DataScan(t1)->DataScan(t2)->Aggr(max(test.t.a),firstrow(test.t.b))}(test.t.b,test.t.b)->Projection->Sel([eq(test.t.b, Column#25)])->Projection",
       "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.g, test.t.g) or(eq(test.t.b, 4), eq(test.t.b, 2))])->Aggr(avg(test.t.a))}->Projection->Sel([eq(cast(test.t.b, decimal(20,0) BINARY), Column#25)])->Projection",
-      "Join{DataScan(t1)->DataScan(t2)->Aggr(max(test.t.a),firstrow(test.t.b))}(test.t.b,test.t.b)->Projection->Sel([eq(test.t.b, Column#25)])->Projection",
+      "Join{DataScan(t1)->DataScan(t2)}(test.t.b,test.t.b)->Aggr(firstrow(test.t.b),max(test.t.a))->Projection->Sel([eq(test.t.b, Column#25)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)(test.t.b,test.t.b)->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
       "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t.b, test.t.b)])->Projection",
@@ -144,7 +144,7 @@
       "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,test.t.a)->Limit->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
-      "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([Column#37],0,5)->Projection",
+      "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([Column#25],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)->TopN([test.t.a],0,5)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a test.t.b],0,5)->Projection",
@@ -202,7 +202,7 @@
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over())->Sort->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.a))->Sort->Projection",
       "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Sort->Projection",
-      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#38 over())->MaxOneRow->Sel([Column#38])}->Projection",
+      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#26 over())->MaxOneRow->Sel([Column#26])}->Projection",
       "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
       "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
       "[planner:3579]Window name 'w2' is not defined.",
@@ -663,7 +663,7 @@
         "1": [
           "test.t.a"
         ],
-        "4": [
+        "2": [
           "test.t.a",
           "test.t.b"
         ]
@@ -678,7 +678,7 @@
           "test.t.a",
           "test.t.b"
         ],
-        "4": [
+        "2": [
           "test.t.b"
         ]
       },
@@ -686,7 +686,7 @@
         "1": [
           "test.t.a"
         ],
-        "4": [
+        "2": [
           "test.t.b"
         ]
       },
@@ -702,7 +702,7 @@
           "test.t.a",
           "test.t.b"
         ],
-        "3": [
+        "2": [
           "test.t.c"
         ]
       },
@@ -711,7 +711,7 @@
           "test.t.a",
           "test.t.b"
         ],
-        "3": [
+        "2": [
           "test.t.c",
           "test.t.d"
         ]
@@ -721,7 +721,7 @@
           "test.t.a",
           "test.t.b"
         ],
-        "3": [
+        "2": [
           "test.t.c",
           "test.t.d"
         ]
@@ -730,7 +730,7 @@
         "1": [
           "test.t.a"
         ],
-        "3": [
+        "2": [
           "test.t.a"
         ]
       },

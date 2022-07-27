@@ -765,6 +765,11 @@ func (b *PlanBuilder) analyzeProjectionList(ctx context.Context, p LogicalPlan, 
 
 		// analyzing projection phase, we don't consider window function field here. (do it like old projection does)
 		if isWindowFuncField {
+			// collected correlated agg to scope if any while ignore the expr generated here, still waiting for window field build in 2th projection building.
+			_, _, err := b.rewriteWithPreprocess(ctx, field.Expr, p, nil, nil, true, nil)
+			if err != nil {
+				return err
+			}
 			expr := expression.NewZero()
 			b.curScope.projExpr = append(b.curScope.projExpr, expr)
 			col, name, err := b.buildProjectionField(ctx, p, field, expr)
@@ -815,6 +820,9 @@ func (b *PlanBuilder) analyzeSelectionList(ctx context.Context, p LogicalPlan, w
 	defer func() {
 		b.curClause = originClause
 	}()
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "SELECT * FROM t2 WHERE (SELECT c1, c2 FROM t2 LIMIT 1) = ANY (SELECT c1, c2 FROM t1)") {
+		fmt.Println(1)
+	}
 	_, _, err := b.rewriteWithPreprocess(ctx, where, p, nil, nil, false, nil)
 	if err != nil {
 		return err

@@ -3338,7 +3338,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#11",
+          "Projection 1.00 root  test.t1.a, Column#8",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─HashAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#7, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexReader 10000.00 root  index:IndexFullScan",
@@ -3354,7 +3354,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#11",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -3478,7 +3478,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1;",
         "Plan": [
-          "Projection 10000.00 root  test.t1.a, <nil>->Column#11",
+          "Projection 10000.00 root  test.t1.a, <nil>->Column#8",
           "└─IndexReader 10000.00 root  index:IndexFullScan",
           "  └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo"
         ],
@@ -3487,7 +3487,7 @@
       {
         "SQL": "select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
@@ -3972,7 +3972,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#11",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -3992,7 +3992,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#11",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -4014,7 +4014,7 @@
       {
         "SQL": "select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#11",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -4036,7 +4036,7 @@
       {
         "SQL": "select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#11",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -4059,7 +4059,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#11",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -4081,7 +4081,7 @@
       {
         "SQL": "select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 1.00 root  test.t1.a, Column#14",
+          "Projection 1.00 root  test.t1.a, Column#11",
           "└─Apply 1.00 root  CARTESIAN left outer join",
           "  ├─StreamAgg(Build) 1.00 root  funcs:min(test.t1.a)->Column#10, funcs:firstrow(test.t1.a)->test.t1.a",
           "  │ └─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
@@ -4770,7 +4770,7 @@
       {
         "SQL": "select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
@@ -4783,7 +4783,7 @@
       {
         "SQL": "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
@@ -4799,7 +4799,7 @@
       {
         "SQL": "select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
@@ -4812,7 +4812,7 @@
       {
         "SQL": "select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
@@ -4828,7 +4828,7 @@
       {
         "SQL": "select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
@@ -4844,7 +4844,7 @@
       {
         "SQL": "select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",
@@ -4860,7 +4860,7 @@
       {
         "SQL": "select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;",
         "Plan": [
-          "Projection 3.75 root  test.t1.a, <nil>->Column#14",
+          "Projection 3.75 root  test.t1.a, <nil>->Column#11",
           "└─IndexJoin 3.75 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
           "  ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t3, index:a(a) keep order:false",

@@ -6687,15 +6687,15 @@ func TestIssue29663(t *testing.T) {
 	tk.MustExec("insert into t2 values(1, 3), (1,4),(2,5),(2,6)")
 
 	tk.MustQuery("explain select one.a from t1 one order by (select two.d from t2 two where two.c = one.b)").Check(testkit.Rows(
-		"Projection_16 10000.00 root  test.t1.a",
-		"└─Sort_17 10000.00 root  test.t2.d",
-		"  └─Apply_20 10000.00 root  CARTESIAN left outer join",
-		"    ├─TableReader_22(Build) 10000.00 root  data:TableFullScan_21",
-		"    │ └─TableFullScan_21 10000.00 cop[tikv] table:one keep order:false, stats:pseudo",
-		"    └─MaxOneRow_23(Probe) 1.00 root  ",
-		"      └─TableReader_26 2.00 root  data:Selection_25",
-		"        └─Selection_25 2.00 cop[tikv]  eq(test.t2.c, test.t1.b)",
-		"          └─TableFullScan_24 2000.00 cop[tikv] table:two keep order:false, stats:pseudo"))
+		"Projection_10 10000.00 root  test.t1.a",
+		"└─Sort_11 10000.00 root  test.t2.d",
+		"  └─Apply_14 10000.00 root  CARTESIAN left outer join",
+		"    ├─TableReader_16(Build) 10000.00 root  data:TableFullScan_15",
+		"    │ └─TableFullScan_15 10000.00 cop[tikv] table:one keep order:false, stats:pseudo",
+		"    └─MaxOneRow_17(Probe) 1.00 root  ",
+		"      └─TableReader_20 2.00 root  data:Selection_19",
+		"        └─Selection_19 2.00 cop[tikv]  eq(test.t2.c, test.t1.b)",
+		"          └─TableFullScan_18 2000.00 cop[tikv] table:two keep order:false, stats:pseudo"))
 }
 
 func TestIssue31609(t *testing.T) {

@@ -829,7 +829,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select 1 from t t1, t t2 where t1.a > all((select a) union (select a))",
-			err: ErrAmbiguous,
+			err: expression.ErrNonUniq,
 		},
 		{
 			sql: "insert into t set a = 1, b = a + 1",

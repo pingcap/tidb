@@ -83,19 +83,19 @@ func TestSingleRuleTraceStep(t *testing.T) {
 					assertReason: "",
 				},
 				{
-					assertAction: "Selection_4 removed from plan tree",
-					assertReason: "Selection_4's conditions have been pushed into Apply_8",
+					assertAction: "Selection_3 removed from plan tree",
+					assertReason: "Selection_3's conditions have been pushed into Apply_8",
 				},
 				{
 					assertAction: "Apply_8 simplified into Join_8",
 					assertReason: "Join_8 hasn't any corelated column, thus the inner plan is non-correlated",
 				},
 				{
-					assertAction: "Aggregation_5 pulled up as Join_8's parent, and Join_8's join type becomes left outer join",
-					assertReason: "Aggregation_5's functions haven't any group by items and Join_8's join type isn't inner join or left outer join, and hasn't any conditions",
+					assertAction: "Aggregation_4 pulled up as Join_8's parent, and Join_8's join type becomes left outer join",
+					assertReason: "Aggregation_4's functions haven't any group by items and Join_8's join type isn't inner join or left outer join, and hasn't any conditions",
 				},
 				{
-					assertAction: "Projection_6 is moved as Aggregation_5's parent",
+					assertAction: "Projection_5 is moved as Aggregation_4's parent",
 					assertReason: "Join_8's join type is left outer join, not semi join",
 				},
 			},

@@ -540,6 +540,7 @@ type PlanBuilder struct {
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
+	// todo: this is not necessary when eNNR is on.
 	allNames [][]*types.FieldName
 
 	// isSampling indicates whether the query is sampling.
@@ -2989,6 +2990,11 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, error) {
+	eNNR := b.ctx.GetSessionVars().OptimizerEnableNewNameResolution
+	if eNNR {
+		b.pushNewScope()
+		defer b.popOldScope()
+	}
 	p := LogicalShow{
 		ShowContents: ShowContents{
 			Tp:                    show.Tp,
@@ -3091,6 +3097,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	p.names = names
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+	}
+	if eNNR {
+		b.curScope.Add(p.schema, p.names)
 	}
 	var err error
 	var np LogicalPlan

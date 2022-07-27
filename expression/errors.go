@@ -36,6 +36,7 @@ var (
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
 	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
+	ErrNonUniq                     = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
@@ -49,7 +50,6 @@ var (
 	errWarnOptionIgnored             = dbterror.ClassExpression.NewStd(mysql.WarnOptionIgnored)
 	errTruncatedWrongValue           = dbterror.ClassExpression.NewStd(mysql.ErrTruncatedWrongValue)
 	errUnknownLocale                 = dbterror.ClassExpression.NewStd(mysql.ErrUnknownLocale)
-	errNonUniq                       = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
 	errWrongValueForType             = dbterror.ClassExpression.NewStd(mysql.ErrWrongValueForType)
 	errUnknown                       = dbterror.ClassExpression.NewStd(mysql.ErrUnknown)
 	errSpecificAccessDenied          = dbterror.ClassExpression.NewStd(mysql.ErrSpecificAccessDenied)
