@@ -789,16 +789,17 @@ func upgrade(s Session) {
 	}
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
-	original := variable.EnableConcurrentDDL.Load()
 	if ver < version92 && !domain.GetDomain(s).DDL().OwnerManager().IsOwner() {
-		variable.EnableConcurrentDDL.Store(false)
+		// use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
+		// overwrite variable EnableConcurrentDDL.
+		variable.DDLForce2Queue.Store(true)
 	}
 	// Do upgrade works then update bootstrap version.
 	for _, upgrade := range bootstrapVersion {
 		upgrade(s, ver)
 	}
 
-	variable.EnableConcurrentDDL.Store(original)
+	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
