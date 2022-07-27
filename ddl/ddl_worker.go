@@ -294,7 +294,8 @@ func (d *ddl) limitDDLJobs() {
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
 	var err error
-	if variable.EnableConcurrentDDL.Load() {
+	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
+	if variable.EnableConcurrentDDL.Load() && !variable.DDLForce2Queue.Load() {
 		err = d.addBatchDDLJobs2Table(tasks)
 	} else {
 		err = d.addBatchDDLJobs2Queue(tasks)
