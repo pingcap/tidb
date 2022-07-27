@@ -1015,7 +1015,8 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Expression,
 	pruner *rangeColumnsPruner) partitionRangeOR {
 	col, ok := args[0].(*expression.Column)
-	if !ok || col.ID != pruner.partCol.ID {
+	if !ok || col.ID != pruner.partCols[0].ID {
+		// TODO: Support more elaborate pruning for multi-columns RANGE COLUMNS!
 		return pruner.fullRange()
 	}
 
@@ -1495,61 +1496,74 @@ var _ partitionRangePruner = &rangeColumnsPruner{}
 
 // rangeColumnsPruner is used by 'partition by range columns'.
 type rangeColumnsPruner struct {
-	data     []expression.Expression
-	partCol  *expression.Column
-	maxvalue bool
+	lessThan [][]*expression.Expression
+	partCols []*expression.Column
 }
 
 func makeRangeColumnPruner(columns []*expression.Column, names types.NameSlice, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning) (*rangeColumnsPruner, error) {
-	schema := expression.NewSchema(columns...)
-	idx := expression.FindFieldNameIdxByColName(names, pi.Columns[0].L)
-	partCol := schema.Columns[idx]
-	data := make([]expression.Expression, len(from.LessThan))
-	for i := 0; i < len(from.LessThan); i++ {
-		if from.LessThan[i] != nil {
-			data[i] = from.LessThan[i].Clone()
-		}
+	if len(pi.Definitions) != len(from.LessThan) {
+		return nil, errors.Trace(fmt.Errorf("Internal error len(pi.Definitions) != len(from.LessThan) %d != %d", len(pi.Definitions), len(from.LessThan)))
 	}
-	return &rangeColumnsPruner{data, partCol, from.MaxValue}, nil
+	schema := expression.NewSchema(columns...)
+	partCols := make([]*expression.Column, 0, len(pi.Columns))
+	for partExprIdx := range pi.Columns {
+		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[partExprIdx].L)
+		partCols = append(partCols, schema.Columns[idx])
+	}
+	lessThan := make([][]*expression.Expression, 0, len(from.LessThan))
+	for i := range from.LessThan {
+		colVals := make([]*expression.Expression, 0, len(from.LessThan[i]))
+		for j := range from.LessThan[i] {
+			if from.LessThan[i][j] != nil {
+				tmp := (*from.LessThan[i][j]).Clone()
+				colVals = append(colVals, &tmp)
+			} else {
+				colVals = append(colVals, nil)
+			}
+		}
+		lessThan = append(lessThan, colVals)
+	}
+	return &rangeColumnsPruner{lessThan, partCols}, nil
 }
 
 func (p *rangeColumnsPruner) fullRange() partitionRangeOR {
-	return fullRange(len(p.data))
+	return fullRange(len(p.lessThan))
 }
 
 func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
+	// TODO: Fix for multi-column RANGE COLUMNS partitioning
 	op, ok := expr.(*expression.ScalarFunction)
 	if !ok {
-		return 0, len(p.data), false
+		return 0, len(p.lessThan), false
 	}
 
 	switch op.FuncName.L {
 	case ast.EQ, ast.LT, ast.GT, ast.LE, ast.GE:
 	case ast.IsNull:
 		// isnull(col)
-		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.partCol.ID {
+		if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && len(p.partCols) == 1 && arg0.ID == p.partCols[0].ID {
 			return 0, 1, true
 		}
-		return 0, len(p.data), false
+		return 0, len(p.lessThan), false
 	default:
-		return 0, len(p.data), false
+		return 0, len(p.lessThan), false
 	}
 	opName := op.FuncName.L
 
 	var col *expression.Column
 	var con *expression.Constant
-	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && arg0.ID == p.partCol.ID {
+	if arg0, ok := op.GetArgs()[0].(*expression.Column); ok && len(p.partCols) == 1 && arg0.ID == p.partCols[0].ID {
 		if arg1, ok := op.GetArgs()[1].(*expression.Constant); ok {
 			col, con = arg0, arg1
 		}
-	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && arg0.ID == p.partCol.ID {
+	} else if arg0, ok := op.GetArgs()[1].(*expression.Column); ok && len(p.partCols) == 1 && arg0.ID == p.partCols[0].ID {
 		if arg1, ok := op.GetArgs()[0].(*expression.Constant); ok {
 			opName = opposite(opName)
 			col, con = arg0, arg1
 		}
 	}
 	if col == nil || con == nil {
-		return 0, len(p.data), false
+		return 0, len(p.lessThan), false
 	}
 
 	// If different collation, we can only prune if:
@@ -1557,9 +1571,9 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 	// - EQ operator, consider values 'a','b','ä' where 'ä' would be in the same partition as 'a' if general_ci, but is binary after 'b'
 	// otherwise return all partitions / no pruning
 	_, exprColl := expr.CharsetAndCollation()
-	colColl := p.partCol.RetType.GetCollate()
-	if exprColl != colColl && (opName != ast.EQ || !collate.IsBinCollation(exprColl)) {
-		return 0, len(p.data), true
+	colColl := p.partCols[0].RetType.GetCollate()
+	if len(p.partCols) == 1 && exprColl != colColl && (opName != ast.EQ || !collate.IsBinCollation(exprColl)) {
+		return 0, len(p.lessThan), true
 	}
 	start, end := p.pruneUseBinarySearch(sctx, opName, con)
 	return start, end, true
@@ -1570,22 +1584,25 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
 	var err error
 	var isNull bool
-	charSet, collation := p.partCol.RetType.GetCharset(), p.partCol.RetType.GetCollate()
+	if len(p.partCols) > 1 {
+		panic("TODO: FIXME!")
+		return 0, len(p.lessThan)
+	}
+	charSet, collation := p.partCols[0].RetType.GetCharset(), p.partCols[0].RetType.GetCollate()
 	compare := func(ith int, op string, v *expression.Constant) bool {
-		if ith == len(p.data)-1 {
-			if p.maxvalue {
-				return true
-			}
+		// TODO: Fix this for multi-column RANGE COLUMNS!!!
+		if p.lessThan[ith][0] == nil {
+			return true
 		}
 		var expr expression.Expression
-		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
+		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), *p.lessThan[ith][0], v)
 		expr.SetCharsetAndCollation(charSet, collation)
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0
 	}
 
-	length := len(p.data)
+	length := len(p.lessThan)
 	switch op {
 	case ast.EQ:
 		pos := sort.Search(length, func(i int) bool { return compare(i, ast.GT, data) })
@@ -1603,9 +1620,9 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		start, end = 0, length
 	}
 
-	// Something goes wrong, abort this prunning.
+	// Something goes wrong, abort this pruning.
 	if err != nil || isNull {
-		return 0, len(p.data)
+		return 0, len(p.lessThan)
 	}
 
 	if end > length {

@@ -511,6 +511,7 @@ func TestShow(t *testing.T) {
  	PARTITION p1 VALUES LESS THAN (10,20,'mmm'),
  	PARTITION p2 VALUES LESS THAN (15,30,'sss'),
         PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE))`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+

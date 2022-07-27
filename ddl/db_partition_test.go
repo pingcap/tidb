@@ -174,6 +174,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 	partition p3 values less than (65,30,13),
 	partition p4 values less than (maxvalue,30,40)
 	);`)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	sql6 := `create table employees (
 	id int not null,
@@ -284,7 +285,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 		  c varchar(30))
 		  partition by range columns (a, b)
 		  (partition p0 values less than (10, 10.0))`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
@@ -416,38 +417,69 @@ func TestCreateTableWithRangeColumnPartition(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-	tk.MustExec(`
-create table log_message_1 (
-    add_time datetime not null default '2000-01-01 00:00:00',
-    log_level int unsigned not null default '0',
-    log_host varchar(32) not null,
-    service_name varchar(32) not null,
-    message varchar(2000)
-) partition by range columns(add_time)(
-    partition p201403 values less than ('2014-04-01'),
-    partition p201404 values less than ('2014-05-01'),
-    partition p201405 values less than ('2014-06-01'),
-    partition p201406 values less than ('2014-07-01'),
-    partition p201407 values less than ('2014-08-01'),
-    partition p201408 values less than ('2014-09-01'),
-    partition p201409 values less than ('2014-10-01'),
-    partition p201410 values less than ('2014-11-01')
-)`)
-	tk.MustExec("drop table if exists log_message_1;")
-	tk.MustExec(`
-	create table log_message_1 (
-		id int not null,
-		fname varchar(30),
-		lname varchar(30),
-		hired date not null default '1970-01-01',
-		separated date not null default '9999-12-31',
-		job_code int,
-		store_id int
-	)
-	partition by hash( year(hired) ) partitions 4;`)
+	/*
+			tk.MustExec(`
+		create table log_message_1 (
+		    add_time datetime not null default '2000-01-01 00:00:00',
+		    log_level int unsigned not null default '0',
+		    log_host varchar(32) not null,
+		    service_name varchar(32) not null,
+		    message varchar(2000)
+		) partition by range columns(add_time)(
+		    partition p201403 values less than ('2014-04-01'),
+		    partition p201404 values less than ('2014-05-01'),
+		    partition p201405 values less than ('2014-06-01'),
+		    partition p201406 values less than ('2014-07-01'),
+		    partition p201407 values less than ('2014-08-01'),
+		    partition p201408 values less than ('2014-09-01'),
+		    partition p201409 values less than ('2014-10-01'),
+		    partition p201410 values less than ('2014-11-01')
+		)`)
+			tk.MustExec("drop table if exists log_message_1;")
+			tk.MustExec(`
+			create table log_message_1 (
+				id int not null,
+				fname varchar(30),
+				lname varchar(30),
+				hired date not null default '1970-01-01',
+				separated date not null default '9999-12-31',
+				job_code int,
+				store_id int
+			)
+			partition by hash( year(hired) ) partitions 4;`)
 
-	tk.MustExec("drop table if exists t")
+			tk.MustExec("drop table if exists t")
+	*/
+
+	tk.MustExec("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		`partition pMax values less than (maxvalue,""))`)
+	err := tk.ExecToErr("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		// If one column has maxvalue set, the next column does not matter, so we should not allow it!
+		`partition pMax values less than (maxvalue,""), partition pMax2 values less than (maxvalue,"a"))`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	err = tk.ExecToErr("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		// If one column has maxvalue set, the next column does not matter, so we should not allow it!
+		`partition pMax values less than ("b",MAXVALUE), partition pMax2 values less than ("b","a"))`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	err = tk.ExecToErr("create table t (a varchar(255), b varchar(255)) partition by range columns (a,b)" +
+		`(partition pNull values less than ("",""), partition p0 values less than ("A",""),` +
+		`partition p1 values less than ("A","A"), partition p2 values less than ("A","b"),` +
+		`partition p3 values less than ("A",maxvalue), partition p4 values less than ("B",""),` +
+		// If one column has maxvalue set, the next column does not matter, so we should not allow it!
+		`partition pMax values less than ("b",MAXVALUE), partition pMax2 values less than ("b",MAXVALUE))`)
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 
 	type testCase struct {
 		sql string
@@ -504,12 +536,12 @@ create table log_message_1 (
 			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		// create as normal table, warning.
-		//	{
-		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-		//			"partition p0 values less than (1, 'a')," +
-		//			"partition p1 values less than (1, 'a'))",
-		//		dbterror.ErrRangeNotIncreasing,
-		//	},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, 'a')," +
+				"partition p1 values less than (1, 'a'))",
+			dbterror.ErrRangeNotIncreasing,
+		},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
 				"partition p0 values less than ( 'a')," +
@@ -517,12 +549,12 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		// create as normal table, warning.
-		//	{
-		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-		//			"partition p0 values less than (1, 'b')," +
-		//			"partition p1 values less than (1, 'a'))",
-		//		dbterror.ErrRangeNotIncreasing,
-		//	},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, 'b')," +
+				"partition p1 values less than (1, 'a'))",
+			dbterror.ErrRangeNotIncreasing,
+		},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns (b) (" +
 				"partition p0 values less than ('b')," +
@@ -530,12 +562,12 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		// create as normal table, warning.
-		//		{
-		//			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
-		//				"partition p0 values less than (1, maxvalue)," +
-		//				"partition p1 values less than (1, 'a'))",
-		//			dbterror.ErrRangeNotIncreasing,
-		//		},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, maxvalue)," +
+				"partition p1 values less than (1, 'a'))",
+			dbterror.ErrRangeNotIncreasing,
+		},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
 				"partition p0 values less than (  maxvalue)," +
@@ -632,6 +664,7 @@ create table log_message_1 (
 	tk.MustExec("create table t1 (a int, b char(3)) partition by range columns (a, b) (" +
 		"partition p0 values less than (1, 'a')," +
 		"partition p1 values less than (2, maxvalue))")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (a int, b char(3)) partition by range columns (b) (" +
@@ -2944,6 +2977,7 @@ func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
                partition p2 values less than (11, 22)
         )`
 	tk.MustExec(sql11)
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	sql12 := `create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),

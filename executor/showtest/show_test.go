@@ -595,7 +595,7 @@ func TestShowCreateTablePlacement(t *testing.T) {
 		" PARTITION pMidLow VALUES less than (1000000,MAXVALUE) COMMENT 'another comment' placement policy 'x'," +
 		" PARTITION pMadMax VALUES less than (MAXVALUE,'1000000') COMMENT ='Not a comment' placement policy 'x'," +
 		"partition pMax values LESS THAN (MAXVALUE, MAXVALUE))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+

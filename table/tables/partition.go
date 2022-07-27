@@ -19,6 +19,7 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
+	"github.com/pingcap/tidb/util/stringutil"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,24 +176,31 @@ func initEvalBuffer(t *partitionedTable) *chunk.MutRow {
 
 // ForRangeColumnsPruning is used for range partition pruning.
 type ForRangeColumnsPruning struct {
-	LessThan []expression.Expression
-	MaxValue bool
+	// LessThan contains expressions for [Partition][column].
+	// If Maxvalue, then nil
+	LessThan [][]*expression.Expression
 }
 
 func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
-	res.LessThan = make([]expression.Expression, len(pi.Definitions))
+	res.LessThan = make([][]*expression.Expression, len(pi.Definitions))
 	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
-			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
-			res.MaxValue = true
-		} else {
-			tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[0], schema, names)
-			if err != nil {
-				return nil, err
+		lessThanCols := make([]*expression.Expression, len(pi.Columns))
+		for j := range pi.Definitions[i].LessThan {
+			if strings.EqualFold(pi.Definitions[i].LessThan[j], "MAXVALUE") {
+				// Use a nil pointer instead of math.MaxInt64 to avoid the corner cases.
+				lessThanCols = append(lessThanCols, nil)
+				// No column after MAXVALUE matters
+				break
+			} else {
+				tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[j], schema, names)
+				if err != nil {
+					return nil, err
+				}
+				lessThanCols = append(lessThanCols, &tmp)
 			}
-			res.LessThan[i] = tmp
 		}
+		res.LessThan = append(res.LessThan, lessThanCols)
 	}
 	return &res, nil
 }
@@ -467,20 +475,17 @@ func fixOldVersionPartitionInfo(sctx sessionctx.Context, str string) (int64, boo
 	return ret, true
 }
 
-// rangePartitionString returns the partition string for a range typed partition.
-func rangePartitionString(pi *model.PartitionInfo) string {
-	// partition by range expr
-	if len(pi.Columns) == 0 {
-		return pi.Expr
+func rangePartitionExprStrings(pi *model.PartitionInfo) []string {
+	var s []string
+	if len(pi.Columns) > 0 {
+		s = make([]string, 0, len(pi.Columns))
+		for _, col := range pi.Columns {
+			s = append(s, stringutil.Escape(col.O, mysql.ModeNone))
+		}
+	} else {
+		s = []string{pi.Expr}
 	}
-
-	// partition by range columns (c1)
-	if len(pi.Columns) == 1 {
-		return "`" + pi.Columns[0].L + "`"
-	}
-
-	// partition by range columns (c1, c2, ...)
-	panic("create table assert len(columns) = 1")
+	return s
 }
 
 func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
@@ -490,13 +495,24 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	var buf bytes.Buffer
 	p := parser.New()
 	schema := expression.NewSchema(columns...)
-	partStr := rangePartitionString(pi)
+	partStrs := rangePartitionExprStrings(pi)
 	for i := 0; i < len(pi.Definitions); i++ {
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Expr less than maxvalue is always true.
 			fmt.Fprintf(&buf, "true")
 		} else {
-			fmt.Fprintf(&buf, "((%s) < (%s))", partStr, pi.Definitions[i].LessThan[0])
+			maxValueFound := false
+			for j := range partStrs[1:] {
+				if strings.EqualFold(pi.Definitions[i].LessThan[j+1], "MAXVALUE") {
+					// if any column will be less than MAXVALUE, so change < to <= of the previous prefix of columns
+					fmt.Fprintf(&buf, "((%s) <= (%s))", strings.Join(partStrs[:j+1], ","), strings.Join(pi.Definitions[i].LessThan[:j+1], ","))
+					maxValueFound = true
+					break
+				}
+			}
+			if !maxValueFound {
+				fmt.Fprintf(&buf, "((%s) < (%s))", strings.Join(partStrs, ","), strings.Join(pi.Definitions[i].LessThan, ","))
+			}
 		}
 
 		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
@@ -513,10 +529,7 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	}
 
 	// build column offset.
-	partExp := pi.Expr
-	if len(pi.Columns) == 1 {
-		partExp = "`" + pi.Columns[0].L + "`"
-	}
+	partExp := strings.Join(partStrs, ",")
 	exprs, err := parseSimpleExprWithNames(p, ctx, partExp, schema, names)
 	if err != nil {
 		return nil, err
@@ -532,22 +545,20 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	}
 	ret.ColumnOffset = offset
 
-	switch len(pi.Columns) {
-	case 0:
+	if len(pi.Columns) < 1 {
 		tmp, err := dataForRangePruning(ctx, pi)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ret.Expr = exprs
 		ret.ForRangePruning = tmp
-	case 1:
+	} else {
+		// TODO: Fix for len > 1
 		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ret.ForRangeColumnsPruning = tmp
-	default:
-		panic("range column partition currently support only one column")
 	}
 	return ret, nil
 }

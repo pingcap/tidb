@@ -421,14 +421,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	case model.PartitionTypeRange:
 		// When tidb_enable_table_partition is 'on' or 'auto'.
 		if s.Sub == nil {
-			// Partition by range expression is enabled by default.
-			if s.ColumnNames == nil {
-				enable = true
-			}
-			// Partition by range columns and just one column.
-			if len(s.ColumnNames) == 1 {
-				enable = true
-			}
+			enable = true
 		}
 	case model.PartitionTypeHash:
 		// Partition by hash is enabled by default.
