@@ -48,7 +48,7 @@ func assertRegions(t *testing.T, regions []*restore.RegionInfo, keys ...string) 
 
 func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
 	ctx := context.Background()
 
@@ -88,7 +88,7 @@ func TestScanSuccess(t *testing.T) {
 
 func TestNotLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
@@ -144,7 +144,7 @@ func printPDRegion(name string, infos []*pdtypes.Region) {
 
 func TestEpochNotMatch(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
@@ -203,7 +203,7 @@ func TestEpochNotMatch(t *testing.T) {
 
 func TestRegionSplit(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
@@ -279,7 +279,7 @@ func TestRegionSplit(t *testing.T) {
 
 func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
 	ctl := restore.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
@@ -330,7 +330,7 @@ func envInt(name string, def int) int {
 
 func TestPaginateScanLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-	cli := initTestClient()
+	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
 	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
 	ctx := context.Background()

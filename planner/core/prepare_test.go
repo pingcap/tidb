@@ -3113,3 +3113,21 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 	tk1.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
 	tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
+
+func TestPreparedShowStatements(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`prepare p1 from 'show variables like "tidb_snapshot"';`)
+	tk.MustQuery(`execute p1;`).Check(testkit.Rows("tidb_snapshot "))
+
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec(`prepare p2 from "show columns from t where field = 'a'";`) // Only column `a` is selected.
+	tk.MustQuery(`execute p2;`).Check(testkit.Rows("a int(11) YES  <nil> "))
+
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec(`prepare p3 from "show tables where tables_in_test = 't1'";`) // Only table `t1` is selected.
+	tk.MustQuery("execute p3;").Check(testkit.Rows("t1"))
+}

@@ -1706,29 +1706,6 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 	return odValue, nil
 }
 
-// FindColumnIndexCols finds column in index
-func FindColumnIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
-	return findColumnInIndexCols(c, cols)
-}
-
-func findColumnInIndexCols(c string, cols []*model.IndexColumn) *model.IndexColumn {
-	for _, c1 := range cols {
-		if c == c1.Name.L {
-			return c1
-		}
-	}
-	return nil
-}
-
-func getColumnInfoByName(tbInfo *model.TableInfo, column string) *model.ColumnInfo {
-	for _, colInfo := range tbInfo.Cols() {
-		if colInfo.Name.L == column {
-			return colInfo
-		}
-	}
-	return nil
-}
-
 // isVirtualGeneratedColumn checks the column if it is virtual.
 func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
 	if col.IsGenerated() && !col.GeneratedStored {
