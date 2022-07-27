@@ -55,6 +55,8 @@ func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -83,6 +85,8 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -107,6 +111,8 @@ func TestRetrySchemaChangeForEmptyChange(t *testing.T) {
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -138,6 +144,8 @@ func TestRetrySchemaChange(t *testing.T) {
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
@@ -180,6 +188,8 @@ func TestRetryMissingUnionScan(t *testing.T) {
 	store, clean := createMockStoreForSchemaTest(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
 
