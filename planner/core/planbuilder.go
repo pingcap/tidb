@@ -643,7 +643,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
 	for _, opt := range opts {
-		opt(builder)
+		opt.Apply(builder)
 	}
 	return builder
 }
