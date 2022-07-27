@@ -564,6 +564,9 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 
 // SetPreferredJoinType set the table hint for the join node
 func (p *LogicalJoin) SetPreferredJoinType(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
@@ -593,6 +596,12 @@ func (p *LogicalJoin) SetPreferredJoinType(hintInfo *tableHintInfo) {
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
 		p.preferJoinType |= preferRightAsINLMJInner
 	}
+	if containDifferentJoinTypes(p.preferJoinType) {
+		errMsg := "Join hints are conflict, you can only specify one type of join"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.preferJoinType = 0
+	}
 }
 
 func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
@@ -601,15 +610,9 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	}
 
 	p.SetPreferredJoinType(hintInfo)
-	if containDifferentJoinTypes(p.preferJoinType) {
-		errMsg := "Join hints are conflict, you can only specify one type of join"
-		warning := ErrInternal.GenWithStack(errMsg)
-		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-		p.preferJoinType = 0
-	}
 	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
-	// set the join order
+	// set the join order hint
 	if hintInfo.leadingJoinOrder != nil {
 		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)
 	}
@@ -3658,6 +3661,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		} else if b.ctx.GetSessionVars().StmtCtx.StraightJoinOrder {
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
+		b.ctx.GetSessionVars().StmtCtx.HasLeadingHint = true
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,

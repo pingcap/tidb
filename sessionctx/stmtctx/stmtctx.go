@@ -322,6 +322,7 @@ type StmtHints struct {
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
 	StraightJoinOrder       bool
+	HasLeadingHint          bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
 	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
