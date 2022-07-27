@@ -506,9 +506,12 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
-	isNonUniqueIndex := tablecodec.IsIndexKey(k) && len(v) == 1
-	// Put row key and unique index need to lock.
-	return !isNonUniqueIndex
+
+	if !tablecodec.IsIndexKey(k) {
+		return true
+	}
+
+	return tablecodec.IndexKVIsUnique(v)
 }
 
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
