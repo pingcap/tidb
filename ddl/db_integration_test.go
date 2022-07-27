@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	goctx "golang.org/x/net/context"
 )
 
 func TestNoZeroDateMode(t *testing.T) {
@@ -906,7 +905,7 @@ func TestChangingTableCharset(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
+		err := sessiontxn.NewTxn(context.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -1188,7 +1187,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
+		err := sessiontxn.NewTxn(context.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)
@@ -2074,7 +2073,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	updateTableInfo := func(tblInfo *model.TableInfo) {
 		mockCtx := mock.NewContext()
 		mockCtx.Store = store
-		err := sessiontxn.NewTxn(goctx.Background(), mockCtx)
+		err := sessiontxn.NewTxn(context.Background(), mockCtx)
 		require.NoError(t, err)
 		txn, err := mockCtx.Txn(true)
 		require.NoError(t, err)

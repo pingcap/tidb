@@ -8,6 +8,7 @@ go_library(
         "rewrite_meta_rawkv.go",
         "stream_mgr.go",
         "stream_status.go",
+        "util.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/stream",
     visibility = ["//visibility:public"],
@@ -45,8 +46,10 @@ go_test(
         "meta_kv_test.go",
         "rewrite_meta_rawkv_test.go",
         "stream_misc_test.go",
+        "util_test.go",
     ],
     embed = [":stream"],
+    flaky = True,
     deps = [
         "//br/pkg/streamhelper",
         "//meta",
@@ -56,5 +59,6 @@ go_test(
         "//util/table-filter",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
     ],
 )

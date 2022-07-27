@@ -68,7 +68,7 @@ func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 		case types.KindMysqlTime, types.KindMysqlDuration, types.KindFloat32, types.KindFloat64:
 			size += 9
 		case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
-			size += 1
+			size++
 		case types.KindMysqlJSON:
 			size += 2 + len(vals[i].GetBytes())
 		case types.KindMysqlDecimal:
@@ -1300,7 +1300,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 			}
 		}
 	default:
-		return nil, errors.New(fmt.Sprintf("invalid eval type %v", ft.EvalType()))
+		return nil, fmt.Errorf("invalid eval type %v", ft.EvalType())
 	}
 	return buf, nil
 }
