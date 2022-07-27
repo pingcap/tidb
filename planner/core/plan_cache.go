@@ -75,14 +75,14 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	varsNum, binVarTypes, txtVarTypes := getParamValue(sctx, isBinProtocol, binProtoVars, txtProtoVars)
 
 	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
-		if plan, names, done, err := getPointQueryPlan(prepared, sessVars, stmtCtx); done == true {
+		if plan, names, done, err := getPointQueryPlan(prepared, sessVars, stmtCtx); done {
 			return plan, names, err
 		}
 	}
 
 	if prepared.UseCache && !ignorePlanCache { // for general plans
 		if plan, names, done, err := getGeneralPlan(ctx, sctx, sessVars, stmtCtx, cacheKey, bindSQL, is,
-			preparedStmt, binVarTypes, txtVarTypes); err != nil || done == true {
+			preparedStmt, binVarTypes, txtVarTypes); err != nil || done {
 			return plan, names, err
 		}
 	}
