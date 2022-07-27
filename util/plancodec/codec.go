@@ -65,7 +65,12 @@ var decoderPool = sync.Pool{
 }
 
 // DecodePlan use to decode the string to plan tree.
-func DecodePlan(planString string) (string, error) {
+func DecodePlan(planString string) (res string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.New("DecodePlan panicked")
+		}
+	}()
 	if len(planString) == 0 {
 		return "", nil
 	}
