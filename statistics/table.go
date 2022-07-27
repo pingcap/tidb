@@ -368,7 +368,7 @@ func (t *Table) GetColRowCount() float64 {
 }
 
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
-// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, ture.
+// If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
 	if t == nil || t.Pseudo {
 		return 0, false
