@@ -101,7 +101,7 @@ func main() {
 	} else {
 		logger.Info("tidb lightning exit", zap.Bool("finished", finished))
 		exitMsg := "tidb lightning exit successfully"
-		if finished {
+		if !finished {
 			exitMsg = "tidb lightning canceled"
 		}
 		fmt.Fprintln(os.Stdout, exitMsg)
