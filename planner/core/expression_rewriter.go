@@ -825,8 +825,8 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-	stmtCtx := er.sctx.GetSessionVars().StmtCtx
-	if stmtCtx.DisableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, hasRewriteHint)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -834,10 +834,11 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		er.ctxStackAppend(er.p.Schema().Columns[er.p.Schema().Len()-1], er.p.OutputNames()[er.p.Schema().Len()-1])
 	} else {
 		// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
-		NthPlanBackup := stmtCtx.StmtHints.ForceNthPlan
-		stmtCtx.StmtHints.ForceNthPlan = -1
+		hints := er.sctx.GetSessionVars().StmtCtx.StmtHints
+		NthPlanBackup := hints.ForceNthPlan
+		hints.ForceNthPlan = -1
 		physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
-		stmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
+		hints.ForceNthPlan = NthPlanBackup
 		if err != nil {
 			er.err = err
 			return v, true
@@ -1001,8 +1002,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	stmtCtx := er.sctx.GetSessionVars().StmtCtx
-	if stmtCtx.DisableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
+	if er.b.disableSubQueryPreprocessing || len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1021,10 +1021,11 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
-	NthPlanBackup := stmtCtx.StmtHints.ForceNthPlan
-	stmtCtx.StmtHints.ForceNthPlan = -1
+	hints := er.sctx.GetSessionVars().StmtCtx.StmtHints
+	NthPlanBackup := hints.ForceNthPlan
+	hints.ForceNthPlan = -1
 	physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
-	stmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
+	hints.ForceNthPlan = NthPlanBackup
 	if err != nil {
 		er.err = err
 		return v, true
