@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -72,6 +73,7 @@ type Tracker struct {
 
 	label         int   // Label of this "Tracker".
 	bytesConsumed int64 // Consumed bytes.
+	bytesReleased int64 // Released bytes.
 	bytesLimit    atomic.Value
 	maxConsumed   atomicutil.Int64 // max number of bytes consumed during execution.
 	isGlobal      bool             // isGlobal indicates whether this tracker is global tracker
@@ -80,6 +82,15 @@ type Tracker struct {
 type actionMu struct {
 	sync.Mutex
 	actionOnExceed ActionOnExceed
+}
+
+// EnableGCAwareMemoryTrack is used to turn on/off the GC-aware memory track
+var EnableGCAwareMemoryTrack = atomicutil.NewBool(false)
+
+// https://golang.google.cn/pkg/runtime/#SetFinalizer
+// It is not guaranteed that a finalizer will run if the size of *obj is zero bytes.
+type finalizerRef struct {
+	byte //nolint:unused
 }
 
 // softScale means the scale of the soft limit to the hard limit.
@@ -340,18 +351,19 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesSoftLimit/bytesHardLimit, the tracker calls its action, so does each of its ancestors.
-func (t *Tracker) Consume(bytes int64) {
-	if bytes == 0 {
+func (t *Tracker) Consume(bs int64) {
+	if bs == 0 {
 		return
 	}
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bs)
+		bytesReleased := atomic.LoadInt64(&tracker.bytesReleased)
 		limits := tracker.bytesLimit.Load().(*bytesLimits)
-		if bytesConsumed >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
+		if bytesConsumed+bytesReleased >= limits.bytesHardLimit && limits.bytesHardLimit > 0 {
 			rootExceed = tracker
 		}
-		if bytesConsumed >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
+		if bytesConsumed+bytesReleased >= limits.bytesSoftLimit && limits.bytesSoftLimit > 0 {
 			rootExceedForSoftLimit = tracker
 		}
 
@@ -362,7 +374,7 @@ func (t *Tracker) Consume(bytes int64) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
-				metrics.MemoryUsage.WithLabelValues(label).Set(float64(consumed))
+				metrics.MemoryUsage.WithLabelValues(label[0], label[1]).Set(float64(consumed))
 			}
 			break
 		}
@@ -379,20 +391,74 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 	}
 
-	if bytes > 0 && rootExceedForSoftLimit != nil {
+	if bs > 0 && rootExceedForSoftLimit != nil {
 		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
 	}
-	if bytes > 0 && rootExceed != nil {
+	if bs > 0 && rootExceed != nil {
 		tryAction(&rootExceed.actionMuForHardLimit, rootExceed)
 	}
 }
 
 // BufferedConsume is used to buffer memory usage and do late consume
+// not thread-safe, should be called in one goroutine
 func (t *Tracker) BufferedConsume(bufferedMemSize *int64, bytes int64) {
 	*bufferedMemSize += bytes
-	if *bufferedMemSize > int64(TrackMemWhenExceeds) {
+	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
 		t.Consume(*bufferedMemSize)
 		*bufferedMemSize = int64(0)
+	}
+}
+
+// Release is used to release memory tracked, track the released memory until GC triggered if needed
+// If you want your track to be GC-aware, please use Release(bytes) instead of Consume(-bytes), and pass the memory size of the real object.
+// Only Analyze is integrated with Release so far.
+func (t *Tracker) Release(bytes int64) {
+	if bytes == 0 {
+		return
+	}
+	defer t.Consume(-bytes)
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.shouldRecordRelease() {
+			// use fake ref instead of obj ref, otherwise obj will be reachable again and gc in next cycle
+			newRef := &finalizerRef{}
+			runtime.SetFinalizer(newRef, func(ref *finalizerRef) {
+				tracker.release(bytes)
+			})
+			tracker.recordRelease(bytes)
+			return
+		}
+	}
+}
+
+// BufferedRelease is used to buffer memory release and do late release
+// not thread-safe, should be called in one goroutine
+func (t *Tracker) BufferedRelease(bufferedMemSize *int64, bytes int64) {
+	*bufferedMemSize += bytes
+	if *bufferedMemSize >= int64(TrackMemWhenExceeds) {
+		t.Release(*bufferedMemSize)
+		*bufferedMemSize = int64(0)
+	}
+}
+
+func (t *Tracker) shouldRecordRelease() bool {
+	return EnableGCAwareMemoryTrack.Load() && t.label == LabelForGlobalAnalyzeMemory
+}
+
+func (t *Tracker) recordRelease(bytes int64) {
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, bytes)
+		if label, ok := MetricsTypes[tracker.label]; ok {
+			metrics.MemoryUsage.WithLabelValues(label[0], label[2]).Set(float64(bytesReleased))
+		}
+	}
+}
+
+func (t *Tracker) release(bytes int64) {
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		bytesReleased := atomic.AddInt64(&tracker.bytesReleased, -bytes)
+		if label, ok := MetricsTypes[tracker.label]; ok {
+			metrics.MemoryUsage.WithLabelValues(label[0], label[2]).Set(float64(bytesReleased))
+		}
 	}
 }
 
@@ -401,7 +467,14 @@ func (t *Tracker) BytesConsumed() int64 {
 	return atomic.LoadInt64(&t.bytesConsumed)
 }
 
+// BytesReleased returns the released memory value in bytes.
+func (t *Tracker) BytesReleased() int64 {
+	return atomic.LoadInt64(&t.bytesReleased)
+}
+
 // MaxConsumed returns max number of bytes consumed during execution.
+// Note: Don't make this method return -1 for special meanings in the future. Because binary plan has used -1 to
+// distinguish between "0 bytes" and "N/A". ref: binaryOpFromFlatOp()
 func (t *Tracker) MaxConsumed() int64 {
 	return t.maxConsumed.Load()
 }
@@ -464,25 +537,25 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 }
 
 // FormatBytes uses to format bytes, this function will prune precision before format bytes.
-func (t *Tracker) FormatBytes(numBytes int64) string {
+func (*Tracker) FormatBytes(numBytes int64) string {
 	return FormatBytes(numBytes)
 }
 
 // BytesToString converts the memory consumption to a readable string.
 func BytesToString(numBytes int64) string {
-	GB := float64(numBytes) / float64(byteSizeGB)
-	if GB > 1 {
-		return fmt.Sprintf("%v GB", GB)
+	gb := float64(numBytes) / float64(byteSizeGB)
+	if gb > 1 {
+		return fmt.Sprintf("%v GB", gb)
 	}
 
-	MB := float64(numBytes) / float64(byteSizeMB)
-	if MB > 1 {
-		return fmt.Sprintf("%v MB", MB)
+	mb := float64(numBytes) / float64(byteSizeMB)
+	if mb > 1 {
+		return fmt.Sprintf("%v MB", mb)
 	}
 
-	KB := float64(numBytes) / float64(byteSizeKB)
-	if KB > 1 {
-		return fmt.Sprintf("%v KB", KB)
+	kb := float64(numBytes) / float64(byteSizeKB)
+	if kb > 1 {
+		return fmt.Sprintf("%v KB", kb)
 	}
 
 	return fmt.Sprintf("%v Bytes", numBytes)
@@ -633,6 +706,7 @@ const (
 )
 
 // MetricsTypes is used to get label for metrics
-var MetricsTypes = map[int]string{
-	LabelForGlobalAnalyzeMemory: "analyze",
+// string[0] is LblModule, string[1] is heap-in-use type, string[2] is released type
+var MetricsTypes = map[int][]string{
+	LabelForGlobalAnalyzeMemory: {"analyze", "inuse", "released"},
 }

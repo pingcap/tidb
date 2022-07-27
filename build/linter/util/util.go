@@ -201,7 +201,6 @@ func FindOffset(fileText string, line, column int) int {
 		} else {
 			currentCol++
 		}
-
 	}
 	return -1 //not found
 }

@@ -63,6 +63,7 @@ go_test(
         "writer_test.go",
     ],
     embed = [":storage"],
+    flaky = True,
     deps = [
         "//br/pkg/mock",
         "@com_github_aws_aws_sdk_go//aws",
