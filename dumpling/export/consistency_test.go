@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/errno"
 	"github.com/stretchr/testify/require"
 )
 
@@ -113,8 +114,6 @@ func TestResolveAutoConsistency(t *testing.T) {
 		resolvedConsistency string
 	}{
 		{version.ServerTypeTiDB, ConsistencyTypeSnapshot},
-		{version.ServerTypeMySQL, ConsistencyTypeFlush},
-		{version.ServerTypeMariaDB, ConsistencyTypeFlush},
 		{version.ServerTypeUnknown, ConsistencyTypeNone},
 	}
 
@@ -125,6 +124,44 @@ func TestResolveAutoConsistency(t *testing.T) {
 		require.NoError(t, resolveAutoConsistency(d))
 		require.Equalf(t, x.resolvedConsistency, conf.Consistency, "server type: %s", x.serverTp.String())
 	}
+
+	cases = []struct {
+		serverTp            version.ServerType
+		resolvedConsistency string
+	}{
+		{version.ServerTypeMySQL, ConsistencyTypeFlush},
+		{version.ServerTypeMariaDB, ConsistencyTypeFlush},
+	}
+
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	tctx := tcontext.Background()
+	resultOk := sqlmock.NewResult(0, 1)
+
+	for _, x := range cases {
+		conf.Consistency = ConsistencyTypeAuto
+		conf.ServerInfo.ServerType = x.serverTp
+		d := &Dumper{tctx: tctx, conf: conf, dbHandle: db}
+		mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnResult(resultOk)
+		require.NoError(t, resolveAutoConsistency(d))
+		require.Equalf(t, x.resolvedConsistency, conf.Consistency, "server type: %s", x.serverTp.String())
+	}
+
+	// test no SUPER privilege will fallback to ConsistencyTypeLock
+	for _, x := range cases {
+		conf.Consistency = ConsistencyTypeAuto
+		conf.ServerInfo.ServerType = x.serverTp
+		d := &Dumper{tctx: tctx, conf: conf, dbHandle: db}
+		mockErr := &mysql.MySQLError{
+			Number:  errno.ErrAccessDenied,
+			Message: "Couldn't execute 'FLUSH TABLES WITH READ LOCK': Access denied for user 'root'@'%' (using password: YES)",
+		}
+		mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnError(mockErr)
+		require.NoError(t, resolveAutoConsistency(d))
+		require.Equalf(t, ConsistencyTypeLock, conf.Consistency, "server type: %s", x.serverTp.String())
+	}
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestConsistencyControllerError(t *testing.T) {
@@ -201,7 +238,7 @@ func TestConsistencyLockTiDBCheck(t *testing.T) {
 	mock.ExpectQuery("SELECT @@tidb_config").WillReturnRows(
 		sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
 	err = ctrl.Setup(tctx)
-	require.ErrorIs(t, err, tiDBDisableTableLockErr)
+	require.ErrorIs(t, err, errTiDBDisableTableLock)
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	// enable-table-lock is true, allow to lock tables

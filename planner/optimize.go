@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"runtime/trace"
 	"strings"
 	"sync"
 	"time"
@@ -478,30 +477,6 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
-}
-
-// OptimizeExecStmt to optimize prepare statement protocol "execute" statement
-// this is a short path ONLY does things filling prepare related params
-// for point select like plan which does not need extra things
-func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
-	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
-	defer trace.StartRegion(ctx, "Optimize").End()
-	var err error
-
-	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
-	defer planBuilderPool.Put(builder.ResetForReuse())
-
-	builder.Init(sctx, is, nil)
-	p, err := builder.Build(ctx, execAst)
-	if err != nil {
-		return nil, err
-	}
-	if execPlan, ok := p.(*plannercore.Execute); ok {
-		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return execPlan.Plan, err
-	}
-	err = errors.Errorf("invalid result plan type, should be Execute")
-	return nil, err
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {
