@@ -9,7 +9,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/testkit/testutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//ddl",
         "//kv",
+        "//parser/ast",
+        "//parser/model",
         "//parser/mysql",
         "//sessionctx/stmtctx",
         "//types",
