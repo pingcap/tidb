@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -517,7 +516,7 @@ create table log_message_1 (
 				"partition p0 values less than ('2022-01-01')," +
 				"partition p1 values less than (MAXVALUE), " +
 				"partition p2 values less than (MAXVALUE));",
-			dbterror.ErrRangeNotIncreasing,
+			ddl.ErrRangeNotIncreasing,
 		},
 		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
