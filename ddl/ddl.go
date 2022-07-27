@@ -642,7 +642,6 @@ func (d *ddl) prepareWorkers4legacyDDL() {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
-	var err error
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(d.limitDDLJobs)
@@ -651,9 +650,30 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	// If tidb_enable_ddl is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if config.GetGlobalConfig().Instance.TiDBEnableDDL.Load() {
-		if err = d.EnableDDL(); err != nil {
-			return err
+		d.ownerManager.SetBeOwnerHook(func() {
+			var err error
+			d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
+			if err != nil {
+				logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
+			}
+		})
+
+		err := d.ownerManager.CampaignOwner()
+		if err != nil {
+			return errors.Trace(err)
 		}
+
+		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+
+		d.prepareWorkers4ConcurrencyDDL()
+		d.prepareWorkers4legacyDDL()
+
+		go d.schemaSyncer.StartCleanWork()
+		if config.TableLockEnabled() {
+			d.wg.Add(1)
+			go d.startCleanDeadTableLock()
+		}
+		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
 	variable.RegisterStatistics(d)
@@ -670,30 +690,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 // Since ownerManager.CampaignOwner will start a new goroutine to run ownerManager.campaignLoop,
 // we should make sure that before invoking EnableDDL(), ddl is DISABLE.
 func (d *ddl) EnableDDL() error {
-	d.ownerManager.SetBeOwnerHook(func() {
-		var err error
-		d.ddlSeqNumMu.seqNum, err = d.GetNextDDLSeqNum()
-		if err != nil {
-			logutil.BgLogger().Error("error when getting the ddl history count", zap.Error(err))
-		}
-	})
-
 	err := d.ownerManager.CampaignOwner()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	d.delRangeMgr = d.newDeleteRangeManager(d.sessPool.resPool == nil)
-
-	d.prepareWorkers4ConcurrencyDDL()
-	d.prepareWorkers4legacyDDL()
-
-	go d.schemaSyncer.StartCleanWork()
-	if config.TableLockEnabled() {
-		d.wg.Add(1)
-		go d.startCleanDeadTableLock()
-	}
-	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	return errors.Trace(err)
 }
 
@@ -722,27 +719,8 @@ func (d *ddl) DisableDDL() error {
 		}
 	}
 
-	d.cancel()
-	d.wg.Wait()
-	d.schemaSyncer.Close()
-	if d.reorgWorkerPool != nil {
-		d.reorgWorkerPool.close()
-	}
-	if d.generalDDLWorkerPool != nil {
-		d.generalDDLWorkerPool.close()
-	}
-
-	for _, worker := range d.workers {
-		worker.Close()
-	}
-	// d.delRangeMgr using sessions from d.sessPool.
-	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
-	if d.delRangeMgr != nil {
-		d.delRangeMgr.clear()
-	}
 	// disable campaign by interrupting campaignLoop
 	d.ownerManager.CampaignCancel()
-
 	return nil
 }
 

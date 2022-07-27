@@ -195,8 +195,8 @@ func (m *ownerManager) CampaignCancel() {
 }
 
 func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
-	var ctx context.Context
-	ctx, m.campaignCancel = context.WithCancel(m.ctx)
+	var campaignContext context.Context
+	campaignContext, m.campaignCancel = context.WithCancel(m.ctx)
 	defer func() {
 		m.campaignCancel()
 		if r := recover(); r != nil {
@@ -218,13 +218,13 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 		case <-etcdSession.Done():
 			logutil.Logger(logCtx).Info("etcd session is done, creates a new one")
 			leaseID := etcdSession.Lease()
-			etcdSession, err = util2.NewSession(ctx, logPrefix, m.etcdCli, util2.NewSessionRetryUnlimited, ManagerSessionTTL)
+			etcdSession, err = util2.NewSession(campaignContext, logPrefix, m.etcdCli, util2.NewSessionRetryUnlimited, ManagerSessionTTL)
 			if err != nil {
 				logutil.Logger(logCtx).Info("break campaign loop, NewSession failed", zap.Error(err))
 				m.revokeSession(logPrefix, leaseID)
 				return
 			}
-		case <-ctx.Done():
+		case <-campaignContext.Done():
 			logutil.Logger(logCtx).Info("break campaign loop, context is done")
 			m.revokeSession(logPrefix, etcdSession.Lease())
 			return
@@ -242,19 +242,19 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 		}
 
 		elec := concurrency.NewElection(etcdSession, m.key)
-		err = elec.Campaign(ctx, m.id)
+		err = elec.Campaign(campaignContext, m.id)
 		if err != nil {
 			logutil.Logger(logCtx).Info("failed to campaign", zap.Error(err))
 			continue
 		}
 
-		ownerKey, err := GetOwnerInfo(ctx, logCtx, elec, m.id)
+		ownerKey, err := GetOwnerInfo(campaignContext, logCtx, elec, m.id)
 		if err != nil {
 			continue
 		}
 
 		m.toBeOwner(elec)
-		m.watchOwner(ctx, etcdSession, ownerKey)
+		m.watchOwner(campaignContext, etcdSession, ownerKey)
 		m.RetireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
