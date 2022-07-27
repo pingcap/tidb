@@ -198,9 +198,7 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, sessVars *vari
 
 func rebuildPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema,
 	preparedStmt *CachedPrepareStmt, ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64,
-	isBinProtocol bool, varsNum int, binVarTypes []byte, txtVarTypes []*types.FieldType) (plan Plan,
-	names []*types.FieldName, err error) {
-
+	isBinProtocol bool, varsNum int, binVarTypes []byte, txtVarTypes []*types.FieldType) (plan Plan, names []*types.FieldName, err error) {
 	prepared := preparedStmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
