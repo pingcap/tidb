@@ -1594,7 +1594,7 @@ func (s StatsLoadedStatus) IsTopNEvicted() bool {
 	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
 }
 
-// IsAllEvicted  indicates whether all the stats got evicted not.
+// IsAllEvicted indicates whether all the stats got evicted or not.
 func (s StatsLoadedStatus) IsAllEvicted() bool {
 	return s.statsInitialized && s.evictedStatus >= allEvicted
 }
