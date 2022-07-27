@@ -19,7 +19,6 @@ import (
 	"context"
 	stderr "errors"
 	"fmt"
-	"github.com/pingcap/tidb/util/stringutil"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 

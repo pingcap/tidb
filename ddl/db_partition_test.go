@@ -281,10 +281,10 @@ func TestCreateTableWithPartition(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_table_partition = 1")
 	tk.MustExec(`create table t30 (
 		  a int,
-		  b float,
+		  b varchar(20),
 		  c varchar(30))
 		  partition by range columns (a, b)
-		  (partition p0 values less than (10, 10.0))`)
+		  (partition p0 values less than (10, '10.0'))`)
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
@@ -2961,7 +2961,6 @@ func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
         )`
 	tk.MustGetErrCode(sql10, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	// after we support multiple columns partition, this sql should fail. For now, it will be a normal table.
 	sql11 := `create table part9 (
                  a int not null,
                  b int not null,
@@ -2976,8 +2975,7 @@ func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
                partition p1 values less than (7, 9),
                partition p2 values less than (11, 22)
         )`
-	tk.MustExec(sql11)
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
 	sql12 := `create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),
@@ -3819,6 +3817,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 	tk.MustExec("drop table t")
 
 	// Test expression with single quotes.
+	tk.MustExec("set @@time_zone = 'Asia/Shanghai'")
 	tk.MustExec(`create table t(created_at timestamp) PARTITION BY RANGE (unix_timestamp(created_at)) (
 		PARTITION p0 VALUES LESS THAN (unix_timestamp('2021-12-01 00:00:00')),
 		PARTITION p1 VALUES LESS THAN (unix_timestamp('2022-01-01 00:00:00')))`)
@@ -3830,6 +3829,7 @@ func TestPartitionTableWithAnsiQuotes(t *testing.T) {
 		"(PARTITION \"p0\" VALUES LESS THAN (1638288000),\n" +
 		" PARTITION \"p1\" VALUES LESS THAN (1640966400))"))
 	tk.MustExec("drop table t")
+	tk.MustExec("set @@time_zone = default")
 
 	// Test values in.
 	tk.MustExec(`CREATE TABLE t (a int DEFAULT NULL, b varchar(255) DEFAULT NULL) PARTITION BY LIST COLUMNS(a,b) (
