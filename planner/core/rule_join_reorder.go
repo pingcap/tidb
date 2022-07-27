@@ -249,7 +249,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			proj.SetChildren(p)
 			p = proj
 		}
-		if p.SCtx().GetSessionVars().StmtCtx.HasLeadingHint && len(joinTypeHintInfo) > 0 {
+		if len(joinOrderHintInfo) > 0 && len(joinTypeHintInfo) > 0 {
 			resetJoinTypeHint(p, joinTypeHintInfo)
 		}
 		return p, nil
@@ -278,7 +278,6 @@ func resetJoinTypeHint(p LogicalPlan, hintInfo []*tableHintInfo) {
 		for _, hint := range hintInfo {
 			join.SetPreferredJoinType(hint)
 		}
-
 	}
 }
 
