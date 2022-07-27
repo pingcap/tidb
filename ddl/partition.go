@@ -975,7 +975,7 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 				return err
 			}
 			startStr := sb.String()
-			errStr := fmt.Sprintf("INTERVAL LAST PARTITION: LAST expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
+			errStr := fmt.Sprintf("INTERVAL: expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
 				lastStr, startStr, intervalString)
 			if timeUnit != ast.TimeUnitInvalid {
 				errStr = errStr + " " + timeUnit.String()

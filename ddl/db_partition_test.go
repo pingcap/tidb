@@ -4095,6 +4095,18 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 			" PARTITION `P_LT_90` VALUES LESS THAN (90),\n" +
 			" PARTITION `P_LT_100` VALUES LESS THAN (100),\n" +
 			" PARTITION `P_LT_110` VALUES LESS THAN (110))"))
+	err = tk.ExecToErr("alter table t2 first partition less than (20)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, given value does not generate a list of partition names to be dropped", err.Error())
+	err = tk.ExecToErr("alter table t2 first partition less than (10)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (10) not matching FIRST + n INTERVALs (20 + n * 10)", err.Error())
+	err = tk.ExecToErr("alter table t2 last partition less than (110)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (110) not matching FIRST + n INTERVALs (110 + n * 10)", err.Error())
+	err = tk.ExecToErr("alter table t2 last partition less than (100)")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (100) not matching FIRST + n INTERVALs (110 + n * 10)", err.Error())
 	tk.MustExec("drop table t2")
 
 	err = tk.ExecToErr("create table t (id timestamp, val varchar(255)) partition by range columns (id) interval (1 minute) first partition less than ('2022-01-01 00:01:00') last partition less than ('2022-01-01 01:00:00')")
@@ -4226,7 +4238,7 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		" first partition less than (0)" +
 		" last partition less than (NULL)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr () not matching FIRST + n INTERVALs (0 + n * 1000000)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr () not matching FIRST + n INTERVALs (0 + n * 1000000)", err.Error())
 	tk.MustExec("create table t (id int, val varchar(255), comment varchar(255))" +
 		" partition by range (id) interval (100)" +
 		" first partition less than (-1000)" +
@@ -4252,13 +4264,13 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		" first partition less than (-100)" +
 		" last partition less than (250)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (250) not matching FIRST + n INTERVALs (-100 + n * 100)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (250) not matching FIRST + n INTERVALs (-100 + n * 100)", err.Error())
 	err = tk.ExecToErr("create table t (id int unsigned, val varchar(255), comment varchar(255))" +
 		" partition by range (id) interval (33)" +
 		" first partition less than (100)" +
 		" last partition less than (67)")
 	require.Error(t, err)
-	require.Equal(t, "[ddl:8200]Unsupported INTERVAL LAST PARTITION: LAST expr (67) not matching FIRST + n INTERVALs (100 + n * 33)", err.Error())
+	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (67) not matching FIRST + n INTERVALs (100 + n * 33)", err.Error())
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {

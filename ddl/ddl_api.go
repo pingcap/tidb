@@ -3806,7 +3806,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		}
 		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-				"FIRST PARTITION, number of partition names does not match")
+				"FIRST PARTITION, given value does not generate a list of partition names to be dropped")
 		}
 		for i := range spec.Partition.Definitions {
 			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
