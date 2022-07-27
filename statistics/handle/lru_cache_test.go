@@ -27,7 +27,7 @@ import (
 var (
 	mockCMSMemoryUsage  = int64(4)
 	mockTopNMemoryUsage = int64(64)
-	mockHistMemoryUsage = int64(153)
+	mockHistMemoryUsage = int64(289)
 )
 
 // each column and index consumes 4 bytes memory
