@@ -13,7 +13,7 @@ func TestGetParameters(t *testing.T) {
 	d := &Dumper{conf: conf}
 	d.metrics = newMetrics(conf.PromFactory, nil)
 
-	mid := d.GetParameters()
+	mid := d.GetStatus()
 	require.EqualValues(t, float64(0), mid.CompletedTables)
 	require.EqualValues(t, float64(0), mid.FinishedBytes)
 	require.EqualValues(t, float64(0), mid.FinishedRows)
@@ -24,7 +24,7 @@ func TestGetParameters(t *testing.T) {
 	AddGauge(d.metrics.finishedRowsGauge, 30)
 	AddCounter(d.metrics.estimateTotalRowsCounter, 40)
 
-	mid = d.GetParameters()
+	mid = d.GetStatus()
 	require.EqualValues(t, float64(10), mid.CompletedTables)
 	require.EqualValues(t, float64(20), mid.FinishedBytes)
 	require.EqualValues(t, float64(30), mid.FinishedRows)

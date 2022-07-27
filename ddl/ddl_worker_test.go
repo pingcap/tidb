@@ -267,7 +267,6 @@ func TestParallelDDL(t *testing.T) {
 	// Table 3 order.
 	require.Less(t, seqIDs[6], seqIDs[7])
 	require.Less(t, seqIDs[7], seqIDs[9])
-	require.Less(t, seqIDs[9], seqIDs[10])
 }
 
 func TestJobNeedGC(t *testing.T) {

@@ -628,6 +628,8 @@ func TestWriteLocal(t *testing.T) {
 func TestLockTables(t *testing.T) {
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Microsecond*500)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")

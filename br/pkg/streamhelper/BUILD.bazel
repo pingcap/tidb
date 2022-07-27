@@ -4,6 +4,7 @@ go_library(
     name = "streamhelper",
     srcs = [
         "advancer.go",
+        "advancer_cliext.go",
         "advancer_daemon.go",
         "advancer_env.go",
         "client.go",
@@ -11,7 +12,6 @@ go_library(
         "models.go",
         "prefix_scanner.go",
         "regioniter.go",
-        "stream_listener.go",
         "tsheap.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/streamhelper",
