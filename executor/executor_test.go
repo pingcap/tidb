@@ -6296,7 +6296,7 @@ func TestForeignKeyCheckValueExistInReferTable(t *testing.T) {
 	checkCaseFn()
 }
 
-func TestForeignKeyCheckValueNotExistInChildTable(t *testing.T) {
+func TestForeignKeyOnDeleteCheck(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -6493,28 +6493,28 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int, a int, b int,  unique index(a, b));",
-				"create table t2 (b int, a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
 			},
 		},
 		// Case-2: test unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
-				"create table t2 (b int, a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int, a int, id int key, name varchar(10), unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
 			},
 		},
 		// Case-3: test non-unique index only contain foreign key columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int, index(a, b));",
-				"create table t2 (b int, a int, id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
 			},
 		},
 		// Case-4: test non-unique index contain foreign key columns and other columns.
 		{
 			prepareSQLs: []string{
 				"create table t1 (id int key,a int, b int,  index(a, b, id));",
-				"create table t2 (b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
+				"create table t2 (name varchar(10), b int, a int, id int key, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON DELETE CASCADE);",
 			},
 		},
 	}
@@ -6526,10 +6526,10 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 			tk.MustExec(sql)
 		}
 		tk.MustExec("insert into t1 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, null), (6, null, 6), (7, null, null);")
-		tk.MustExec("insert into t2 values (1, 1, 1),(2, 2, 2), (3, 3, 3), (4, 4, 4), (null, 5, 5), (6, null, 6), (null, null, 7);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a'),(2, 2, 2, 'b'), (3, 3, 3, 'c'), (4, 4, 4, 'd'), (5, 5, null, 'e'), (6, null, 6, 'f'), (7, null, null, 'g');")
 		tk.MustExec("delete from t1 where id = 1 or a = 2")
 		tk.MustExec("delete from t1 where a in (2,3,4) or b in (5,6,7)")
-		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("5 5 <nil>", "6 <nil> 6", "7 <nil> <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("5 5 <nil> e", "6 <nil> 6 f", "7 <nil> <nil> g"))
 	}
 
 	cases = []struct {
@@ -6644,6 +6644,8 @@ func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "3 <nil> <nil>", "4 <nil> <nil>", "5 5 <nil>", "6 <nil> 6", "7 <nil> <nil>"))
 	}
 
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (id int, a int, b int,  primary key (a, b));")
 	//TODO: fix me: following SQL should return error: (1830, "Column 'a' cannot be NOT NULL: needed in a foreign key constraint 't2_ibfk_1' SET NULL")
 	//tk.ExecToErr("create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON DELETE SET NULL);")
@@ -6787,4 +6789,143 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 	tk.MustExec("update t1 set id = id + 100 where id in (1, 2, 3)")
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("4 14 24", "101 11 21", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 101 21 a", "12 102 22 b", "13 103 23 c", "14 4 24 d"))
+}
+
+func TestForeignKeyOnUpdateSetNull(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@foreign_key_checks=1")
+
+	cases := []struct {
+		prepareSQLs []string
+	}{
+		// Case-1: test unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int, a int, b int,  unique index(a, b));",
+				"create table t2 (b int, name varchar(10), a int, id int, unique index (a,b), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+		// Case-2: test unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key, a int, b int, unique index(a, b, id));",
+				"create table t2 (b int, name varchar(10), a int, id int key, unique index (a,b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+		// Case-3: test non-unique index only contain foreign key columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int, index(a, b));",
+				"create table t2 (b int, a int, name varchar(10), id int key, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+		// Case-4: test non-unique index contain foreign key columns and other columns.
+		{
+			prepareSQLs: []string{
+				"create table t1 (id int key,a int, b int,  index(a, b, id));",
+				"create table t2 (name varchar(10), b int, id int key, a int, index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+	}
+
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24), (5, 15, null), (6, null, 26), (7, null, null);")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'),(2, 12, 22, 'b'), (3, 13, 23, 'c'), (4, 14, 24, 'd'), (5, 15, null, 'e'), (6, null, 26, 'f'), (7, null, null, 'g');")
+
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
+		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 111 221", "2 112 222"))
+		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 <nil> <nil> b", "3 13 23 c"))
+
+		tk.MustExec("update t1 set a=101, b=null where id = 1 or b = 222")
+		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 101 <nil>", "2 101 <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 <nil> <nil> b", "3 13 23 c"))
+
+		tk.MustExec("update t1 set a=null where b is null")
+		tk.MustQuery("select id, a, b from t1 where b is null order by id").Check(testkit.Rows("1 <nil> <nil>", "2 <nil> <nil>", "5 <nil> <nil>", "7 <nil> <nil>"))
+		tk.MustQuery("select id, a, b, name from t2 where b is null order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 <nil> <nil> b", "5 15 <nil> e", "7 <nil> <nil> g"))
+
+		tk.MustExec("update t1 set a=0, b = 0 where id = 7")
+		tk.MustQuery("select id, a, b from t1 where a=0 and b=0 order by id").Check(testkit.Rows("7 0 0"))
+		tk.MustQuery("select id, a, b from t2 where a=0 and b=0 order by id").Check(testkit.Rows())
+	}
+
+	cases = []struct {
+		prepareSQLs []string
+	}{
+		// Case-5: test primary key only contain foreign key columns, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (b int,  a int, name varchar(10), id int, index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+		// Case-6: test primary key only contain foreign key columns, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b));",
+				"create table t2 (name varchar(10), b int,  a int, id int, unique index (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+		// Case-7: test primary key contain foreign key columns and other column, and disable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=0;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int, name varchar(10),  a int, id int, unique index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+		// Case-8: test primary key contain foreign key columns and other column, and enable tidb_enable_clustered_index.
+		{
+			prepareSQLs: []string{
+				"set @@tidb_enable_clustered_index=1;",
+				"create table t1 (id int, a int, b int,  primary key (a, b, id));",
+				"create table t2 (b int,  a int, id int, name varchar(10), index (a, b, id), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);",
+			},
+		},
+	}
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t2;")
+		tk.MustExec("drop table if exists t1;")
+		for _, sql := range ca.prepareSQLs {
+			tk.MustExec(sql)
+		}
+		tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+		tk.MustExec("insert into t2 (id, a, b, name) values (1, 11, 21, 'a'),(2, 12, 22, 'b'), (3, 13, 23, 'c'), (4, 14, 24, 'd')")
+
+		tk.MustExec("update t1 set a=a+100, b = b+200 where id in (1, 2)")
+		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 111 221", "2 112 222"))
+		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 <nil> <nil> b", "3 13 23 c"))
+
+		tk.MustExec("update t1 set a=101 where id = 1 or b = 222")
+		tk.MustQuery("select id, a, b from t1 where id in (1,2) order by id").Check(testkit.Rows("1 101 221", "2 101 222"))
+		tk.MustQuery("select id, a, b, name from t2 where id in (1,2,3) order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 <nil> <nil> b", "3 13 23 c"))
+	}
+
+	// Case-9: test primary key is handle and contain foreign key column.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (id));")
+	tk.MustExec("create table t2 (b int,  a int, id int, name varchar(10), index (a), foreign key fk(a) references t1(id) ON UPDATE SET NULL);")
+	tk.MustExec("insert into t1 (id, a, b) values       (1, 11, 21),(2, 12, 22), (3, 13, 23), (4, 14, 24)")
+	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a'),(12, 2, 22, 'b'), (13, 3, 23, 'c'), (14, 4, 24, 'd')")
+	tk.MustExec("update t1 set id = id + 100 where id in (1, 2, 3)")
+	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("4 14 24", "101 11 21", "102 12 22", "103 13 23"))
+	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 <nil> 21 a", "12 <nil> 22 b", "13 <nil> 23 c", "14 4 24 d"))
+
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (id int, a int, b int,  primary key (a, b));")
+	//TODO: fix me: following SQL should return error: (1830, "Column 'a' cannot be NOT NULL: needed in a foreign key constraint 't2_ibfk_1' SET NULL")
+	//tk.ExecToErr("create table t2 (b int,  a int, id int, primary key (a, b), foreign key fk(a, b) references t1(a, b) ON UPDATE SET NULL);")
 }
