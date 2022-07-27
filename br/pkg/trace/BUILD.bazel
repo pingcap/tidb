@@ -23,6 +23,7 @@ go_test(
         "tracing_serial_test.go",
     ],
     embed = [":trace"],
+    flaky = True,
     deps = [
         "//testkit/testsetup",
         "@com_github_opentracing_opentracing_go//:opentracing-go",

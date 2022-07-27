@@ -612,7 +612,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 		}
 	}
 	// reorg worker count at least 1 at most 10.
-	reorgCnt := mathutil.Min(mathutil.Max(runtime.NumCPU()/4, 1), reorgWorkerCnt)
+	reorgCnt := mathutil.Min(mathutil.Max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
@@ -723,7 +723,9 @@ func (d *ddl) close() {
 	if d.delRangeMgr != nil {
 		d.delRangeMgr.clear()
 	}
-	d.sessPool.close()
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
 	variable.UnregisterStatistics(d)
 
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
@@ -1121,7 +1123,9 @@ func (d *ddl) SwitchConcurrentDDL(toConcurrentDDL bool) error {
 	} else {
 		err = d.MoveJobFromTable2Queue()
 	}
-	variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+	if err == nil {
+		variable.EnableConcurrentDDL.Store(toConcurrentDDL)
+	}
 	logutil.BgLogger().Info("[ddl] SwitchConcurrentDDL", zap.Bool("toConcurrentDDL", toConcurrentDDL), zap.Error(err))
 	return err
 }
