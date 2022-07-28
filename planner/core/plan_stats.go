@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -138,7 +137,7 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 			if idx.Meta().State != model.StatePublic {
 				continue
 			}
-			idxCol := ddl.FindColumnIndexCols(colName, idx.Meta().Columns)
+			idxCol := idx.Meta().FindColumnByName(colName)
 			idxID := idx.Meta().ID
 			if idxCol != nil {
 				tblStats := stats.GetTableStats(tbl.Meta())
