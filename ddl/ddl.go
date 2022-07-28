@@ -696,6 +696,7 @@ func (d *ddl) waitOwner(ctx context.Context) error {
 		case <-ticker.C:
 			_, err := d.ownerManager.GetOwnerID(ctx)
 			if err == concurrency.ErrElectionNoLeader {
+				logutil.BgLogger().Warn("No DDL owner in the cluster, wait and check again")
 				continue
 			}
 			return err

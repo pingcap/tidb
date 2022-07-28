@@ -310,7 +310,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] add DDL jobs failed", zap.String("jobs", jobs), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", variable.EnableConcurrentDDL.Load() && !variable.DDLForce2Queue.Load()))
 	}
 }
 
