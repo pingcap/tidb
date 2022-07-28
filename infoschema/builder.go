@@ -91,7 +91,7 @@ func (b *bundleInfoBuilder) markPartitionBundleShouldUpdate(partID int64) {
 
 func (b *bundleInfoBuilder) markBundlesReferPolicyShouldUpdate(policyID int64) {
 	b.ensureMap()
-	b.updatePolicies[policyID:] = struct{}{}
+	b.updatePolicies[policyID] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) updateInfoSchemaBundles(is *infoSchema) {
