@@ -227,13 +227,17 @@ func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, require
 	return version.CheckVersion("PD", *ver, requiredMinVersion, requiredMaxVersion)
 }
 
-func CheckTiDBDestination(ctx context.Context, tls *common.TLS, pdAddr string, clusterId string) error {
-	id, err := pdutil.FetchClusterID(ctx, tls, pdAddr)
+func CheckTiDBDestination(ctx context.Context, tls *common.TLS, pdAddrFromCfg string, pdAddrFromFetch string) error {
+	idFromCfgPD, err := pdutil.FetchClusterID(ctx, tls, pdAddrFromCfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if id != clusterId {
-		return errors.Errorf("Failed to match the cluster ID, please check whether pd-addr and status-port")
+	idFromFetchPD, err := pdutil.FetchClusterID(ctx, tls, pdAddrFromFetch)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if idFromCfgPD != idFromFetchPD {
+		return errors.Errorf("Failed to match the cluster ID (`%s` from config, `%s` from pd), please check whether pd-addr and status-port are correct", idFromCfgPD, idFromFetchPD)
 	}
 	return nil
 }
