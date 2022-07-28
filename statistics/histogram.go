@@ -139,8 +139,11 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
+	if len(hg.Buckets) == 0 && len(hg.scalars) == 0 && hg.Bounds.Capacity() == 0 {
+		return
+	}
 	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
-	return
+	return sum
 }
 
 // AppendBucket appends a bucket into `hg`.
@@ -1589,6 +1592,11 @@ func (s StatsLoadedStatus) IsCMSEvicted() bool {
 // IsTopNEvicted indicates whether the topn got evicted now.
 func (s StatsLoadedStatus) IsTopNEvicted() bool {
 	return s.statsInitialized && s.evictedStatus >= onlyHistRemained
+}
+
+// IsAllEvicted indicates whether all the stats got evicted or not.
+func (s StatsLoadedStatus) IsAllEvicted() bool {
+	return s.statsInitialized && s.evictedStatus >= allEvicted
 }
 
 // IsFullLoad indicates whether the stats are full loaded
