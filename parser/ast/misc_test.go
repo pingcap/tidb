@@ -242,7 +242,7 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INL_JOIN(t1,t2)", "INL_JOIN(`t1`, `t2`)"},
 		{"HASH_JOIN(t1,t2)", "HASH_JOIN(`t1`, `t2`)"},
 		{"HASH_BUILD(t1)", "HASH_BUILD(`t1`)"},
-		{"HASH_PROBE(t1)", "HASH_BUILD(`t1`)"},
+		{"HASH_PROBE(t1)", "HASH_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
