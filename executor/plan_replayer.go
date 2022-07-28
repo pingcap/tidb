@@ -172,7 +172,7 @@ func (e *PlanReplayerSingleExec) dumpSingle(path string) (fileName string, err e
 	// Retrieve all tables
 	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
 	if err != nil {
-		return "", errors.AddStack(errors.New(fmt.Sprintf("plan replayer: invalid SQL text, err: %v", err)))
+		return "", errors.AddStack(fmt.Errorf("plan replayer: invalid SQL text, err: %v", err))
 	}
 
 	// Dump Schema
@@ -418,7 +418,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 		return errors.AddStack(err)
 	}
 	if len(sRows) == 0 || len(sRows[0]) != 2 {
-		return errors.New(fmt.Sprintf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName))
+		return fmt.Errorf("plan replayer: get create table %v.%v failed", pair.DBName, pair.TableName)
 	}
 	fmt.Fprintf(fw, "create database `%v`; use `%v`;", pair.DBName, pair.DBName)
 	fmt.Fprintf(fw, "%s", sRows[0][1])
