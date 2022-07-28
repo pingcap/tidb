@@ -91,6 +91,10 @@ const (
 	TiDBHashJoin = "tidb_hj"
 	// HintHJ is hint enforce hash join.
 	HintHJ = "hash_join"
+	// HintHashBuild is hint enforce hash join's build side
+	HintHashBuild = "hash_build"
+	// HintHashProbe is hint enforce hash join's probe side
+	HintHashProbe = "hash_probe"
 	// HintHashAgg is hint enforce hash aggregation.
 	HintHashAgg = "hash_agg"
 	// HintStreamAgg is hint enforce stream aggregation.
@@ -562,6 +566,42 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	return nil
 }
 
+func (p *LogicalJoin) setPreferredHJBuildAndProbeSide(hintInfo *tableHintInfo) {
+	if hintInfo == nil {
+		return
+	}
+
+	lhsAlias := extractTableAlias(p.children[0], p.blockOffset)
+	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
+	hjOrder := uint(0)
+	if hintInfo.ifPreferHJBuild(lhsAlias) {
+		hjOrder |= preferLeftAsHJBuild
+	}
+	if hintInfo.ifPreferHJBuild(rhsAlias) {
+		hjOrder |= preferRightAsHJBuild
+	}
+	if hintInfo.ifPreferHJProbe(lhsAlias) {
+		hjOrder |= preferLeftAsHJProbe
+	}
+	if hintInfo.ifPreferHJProbe(rhsAlias) {
+		hjOrder |= preferRightAsHJProbe
+	}
+	hasConflict := false
+	if (hjOrder&preferLeftAsHJBuild) > 0 && (hjOrder&preferLeftAsHJProbe) > 0 {
+		hasConflict = true
+	}
+	if (hjOrder&preferRightAsHJBuild) > 0 && (hjOrder&preferRightAsHJProbe) > 0 {
+		hasConflict = true
+	}
+	if hasConflict {
+		errMsg := "HASH_BUILD and HASH_PROBE hints are conflict, please check the hints"
+		warning := ErrInternal.GenWithStack(errMsg)
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	} else {
+		p.preferJoinType |= hjOrder
+	}
+}
+
 func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
 		return
@@ -602,6 +642,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *tableHintInfo) {
 		p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		p.preferJoinType = 0
 	}
+	p.setPreferredHJBuildAndProbeSide(hintInfo)
 	// set the join order
 	if hintInfo.leadingJoinOrder != nil {
 		p.preferJoinOrder = hintInfo.matchTableName([]*hintTableInfo{lhsAlias, rhsAlias}, hintInfo.leadingJoinOrder)
@@ -3525,6 +3566,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		limitHints                                                                      limitHintInfo
 		MergeHints                                                                      MergeHintInfo
 		leadingJoinOrder                                                                []hintTableInfo
+		hashBuildTables, hashProbeTables                                                []hintTableInfo
 		leadingHintCnt                                                                  int
 	)
 	for _, hint := range hints {
@@ -3551,6 +3593,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
 			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintHashBuild:
+			hashBuildTables = append(hashBuildTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+		case HintHashProbe:
+			hashProbeTables = append(hashProbeTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintHashAgg:
 			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -3692,6 +3738,8 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintBCJ, TiDBBroadCastJoin, hintInfo.broadcastJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintHashBuild, "", hintInfo.hashBuildTables)
+	b.appendUnmatchedJoinHintWarning(HintHashProbe, "", hintInfo.hashProbeTables)
 	b.appendUnmatchedJoinHintWarning(HintLeading, "", hintInfo.leadingJoinOrder)
 	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
@@ -5029,8 +5077,10 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
+			joinPlan.preferJoinType = 0
 			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
 		}
+		joinPlan.setPreferredHJBuildAndProbeSide(b.TableHints())
 	}
 	if forceRewrite {
 		joinPlan.preferJoinType |= preferRewriteSemiJoin

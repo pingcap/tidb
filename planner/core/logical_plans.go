@@ -120,6 +120,10 @@ const (
 	preferRewriteSemiJoin
 	preferHashAgg
 	preferStreamAgg
+	preferLeftAsHJBuild
+	preferRightAsHJBuild
+	preferLeftAsHJProbe
+	preferRightAsHJProbe
 )
 
 const (

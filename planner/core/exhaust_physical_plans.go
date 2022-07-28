@@ -376,30 +376,56 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPl
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return nil
 	}
+	forceLeftToBuild := ((p.preferJoinType & preferLeftAsHJBuild) > 0) || ((p.preferJoinType & preferRightAsHJProbe) > 0)
+	forceRightToBuild := ((p.preferJoinType & preferRightAsHJBuild) > 0) || ((p.preferJoinType & preferLeftAsHJProbe) > 0)
+	if forceLeftToBuild && forceRightToBuild {
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("Some HASH_BUILD and HASH_PROBE hints are conflicts, please check the hints"))
+		forceLeftToBuild = false
+		forceRightToBuild = false
+
+	}
 	joins := make([]PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		joins = append(joins, p.getHashJoin(prop, 1, false))
+		if forceLeftToBuild || forceRightToBuild {
+			// Do not support specifying the build side.
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(fmt.Sprintf("We can't use the ORDERED_HASH_JOIN hint for %s, please check the hint", p.JoinType)))
+		}
 	case LeftOuterJoin:
 		if ForceUseOuterBuild4Test {
 			joins = append(joins, p.getHashJoin(prop, 1, true))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 1, true))
+			if !forceLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+			}
+			if !forceRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, true))
+			}
 		}
 	case RightOuterJoin:
 		if ForceUseOuterBuild4Test {
 			joins = append(joins, p.getHashJoin(prop, 0, true))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 0, false))
-			joins = append(joins, p.getHashJoin(prop, 0, true))
+			if !forceLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, true))
+			}
+			if !forceRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			}
 		}
 	case InnerJoin:
 		if ForcedHashLeftJoin4Test {
 			joins = append(joins, p.getHashJoin(prop, 1, false))
 		} else {
-			joins = append(joins, p.getHashJoin(prop, 1, false))
-			joins = append(joins, p.getHashJoin(prop, 0, false))
+			if forceLeftToBuild {
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			} else if forceRightToBuild {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+			} else {
+				joins = append(joins, p.getHashJoin(prop, 1, false))
+				joins = append(joins, p.getHashJoin(prop, 0, false))
+			}
 		}
 	}
 	return joins
