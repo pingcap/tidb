@@ -179,7 +179,7 @@ func main() {
 	}
 	registerStores()
 	registerMetrics()
-	if config.GetGlobalConfig().OOMUseTmpStorage {
+	if variable.EnableTmpStorageOnOOM.Load() {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
@@ -238,7 +238,7 @@ func syncLog() {
 }
 
 func checkTempStorageQuota() {
-	// check capacity and the quota when OOMUseTmpStorage is enabled
+	// check capacity and the quota when EnableTmpStorageOnOOM is enabled
 	c := config.GetGlobalConfig()
 	if c.TempStorageQuota < 0 {
 		// means unlimited, do nothing
