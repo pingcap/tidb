@@ -51,6 +51,7 @@ import (
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -790,6 +791,11 @@ func upgrade(s Session) {
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 && !domain.GetDomain(s).DDL().OwnerManager().IsOwner() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		if err := waitOwner(ctx, domain.GetDomain(s)); err != nil {
+			logutil.BgLogger().Fatal("[Upgrade] upgrade failed", zap.Error(err))
+		}
+		cancel()
 		// use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
 		// overwrite variable EnableConcurrentDDL.
 		variable.DDLForce2Queue.Store(true)
@@ -827,6 +833,25 @@ func upgrade(s Session) {
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
+	}
+}
+
+// waitOwner is used to wait the DDL owner to be elected in the cluster.
+func waitOwner(ctx context.Context, dom *domain.Domain) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			_, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
+			if err == concurrency.ErrElectionNoLeader {
+				logutil.BgLogger().Warn("No DDL owner in the cluster, wait and check again")
+				continue
+			}
+			return err
+		}
 	}
 }
 

@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -683,25 +682,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(d.PollTiFlashRoutine)
 
 	return nil
-}
-
-// waitOwner is used to wait the DDL owner to be elected in the cluster.
-func (d *ddl) waitOwner(ctx context.Context) error {
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			_, err := d.ownerManager.GetOwnerID(ctx)
-			if err == concurrency.ErrElectionNoLeader {
-				logutil.BgLogger().Warn("No DDL owner in the cluster, wait and check again")
-				continue
-			}
-			return err
-		}
-	}
 }
 
 // GetNextDDLSeqNum return the next DDL seq num.
