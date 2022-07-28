@@ -564,6 +564,14 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		{
+			"create table t(d datetime)" +
+				"partition by range columns (d) (" +
+				"partition p0 values less than ('2022-01-01')," +
+				"partition p1 values less than (MAXVALUE), " +
+				"partition p2 values less than (MAXVALUE));",
+			dbterror.ErrRangeNotIncreasing,
+		},
+		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
 			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
@@ -907,7 +915,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 			dbterror.ErrUniqueKeyNeedAllFieldsInPf,
 		},
 		{
-			generatePartitionTableByNum(ddl.PartitionCountLimit + 1),
+			generatePartitionTableByNum(mysql.PartitionCountLimit + 1),
 			dbterror.ErrTooManyPartitions,
 		},
 	}
@@ -938,7 +946,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
-		generatePartitionTableByNum(ddl.PartitionCountLimit),
+		generatePartitionTableByNum(mysql.PartitionCountLimit),
 	}
 
 	for id, sql := range validCases {
@@ -2468,7 +2476,7 @@ func TestAddPartitionTooManyPartitions(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	count := ddl.PartitionCountLimit
+	count := mysql.PartitionCountLimit
 	tk.MustExec("drop table if exists p1;")
 	sql1 := `create table p1 (
 		id int not null

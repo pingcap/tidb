@@ -223,7 +223,7 @@ func timestampDirName() string {
 }
 
 // DefineFlags defines flags of dumpling's configuration
-func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
+func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
 	flags.StringSliceP(flagDatabase, "B", nil, "Databases to dump")
 	flags.StringSliceP(flagTablesList, "T", nil, "Comma delimited table list to dump; must be qualified table names")
@@ -490,7 +490,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	tmpl, err := ParseOutputFileTemplate(outputFilenameFormat)
 	if err != nil {
-		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')\n", outputFilenameFormat)
+		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
 	conf.OutputFileTemplate = tmpl
 
@@ -551,6 +551,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
+// GetConfTables parses tables from tables-list and filter arguments
 func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	dbTables := DatabaseTables{}
 	var (
@@ -609,7 +610,9 @@ const (
 	defaultDumpGCSafePointTTL = 5 * 60
 	defaultEtcdDialTimeOut    = 3 * time.Second
 
-	LooseCollationCompatible  = "loose"
+	// LooseCollationCompatible is used in DM, represents a collation setting for best compatibility.
+	LooseCollationCompatible = "loose"
+	// StrictCollationCompatible is used in DM, represents a collation setting for correctness.
 	StrictCollationCompatible = "strict"
 
 	dumplingServiceSafePointPrefix = "dumpling"

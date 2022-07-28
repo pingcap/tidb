@@ -39,7 +39,7 @@ import (
 
 var openDBFunc = sql.Open
 
-var emptyHandleValsErr = errors.New("empty handleVals for TiDB table")
+var errEmptyHandleVals = errors.New("empty handleVals for TiDB table")
 
 // Dumper is the dump progress structure
 type Dumper struct {
@@ -691,7 +691,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		// don't retry on context error and successful tasks
 		if err2 := errors.Cause(err); err2 == nil || err2 == context.DeadlineExceeded || err2 == context.Canceled {
 			return err
-		} else if err2 != emptyHandleValsErr {
+		} else if err2 != errEmptyHandleVals {
 			tctx.L().Info("fallback to concurrent dump tables using rows due to some problem. This won't influence the whole dump process",
 				zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		}
@@ -892,7 +892,7 @@ func (d *Dumper) sendConcurrentDumpTiDBTasks(tctx *tcontext.Context,
 	if len(handleVals) == 0 {
 		if partition == "" {
 			// return error to make outside function try using rows method to dump data
-			return errors.Annotatef(emptyHandleValsErr, "table: `%s`.`%s`", escapeString(db), escapeString(tbl))
+			return errors.Annotatef(errEmptyHandleVals, "table: `%s`.`%s`", escapeString(db), escapeString(tbl))
 		}
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, partition, buildOrderByClauseString(handleColNames), startChunkIdx, totalChunk)
 	}
@@ -1337,6 +1337,30 @@ func resolveAutoConsistency(d *Dumper) error {
 	default:
 		conf.Consistency = ConsistencyTypeNone
 	}
+
+	if conf.Consistency == ConsistencyTypeFlush {
+		timeout := time.Second * 5
+		ctx, cancel := context.WithTimeout(d.tctx.Context, timeout)
+		defer cancel()
+
+		// probe if upstream has enough privilege to FLUSH TABLE WITH READ LOCK
+		conn, err := d.dbHandle.Conn(ctx)
+		if err != nil {
+			return errors.New("failed to get connection from db pool after 5 seconds")
+		}
+		//nolint: errcheck
+		defer conn.Close()
+
+		err = FlushTableWithReadLock(d.tctx, conn)
+		//nolint: errcheck
+		defer UnlockTables(d.tctx, conn)
+		if err != nil {
+			// fallback to ConsistencyTypeLock
+			d.tctx.L().Warn("error when use FLUSH TABLE WITH READ LOCK, fallback to LOCK TABLES",
+				zap.Error(err))
+			conf.Consistency = ConsistencyTypeLock
+		}
+	}
 	return nil
 }
 
@@ -1500,7 +1524,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	// To avoid this function continuously returning errors and confusing users because we fail to init this function at first,
 	// selectTiDBTableRegionFunc is set to always return an ignorable error at first.
 	d.selectTiDBTableRegionFunc = func(_ *tcontext.Context, _ *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error) {
-		return nil, nil, errors.Annotatef(emptyHandleValsErr, "table: `%s`.`%s`", escapeString(meta.DatabaseName()), escapeString(meta.TableName()))
+		return nil, nil, errors.Annotatef(errEmptyHandleVals, "table: `%s`.`%s`", escapeString(meta.DatabaseName()), escapeString(meta.TableName()))
 	}
 	dbHandle, err := openDBFunc("mysql", conf.GetDSN(""))
 	if err != nil {

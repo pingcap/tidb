@@ -23,6 +23,7 @@ go_test(
         "terror_test.go",
     ],
     embed = [":dbterror"],
+    flaky = True,
     deps = [
         "//errno",
         "//testkit/testsetup",
