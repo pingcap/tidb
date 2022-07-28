@@ -4271,6 +4271,43 @@ func TestCreateAndAlterIntervalPartition(t *testing.T) {
 		" last partition less than (67)")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:8200]Unsupported INTERVAL: expr (67) not matching FIRST + n INTERVALs (100 + n * 33)", err.Error())
+
+	// Non-partitioned tables does not support ALTER of FIRST/LAST PARTITION
+	tk.MustExec(`create table t (a int, b varchar(255))`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1505]Partition management on a not partitioned table is not possible", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1505]Partition management on a not partitioned table is not possible", err.Error())
+	tk.MustExec(`drop table t`)
+	// HASH/LIST [COLUMNS] does not support ALTER of FIRST/LAST PARTITION
+	tk.MustExec(`create table t (a int, b varchar(255)) partition by hash (a) partitions 4`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported add partitions", err.Error())
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int, b varchar(255)) partition by list (a) (partition p0 values in (1,2,3), partition p1 values in (22,23,24))`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (0)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (100)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1492]For LIST partitions each partition must be defined", err.Error())
+	tk.MustExec(`drop table t`)
+
+	tk.MustExec(`create table t (a int, b varchar(255)) partition by list columns (b) (partition p0 values in ("1","2","3"), partition p1 values in ("22","23","24"))`)
+	err = tk.ExecToErr(`ALTER TABLE t FIRST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:8200]Unsupported FIRST PARTITION, does not seem like an INTERVAL partitioned table", err.Error())
+	err = tk.ExecToErr(`ALTER TABLE t LAST PARTITION LESS THAN (10)`)
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1492]For LIST partitions each partition must be defined", err.Error())
+	tk.MustExec(`drop table t`)
 }
 
 func TestPartitionTableWithAnsiQuotes(t *testing.T) {
