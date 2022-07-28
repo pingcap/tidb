@@ -129,6 +129,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineWithSysFlags(command, false)
 	return command
 }
 
@@ -182,6 +183,7 @@ func newStreamRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
+	task.DefineWithSysFlags(command, true)
 	task.DefineStreamRestoreFlags(command)
 	command.Hidden = true
 	return command

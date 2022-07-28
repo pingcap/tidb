@@ -74,6 +74,7 @@ const (
 	// flagEnableOpenTracing is whether to enable opentracing
 	flagEnableOpenTracing = "enable-opentracing"
 	flagSkipCheckPath     = "skip-check-path"
+	flagWithSysTable      = "with-sys-table"
 
 	defaultSwitchInterval       = 5 * time.Minute
 	defaultGRPCKeepaliveTime    = 10 * time.Second
@@ -209,6 +210,8 @@ type Config struct {
 
 	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
 
+	// determines whether enable restore sys table on default, see fullClusterRestore in restore/client.go
+	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 	// whether there's explicit filter
 	ExplicitFilter bool `json:"-" toml:"-"`
 }
@@ -306,6 +309,14 @@ func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden
 	if setHidden {
 		_ = flags.MarkHidden(flagFilter)
 		_ = flags.MarkHidden(flagCaseSensitive)
+	}
+}
+
+func DefineWithSysFlags(command *cobra.Command, setHidden bool) {
+	flags := command.Flags()
+	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
+	if setHidden {
+		_ = flags.MarkHidden(flagWithSysTable)
 	}
 }
 
@@ -504,6 +515,12 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
+	}
+	if flags.Lookup(flagWithSysTable) != nil {
+		cfg.WithSysTable, err = flags.GetBool(flagWithSysTable)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	checkRequirements, err := flags.GetBool(flagCheckRequirement)
 	if err != nil {

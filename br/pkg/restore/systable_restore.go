@@ -44,15 +44,15 @@ var unRecoverableTable = map[string]struct{}{
 	"schema_index_usage": {},
 }
 
-var sysPrivilegeTableSet = map[string]bool{
-	"user":          true, // since v1.0.0
-	"db":            true, // since v1.0.0
-	"tables_priv":   true, // since v1.0.0
-	"columns_priv":  true, // since v1.0.0
-	"default_roles": true, // since v3.0.0
-	"role_edges":    true, // since v3.0.0
-	"global_priv":   true, // since v3.0.8
-	"global_grants": true, // since v5.0.3
+var sysPrivilegeTableMap = map[string]string{
+	"user":          "user",    // since v1.0.0
+	"db":            "user",    // since v1.0.0
+	"tables_priv":   "user",    // since v1.0.0
+	"columns_priv":  "user",    // since v1.0.0
+	"default_roles": "user",    // since v3.0.0
+	"role_edges":    "to_user", // since v3.0.0
+	"global_priv":   "user",    // since v3.0.8
+	"global_grants": "user",    // since v5.0.3
 }
 
 func isUnrecoverableTable(tableName string) bool {
@@ -197,10 +197,14 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	}
 
 	if db.ExistingTables[tableName] != nil {
-		if rc.fullClusterRestore && sysPrivilegeTableSet[tableName] {
+		whereClause := ""
+		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
+			// cloud_admin is a special user on tidb cloud, need to skip it.
+			whereClause = fmt.Sprintf("WHERE %s != 'cloud_admin'", sysPrivilegeTableMap[tableName])
 			log.Info("full cluster restore, delete existing data",
 				zap.String("table", tableName), zap.Stringer("schema", db.Name))
-			deleteSQL := fmt.Sprintf("DELETE FROM %s;", utils.EncloseDBAndTable(db.Name.L, tableName))
+			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
+				utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
 			if err := execSQL(deleteSQL); err != nil {
 				return err
 			}
@@ -214,10 +218,11 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
 		}
 		colListStr := strings.Join(columnNames, ",")
-		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
+		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s %s;",
 			utils.EncloseDBAndTable(db.Name.L, tableName),
 			colListStr, colListStr,
-			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
+			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
+			whereClause)
 		return execSQL(replaceIntoSQL)
 	}
 
