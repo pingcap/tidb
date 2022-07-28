@@ -75,7 +75,7 @@ func (b *bundleInfoBuilder) SetDeltaUpdateBundles() {
 	b.deltaUpdate = true
 }
 
-func (b *bundleInfoBuilder) deleteBundle(is *infoSchema, tblID int64) {
+func (_ *bundleInfoBuilder) deleteBundle(is *infoSchema, tblID int64) {
 	delete(is.ruleBundleMap, tblID)
 }
 
@@ -91,7 +91,7 @@ func (b *bundleInfoBuilder) markPartitionBundleShouldUpdate(partID int64) {
 
 func (b *bundleInfoBuilder) markBundlesReferPolicyShouldUpdate(policyID int64) {
 	b.ensureMap()
-	b.updatePolicies[policyID] = struct{}{}
+	b.updatePolicies[policyID:] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) updateInfoSchemaBundles(is *infoSchema) {
@@ -593,8 +593,8 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m *meta.Meta, diff *model.Sc
 	return nil
 }
 
-func (b *Builder) applyDropPolicy(PolicyID int64) []int64 {
-	po, ok := b.is.PolicyByID(PolicyID)
+func (b *Builder) applyDropPolicy(policyID int64) []int64 {
+	po, ok := b.is.PolicyByID(policyID)
 	if !ok {
 		return nil
 	}
