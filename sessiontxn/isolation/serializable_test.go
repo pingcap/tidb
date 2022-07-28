@@ -38,7 +38,7 @@ import (
 )
 
 func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -72,7 +72,7 @@ func TestPessimisticSerializableTxnProviderTS(t *testing.T) {
 }
 
 func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -110,7 +110,7 @@ func TestPessimisticSerializableTxnContextProviderLockError(t *testing.T) {
 }
 
 func TestSerializableInitialize(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	testfork.RunTest(t, func(t *testfork.T) {
