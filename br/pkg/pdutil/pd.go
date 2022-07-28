@@ -891,7 +891,7 @@ func FetchClusterID(ctx context.Context, tls *common.TLS, pdAddr string) (string
 	}
 	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/cluster", &rawClusterID)
 	if err != nil {
-		return strconv.Itoa(rawClusterID.Id), errors.Trace(err)
+		return "", errors.Trace(err)
 	}
 
 	return strings.TrimSpace(strconv.Itoa(rawClusterID.Id)), nil
