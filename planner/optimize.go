@@ -385,7 +385,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err = execPlan.OptimizePreparedPlan(ctx, sctx, is)
-		return execPlan.Plan, execPlan.OutputNames(), err
+		return execPlan, execPlan.OutputNames(), err
 	}
 	err = errors.Errorf("invalid result plan type, should be Execute")
 	return nil, nil, err
