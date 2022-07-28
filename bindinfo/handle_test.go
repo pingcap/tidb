@@ -69,7 +69,7 @@ func TestBindingCache(t *testing.T) {
 }
 
 func TestBindingLastUpdateTime(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -100,7 +100,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 }
 
 func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -125,7 +125,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 }
 
 func TestBindParse(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -250,7 +250,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 }
 
 func TestSetBindingStatus(t *testing.T) {
-	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)

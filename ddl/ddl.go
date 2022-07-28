@@ -82,10 +82,6 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
-
-	// PartitionCountLimit is limit of the number of partitions in a table.
-	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
-	PartitionCountLimit = 8192
 )
 
 // OnExist specifies what to do when a new object has a name collision.

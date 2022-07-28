@@ -466,7 +466,7 @@ func corruptMutations(t *TableCommon, txn kv.Transaction, sh kv.StagingHandle, c
 				}
 			}
 		default:
-			return errors.New(fmt.Sprintf("unknown command to corrupt mutation: %s", cmd))
+			return fmt.Errorf("unknown command to corrupt mutation: %s", cmd)
 		}
 	}
 	return nil
