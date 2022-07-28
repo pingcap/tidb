@@ -75,14 +75,14 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	varsNum, binVarTypes, txtVarTypes := getParamValue(sctx, isBinProtocol, binProtoVars, txtProtoVars)
 
 	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
-		if plan, names, done, err := getPointQueryPlan(prepared, sessVars, stmtCtx); done {
+		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
 			return plan, names, err
 		}
 	}
 
 	if prepared.UseCache && !ignorePlanCache { // for general plans
-		if plan, names, done, err := getGeneralPlan(ctx, sctx, sessVars, stmtCtx, cacheKey, bindSQL, is,
-			preparedStmt, binVarTypes, txtVarTypes); err != nil || done {
+		if plan, names, ok, err := getGeneralPlan(ctx, sctx, cacheKey, bindSQL, is, preparedStmt,
+			binVarTypes, txtVarTypes); err != nil || ok {
 			return plan, names, err
 		}
 	}
@@ -94,9 +94,6 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 // getParamValue get real values for "?" in PREPARE statements
 func getParamValue(sctx sessionctx.Context, isBinProtocol bool, binProtoVars []types.Datum,
 	txtProtoVars []expression.Expression) (varsNum int, binVarTypes []byte, txtVarTypes []*types.FieldType) {
-	var varsNum int
-	var binVarTypes []byte
-	var txtVarTypes []*types.FieldType
 	if isBinProtocol { // binary protocol
 		varsNum = len(binProtoVars)
 		for _, param := range binProtoVars {
@@ -113,19 +110,19 @@ func getParamValue(sctx sessionctx.Context, isBinProtocol bool, binProtoVars []t
 			txtVarTypes = append(txtVarTypes, tp)
 		}
 	}
-	return varsNum, binVarTypes, txtVarTypes
+	return
 }
 
-func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext) (plan Plan,
-	names []*types.FieldName, done bool, err error) {
+func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext) (Plan,
+	[]*types.FieldName, bool, error) {
 	// short path for point-get plans
 	// Rewriting the expression in the select.where condition  will convert its
 	// type from "paramMarker" to "Constant".When Point Select queries are executed,
 	// the expression in the where condition will not be evaluated,
 	// so you don't need to consider whether prepared.useCache is enabled.
-	plan = prepared.CachedPlan.(Plan)
-	names = prepared.CachedNames.(types.NameSlice)
-	err = RebuildPlan4CachedPlan(plan)
+	plan := prepared.CachedPlan.(Plan)
+	names := prepared.CachedNames.(types.NameSlice)
+	err := RebuildPlan4CachedPlan(plan)
 	if err != nil {
 		logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 		return plan, names, false, nil
@@ -140,9 +137,12 @@ func getPointQueryPlan(prepared *ast.Prepared, sessVars *variable.SessionVars, s
 	return plan, names, true, nil
 }
 
-func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, sessVars *variable.SessionVars, stmtCtx *stmtctx.StatementContext,
-	cacheKey kvcache.Key, bindSQL string, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
-	binVarTypes []byte, txtVarTypes []*types.FieldType) (plan Plan, names []*types.FieldName, done bool, err error) {
+func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, cacheKey kvcache.Key, bindSQL string,
+	is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt, binVarTypes []byte, txtVarTypes []*types.FieldType) (Plan,
+	[]*types.FieldName, bool, error) {
+	sessVars := sctx.GetSessionVars()
+	stmtCtx := sessVars.StmtCtx
+
 	if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 		if err := checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 			return nil, nil, false, err
@@ -195,9 +195,9 @@ func getGeneralPlan(ctx context.Context, sctx sessionctx.Context, sessVars *vari
 	return nil, nil, false, nil
 }
 
-func rebuildPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema,
-	preparedStmt *CachedPrepareStmt, ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64,
-	isBinProtocol bool, varsNum int, binVarTypes []byte, txtVarTypes []*types.FieldType) (plan Plan, names []*types.FieldName, err error) {
+func rebuildPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt,
+	ignorePlanCache bool, cacheKey kvcache.Key, latestSchemaVersion int64, isBinProtocol bool, varsNum int, binVarTypes []byte,
+	txtVarTypes []*types.FieldType) (Plan, []*types.FieldName, error) {
 	prepared := preparedStmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -206,13 +206,13 @@ func rebuildPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infosc
 	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
-		return p, names, err
+		return nil, nil, err
 	}
-	//err = e.tryCachePointPlan(ctx, sctx, preparedStmt, is, p)
 	err = tryCachePointPlan(ctx, sctx, preparedStmt, is, p)
 	if err != nil {
-		return p, names, err
+		return nil, nil, err
 	}
+
 	// We only cache the tableDual plan when the number of vars are zero.
 	if containTableDual(p) && varsNum > 0 {
 		stmtCtx.SkipPlanCache = true
@@ -223,7 +223,7 @@ func rebuildPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infosc
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
 			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB,
 				prepared.SchemaVersion, latestSchemaVersion); err != nil {
-				return p, names, err
+				return nil, nil, err
 			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
