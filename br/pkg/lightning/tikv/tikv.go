@@ -217,6 +217,18 @@ func CheckPDVersion(ctx context.Context, tls *common.TLS, pdAddr string, require
 	return version.CheckVersion("PD", *ver, requiredMinVersion, requiredMaxVersion)
 }
 
+func CheckTiDBDestination(ctx context.Context, tls *common.TLS, pdAddr string, clusterId string) error {
+	id, err := pdutil.FetchClusterID(ctx, tls, pdAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if id != clusterId {
+		return errors.Errorf("Failed to match the cluster ID, Please check whether status-port is correct")
+	}
+	return nil
+}
+
 func CheckTiKVVersion(ctx context.Context, tls *common.TLS, pdAddr string, requiredMinVersion, requiredMaxVersion semver.Version) error {
 	return ForAllStores(
 		ctx,

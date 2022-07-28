@@ -1658,6 +1658,14 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 	if err != nil {
 		return errors.Trace(err)
 	}
+	clusterId, err := local.g.GetSQLExecutor().ObtainStringWithLog(
+		ctx,
+		"select substring(type,8) from METRICS_SCHEMA.PD_CLUSTER_METADATA limit 1;",
+		"check TiDB Cluster ID",
+		log.L())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
 		return err
 	}
@@ -1665,6 +1673,9 @@ func (local *local) CheckRequirements(ctx context.Context, checkCtx *backend.Che
 		return err
 	}
 	if err := tikv.CheckTiKVVersion(ctx, local.tls, local.pdAddr, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
+		return err
+	}
+	if err := tikv.CheckTiDBDestination(ctx, local.tls, local.pdAddr, clusterId); err != nil {
 		return err
 	}
 
