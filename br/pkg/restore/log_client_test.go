@@ -1,5 +1,8 @@
 // Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
 
+// NOTE: we need to create client with only `storage` field.
+// However adding a public API for that is weird, so this test uses the `restore` package instead of `restore_test`.
+// Maybe we should refactor these APIs when possible.
 package restore
 
 import (
