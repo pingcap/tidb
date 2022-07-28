@@ -72,7 +72,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 	}
 
 	isBinProtocol := len(binProtoVars) > 0
-	varsNum, binVarTypes, txtVarTypes := getParamValue(sctx, isBinProtocol, binProtoVars, txtProtoVars)
+	varsNum, binVarTypes, txtVarTypes := parseParamTypes(sctx, isBinProtocol, binProtoVars, txtProtoVars)
 
 	if prepared.UseCache && prepared.CachedPlan != nil && !ignorePlanCache { // for point query plan
 		if plan, names, ok, err := getPointQueryPlan(prepared, sessVars, stmtCtx); ok {
@@ -91,8 +91,8 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context, i
 		latestSchemaVersion, isBinProtocol, varsNum, binVarTypes, txtVarTypes)
 }
 
-// getParamValue get real values for "?" in PREPARE statements
-func getParamValue(sctx sessionctx.Context, isBinProtocol bool, binProtoVars []types.Datum,
+// parseParamTypes get parameters' types in PREPARE statement
+func parseParamTypes(sctx sessionctx.Context, isBinProtocol bool, binProtoVars []types.Datum,
 	txtProtoVars []expression.Expression) (varsNum int, binVarTypes []byte, txtVarTypes []*types.FieldType) {
 	if isBinProtocol { // binary protocol
 		varsNum = len(binProtoVars)
