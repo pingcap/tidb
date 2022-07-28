@@ -466,6 +466,8 @@ type TableInfo struct {
 
 	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
+
+	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 }
 
 // TableCacheStatusType is the type of the table cache status
@@ -766,6 +768,16 @@ func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	for _, idx := range t.Indices {
 		if idx.Name.L == idxName {
 			return idx
+		}
+	}
+	return nil
+}
+
+// FindPublicColumnByName finds the public column by name.
+func (t *TableInfo) FindPublicColumnByName(colNameL string) *ColumnInfo {
+	for _, col := range t.Cols() {
+		if col.Name.L == colNameL {
+			return col
 		}
 	}
 	return nil
@@ -1085,6 +1097,13 @@ func (p PartitionType) String() string {
 	}
 }
 
+// ExchangePartitionInfo provides exchange partition info.
+type ExchangePartitionInfo struct {
+	ExchangePartitionFlag  bool  `json:"exchange_partition_flag"`
+	ExchangePartitionID    int64 `json:"exchange_partition_id"`
+	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
+}
+
 // PartitionInfo provides table partition info.
 type PartitionInfo struct {
 	Type    PartitionType `json:"type"`
@@ -1334,6 +1353,21 @@ func (index *IndexInfo) HasColumnInIndexColumns(tblInfo *TableInfo, colID int64)
 		}
 	}
 	return false
+}
+
+// FindColumnByName finds the index column with the specified name.
+func (index *IndexInfo) FindColumnByName(nameL string) *IndexColumn {
+	return FindIndexColumnByName(index.Columns, nameL)
+}
+
+// FindIndexColumnByName finds IndexColumn by name.
+func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) *IndexColumn {
+	for _, ic := range indexCols {
+		if ic.Name.L == nameL {
+			return ic
+		}
+	}
+	return nil
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.

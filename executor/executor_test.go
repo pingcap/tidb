@@ -2629,6 +2629,8 @@ func TestSelectForUpdate(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
@@ -3787,6 +3789,8 @@ func TestPointGetPreparedPlanWithCommitMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists ps_text")
 	defer tk1.MustExec("drop database if exists ps_text")
@@ -3961,6 +3965,8 @@ func TestPointUpdatePreparedPlanWithCommitMode(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("drop database if exists pu_test2")
 	defer tk1.MustExec("drop database if exists pu_test2")
@@ -4389,7 +4395,7 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	err = ddl.AddHistoryDDLJob(meta.NewMeta(txn), job, true)
+	err = meta.NewMeta(txn).AddHistoryDDLJob(job, true)
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")
@@ -5668,6 +5674,31 @@ func TestAdmin(t *testing.T) {
 	result.Check(testkit.Rows(historyJobs[0].Query))
 	require.NoError(t, err)
 
+	// show DDL job queries with range test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test2")
+	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test3")
+	tk.MustExec("create table admin_test3 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test4")
+	tk.MustExec("create table admin_test4 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test5")
+	tk.MustExec("create table admin_test5 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test6")
+	tk.MustExec("create table admin_test6 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test7")
+	tk.MustExec("create table admin_test7 (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("drop table if exists admin_test8")
+	tk.MustExec("create table admin_test8 (c1 int, c2 int, c3 int default 1, index (c1))")
+	historyJobs, err = ddl.GetLastNHistoryDDLJobs(meta.NewMeta(txn), ddl.DefNumHistoryJobs)
+	result = tk.MustQuery(`admin show ddl job queries limit 3`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[0].ID, historyJobs[0].Query), fmt.Sprintf("%d %s", historyJobs[1].ID, historyJobs[1].Query), fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query)))
+	result = tk.MustQuery(`admin show ddl job queries limit 3, 2`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
+	result = tk.MustQuery(`admin show ddl job queries limit 3 offset 2`)
+	result.Check(testkit.Rows(fmt.Sprintf("%d %s", historyJobs[2].ID, historyJobs[2].Query), fmt.Sprintf("%d %s", historyJobs[3].ID, historyJobs[3].Query), fmt.Sprintf("%d %s", historyJobs[4].ID, historyJobs[4].Query)))
+	require.NoError(t, err)
+
 	// check table test
 	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
 	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
@@ -5744,6 +5775,8 @@ func TestAdmin(t *testing.T) {
 func TestForSelectScopeInUnion(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
 	// A union B for update, the "for update" option belongs to union statement, so
 	// it should works on both A and B.
 	tk1 := testkit.NewTestKit(t, store)

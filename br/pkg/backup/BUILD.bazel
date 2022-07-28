@@ -63,8 +63,10 @@ go_test(
         "schema_test.go",
     ],
     embed = [":backup"],
+    flaky = True,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/gluetidb",
         "//br/pkg/metautil",
         "//br/pkg/mock",
         "//br/pkg/pdutil",

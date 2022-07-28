@@ -106,6 +106,7 @@ go_test(
         "@com_github_pingcap_fn//:fn",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_prometheus_prometheus//promql",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",

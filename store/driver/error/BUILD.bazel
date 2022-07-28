@@ -19,6 +19,7 @@ go_test(
     name = "error_test",
     srcs = ["error_test.go"],
     embed = [":error"],
+    flaky = True,
     deps = [
         "//parser/terror",
         "//testkit/testsetup",

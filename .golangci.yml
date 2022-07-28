@@ -3,7 +3,6 @@ run:
 linters:
   disable-all: true
   enable:
-    - misspell
     - ineffassign
     - typecheck
     - varcheck
@@ -20,7 +19,6 @@ linters:
     - bodyclose
     - exportloopref
     - rowserrcheck
-    - unconvert
     - makezero
     - durationcheck
     - prealloc

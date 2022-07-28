@@ -17,6 +17,7 @@ go_library(
     deps = [
         "//bindinfo",
         "//config",
+        "//ddl",
         "//ddl/placement",
         "//domain",
         "//errno",
@@ -111,6 +112,7 @@ go_test(
         "nontransactional_test.go",
         "schema_amender_test.go",
         "schema_test.go",
+        "session_test.go",
         "tidb_test.go",
     ],
     data = glob(["testdata/**"]),
@@ -140,6 +142,7 @@ go_test(
         "//table",
         "//tablecodec",
         "//testkit",
+        "//testkit/external",
         "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",
