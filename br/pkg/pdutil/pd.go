@@ -887,7 +887,7 @@ func FetchClusterID(ctx context.Context, tls *common.TLS, pdAddr string) (string
 	//   "id": 7125154571691814555
 	// }
 	var rawClusterID struct {
-		Id int `json:"id"`
+		Id int64 `json:"id"`
 	}
 	err := tls.WithHost(pdAddr).GetJSON(ctx, "/pd/api/v1/cluster", &rawClusterID)
 	if err != nil {
