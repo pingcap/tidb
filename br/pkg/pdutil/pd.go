@@ -894,5 +894,5 @@ func FetchClusterID(ctx context.Context, tls *common.TLS, pdAddr string) (string
 		return "", errors.Trace(err)
 	}
 
-	return strings.TrimSpace(strconv.Itoa(rawClusterID.Id)), nil
+	return strings.TrimSpace(strconv.FormatInt(rawClusterID.Id, 10)), nil
 }
