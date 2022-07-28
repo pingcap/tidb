@@ -61,8 +61,7 @@ func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
 		fmt.Println("# the target cluster is not compatible with the backup data,")
 		fmt.Println("# br cannot restore system tables.")
 	}
-	fmt.Println("# you can use the following command to skip restoring system tables:")
-	fmt.Printf("#    br restore %s --filter '*.*' --filter '!mysql.*' \n", command.Use)
+	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	fmt.Println("#######################################################################")
 }
 
