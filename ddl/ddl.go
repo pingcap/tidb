@@ -685,7 +685,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-// we have to wait at least an owner in the cluster.
+// waitOwner is used to wait the DDL owner to be elected in the cluster.
 func (d *ddl) waitOwner(ctx context.Context) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
