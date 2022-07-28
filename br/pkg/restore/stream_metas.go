@@ -68,19 +68,16 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 
 // CalculateShiftTS calculates the shift-ts.
 func (ms *StreamMetadataSet) CalculateShiftTS(startTS uint64) uint64 {
-	minBeginTS, exist := uint64(0), false
-
-	for _, meta := range ms.metadata {
-		ts, ok := UpdateShiftTS(meta, startTS, mathutil.MaxUint)
-		if ok && (!exist || ts < minBeginTS) {
-			minBeginTS = ts
-			exist = true
-		}
+	metadatas := make([]*backuppb.Metadata, 0, len(ms.metadata))
+	for _, m := range ms.metadata {
+		metadatas = append(metadatas, m)
 	}
+
+	minBeginTS, exist := CalculateShiftTS(metadatas, startTS, mathutil.MaxUint)
 	if !exist {
 		minBeginTS = startTS
 	}
-	log.Info("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
+	log.Warn("calculate shift-ts", zap.Uint64("start-ts", startTS), zap.Uint64("shift-ts", minBeginTS))
 	return minBeginTS
 }
 
@@ -267,5 +264,29 @@ func UpdateShiftTS(m *backuppb.Metadata, startTS uint64, restoreTS uint64) (uint
 			minBeginTS = d.MinBeginTsInDefaultCf
 		}
 	}
+	return minBeginTS, isExist
+}
+
+// CalculateShiftTS gets the minimal begin-ts about transaction according to the kv-event in write-cf.
+func CalculateShiftTS(
+	metas []*backuppb.Metadata,
+	startTS uint64,
+	restoreTS uint64,
+) (uint64, bool) {
+	var (
+		minBeginTS uint64
+		isExist    bool
+	)
+	for _, m := range metas {
+		if len(m.Files) == 0 || m.MinTs > restoreTS || m.MaxTs < startTS {
+			continue
+		}
+		ts, ok := UpdateShiftTS(m, startTS, mathutil.MaxUint)
+		if ok && (!isExist || ts < minBeginTS) {
+			minBeginTS = ts
+			isExist = true
+		}
+	}
+
 	return minBeginTS, isExist
 }
