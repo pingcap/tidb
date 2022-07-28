@@ -51,7 +51,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var coprCacheCounterEvict = tidbmetrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
@@ -94,15 +93,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		req.Paging = false
 	}
 
-	if req.Paging && slices.IsSortedFunc(req.KeyRanges, func(i, j kv.KeyRange) bool {
-		if i.EndKey.Cmp(j.StartKey) > 0 {
-			return false
-		}
-		if i.StartKey.Cmp(i.EndKey) > 0 {
-			return false
-		}
-		return true
-	}) {
+	if req.Paging && !checkKeyRangeSorted(req.KeyRanges) {
 		logutil.BgLogger().Fatal("distsql request key range not sorted!")
 	}
 
@@ -1373,4 +1364,22 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}
+}
+
+func checkKeyRangeSorted(keyRanges []kv.KeyRange) bool {
+	if len(keyRanges) == 0 {
+		return true
+	}
+	lastKey := keyRanges[0].EndKey
+	for i := 1; i < len(keyRanges); i++ {
+		r := keyRanges[i]
+		if r.StartKey.Cmp(r.EndKey) >= 0 {
+			return false
+		}
+		if r.StartKey.Cmp(lastKey) < 0 {
+			return false
+		}
+		lastKey = r.EndKey
+	}
+	return true
 }
