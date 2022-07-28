@@ -317,14 +317,14 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema) (*ExecStmt, bool, bool, error) {
+	execStmt *ast.ExecuteStmt, is infoschema.InfoSchema) (*ExecStmt, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
 	}()
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
-		return nil, false, false, err
+		return nil, err
 	}
 
 	failpoint.Inject("assertTxnManagerInCompile", func() {
@@ -344,13 +344,12 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execStmt.ExecID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 		if !ok {
-			return nil, false, false, errors.Errorf("invalid CachedPrepareStmt type")
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 		stmtCtx.OriginalSQL = stmt.Text
 		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
-	tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
-	return stmt, tiFlashPushDown, tiFlashExchangePushDown, nil
+	return stmt, nil
 }

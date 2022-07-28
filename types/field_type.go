@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	ast "github.com/pingcap/tidb/parser/types"
@@ -1447,4 +1448,18 @@ func checkTypeChangeSupported(origin *FieldType, to *FieldType) bool {
 func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
 	return (IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
 		(oldCol == mysql.TypeString && IsTypeVarchar(newCol) && collate.NewCollationEnabled())
+}
+
+// IsVarcharTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
+func IsVarcharTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
+	desc, err := charset.GetCharsetInfo(setCharset)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	maxFlen := mysql.MaxFieldVarCharLength
+	maxFlen /= desc.Maxlen
+	if colDefTpFlen != UnspecifiedLength && colDefTpFlen > maxFlen {
+		return ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDefName, maxFlen)
+	}
+	return nil
 }
